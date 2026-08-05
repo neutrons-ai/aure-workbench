@@ -1,0 +1,217 @@
+"""Tests for the fit runner: input observation and the bumps export path."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from nr_workbench.fitting.runner import (
+    FitError,
+    collect_artifacts,
+    load_problem,
+    track_opened_files,
+)
+
+pytestmark = pytest.mark.integration
+
+pytest.importorskip("refl1d", reason="refl1d is required for runner tests")
+
+TRIVIAL = """\
+import os
+
+import numpy as np
+from refl1d.names import SLD, Experiment, FitProblem, QProbe
+
+DATA = os.path.join(os.path.dirname(__file__), "..", "data", "steady", "d.txt")
+q, r, dr, dq = np.loadtxt(DATA).T
+probe = QProbe(q, dq, data=(r, dr))
+
+Air = SLD("Air", rho=0.0)
+Film = SLD("Film", rho=4.0)
+Si = SLD("Si", rho=2.07)
+sample = Air(0, 5) | Film(100, 5) | Si
+sample["Film"].thickness.range(50, 200)
+
+problem = FitProblem(Experiment(sample=sample, probe=probe))
+"""
+
+
+@pytest.fixture
+def script_project(tmp_path: Path) -> Path:
+    """A minimal tree with a script that reads data via a relative hop."""
+    (tmp_path / "data" / "steady").mkdir(parents=True)
+    (tmp_path / "data" / "steady" / "d.txt").write_text(
+        "\n".join(f"{0.01 * i + 0.01:.4f} 1e-3 1e-4 1e-4" for i in range(1, 25)),
+        encoding="utf-8",
+    )
+    (tmp_path / "models").mkdir()
+    (tmp_path / "models" / "m.py").write_text(TRIVIAL, encoding="utf-8")
+    return tmp_path
+
+
+# --------------------------------------------------------------------------
+# Observing inputs
+# --------------------------------------------------------------------------
+
+
+def test_track_opened_files_records_a_read(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("x", encoding="utf-8")
+
+    with track_opened_files() as opened:
+        target.read_text(encoding="utf-8")
+
+    assert any(str(target) in path for path in opened)
+
+
+def test_track_opened_files_stops_collecting_after_the_block(tmp_path: Path) -> None:
+    """The hook is permanent; the collector must not keep growing."""
+    target = tmp_path / "a.txt"
+    target.write_text("x", encoding="utf-8")
+
+    with track_opened_files() as opened:
+        pass
+    target.read_text(encoding="utf-8")
+
+    assert not any(str(target) in path for path in opened)
+
+
+def test_track_opened_files_nests(tmp_path: Path) -> None:
+    """A nested block must not clobber the outer collector."""
+    inner_file = tmp_path / "inner.txt"
+    inner_file.write_text("x", encoding="utf-8")
+    outer_file = tmp_path / "outer.txt"
+    outer_file.write_text("x", encoding="utf-8")
+
+    with track_opened_files() as outer:
+        with track_opened_files() as inner:
+            inner_file.read_text(encoding="utf-8")
+        outer_file.read_text(encoding="utf-8")
+
+    assert any("inner.txt" in p for p in inner)
+    assert any("outer.txt" in p for p in outer)
+    assert not any("inner.txt" in p for p in outer)
+
+
+def test_load_problem_observes_a_path_built_at_runtime(script_project: Path) -> None:
+    """The whole point: the data path never appears whole in the source."""
+    loaded = load_problem(script_project / "models" / "m.py", root=script_project)
+
+    names = [p.name for p in loaded.opened]
+    assert "d.txt" in names
+
+
+def test_load_problem_excludes_the_script_and_the_interpreter(
+    script_project: Path,
+) -> None:
+    """Only project data files count as inputs; the script is recorded apart."""
+    loaded = load_problem(script_project / "models" / "m.py", root=script_project)
+
+    assert all(p.suffix != ".py" for p in loaded.opened)
+    assert all(str(p).startswith(str(script_project)) for p in loaded.opened)
+
+
+def test_load_problem_rejects_a_script_without_a_problem(tmp_path: Path) -> None:
+    script = tmp_path / "no_problem.py"
+    script.write_text("x = 1\n", encoding="utf-8")
+
+    with pytest.raises(FitError, match="module-level `problem`"):
+        load_problem(script)
+
+
+def test_load_problem_reports_a_raising_script(tmp_path: Path) -> None:
+    script = tmp_path / "boom.py"
+    script.write_text("raise ValueError('nope')\n", encoding="utf-8")
+
+    with pytest.raises(FitError, match="raised while loading"):
+        load_problem(script)
+
+
+def test_load_problem_reports_a_missing_script(tmp_path: Path) -> None:
+    with pytest.raises(FitError, match="not found"):
+        load_problem(tmp_path / "absent.py")
+
+
+# --------------------------------------------------------------------------
+# The bumps export workaround
+# --------------------------------------------------------------------------
+
+
+def test_our_export_path_writes_the_uncertainty_block(
+    script_project: Path, tmp_path: Path
+) -> None:
+    """Calling export_fit ourselves must produce the MCMC outputs.
+
+    This is the payoff of not passing ``export=`` to ``bumps.fitters.fit``:
+    ``-err.json`` carries the parameter uncertainties and ``-chain.mc.gz`` the
+    DREAM chain, and both are what downstream SLD confidence bands need.
+    """
+    from nr_workbench.fitting.runner import run_fit
+
+    loaded = load_problem(script_project / "models" / "m.py", root=script_project)
+    out = tmp_path / "out"
+
+    outcome = run_fit(
+        loaded.problem, out, method="dream", samples=600, burn=30, quiet=True
+    )
+
+    names = [p.name for p in out.iterdir()]
+    assert outcome.export_ok, outcome.export_error
+    assert any(n.endswith("-err.json") for n in names), names
+    assert any(n.endswith("-chain.mc.gz") for n in names), names
+    assert "uncertainties" in outcome.artifacts
+    assert "chain" in outcome.artifacts
+
+
+@pytest.mark.slow
+def test_bumps_export_kwarg_still_drops_the_uncertainty_block(
+    script_project: Path, tmp_path: Path
+) -> None:
+    """Pin the bug the workaround exists for, so we notice when it is fixed.
+
+    In bumps 1.0.x, ``fit(export=...)`` forwards a bare ``MCMCDraw`` where
+    ``export_fit`` expects an ``OptimizeResult``, so the uncertainty block is
+    silently skipped. If this test starts failing, bumps has been fixed and
+    ``_export`` can be simplified -- which is worth knowing rather than
+    carrying the workaround forever as folklore.
+    """
+    from bumps.fitters import fit as bumps_fit
+
+    loaded = load_problem(script_project / "models" / "m.py", root=script_project)
+    loaded.problem.name = "problem"
+    out = tmp_path / "buggy"
+    out.mkdir()
+
+    bumps_fit(
+        loaded.problem, method="dream", samples=600, burn=30, verbose=0, export=str(out)
+    )
+
+    names = [p.name for p in out.iterdir()]
+    assert not any(n.endswith("-err.json") for n in names), (
+        "bumps fit(export=...) now writes the uncertainty block -- the "
+        "workaround in fitting/runner.py::_export can be revisited."
+    )
+
+
+def test_collect_artifacts_names_the_interesting_files(tmp_path: Path) -> None:
+    out = tmp_path / "fit"
+    out.mkdir()
+    for name in (
+        "problem.par",
+        "problem-err.json",
+        "problem-1-refl.dat",
+        "problem-chain.mc.gz",
+    ):
+        (out / name).write_text("x", encoding="utf-8")
+
+    artifacts = collect_artifacts(out)
+
+    assert artifacts["parameters"] == "fit/problem.par"
+    assert artifacts["uncertainties"] == "fit/problem-err.json"
+    assert artifacts["reflectivity"] == "fit/problem-1-refl.dat"
+    assert artifacts["chain"] == "fit/problem-chain.mc.gz"
+
+
+def test_collect_artifacts_tolerates_a_missing_directory(tmp_path: Path) -> None:
+    assert collect_artifacts(tmp_path / "nope") == {}

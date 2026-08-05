@@ -61,11 +61,33 @@ folder — it never overwrites a file you have edited.
 
 Run `nrw --help` for the full command surface.
 
+## Provenance
+
+Run any refl1d script -- including one you wrote by hand years ago -- and it
+comes out with a complete, queryable record:
+
+```bash
+nrw fit run samples/Cu/models/cu-d2o.py --method dream --samples 5000
+nrw ls                        # every fit, newest first, with freshness
+nrw whence figures/fig3.svg   # what produced this?
+nrw promote <fit_id> --as final --reason "converged; SLD band excludes null"
+nrw check                     # CI-able: fails if a result went stale
+```
+
+Each fit writes an immutable directory holding the frozen script, every input
+file with its sha256, the exact package versions and git state (with a patch if
+the tree was dirty), and the bumps output. `nrw whence` traces a figure back to
+that record even after it has been copied out of the project, because figures
+are stamped at write time.
+
+Re-running an identical fit is refused by default, and a result whose data has
+changed underneath it is reported as `STALE` everywhere it appears.
+
 ## Status
 
-Early. Milestone 0 (scaffold and skills) is implemented; the provenance ledger,
-the model spec and generator, the tNR assessment tools, and the web UI are in
-progress. See [docs/project.md](docs/project.md).
+Early. Milestone 0 (scaffold and skills) and Milestone 1 (the provenance spine)
+are implemented. The model spec and generator, the tNR assessment tools, and
+the web UI are next. See [docs/project.md](docs/project.md).
 
 ## Development
 

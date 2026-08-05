@@ -100,6 +100,97 @@ def sample_new_command(sample_id: str, title: str | None, beamtime: str | None) 
     run_sample_new(sample_id=sample_id, title=title, beamtime=beamtime)
 
 
+@main.group("fit")
+def fit_group() -> None:
+    """Run fits and record what produced every result."""
+
+
+@fit_group.command("run")
+@click.argument("script", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--sample",
+    default=None,
+    help="Sample to record under [default: inferred from the path].",
+)
+@click.option(
+    "--method",
+    default="amoeba",
+    show_default=True,
+    help="Bumps fitter: amoeba, dream, lm, de, newton.",
+)
+@click.option("--steps", type=int, default=None, help="Maximum optimizer steps.")
+@click.option("--samples", type=int, default=None, help="DREAM sample count.")
+@click.option("--burn", type=int, default=None, help="DREAM burn-in.")
+@click.option("--pop", type=int, default=None, help="Population size.")
+@click.option(
+    "--seed", type=int, default=None, help="Random seed, for a reproducible run."
+)
+@click.option("--note", default=None, help="Free-text note stored in the record.")
+@click.option(
+    "--name", "model_name", default=None, help="Model name [default: the script stem]."
+)
+@click.option(
+    "--force", is_flag=True, help="Run even if an identical run already exists."
+)
+@click.option("--dry-run", is_flag=True, help="Report what would run; write nothing.")
+def fit_run_command(**kwargs: object) -> None:
+    """Run SCRIPT and write an immutable record of the fit.
+
+    Works on hand-written refl1d scripts as they are: no migration, no schema.
+    The script must define a module-level `problem = FitProblem(...)`.
+    """
+    from nr_workbench.commands.fit import run_fit_command
+
+    run_fit_command(**kwargs)  # type: ignore[arg-type]
+
+
+@main.command("whence")
+@click.argument("path")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def whence_command(path: str, as_json: bool) -> None:
+    """Trace PATH back to the fit that produced or consumed it.
+
+    Accepts a figure, an artifact, a data file, a fit directory, or a fit id.
+    """
+    from nr_workbench.commands.provenance_cmd import run_whence
+
+    run_whence(path=path, as_json=as_json)
+
+
+@main.command("ls")
+@click.option("--sample", default=None, help="Restrict to one sample.")
+@click.option("--limit", type=int, default=50, show_default=True, help="Maximum rows.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def ls_command(sample: str | None, limit: int, as_json: bool) -> None:
+    """List recorded fits, newest first."""
+    from nr_workbench.commands.provenance_cmd import run_ls
+
+    run_ls(sample=sample, as_json=as_json, limit=limit)
+
+
+@main.command("promote")
+@click.argument("fit_id")
+@click.option(
+    "--as", "label", default="final", show_default=True, help="Label to apply."
+)
+@click.option("--reason", required=True, help="Why this fit is the answer. Required.")
+@click.option("--force", is_flag=True, help="Promote even if the inputs have changed.")
+def promote_command(fit_id: str, label: str, reason: str, force: bool) -> None:
+    """Mark FIT_ID as the answer, recording who decided and why."""
+    from nr_workbench.commands.provenance_cmd import run_promote
+
+    run_promote(fit_id=fit_id, label=label, reason=reason, force=force)
+
+
+@main.command("check")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def check_command(as_json: bool) -> None:
+    """Verify project integrity: stale results, missing inputs, broken pointers."""
+    from nr_workbench.commands.provenance_cmd import run_check
+
+    run_check(as_json=as_json)
+
+
 @main.group("skills")
 def skills_group() -> None:
     """Manage the project's skills/ directory."""

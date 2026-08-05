@@ -129,6 +129,72 @@ reuses `created`, `name`, `beamtime` and `ipts` unless overridden on the
 command line. So a bare `nrw init` in an existing project is a true no-op and
 does not blank fields the user set earlier.
 
+### 2026-08-05: Observe a script's inputs; do not guess them from its source
+
+Every real fit script in experiments-2025 builds its data path the same way:
+
+```python
+DATA = os.path.join(os.path.dirname(__file__), "..", "data", "steady", fname)
+```
+
+The full path never appears as a literal, and `fname` is often assembled from a
+run number, so scanning the AST for string literals finds nothing. Measured: the
+first implementation recorded 1 input (the script) for a script that read a data
+file.
+
+`fitting/runner.py::track_opened_files` installs a `sys.addaudithook` on the
+`open` event and records every genuine file open during `runpy.run_path`. That
+is exact rather than heuristic and works regardless of how the path was
+assembled — through `numpy.loadtxt`, refl1d's loaders, or runtime string
+building.
+
+Two consequences worth knowing:
+
+- **Audit hooks cannot be removed once installed.** One hook is installed lazily
+  and gated on a module-level collector that the context manager sets and
+  restores, so nesting works and nothing accumulates after the block.
+- **The script is loaded once**, and the loaded problem is handed to `run_fit`.
+  Loading it twice would double every side effect a script has.
+
+`--dry-run` cannot observe anything, so it falls back to the literal scan plus a
+unique-basename search of the project, and the two paths can disagree. That is
+accepted: the recorded path is the exact one.
+
+### 2026-08-05: bumps `fit(export=...)` still silently drops the uncertainty block
+
+Inherited from nr-analyzer and **re-verified against bumps 1.0.4**, because a
+workaround nobody rechecks becomes folklore. Measured on the same problem:
+
+| call | files written | `-err.json` | `-chain.mc.gz` |
+|---|---|---|---|
+| `fit(problem, export=dir)` | 9 | no | no |
+| `fit(problem)` then `export_fit(dir, problem, result)` | 19 | yes | yes |
+
+`fit(export=...)` forwards `result.state` — a bare `MCMCDraw` — where
+`export_fit` expects an `OptimizeResult`. Its
+`getattr(fit, "fit_state", getattr(fit, "state", None))` resolves to `None` and
+the entire uncertainty branch is skipped, with no error.
+
+`tests/test_runner.py::test_bumps_export_kwarg_still_drops_the_uncertainty_block`
+pins the bug deliberately: when bumps fixes it, that test fails and tells us the
+workaround can go.
+
+### 2026-08-05: fit_id collides for same-second replicates
+
+`fit_id` is a second-resolution timestamp plus a content hash, so two forced
+replicates of an identical run started in the same second produce the same id
+and the second `mkdir` fails. `record.py::create_unique` appends `-2`, `-3`, …
+Because `mkdir` is atomic, the same loop is what makes concurrent fits safe:
+whichever process loses the race takes the next suffix.
+
+### 2026-08-05: `ruff format` will reformat vendored files unless excluded
+
+`_vendor/result_manifest.py` is a byte-identical copy of a contract shared
+across analyzer_tools, data-assembler and nr_isaac_format. A plain
+`ruff format src tests` reformatted it and broke that guarantee — caught by
+`tests/test_vendor.py` on its first real run. `extend-exclude` in
+`[tool.ruff]` now covers `src/nr_workbench/_vendor`.
+
 ### 2026-08-05: A NUL byte is the binary test, not a failed decode
 
 `_render_diff` originally detected binary content with `try: decode('utf-8')`.

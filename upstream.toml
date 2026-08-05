@@ -1,0 +1,68 @@
+# Vendored files and where they came from.
+#
+# Two categories, and the difference matters:
+#
+#   verbatim -- byte-identical copies of a shared contract. Never edited here.
+#               `tests/test_vendor.py` re-hashes these and fails on any drift.
+#   adapted  -- code we took and changed. Carries an attribution header at the
+#               top of the file; changes are ours to maintain.
+#
+# `sha256` is of the file as vendored, so a local edit is detectable even
+# without network access to the upstream repo.
+
+[[verbatim]]
+dest = "src/nr_workbench/_vendor/result_manifest.py"
+repo = "neutrons-ai/nr-analyzer"
+path = "analyzer_tools/result_manifest.py"
+commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
+sha256 = "e341a23846c5370e6eda67cfa85ce7038c073ebbb461cc62fa1edf9004624075"
+synced = "2026-08-05"
+reason = """
+The ndip-tool-result/1 manifest is already shared byte-identical across
+analyzer_tools, data-assembler and nr_isaac_format. It is the interop seam:
+any orchestrator that can drive nr-analyzer can drive nr-workbench unchanged.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/fitting/runner.py"
+repo = "neutrons-ai/nr-analyzer"
+path = "analyzer_tools/analysis/run_fit.py"
+commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
+synced = "2026-08-05"
+adaptation = """
+Kept the hard-won bumps 1.0.x workaround -- never pass export= to
+bumps.fitters.fit, call export_fit yourself -- and the runpy problem-loading
+approach. Dropped the analyzer config singleton, the report/AuRE-export side
+effects, and the click coupling; the runner is a library function that returns
+a result object, and the CLI layer decides what to print.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills_install.py"
+repo = "mdoucet/ai-project-template"
+path = "scripts/install_skills.py"
+synced = "2026-08-05"
+adaptation = """
+Same copytree-plus-dispatcher shape and the same dispatcher_markdown block
+scalar, but sourced from package data instead of the neutron-skills retriever,
+and routed through the idempotent scaffold engine so a locally edited skill is
+never clobbered.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/neutron-reflectometry/SKILL.md"
+repos = ["neutrons-ai/aure", "mdoucet/experiments-2025"]
+paths = [
+    "src/aure/skills/neutron-reflectometry/SKILL.md",
+    "docs/neutron-reflectometry.md",
+]
+synced = "2026-08-05"
+adaptation = """
+Merged both sources, narrowed to REF_L/BL-4B, restructured into the
+neutron-skills v2 anatomy, and split the long refinement guidance into
+references/refinement-strategy.md.
+
+Now that neutrons-ai/aure#20 has merged, aure ships its SKILL.md files in the
+wheel -- so the remaining pure-AuRE skills should be READ from the installed
+package rather than copied here. See docs/ground_truths.md.
+"""

@@ -149,6 +149,11 @@ exclude_lines = [
 line-length = 88
 target-version = "py311"
 src = ["src", "tests"]
+# _vendor/ holds byte-identical copies of contracts shared across the
+# neutron-ai repos. Formatting them would fork a shared file for cosmetic
+# reasons -- and `ruff format .` did exactly that once, caught by
+# tests/test_vendor.py. Excluded so it cannot happen again.
+extend-exclude = ["src/nr_workbench/_vendor"]
 
 [tool.ruff.lint]
 select = [
