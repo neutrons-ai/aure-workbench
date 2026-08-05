@@ -59,6 +59,12 @@ Then copy reduced data into `samples/Sample4/data/steady/` and
 Code. `nrw init` is idempotent and safe to run on top of an existing beamtime
 folder — it never overwrites a file you have edited.
 
+**[docs/getting-started.md](docs/getting-started.md) walks the whole thing
+through on real data**: two OCV states either side of an EIS sequence,
+co-refined with the 15 time-resolved slices measured during it, from an empty
+directory to a promoted χ² = 1.83 result. Every command and number in it was
+produced by running it.
+
 Run `nrw --help` for the full command surface.
 
 ## Provenance

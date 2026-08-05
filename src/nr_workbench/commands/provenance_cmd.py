@@ -118,7 +118,7 @@ def _print_whence(result: Any) -> None:
         for entry in result.consumed_by:
             click.echo(
                 f"    {entry['fit_id']}  {entry.get('model', '')}  "
-                f"chisq {entry.get('chisq')}"
+                f"chisq {_format_number(entry.get('chisq'))}"
             )
         click.echo()
         click.echo(
@@ -487,6 +487,22 @@ def _current_user() -> str:
         return "unknown"
 
 
+def _format_number(value: object) -> str:
+    """Render a value for display, trimming float noise.
+
+    Chi-squared arrives as a full-precision float. Printing
+    ``1.8295690333746149`` beside a verdict that says ``1.83`` invites the
+    reader to think the digits mean something; four significant figures is
+    already more than the fit warrants. Non-numbers pass through unchanged, so
+    this is safe on the mixed values a diff can carry.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    return f"{value:.4g}"
+
+
 def run_diff(
     *, fit_a: str, fit_b: str, as_json: bool = False, script: bool = False
 ) -> None:
@@ -572,7 +588,7 @@ def run_diff(
     if payload["results"]:
         click.echo("\n  results")
         for key, (was, now) in payload["results"].items():
-            click.echo(f"    {key:<16} {was} -> {now}")
+            click.echo(f"    {key:<16} {_format_number(was)} -> {_format_number(now)}")
 
     if script:
         import difflib
