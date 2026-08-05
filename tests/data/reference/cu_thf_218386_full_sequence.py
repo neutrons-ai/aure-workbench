@@ -1,9 +1,20 @@
-# VENDORED REFERENCE -- DO NOT EDIT except to repoint its data directories.
+# VENDORED REFERENCE -- DO NOT EDIT except for the two changes noted here.
 #
 # experiments-2025/jen-apr2025/models/Cu-THF-218386-full-sequence.py, the
 # 343-line hand-written co-refinement that nrw-model/1 has to reproduce. Kept
-# here verbatim (bar the two data paths below) so
-# tests/test_model_gate.py can compare against it without needing that repo.
+# here so tests/test_model_gate.py can compare against it without needing that
+# repository.
+#
+# Two deliberate departures from the original:
+#
+#   1. The two data-directory constants point at the vendored fixture.
+#   2. `dL` is 0 rather than delta_wl_over_wl(wl) * q. BL-4B has standardised
+#      on the angular-only resolution convention, and the moderator variant was
+#      dimensionally wrong (multiplied by q, not wl). Normalising BOTH sides is
+#      what keeps the gate a test of the model structure -- the co-refinement,
+#      the parameter sharing, the constraints -- rather than of a convention the
+#      project has dropped. delta_wl_over_wl is left defined but unused so the
+#      diff against the original stays small and legible.
 #
 import os
 
@@ -34,7 +45,7 @@ def get_probe_parts(data_file, theta):
     q, data, errors, dq = np.loadtxt(data_file).T
     wl = 4 * np.pi * np.sin(np.pi / 180 * theta) / q
     dT = dq / q * np.tan(np.pi / 180 * theta) * 180 / np.pi
-    dL = delta_wl_over_wl(wl) * q
+    dL = 0 * q  # NORMALISED: see the banner
     return data, errors, wl, dL, dT
 
 
@@ -42,7 +53,7 @@ def create_probe(data_file, theta):
     q, data, errors, dq = np.loadtxt(data_file).T
     wl = 4 * np.pi * np.sin(np.pi / 180 * theta) / q
     dT = dq / q * np.tan(np.pi / 180 * theta) * 180 / np.pi
-    dL = delta_wl_over_wl(wl) * q
+    dL = 0 * q  # NORMALISED: see the banner
 
     # The following is how refl1d computes dQ
     # dQ = (4 * np.pi / wl) * np.sqrt((np.sin(np.pi/180*theta) * dL / wl) ** 2 + (np.cos(np.pi/180*theta) * dT * np.pi/180) ** 2)

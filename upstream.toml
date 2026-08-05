@@ -102,15 +102,24 @@ physics, formulas, worked numbers and interpretation rules are unchanged.
 tnr-pca and tnr-kl are merged: both answer the same follow-up question.
 """
 
-[[verbatim]]
+[[adapted]]
 dest = "tests/data/reference/cu_thf_218386_full_sequence.py"
 repo = "mdoucet/experiments-2025"
 path = "jen-apr2025/models/Cu-THF-218386-full-sequence.py"
 synced = "2026-08-05"
-reason = """
+adaptation = """
 The hand-written co-refinement the nrw-model/1 gate compares against: two
-three-segment OCV states plus fifteen tNR slices, 343 lines. Kept verbatim
-apart from its two data-directory constants, which are repointed at the
-vendored fixture so tests/test_model_gate.py runs without experiments-2025.
-Excluded from ruff -- reformatting it would weaken the comparison.
+three-segment OCV states plus fifteen tNR slices, 343 lines.
+
+Adapted rather than verbatim, in exactly two places, both noted in its banner:
+
+  1. The two data-directory constants point at the vendored fixture, so
+     tests/test_model_gate.py runs without experiments-2025.
+  2. dL is 0 rather than delta_wl_over_wl(wl) * q. BL-4B standardised on the
+     angular-only convention on 2026-08-05 and the moderator variant was
+     dimensionally wrong. Normalising BOTH sides keeps the gate a test of the
+     model structure rather than of a dropped convention.
+
+Excluded from ruff: reformatting it would obscure the diff against the
+original, which is what makes those two changes auditable.
 """

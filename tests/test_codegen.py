@@ -197,16 +197,21 @@ def test_angular_only_emits_zero_wavelength_spread(source: str) -> None:
     assert "delta_wl_over_wl" not in source
 
 
-def test_moderator_mode_emits_the_emission_time_polynomial() -> None:
-    """Reproducing the REF_L convention exactly is what passed the gate."""
+def test_moderator_resolution_is_rejected_with_an_explanation() -> None:
+    """The retired convention must fail loudly, not silently change the physics.
+
+    It computed dL as `delta_wl_over_wl(wl) * q` -- by q rather than wl -- and
+    results under it are not comparable with angular-only ones. A bare "input
+    should be 'angular_only'" would not tell anyone that.
+    """
+    from nr_workbench.spec.models import SpecError
+
     payload = {**BASE, "probe": {"resolution": "moderator", "dq_is_fwhm": True}}
 
-    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
-
-    assert "def delta_wl_over_wl(wl):" in source
-    assert "dL = delta_wl_over_wl(wl) * q" in source
-    # The `* q` looks like a units slip; the comment must explain why it stays.
-    assert "REF_L convention" in source
+    with pytest.raises(
+        (SpecError, Exception), match="no longer supported|angular_only"
+    ):
+        ModelSpec.model_validate(payload)
 
 
 def test_sigma_input_is_converted_to_fwhm() -> None:

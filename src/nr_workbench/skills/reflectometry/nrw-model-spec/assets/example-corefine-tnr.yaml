@@ -22,7 +22,7 @@ stack:                                      # ambient -> substrate
   - {name: Ti,   material: Ti,   thickness: 40,  roughness: 10}
   - {name: Si,   material: Si}
 
-probe: {resolution: moderator, dq_is_fwhm: true}
+probe: {resolution: angular_only, dq_is_fwhm: true}
 
 states:
   - name: ocv1

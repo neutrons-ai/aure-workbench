@@ -184,17 +184,41 @@ class Probe(_Base):
     """How the probe is constructed from the data.
 
     Attributes:
-        resolution: ``angular_only`` builds dT from dQ and sets dL = 0, which
-            is the BL-4B convention and what the hand-written scripts do.
-            ``moderator`` additionally models the wavelength spread.
+        resolution: Only ``angular_only``: dT is derived from dQ at the known
+            incident angle and dL is zero. See the class body for why the
+            moderator variant was dropped.
         dq_is_fwhm: Whether the 4th data column is FWHM. It is, for REF_L --
             treating it as sigma scales every resolution by 2.355.
         back_reflection: Neutrons enter through the substrate.
     """
 
-    resolution: Literal["angular_only", "moderator"] = "angular_only"
+    # Some hand-written REF_L scripts instead computed dL from the SNS
+    # moderator emission-time polynomial as `delta_wl_over_wl(wl) * q` --
+    # multiplied by q rather than by wl, which is dimensionally wrong. That
+    # variant is deliberately not supported: carrying two resolution
+    # conventions means two sets of results that cannot be compared, and only
+    # one of them is right.
+    #
+    # A spec that asks for it fails loudly rather than silently changing the
+    # physics, which is what a bare Literal error would amount to.
+    resolution: Literal["angular_only"] = "angular_only"
     dq_is_fwhm: bool = True
     back_reflection: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_retired_resolutions(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("resolution") == "moderator":
+            raise SpecError(
+                "probe.resolution: 'moderator' is no longer supported. It computed "
+                "the wavelength spread as `delta_wl_over_wl(wl) * q` -- multiplied "
+                "by q rather than wl -- and BL-4B has standardised on the "
+                "angular-only convention (dL = 0). Use `resolution: angular_only`.\n"
+                "Note that fits made under the moderator convention are not "
+                "numerically comparable with angular-only ones, so re-run rather "
+                "than compare."
+            )
+        return data
 
 
 class Segment(_Base):

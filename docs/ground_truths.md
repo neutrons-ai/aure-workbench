@@ -21,7 +21,7 @@ Neither tool auto-discovers that folder, which is why every skill also gets a
 pair is byte-identical except that the `.claude` copy carries
 `tools: Read, Grep, Glob, Bash` — Copilot's agent schema flags those names as
 unknown, so it is omitted there. `tests/test_skills.py` asserts exactly that
-difference.
+difference.Let's 
 
 To change a standard, edit the `SKILL.md`. Never the dispatcher.
 
@@ -274,19 +274,30 @@ standing in for 343 lines of Python.
 Getting there required two corrections that no amount of reading would have
 found:
 
-**1. The apr2025 scripts use the moderator resolution, not `dL = 0`.** The
-initial generated script differed from the reference by ~1e-4 in chi-squared —
-small enough to look like rounding, large enough to be real. The cause was
-`dL`: the reference computes the SNS moderator emission-time polynomial, while
-`resolution: angular_only` sets `dL = 0`. Two conventions exist in this
-codebase and **fits made under one are not comparable with the other**, so the
-spec must say which.
+**1. The apr2025 scripts used a different resolution convention.** The initial
+generated script differed from the reference by ~1e-4 in chi-squared — small
+enough to look like rounding, large enough to be real. The cause was `dL`: the
+reference computes the SNS moderator emission-time polynomial, while
+`angular_only` sets `dL = 0`.
 
-Note the reference computes `dL = delta_wl_over_wl(wl) * q` — multiplied by q,
-not by wl, which looks like a units slip. It is reproduced exactly anyway: it
-is the long-standing REF_L convention and every published fit from this
-beamline uses it. Changing it would silently invalidate comparisons with older
-work. The generated script carries a comment saying so.
+**Resolved 2026-08-05: BL-4B standardises on angular-only (`dL = 0`), and the
+moderator variant is not supported.** It computed
+`dL = delta_wl_over_wl(wl) * q` — multiplied by q rather than by wl, which is
+dimensionally wrong. Carrying both would mean two sets of results that cannot
+be compared, and only one of them is right.
+
+Consequences, all live:
+
+- A spec asking for `resolution: moderator` is **rejected with an explanation**,
+  not silently accepted. Failing loudly matters here because the alternative is
+  a fit that runs fine and produces numbers nobody can compare with anything.
+- **Fits made under the moderator convention must be re-run, not compared.**
+  The same model on the same data gives χ² 101.983 under moderator and 101.994
+  under angular-only.
+- The vendored gate reference is normalised to `dL = 0` **on both sides**, so
+  `tests/test_model_gate.py` measures the model structure — co-refinement,
+  parameter sharing, constraints — rather than a convention that has been
+  dropped. Its banner says so.
 
 **2. Angle segments do not always share a normalisation.** The reference gives
 ocv1's 3.5° segment its own intensity with a wider range, and says why:

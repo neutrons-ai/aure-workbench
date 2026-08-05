@@ -154,55 +154,21 @@ def _imports(table: ParameterTable) -> str:
     return "\n".join(lines)
 
 
-#: The SNS moderator emission-time polynomial, lifted verbatim from the
-#: hand-written REF_L scripts. Two pieces, switching at 2 A.
-_MODERATOR_HELPER = '''
-def delta_wl_over_wl(wl):
-    """Relative wavelength spread from the SNS moderator emission time.
-
-    The emission-time polynomial gives a time in microseconds; the constants
-    are the BL-4B flight geometry. Lifted verbatim from the hand-written REF_L
-    scripts so results stay comparable with work done before this tool.
-    """
-    dtof = 0.0148 * wl * wl * wl - 0.5233 * wl * wl + 6.4797 * wl + 231.99
-    dtof[wl > 2] = (
-        392.31 * wl**6
-        - 3169.3 * wl**5
-        + 10445 * wl**4
-        - 17872 * wl * wl * wl
-        + 16509 * wl * wl
-        - 7448.4 * wl
-        + 1280.5
-    )
-    return 3.9560 * dtof / (1000000 * 15.282 * wl)
-'''
-
-
 def _instrument_helpers(table: ParameterTable) -> str:
     """The BL-4B probe construction, inlined so the script stands alone."""
-    probe = table.spec.probe
-    fwhm = probe.dq_is_fwhm
-    moderator = probe.resolution == "moderator"
-
-    lines = ["# --- instrument (BL-4B) " + "-" * 52]
-    if moderator:
-        lines.append(_MODERATOR_HELPER.rstrip("\n"))
-
-    lines += [
+    fwhm = table.spec.probe.dq_is_fwhm
+    lines = [
+        "# --- instrument (BL-4B) " + "-" * 52,
         "",
         "",
         "def create_probe(data_file, theta):",
         '    """Angle-based probe from a 4-column Q, R, dR, dQ file.',
         "",
-        "    dT comes from dQ at the known incident angle. dL is "
-        + ("the moderator spread." if moderator else "zero: the angular-only"),
-    ]
-    if not moderator:
-        lines.append("    convention REF_L reduction produces.")
-    lines += [
+        "    dT is derived from dQ at the known incident angle, and dL is zero:",
+        "    the angular-only resolution convention BL-4B has standardised on.",
         "",
-        f"    The 4th column is {'FWHM' if fwhm else 'sigma'}, matching the file convention;",
-        "    make_probe expects FWHM for both dT and dL.",
+        f"    The 4th column is {'FWHM' if fwhm else 'sigma'}; make_probe wants FWHM",
+        "    for both dT and dL.",
         '    """',
         "    q, data, errors, dq = np.loadtxt(data_file).T",
     ]
@@ -211,18 +177,7 @@ def _instrument_helpers(table: ParameterTable) -> str:
     lines += [
         "    wl = 4 * np.pi * np.sin(np.pi / 180 * theta) / q",
         "    dT = dq / q * np.tan(np.pi / 180 * theta) * 180 / np.pi",
-    ]
-    if moderator:
-        lines += [
-            "    # Multiplied by q, not wl. That looks like a units slip, but it is the",
-            "    # long-standing REF_L convention and every published fit from this",
-            "    # beamline uses it -- changing it here would silently make new results",
-            "    # incomparable with old ones.",
-            "    dL = delta_wl_over_wl(wl) * q",
-        ]
-    else:
-        lines.append("    dL = 0 * q")
-    lines += [
+        "    dL = 0 * q",
         "    return make_probe(",
         "        T=theta, dT=dT, L=wl, dL=dL,",
         "        data=(data, errors),",

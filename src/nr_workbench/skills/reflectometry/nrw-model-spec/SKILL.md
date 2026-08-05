@@ -83,14 +83,20 @@ where a parameter may go; the stack says where it starts.
 ### 3. Set the probe convention
 
 ```yaml
-probe: {resolution: moderator, dq_is_fwhm: true}
+probe: {resolution: angular_only, dq_is_fwhm: true}
 ```
 
 - `dq_is_fwhm: true` — the 4th column of every REF_L file is FWHM. Getting this
   wrong scales all resolution by 2.355.
-- `resolution: moderator` uses the SNS emission-time polynomial, which is what
-  the existing REF_L scripts do. `angular_only` sets dL = 0. **Pick the one your
-  previous fits used**, or new results will not be comparable with old ones.
+- `resolution: angular_only` derives dT from dQ at the known incident angle and
+  sets dL = 0. It is the only supported convention.
+
+Some older hand-written scripts instead computed dL from the SNS moderator
+emission-time polynomial as `delta_wl_over_wl(wl) * q` — multiplied by q rather
+than wl, which is dimensionally wrong. A spec asking for `resolution: moderator`
+is rejected with an explanation. **Fits made under that convention are not
+numerically comparable with these** (the same model gives χ² 101.983 there
+against 101.994 here), so re-run rather than compare.
 
 ### 4. Declare the measurements
 
