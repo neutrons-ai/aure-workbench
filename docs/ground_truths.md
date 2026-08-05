@@ -423,3 +423,52 @@ comment, listing runs (230594, 230597, 230600) that were never measured.
 be actively misleading. Raw HTML is not rendered either -- a `sample.md`
 travels between beamtimes and collaborators, and prose in a side panel has no
 reason to run script.
+
+### 2026-08-05: AuRE returns one flat feature mapping, and confidence is load-bearing
+
+`extract_all_features` does not nest. The keys are `critical_edges`,
+`oscillation_periods`, `n_fringes`, `estimated_total_thickness` +
+`thickness_uncertainty` + `thickness_confidence`, `estimated_roughness`,
+`estimated_n_layers`, `q_min`/`q_max`/`n_points`/`has_error_bars`. Guessing at
+nested keys like `kiessig_fringes` yields empty results with no error, which is
+how the first version of `aure_adapter` was wrong.
+
+On the real 218386 curve the thickness comes back as **444 +/- 555 A** with
+confidence `medium`. The uncertainty exceeds the value, so it constrains
+nothing -- but printed alone it looks like a number you could seed a model
+with. `Estimate.usable` encodes that test, and `nrw data features` says
+"uncertainty exceeds the value; not a constraint" rather than leaving the
+reader to notice.
+
+### 2026-08-05: segment overlap independently found the reference script's special case
+
+`nrw data overlap Sample6` measures run 218386's 1.2 deg and 3.5 deg segments
+as disagreeing by **+27.58%, 14.8 sigma**, while every other pair in the sample
+sits within 3 sigma.
+
+The hand-written reference script has, at line 243:
+
+    # The third run has a different intensity, so we don't share that
+    # parameter with the first two runs.
+
+So the original author found the same thing by eye and worked around it with a
+free per-segment intensity. The check turns that into a number with an error
+bar, before a model is written rather than after one misbehaves.
+
+Where two angle settings overlap they measure the same sample, so a significant
+ratio is a normalisation error. The fit will otherwise absorb it into a layer
+thickness or an SLD, which is invisible on a log-R plot.
+
+### 2026-08-05: interpolate reflectivity log-log, or the overlap ratio is biased
+
+Comparing two segments means interpolating one onto the other's Q grid.
+`np.interp` on R against Q biases the ratio **0.22% low** on a realistic
+overlap: Fresnel decay goes as Q^-4, and a chord between two points of a convex
+curve sits above it, so every interpolated value is slightly high. The bias is
+one-directional, so it does not average away, and it is a fifth of the 1% scale
+this check reports at.
+
+Logging R alone leaves 0.043% -- `log R` is straight in `log Q`, not in `Q`.
+Log-log is exact for a power law: measured residual 2e-14 on a synthetic
+Fresnel curve, and 0.13% on one with strong fringes, which is honest since
+fringes are not a power law.

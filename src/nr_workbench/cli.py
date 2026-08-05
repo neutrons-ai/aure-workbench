@@ -514,6 +514,47 @@ def check_command(as_json: bool) -> None:
     run_check(as_json=as_json)
 
 
+@main.group("data")
+def data_group() -> None:
+    """Check reduced data before modelling it."""
+
+
+@data_group.command("overlap")
+@click.argument("sample")
+@click.option("--run", type=int, help="Restrict to one run number.")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--result-out", type=click.Path(), help="Write JSON here.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def data_overlap_command(**kwargs: object) -> None:
+    """Check that a run's angle segments agree where they overlap in Q."""
+    from nr_workbench.commands.data import run_overlap
+
+    run_overlap(**kwargs)  # type: ignore[arg-type]
+
+
+@data_group.command("features")
+@click.argument("path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--result-out", type=click.Path(), help="Write JSON here.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def data_features_command(**kwargs: object) -> None:
+    """Report critical edges, Kiessig fringes and thickness for one curve."""
+    from nr_workbench.commands.data import run_features
+
+    run_features(**kwargs)  # type: ignore[arg-type]
+
+
+@data_group.command("check")
+@click.argument("sample", required=False)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--result-out", type=click.Path(), help="Write JSON here.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def data_check_command(**kwargs: object) -> None:
+    """Validate every reduced steady-state file for a sample."""
+    from nr_workbench.commands.data import run_check
+
+    run_check(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("serve")
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface.")
