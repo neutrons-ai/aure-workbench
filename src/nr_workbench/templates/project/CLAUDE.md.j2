@@ -1,0 +1,63 @@
+# Claude Code Instructions
+
+This is an **nr-workbench** project for neutron reflectometry analysis at
+{{ facility }} {{ instrument }}. It was scaffolded by `nrw init` and follows the
+shared AI-assisted workflow below.
+
+@.github/copilot-instructions.md
+
+## Read this first
+
+`skills/reflectometry/nr-workbench-project/SKILL.md` is the map of this project:
+where files belong, which command does what, and the provenance rules. Read it
+before creating a file or running a fit.
+
+## Skills
+
+Skills live in [`skills/`](skills/) at the repository root — tool-neutral, so
+both Claude Code and GitHub Copilot reach them by `Read`. Neither tool
+auto-discovers that folder, so each skill has a **thin dispatcher agent** in
+[`.claude/agents/`](.claude/agents/) and `.github/agents/` whose only job is to
+load the skill.
+
+**To change a standard, edit its `SKILL.md` — never the dispatcher.**
+
+Pull more domain skills from the neutron-skills library:
+
+```bash
+python scripts/install_skills.py --query "neutron reflectometry"
+```
+
+## Provenance rules
+
+These are what make this project different from a folder of scripts. Breaking
+them is how you end up unable to say which script produced a figure.
+
+1. **Never hand-edit a generated fit script.** `models/<name>.py` is derived
+   from `models/<name>.yaml`. Edit the spec and regenerate. If the spec cannot
+   express what you need, run `nrw model fork` — that keeps full provenance.
+2. **Never overwrite a result.** Every fit writes a new immutable directory
+   under `samples/<id>/results/<fit_id>/`.
+3. **No absolute paths in committed files.** Everything resolves from the
+   project root.
+4. **No boolean toggles inside a fit script.** Two variants means two specs,
+   each with its own hash and its own records.
+5. **Run `nrw check` before calling anything final.**
+
+## Ground truths
+
+Append non-obvious findings to [`docs/ground_truths.md`](docs/ground_truths.md)
+— API quirks, why a model was rejected, a constraint that mattered. It is this
+project's memory between sessions.
+
+## Commands
+
+| Task | Command |
+|---|---|
+| Check the environment | `nrw doctor` |
+| Add a sample | `nrw sample new <ID>` |
+| Assess a tNR run | `nrw tnr assess data/tnr/<dir> --label <label>` |
+| Trace a figure to its fit | `nrw whence <path>` |
+| Verify project integrity | `nrw check` |
+
+Run `nrw --help` for the full surface; not every command exists yet.

@@ -1,0 +1,24 @@
+contract_version = {{ contract_version }}
+
+[project]
+name = "{{ project_name }}"
+created = "{{ created }}"
+facility = "{{ facility }}"
+instrument = "{{ instrument }}"
+
+[beamtime]
+label = {% if beamtime %}"{{ beamtime }}"{% else %}""{% endif %}
+ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
+
+# Filename and instrument conventions for REF_L / BL-4B. These are facts about
+# the instrument and its reduction pipeline, not preferences. dq_convention in
+# particular: the 4th column of every reduced file is FWHM, and treating it as
+# sigma silently scales all resolution by 2.355.
+[conventions]
+steady_state_glob = "REFL_{run}_combined_data_auto.txt"
+partial_glob = "REFL_{run}_{seg}_{subrun}_partial.txt"
+tnr_slice_glob = "r{run}_t{t_s:06d}.txt"
+tnr_intervals_glob = "r{run}_*reduction.json"
+standard_thetas = [0.45, 1.2, 3.5]
+tnr_theta = 0.6
+dq_convention = "FWHM"

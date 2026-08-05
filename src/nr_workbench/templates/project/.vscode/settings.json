@@ -1,0 +1,13 @@
+{
+  "//": "Model specs validate live against the generated JSON Schema, so a typo is caught in the editor rather than at fit time.",
+  "yaml.schemas": {
+    "./.nrw/schema/nrw-model-1.json": ["samples/*/models/*.yaml"]
+  },
+  "files.associations": {
+    "*.nrw-new": "plaintext"
+  },
+  "search.exclude": {
+    "**/data/raw/**": true,
+    "**/.nrw/cache/**": true
+  }
+}

@@ -1,0 +1,46 @@
+# {{ project_name }}
+
+Neutron reflectometry analysis project for {{ facility }} {{ instrument }}
+{%- if beamtime %}, beamtime `{{ beamtime }}`{% endif %}
+{%- if ipts %} ({{ ipts }}){% endif %}.
+
+Scaffolded by [nr-workbench](https://github.com/neutrons-ai/nr-workbench)
+{{ nrw_version }} on {{ created }}.
+
+## Layout
+
+```
+nrw.toml                  project config
+skills/                   domain skills, read by Claude Code and Copilot
+samples/<id>/
+  sample.md               your notes: description, measurements, fits to do
+  sample.yaml             machine register of measurements on disk
+  data/steady/            REFL_*_combined_data_auto.txt, REFL_*_partial.txt
+  data/tnr/<run>_<bin>/   r<run>_t<seconds>.txt slices + reduction JSON
+  data/raw/               NeXus (gitignored)
+  models/<name>.yaml      model spec — the source of truth
+  models/<name>.py        generated fit script — derived, do not hand-edit
+  assessments/<label>/    tNR metric output
+  results/<fit_id>/       immutable fit records
+  reports/                write-ups
+docs/ground_truths.md     findings that must survive between sessions
+```
+
+## Getting started
+
+```bash
+nrw doctor                       # check the environment
+nrw sample new Sample1           # create a sample
+# copy reduced data into samples/Sample1/data/steady/ and data/tnr/
+nrw sample scan Sample1          # register what is on disk
+```
+
+Then open this folder in VS Code and work with Claude Code. It reads
+`skills/reflectometry/` automatically through the dispatcher agents.
+
+## The one rule
+
+Every result must stay traceable to what produced it. Do not hand-edit
+generated scripts, do not overwrite results, and run `nrw check` before calling
+anything final. `nrw whence <figure>` should always be able to answer "what made
+this?".

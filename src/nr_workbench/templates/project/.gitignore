@@ -1,0 +1,49 @@
+# nr-workbench project
+#
+# The rule: small provenance records are tracked, large payloads are not. The
+# repository should still be able to say what happened even when the data is
+# absent from this machine.
+
+# --- Payloads: large, reproducible from the instrument ---------------------
+samples/*/data/raw/
+*.nxs
+*.nxs.h5
+*.h5
+
+# Fit payloads: DREAM chains and large bitmaps. The manifests, parameter
+# tables and SVG figures beside them ARE tracked.
+samples/*/results/*/fit/*.mc.gz
+samples/*/results/*/fit/*.mcmc
+samples/*/results/*/fit/*.chain
+samples/*/results/*/output/
+*.png
+
+# --- Machine-local state ---------------------------------------------------
+.nrw/cache/
+.nrw/backups/
+.nrw/lock
+
+# Refused-overwrite copies written by `nrw init` when a file has been edited.
+# Review them, then merge or delete; never commit them.
+*.nrw-new
+
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- Editors / OS ----------------------------------------------------------
+.DS_Store
+*.swp
+
+# --- Explicitly tracked, despite looking like build output -----------------
+# The provenance skeleton. Do not add these to the ignore list.
+!.nrw/index.jsonl
+!.nrw/schema/
+!.nrw/scaffold.lock.json
+!.nrw/skills.lock.json
+!samples/*/results/*/manifest.json
+!samples/*/results/*/figures/*.svg
