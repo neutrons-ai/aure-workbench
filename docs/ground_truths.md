@@ -21,7 +21,7 @@ Neither tool auto-discovers that folder, which is why every skill also gets a
 pair is byte-identical except that the `.claude` copy carries
 `tools: Read, Grep, Glob, Bash` — Copilot's agent schema flags those names as
 unknown, so it is omitted there. `tests/test_skills.py` asserts exactly that
-difference.Let's 
+difference.
 
 To change a standard, edit the `SKILL.md`. Never the dispatcher.
 
@@ -309,6 +309,41 @@ Fixed by letting `in:` name a single measurement as `group#index`, with a
 specificity rule: a measurement-level declaration outranks a group-level one.
 Unreferenced parameters are then pruned, so a fully-overridden group parameter
 does not linger and inflate the count.
+
+### 2026-08-05: `nrw check` polices generated scripts, not hand-written ones
+
+The first version of the script-drift check flagged any `models/*.py` with no
+spec as an `orphan-script`. It broke an M1 test, and the test was right: running
+an existing hand-written script **unchanged, with no spec and no migration** is
+the adoption path this package promises. Flagging every such file would make
+`check` useless for exactly the case it is meant to support.
+
+The rule is now: only files that *claim* to be generated are policed.
+
+| condition | reported as |
+|---|---|
+| generated banner, self-hash mismatch | `hand-edited-script` |
+| generated banner, spec changed since | `stale-script` |
+| generated banner, spec gone | `missing-spec` |
+| `HAND-OWNED SCRIPT` banner (a fork) | skipped -- hand-owned by design |
+| no banner at all | skipped -- it is just a script |
+
+A hand-written script is still fully tracked: `nrw fit run` records its hash,
+its inputs and the environment exactly as for a generated one. Provenance does
+not require the generator.
+
+### 2026-08-05: a scaffold that does not validate teaches the pattern backwards
+
+`nrw model new` initially emitted a spec that failed its own `nrw model
+validate`: it declared a structural parameter `per: state` (which defaults to
+*every* group, series included) while also constraining that path across the
+series -- the double-assignment error. First contact with the schema would have
+been an error message about a file the tool itself wrote.
+
+`_scaffold_document` now scopes structural parameters to the states with an
+explicit `in:` whenever a constraint owns the series, and omits the constraint
+entirely when there is only one state to anchor it. The scaffold validates,
+generates, and builds as written.
 
 ### 2026-08-05: A NUL byte is the binary test, not a failed decode
 

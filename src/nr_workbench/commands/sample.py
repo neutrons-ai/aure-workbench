@@ -145,3 +145,122 @@ def run_sample_new(
     click.echo(
         f"  2. Copy reduced data into samples/{sample_id}/data/steady/ and data/tnr/"
     )
+
+
+def run_sample_scan(
+    *, sample_id: str | None = None, as_json: bool = False, write: bool = True
+) -> None:
+    """Register the data on disk for one sample, or all of them.
+
+    ``sample.md`` stays authoritative for intent; this maintains the machine
+    register and, more usefully, reports where the two disagree.
+
+    Args:
+        sample_id: The sample to scan. All of them if omitted.
+        as_json: Emit machine-readable JSON.
+        write: Update ``sample.yaml``. Off makes it a read-only report.
+
+    Raises:
+        click.ClickException: If there is no project, or the sample is unknown.
+    """
+    import json as _json
+
+    import yaml
+
+    from nr_workbench.project.scan import scan_sample
+
+    try:
+        layout = ProjectLayout.discover()
+        config = load_config(layout.root)
+    except (ProjectNotFoundError, ProjectConfigError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    samples = [sample_id] if sample_id else layout.list_samples()
+    if not samples:
+        raise click.ClickException(
+            "No samples yet. Create one with `nrw sample new <ID>`."
+        )
+
+    payloads = []
+    for name in samples:
+        try:
+            result = scan_sample(layout.root, name)
+        except FileNotFoundError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+        register = layout.sample(name) / "sample.yaml"
+        existing = {}
+        if register.is_file():
+            existing = yaml.safe_load(register.read_text(encoding="utf-8")) or {}
+
+        document = result.as_dict(
+            title=existing.get("title", name),
+            beamtime=existing.get("beamtime") or config.beamtime,
+            created=existing.get("created", ""),
+        )
+        if write:
+            register.write_text(
+                yaml.safe_dump(document, sort_keys=False, default_flow_style=False),
+                encoding="utf-8",
+            )
+
+        payloads.append(
+            {
+                "sample": name,
+                "steady_runs": sorted(result.steady),
+                "series": [s.as_dict() for s in result.series],
+                "documented_but_absent": result.documented_but_absent,
+                "present_but_undocumented": result.present_but_undocumented,
+                "unreadable": result.unreadable,
+            }
+        )
+
+        if not as_json:
+            _echo_scan(name, result, register, layout.root, write)
+
+    if as_json:
+        click.echo(_json.dumps(payloads, indent=2))
+
+
+def _echo_scan(name, result, register, root, write) -> None:
+    """Print one sample's scan."""
+    click.echo(f"{name}")
+    if result.steady:
+        for run in sorted(result.steady):
+            entry = result.steady[run]
+            parts = []
+            if entry.combined:
+                parts.append("combined")
+            if entry.partials:
+                parts.append(f"{len(entry.partials)} segment(s)")
+            click.echo(f"  steady  {run}  {', '.join(parts)}")
+    for series in result.series:
+        span = ""
+        if series.t_step is not None:
+            span = f", t = {series.t_start:g}..{series.t_stop:g} s every {series.t_step:g} s"
+        click.echo(
+            f"  series  {series.run or '?'}  {series.n_slices} slice(s) "
+            f"[{series.kind}]{span}"
+        )
+    if not result.steady and not result.series:
+        click.echo("  no data found; copy reduced files into data/steady and data/tnr")
+
+    # The interesting part: where prose and disk disagree.
+    if result.documented_but_absent:
+        click.echo(
+            f"  ! sample.md mentions {result.documented_but_absent} with no data on disk"
+        )
+    if result.present_but_undocumented:
+        click.echo(
+            f"  ! data on disk for {result.present_but_undocumented}, "
+            "not mentioned in sample.md"
+        )
+    if result.unreadable:
+        click.echo(
+            f"  ! {len(result.unreadable)} file(s) did not match any known convention"
+        )
+        for path in result.unreadable[:3]:
+            click.echo(f"      {path}")
+
+    if write:
+        click.echo(f"  wrote {register.relative_to(root)}")

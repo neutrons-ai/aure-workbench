@@ -6,6 +6,7 @@ these can answer honestly.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -428,6 +429,7 @@ def run_check(*, as_json: bool = False) -> None:
                 }
             )
 
+    problems.extend(check_generated_scripts(layout))
     if as_json:
         click.echo(json.dumps({"checked": checked, "problems": problems}, indent=2))
     else:
@@ -483,3 +485,270 @@ def _current_user() -> str:
         return getpass.getuser()
     except Exception:
         return "unknown"
+
+
+def run_diff(
+    *, fit_a: str, fit_b: str, as_json: bool = False, script: bool = False
+) -> None:
+    """Compare two fits and say what actually changed.
+
+    The most useful line is the verdict, because it separates "the fit got
+    better" from "the data changed underneath me" -- two situations that look
+    identical in a chi-squared column and mean completely different things.
+
+    Args:
+        fit_a: Earlier fit id, or a unique prefix.
+        fit_b: Later fit id, or a unique prefix.
+        as_json: Emit machine-readable JSON.
+        script: Also print a unified diff of the two scripts.
+
+    Raises:
+        click.ClickException: If either fit cannot be resolved.
+    """
+    layout = _layout()
+    index = FitIndex(layout.index_file)
+
+    entry_a, dir_a = _resolve_fit(layout, index, fit_a)
+    entry_b, dir_b = _resolve_fit(layout, index, fit_b)
+
+    manifest_a = FitDirectory(dir_a).read_manifest()
+    manifest_b = FitDirectory(dir_b).read_manifest()
+    prov_a = manifest_a.get("provenance", {})
+    prov_b = manifest_b.get("provenance", {})
+    id_a = prov_a.get("identity", {})
+    id_b = prov_b.get("identity", {})
+
+    changed = {
+        "inputs": id_a.get("inputs_digest") != id_b.get("inputs_digest"),
+        "script": id_a.get("script_sha256") != id_b.get("script_sha256"),
+        "settings": id_a.get("settings_digest") != id_b.get("settings_digest"),
+        "environment": id_a.get("env_digest") != id_b.get("env_digest"),
+    }
+
+    payload = {
+        "a": entry_a.get("fit_id"),
+        "b": entry_b.get("fit_id"),
+        "changed": changed,
+        "settings": _diff_mapping(
+            manifest_a.get("params", {}), manifest_b.get("params", {})
+        ),
+        "results": _diff_mapping(
+            manifest_a.get("info", {}), manifest_b.get("info", {})
+        ),
+        "inputs": _diff_inputs(dir_a, dir_b),
+        "verdict": _diff_verdict(
+            changed, manifest_a.get("info", {}), manifest_b.get("info", {})
+        ),
+    }
+
+    if as_json:
+        click.echo(json.dumps(payload, indent=2, default=str))
+        return
+
+    click.echo(f"  a  {payload['a']}")
+    click.echo(f"  b  {payload['b']}")
+    click.echo()
+    for field_name, differs in changed.items():
+        click.echo(f"  {field_name:<12} {'CHANGED' if differs else 'same'}")
+
+    if payload["settings"]:
+        click.echo("\n  settings")
+        for key, (was, now) in payload["settings"].items():
+            click.echo(f"    {key:<16} {was} -> {now}")
+
+    if (
+        payload["inputs"]["changed"]
+        or payload["inputs"]["only_a"]
+        or payload["inputs"]["only_b"]
+    ):
+        click.echo("\n  inputs")
+        for path in payload["inputs"]["changed"]:
+            click.echo(f"    changed  {path}")
+        for path in payload["inputs"]["only_a"]:
+            click.echo(f"    only a   {path}")
+        for path in payload["inputs"]["only_b"]:
+            click.echo(f"    only b   {path}")
+
+    if payload["results"]:
+        click.echo("\n  results")
+        for key, (was, now) in payload["results"].items():
+            click.echo(f"    {key:<16} {was} -> {now}")
+
+    if script:
+        import difflib
+
+        a_source = (
+            (dir_a / "model.py").read_text(encoding="utf-8").splitlines(keepends=True)
+        )
+        b_source = (
+            (dir_b / "model.py").read_text(encoding="utf-8").splitlines(keepends=True)
+        )
+        click.echo("\n  script")
+        for line in difflib.unified_diff(
+            a_source, b_source, fromfile="a/model.py", tofile="b/model.py"
+        ):
+            click.echo("    " + line.rstrip("\n"))
+
+    click.echo(f"\n  verdict  {payload['verdict']}")
+
+
+def _resolve_fit(layout: ProjectLayout, index: FitIndex, reference: str):
+    """Resolve a fit id or prefix to its entry and directory."""
+    matches = index.resolve(reference)
+    if not matches:
+        raise click.ClickException(f"No fit matching {reference!r}. See `nrw ls`.")
+    if len(matches) > 1:
+        raise click.ClickException(
+            f"{reference!r} matches {len(matches)} fits: "
+            + ", ".join(str(m["fit_id"]) for m in matches[:5])
+        )
+    entry = matches[0]
+    directory = _fit_dir(layout, entry)
+    if directory is None:
+        raise click.ClickException(f"Fit directory for {entry['fit_id']} is missing.")
+    return entry, directory
+
+
+def _diff_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, tuple[Any, Any]]:
+    """Keys whose values differ between two mappings."""
+    return {
+        key: (a.get(key), b.get(key))
+        for key in sorted(set(a) | set(b))
+        if a.get(key) != b.get(key)
+    }
+
+
+def _diff_inputs(dir_a: Path, dir_b: Path) -> dict[str, list[str]]:
+    """Compare the recorded inputs of two fits by content, not by name."""
+    a = {e["path"]: e["sha256"] for e in FitDirectory(dir_a).read_inputs()}
+    b = {e["path"]: e["sha256"] for e in FitDirectory(dir_b).read_inputs()}
+    return {
+        "changed": sorted(p for p in set(a) & set(b) if a[p] != b[p]),
+        "only_a": sorted(set(a) - set(b)),
+        "only_b": sorted(set(b) - set(a)),
+    }
+
+
+def _diff_verdict(changed: dict[str, bool], info_a: dict, info_b: dict) -> str:
+    """Say what the difference means, not just that there is one."""
+    chisq_a, chisq_b = info_a.get("chisq"), info_b.get("chisq")
+    direction = ""
+    if isinstance(chisq_a, int | float) and isinstance(chisq_b, int | float):
+        if chisq_b < chisq_a:
+            direction = f"chi-squared improved {chisq_a:.4g} -> {chisq_b:.4g}"
+        elif chisq_b > chisq_a:
+            direction = f"chi-squared worsened {chisq_a:.4g} -> {chisq_b:.4g}"
+        else:
+            direction = "chi-squared unchanged"
+
+    if changed["inputs"]:
+        return (
+            f"the DATA changed{'; ' + direction if direction else ''}. Any comparison "
+            "between these two is about different measurements, not different models."
+        )
+    if changed["script"] and changed["settings"]:
+        return f"model and fit settings both changed{'; ' + direction if direction else ''}"
+    if changed["script"]:
+        return (
+            f"model change on identical data{'; ' + direction if direction else ''} -- "
+            "the difference is attributable to the model."
+        )
+    if changed["settings"]:
+        return (
+            f"fit settings only{'; ' + direction if direction else ''} -- same model, "
+            "same data, different optimizer run."
+        )
+    if changed["environment"]:
+        return f"only the environment differs{'; ' + direction if direction else ''}"
+    return "nothing recorded differs; these are replicates"
+
+
+def check_generated_scripts(layout: ProjectLayout) -> list[dict[str, str]]:
+    """Verify every generated script still matches its spec and its own hash.
+
+    Two failure modes, and they mean different things:
+
+    * **hand-edited** -- the script's recorded self-hash no longer matches its
+      contents. Someone edited a generated file, so the spec no longer
+      describes what would run. `nrw model fork` is the supported way to take
+      ownership; this is the unsupported way.
+    * **stale** -- the spec has changed since the script was generated, so the
+      script describes an older model than the one on disk.
+
+    Forked scripts are skipped: they are hand-owned by design and carry a
+    banner saying so.
+
+    Args:
+        layout: The project layout.
+
+    Returns:
+        Problems found, in the shape `nrw check` reports.
+    """
+    from nr_workbench.codegen.generator import verify_self_hash
+
+    problems: list[dict[str, str]] = []
+    for script in sorted(layout.samples_dir.glob("*/models/*.py")):
+        try:
+            source = script.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        relative = script.relative_to(layout.root).as_posix()
+        if "HAND-OWNED SCRIPT" in source[:2000]:
+            continue
+        if "GENERATED BY nr-workbench" not in source[:2000]:
+            # A plain hand-written script is not a problem. Running one exactly
+            # as it is -- no spec, no migration -- is the adoption path this
+            # package promises, and `nrw fit run` records it as fully as a
+            # generated one. Only files that *claim* to be generated are
+            # policed here; a missing spec for one of those is `missing-spec`.
+            continue
+
+        if not verify_self_hash(source):
+            problems.append(
+                {
+                    "fit_id": "-",
+                    "kind": "hand-edited-script",
+                    "detail": (
+                        f"{relative} was edited after generation; the spec no longer "
+                        "describes it. Re-apply the change to the spec, or "
+                        "`nrw model fork` to own it."
+                    ),
+                }
+            )
+            continue
+
+        spec = script.with_suffix(".yaml")
+        if not spec.is_file():
+            problems.append(
+                {
+                    "fit_id": "-",
+                    "kind": "missing-spec",
+                    "detail": f"{relative} was generated from a spec that is gone",
+                }
+            )
+            continue
+
+        recorded = _recorded_spec_hash(source)
+        actual = hashlib.sha256(spec.read_bytes()).hexdigest()
+        if recorded and recorded != actual:
+            problems.append(
+                {
+                    "fit_id": "-",
+                    "kind": "stale-script",
+                    "detail": (
+                        f"{relative} is older than {spec.name}; re-run "
+                        f"`nrw model generate {spec.relative_to(layout.root)}`"
+                    ),
+                }
+            )
+
+    return problems
+
+
+def _recorded_spec_hash(source: str) -> str | None:
+    """Read the spec digest a generated script records in its header."""
+    import re
+
+    match = re.search(r"spec sha256: ([0-9a-f]{64})", source)
+    return match.group(1) if match else None

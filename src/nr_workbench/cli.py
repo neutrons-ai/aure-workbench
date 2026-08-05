@@ -100,6 +100,27 @@ def sample_new_command(sample_id: str, title: str | None, beamtime: str | None) 
     run_sample_new(sample_id=sample_id, title=title, beamtime=beamtime)
 
 
+@sample_group.command("scan")
+@click.argument("sample_id", required=False)
+@click.option(
+    "--no-write",
+    "write",
+    flag_value=False,
+    default=True,
+    help="Report only; do not update sample.yaml.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def sample_scan_command(sample_id: str | None, write: bool, as_json: bool) -> None:
+    """Register the data on disk for SAMPLE_ID, or every sample.
+
+    Also reports where sample.md and the files disagree -- a run written up
+    with no data, or data nobody wrote up.
+    """
+    from nr_workbench.commands.sample import run_sample_scan
+
+    run_sample_scan(sample_id=sample_id, as_json=as_json, write=write)
+
+
 @main.group("model")
 def model_group() -> None:
     """Write, check, and generate fit scripts from a model spec."""
@@ -146,6 +167,38 @@ def model_generate_command(**kwargs: object) -> None:
     from nr_workbench.commands.model import run_generate
 
     run_generate(**kwargs)  # type: ignore[arg-type]
+
+
+@model_group.command("new")
+@click.argument("sample")
+@click.option("--name", required=True, help="Model name; also the filename.")
+@click.option("--out", default=None, help="Explicit output path.")
+@click.option("--force", is_flag=True, help="Overwrite an existing spec.")
+def model_new_command(**kwargs: object) -> None:
+    """Scaffold a spec for SAMPLE from the data found on disk.
+
+    The stack is a placeholder for you to correct; everything else -- states,
+    series, file discovery -- is filled in from what `nrw sample scan` sees.
+    """
+    from nr_workbench.commands.model import run_new
+
+    run_new(**kwargs)  # type: ignore[arg-type]
+
+
+@model_group.command("fork")
+@click.argument("spec", type=click.Path(exists=True, dir_okay=False))
+@click.option("--name", default=None, help="Name for the forked script.")
+@click.option("--out", default=None, help="Explicit output path.")
+def model_fork_command(**kwargs: object) -> None:
+    """Take manual ownership of SPEC's generated script.
+
+    The supported way to hand-edit. The fork is yours to change, and stays
+    fully tracked by `nrw fit run` -- escaping the generator must not mean
+    escaping provenance.
+    """
+    from nr_workbench.commands.model import run_fork
+
+    run_fork(**kwargs)  # type: ignore[arg-type]
 
 
 @model_group.command("schema")
@@ -432,6 +485,24 @@ def promote_command(fit_id: str, label: str, reason: str, force: bool) -> None:
     from nr_workbench.commands.provenance_cmd import run_promote
 
     run_promote(fit_id=fit_id, label=label, reason=reason, force=force)
+
+
+@main.command("diff")
+@click.argument("fit_a")
+@click.argument("fit_b")
+@click.option(
+    "--script", is_flag=True, help="Also print a unified diff of the scripts."
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def diff_command(**kwargs: object) -> None:
+    """Compare two fits: what changed, and whether it explains the result.
+
+    The verdict separates "the fit got better" from "the data changed
+    underneath me" -- indistinguishable in a chi-squared column.
+    """
+    from nr_workbench.commands.provenance_cmd import run_diff
+
+    run_diff(**kwargs)  # type: ignore[arg-type]
 
 
 @main.command("check")

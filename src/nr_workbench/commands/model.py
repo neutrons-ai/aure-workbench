@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -183,24 +184,22 @@ def run_preview(*, spec: str, as_json: bool = False, build: bool = False) -> Non
 
 
 def _build_problem(table, root: Path) -> dict[str, Any]:
-    """Generate, execute, and report on the problem, without writing a script."""
-    import tempfile
+    """Generate, execute, and report on the problem, without keeping a script.
 
+    Written inside the project's own cache rather than a temp directory. The
+    generated script locates the project by walking up to ``nrw.toml``, so it
+    has to sit somewhere that walk succeeds -- and staging a parallel tree of
+    symlinks to fake that is fragile in exactly the way this check exists to
+    catch.
+    """
     from nr_workbench.codegen.generator import generate
 
-    source = generate(table)
-    with tempfile.TemporaryDirectory() as tmp:
-        # Executed at the depth the generated script expects, so PROJECT_ROOT
-        # resolves to the real project and its relative data paths work.
-        staging = Path(tmp) / "samples" / "_preview" / "models"
-        staging.mkdir(parents=True)
-        script = staging / "preview.py"
-        script.write_text(source, encoding="utf-8")
-        for entry in root.iterdir():
-            link = Path(tmp) / entry.name
-            if not link.exists():
-                link.symlink_to(entry)
+    scratch = root / ".nrw" / "cache" / "preview"
+    scratch.mkdir(parents=True, exist_ok=True)
+    script = scratch / "preview.py"
+    script.write_text(generate(table), encoding="utf-8")
 
+    try:
         from nr_workbench.fitting.runner import FitError, load_problem
 
         try:
@@ -217,6 +216,8 @@ def _build_problem(table, root: Path) -> dict[str, Any]:
             }
         except Exception as exc:  # pragma: no cover - bumps API drift
             return {"error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        script.unlink(missing_ok=True)
 
 
 def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> None:
@@ -315,3 +316,269 @@ def run_forms() -> None:
     width = max(len(name) for name, _ in rows)
     for name, summary in rows:
         click.echo(f"  {name:<{width}}  {summary}")
+
+
+def run_new(
+    *, sample: str, name: str, out: str | None = None, force: bool = False
+) -> None:
+    """Scaffold a spec from what `nrw sample scan` found on disk.
+
+    Produces something that validates and generates immediately, with the
+    stack left as a placeholder for the scientist to correct. Starting from a
+    working file beats starting from a blank one -- the schema is easier to
+    learn by editing than by reading.
+
+    Args:
+        sample: The sample to build a spec for.
+        name: Model name; also the filename.
+        out: Explicit output path.
+        force: Overwrite an existing spec.
+
+    Raises:
+        click.ClickException: If the sample has no usable data, or the target
+            exists and ``force`` was not given.
+    """
+    import yaml
+
+    from nr_workbench.project.scan import scan_sample
+
+    layout = _layout()
+    try:
+        found = scan_sample(layout.root, sample)
+    except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if not found.steady and not found.series:
+        raise click.ClickException(
+            f"No data found for {sample!r}. Copy reduced files into "
+            f"samples/{sample}/data/steady and data/tnr, then run `nrw sample scan`."
+        )
+
+    target = Path(out) if out else layout.sample(sample) / "models" / f"{name}.yaml"
+    if target.exists() and not force:
+        raise click.ClickException(
+            f"{target} already exists. Use --force to overwrite."
+        )
+
+    document = _scaffold_document(sample, name, found)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    header = (
+        f"# yaml-language-server: $schema="
+        f"{_schema_relative(layout, target)}\n"
+        "#\n"
+        "# Scaffolded by `nrw model new` from the data on disk. The stack below is a\n"
+        "# PLACEHOLDER -- replace it with the real layers and starting values, then:\n"
+        "#\n"
+        "#   nrw model validate <this file>\n"
+        "#   nrw model preview  <this file>\n"
+        "#   nrw model generate <this file>\n"
+    )
+    target.write_text(
+        header + yaml.safe_dump(document, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+
+    click.echo(f"Wrote {target.relative_to(layout.root)}")
+    click.echo(
+        f"  {len(document.get('states', []))} state(s), "
+        f"{len(document.get('series', []))} series"
+    )
+    click.echo("\n  The stack is a placeholder. Edit it, then:")
+    click.echo(f"    nrw model validate {target.relative_to(layout.root)}")
+
+
+def _scaffold_document(sample: str, name: str, found) -> dict[str, Any]:
+    """Build the scaffolded spec mapping."""
+    states = []
+    for run in sorted(found.steady):
+        entry = found.steady[run]
+        if entry.partials:
+            states.append(
+                {
+                    "name": f"run{run}",
+                    "condition": "",
+                    "run": run,
+                    "segments": "auto",
+                    "thetas": [0.45, 1.2, 3.5][: len(entry.partials)] or [0.45],
+                    "data_dir": str(Path(next(iter(entry.partials.values()))).parent),
+                }
+            )
+        elif entry.combined:
+            states.append(
+                {
+                    "name": f"run{run}",
+                    "condition": "",
+                    "run": run,
+                    "kind": "combined",
+                    "segments": "auto",
+                    "thetas": [0.45],
+                    "data_dir": str(Path(entry.combined).parent),
+                }
+            )
+
+    series = []
+    for found_series in found.series:
+        block: dict[str, Any] = {
+            "name": f"tnr{found_series.run or ''}" or "tnr",
+            "condition": "",
+            "run": found_series.run,
+            "reduced_dir": found_series.directory,
+            "theta": 0.6,
+            "time_from": "filename"
+            if found_series.kind == "time_binned"
+            else "reduction_json",
+        }
+        if found_series.t_step is not None:
+            block["select"] = {
+                "t_start": found_series.t_start,
+                "t_stop": found_series.t_stop,
+                "t_step": found_series.t_step,
+            }
+        series.append(block)
+
+    document: dict[str, Any] = {
+        "schema": "nrw-model/1",
+        "name": name,
+        "sample": sample,
+        "description": f"TODO: describe {sample}.\n",
+        # A minimal physically-sensible stack, deliberately obvious as a stub.
+        "materials": {
+            "Ambient": {"rho": 0.0},
+            "Film": {"rho": 4.0},
+            "Si": {"rho": 2.07},
+        },
+        "stack": [
+            {"name": "Ambient", "material": "Ambient", "thickness": 0, "roughness": 5},
+            {"name": "Film", "material": "Film", "thickness": 100, "roughness": 5},
+            {"name": "Si", "material": "Si"},
+        ],
+        "probe": {"resolution": "angular_only", "dq_is_fwhm": True},
+    }
+    if states:
+        document["states"] = states
+    if series:
+        document["series"] = series
+
+    # A path the series takes from a constraint must NOT also be declared free
+    # there, or resolution rejects it as a double assignment. So structural
+    # parameters are scoped to the states, and the constraint owns the series.
+    # The scaffold has to validate and generate as written -- one that fails on
+    # first contact teaches the pattern backwards.
+    state_names = [s["name"] for s in states]
+    constrained = bool(series and len(states) >= 2)
+
+    thickness: dict[str, Any] = {
+        "path": "Film.thickness",
+        "range": [50, 200],
+        "per": "state",
+    }
+    if constrained:
+        thickness["in"] = state_names
+
+    document["parameters"] = [
+        thickness,
+        {"path": "Film.rho", "range": [2, 6], "per": "model"},
+        {"path": "probe.intensity", "value": 1.0, "pm": 0.1, "per": "state"},
+    ]
+
+    if constrained:
+        document["constraints"] = [
+            {
+                "series": series[0]["name"],
+                "form": "linear_in_time",
+                "from": state_names[0],
+                "to": state_names[-1],
+                "paths": ["Film.thickness"],
+            }
+        ]
+    elif series:
+        # One state cannot anchor an interpolation, so give the series its own
+        # value rather than emitting a constraint that would be rejected.
+        document["parameters"].append(
+            {
+                "path": "Film.thickness",
+                "range": [50, 200],
+                "per": "state",
+                "in": [s["name"] for s in series],
+            }
+        )
+    document["fit"] = {"method": "amoeba", "steps": 1000}
+    return document
+
+
+def _schema_relative(layout, target: Path) -> str:
+    """Relative path from a spec to the project's JSON Schema."""
+    import os
+
+    schema = layout.schema_dir / "nrw-model-1.json"
+    return os.path.relpath(schema, target.parent)
+
+
+def run_fork(*, spec: str, name: str | None = None, out: str | None = None) -> None:
+    """Turn a generated script into a hand-owned one, keeping provenance.
+
+    The escape hatch has to live *inside* the provenance system. If taking
+    manual control of a script also meant losing the record of what produced a
+    result, people would do it anyway and the record would quietly become
+    fiction. A fork is legal, cheap, and permanently labelled.
+
+    Args:
+        spec: The spec whose generated script should be forked.
+        name: Name for the forked script. Defaults to ``<spec>-fork``.
+        out: Explicit output path.
+
+    Raises:
+        click.ClickException: If the script has not been generated yet, or the
+            target already exists.
+    """
+    from datetime import datetime
+
+    layout, path, model = _load(spec)
+    generated = path.with_suffix(".py")
+    if not generated.is_file():
+        raise click.ClickException(
+            f"{generated.name} does not exist yet. Run `nrw model generate {spec}` first."
+        )
+
+    fork_name = name or f"{model.name}-fork"
+    target = Path(out) if out else generated.with_name(f"{fork_name}.py")
+    if target.exists():
+        raise click.ClickException(f"{target} already exists. Choose another --name.")
+
+    source = generated.read_text(encoding="utf-8")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    banner = "\n".join(
+        [
+            "# " + "-" * 74,
+            "# HAND-OWNED SCRIPT -- edit this freely.",
+            f"#   forked from: {path.relative_to(layout.root).as_posix()}",
+            f"#   spec sha256: {_spec_sha256(path)}  (at the time of the fork)",
+            f"#   forked:      {stamp}",
+            "#",
+            "# `nrw model generate` will not touch this file, and `nrw check` will not",
+            "# compare it against the spec. It is yours.",
+            "#",
+            "# It is still fully tracked: `nrw fit run` records its hash, its inputs and",
+            "# the environment exactly as for a generated script, so results stay",
+            "# traceable. That is the point of forking rather than editing in place.",
+            "# " + "-" * 74,
+            "",
+        ]
+    )
+
+    # Drop the generated header: its self-hash no longer applies, and leaving a
+    # stale DO-NOT-EDIT banner on a file the user is meant to edit is worse
+    # than having none.
+    body = source
+    if body.startswith("# ---"):
+        marker = "# " + "-" * 74
+        end = body.find(marker, body.find(marker) + 1)
+        if end != -1:
+            body = body[end + len(marker) :].lstrip("\n")
+
+    target.write_text(banner + body, encoding="utf-8")
+
+    click.echo(f"Forked to {target.relative_to(layout.root)}")
+    click.echo("  edit it freely; `nrw model generate` will leave it alone")
+    click.echo(f"\n  nrw fit run {target.relative_to(layout.root)}")
