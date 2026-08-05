@@ -51,7 +51,7 @@ dependencies = [
     "flask>=3.0",
     "refl1d>=1.0,<2",
     "bumps>=1.0,<2",
-    "aure @ git+https://github.com/neutrons-ai/aure.git@e19ec6bb7021a19a8e321672ad12b36d47d17834",
+    "aure @ git+https://github.com/neutrons-ai/aure.git@3021fee37294b938134d052e16dac4f9c282e97f",
 ]
 
 [project.optional-dependencies]

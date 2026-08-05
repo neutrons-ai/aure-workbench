@@ -44,7 +44,7 @@ left by an earlier build is reused by setuptools and re-includes files the
 current configuration no longer packages. Without that strip the test passes
 even with the fix reverted — measured, not theorised.
 
-### 2026-08-05: AuRE ships no SKILL.md files in its wheel (fixed upstream)
+### 2026-08-05: AuRE ships no SKILL.md files in its wheel — FIXED, merged as `3021fee`
 
 AuRE's `[tool.setuptools.package-data]` covered only `"aure.web"`, so none of
 its eight `SKILL.md` files reached the wheel or sdist. Invisible under
@@ -54,9 +54,36 @@ domain knowledge into any prompt, with no error and no log line.
 `SkillRegistry._scan` only warned when the *directory* was missing, which it
 never was.
 
-Fixed in `neutrons-ai/aure` branch `fix/package-skills-data`. **Until that
-merges, nr-workbench cannot read skills from an installed aure** and ships its
-own adapted copies instead.
+Fixed upstream (`neutrons-ai/aure` PR #20, merged 2026-08-05 as `3021fee`) and
+verified from this side: a wheel built from aure main, installed non-editable
+into a clean venv, exposes all eight `SKILL.md` files.
+
+**Consequence for later milestones.** nr-workbench can now read AuRE's domain
+skills from the installed package instead of vendoring copies. The three skills
+shipped in M0 are unaffected — `nr-workbench-project` is new,
+`tnr-change-assessment` comes from experiments-2025, and
+`neutron-reflectometry` is a merge of both sources rewritten into the v2
+anatomy — but the four planned pure-AuRE skills (`thin-layer-degeneracy`,
+`solvent-contrast-matching`, `metal-oxide-interfaces`, `polymer-films`) should
+be *read from upstream*, not copied. One fewer divergent copy to keep in sync.
+
+### 2026-08-05: Enumerate aure's skills without importing aure
+
+Confirmed working against the installed wheel:
+
+```python
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.find_spec("aure")          # does NOT run aure/__init__.py
+skills_root = Path(spec.submodule_search_locations[0]) / "skills"
+names = sorted(p.parent.name for p in skills_root.glob("*/SKILL.md"))
+```
+
+`find_spec` on a *top-level* package locates it without executing its
+`__init__.py`, so this costs nothing and avoids the 1.5-3s LLM-stack import.
+Do not use `find_spec("aure.skills")` — resolving a submodule imports the
+parent, which defeats the whole point.
 
 ### 2026-08-05: Any `import aure` costs 1.5-3 seconds
 
