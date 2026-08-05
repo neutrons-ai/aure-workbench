@@ -1,0 +1,37 @@
+# tNR symmetric KL divergence per Q bin (per-type reference)
+# source_dir: data
+# json: data/r999001_eis_reduction.json
+# n_points: 32
+# time_s	sym_kl	interval_type	label
+0.000	0.00000000e+00	hold	hold_initial_0
+30.000	1.06278645e+00	hold	hold_initial_1
+60.000	1.14753534e+00	hold	hold_initial_2
+90.000	1.12656977e+00	hold	hold_initial_3
+120.000	1.10677848e+00	hold	hold_initial_4
+150.000	9.88767209e-01	hold	hold_initial_5
+180.000	1.09957245e+00	hold	hold_initial_6
+210.000	9.90469599e-01	hold	hold_initial_7
+240.000	7.69655142e-01	hold	hold_step0
+270.000	0.00000000e+00	eis	eis_step0
+355.000	9.21134492e-01	hold	hold_step1
+385.000	1.09549649e+00	eis	eis_step1
+470.000	1.17289742e+00	hold	hold_step2
+500.000	1.32490349e+00	eis	eis_step2
+585.000	9.52118170e-01	hold	hold_step3
+615.000	1.25909867e+00	eis	eis_step3
+700.000	1.55182082e+00	hold	hold_step4
+730.000	1.70743392e+00	eis	eis_step4
+815.000	1.89322864e+00	hold	hold_step5
+845.000	2.39395505e+00	eis	eis_step5
+930.000	1.61255742e+00	hold	hold_step6
+960.000	2.89098566e+00	eis	eis_step6
+1045.000	2.24078088e+00	hold	hold_step7
+1075.000	3.47079941e+00	eis	eis_step7
+1160.000	2.29889398e+00	hold	hold_step8
+1190.000	3.83314123e+00	eis	eis_step8
+1275.000	2.20587585e+00	hold	hold_step9
+1305.000	3.88320135e+00	eis	eis_step9
+1390.000	1.96186323e+00	hold	hold_step10
+1420.000	3.67369329e+00	eis	eis_step10
+1505.000	1.97598738e+00	hold	hold_step11
+1535.000	4.19112014e+00	eis	eis_step11

@@ -144,6 +144,193 @@ def fit_run_command(**kwargs: object) -> None:
     run_fit_command(**kwargs)  # type: ignore[arg-type]
 
 
+@main.group("tnr")
+def tnr_group() -> None:
+    """Assess temporal change in a time-resolved run."""
+
+
+def _reference_options(func):
+    """Attach the block-selection options every tNR command shares.
+
+    Defined here rather than imported so that `nrw --help` still touches
+    nothing heavy: importing anything under `nr_workbench.tnr` pulls in numpy
+    and every metric through the package __init__.
+    """
+    options = (
+        click.option(
+            "--min-duration",
+            type=float,
+            default=5.0,
+            show_default=True,
+            help="Skip intervals shorter than this many seconds.",
+        ),
+        click.option(
+            "--json-path",
+            "json_path",
+            type=click.Path(exists=True, dir_okay=False),
+            default=None,
+            help="Reduction JSON [default: discovered in DATA_DIR].",
+        ),
+        click.option(
+            "--ref-seconds",
+            type=float,
+            default=None,
+            help="Reference block: intervals within N s of the run start.",
+        ),
+        click.option(
+            "--ref-labels",
+            default=None,
+            help="Reference block: comma-separated labels or globs.",
+        ),
+        click.option(
+            "--late-seconds",
+            type=float,
+            default=None,
+            help="Late block: intervals within N s of the run end.",
+        ),
+        click.option(
+            "--late-labels",
+            default=None,
+            help="Late block: comma-separated labels or globs.",
+        ),
+        click.option(
+            "--min-ref-snr",
+            type=float,
+            default=0.0,
+            show_default=True,
+            help="Drop reference Q bins below this many sigma above zero.",
+        ),
+        click.option(
+            "--ref-loo/--no-ref-loo",
+            default=True,
+            show_default=True,
+            help="Exact leave-one-out variance for reference members; "
+            "disabling it biases their chi-squared low by about 10%.",
+        ),
+    )
+    for option in reversed(options):
+        func = option(func)
+    return func
+
+
+@tnr_group.command("assess")
+@click.argument("data_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--out", default=None, help="Output directory [default: ../assessments/<label>]."
+)
+@click.option("--label", default="", help="Filename prefix and plot-title label.")
+@click.option(
+    "--template",
+    type=click.Choice(["late", "pca"]),
+    default="late",
+    show_default=True,
+    help="Template source for the amplitude projection.",
+)
+@click.option(
+    "--template-smooth",
+    type=int,
+    default=9,
+    show_default=True,
+    help="Boxcar width for the template, in Q points.",
+)
+@click.option(
+    "--qbands", type=int, default=4, show_default=True, help="Number of Q bands."
+)
+@click.option(
+    "--qband-edges", default=None, help="Explicit band edges, comma-separated."
+)
+@click.option("--variogram-bins", type=int, default=6, show_default=True)
+@click.option("--variogram-min-pairs", type=int, default=3, show_default=True)
+@click.option(
+    "--variogram-lag-scale",
+    type=click.Choice(["log", "linear"]),
+    default="log",
+    show_default=True,
+)
+@click.option(
+    "--delta2-clip",
+    type=click.Choice(["mean", "element"]),
+    default="mean",
+    show_default=True,
+)
+@click.option(
+    "--heatmap-coadd-seconds",
+    type=float,
+    default=None,
+    help="Coadd the residual heatmap into blocks of this many seconds.",
+)
+@click.option("--no-plots", is_flag=True, help="Write tables only; skip the PNGs.")
+@click.option(
+    "--result-out", default=None, help="Write an ndip-tool-result/1 manifest here."
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit the assessment as JSON.")
+@_reference_options
+def tnr_assess_command(**kwargs: object) -> None:
+    """Run every metric on DATA_DIR, in the documented reading order.
+
+    Writes the plots and tables under their original names, plus an
+    assessment.json carrying the machine-readable verdict.
+    """
+    from nr_workbench.commands.tnr_cmd import run_assess
+
+    run_assess(**kwargs)  # type: ignore[arg-type]
+
+
+@tnr_group.command("manifest")
+@click.argument("data_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+@_reference_options
+def tnr_manifest_command(**kwargs: object) -> None:
+    """Show DATA_DIR's interval structure without computing any metric."""
+    from nr_workbench.commands.tnr_cmd import run_manifest
+
+    run_manifest(**kwargs)  # type: ignore[arg-type]
+
+
+def _add_metric_command(name: str, help_text: str) -> None:
+    """Register a per-metric subcommand sharing the assess options."""
+
+    @tnr_group.command(name, help=help_text)
+    @click.argument("data_dir", type=click.Path(exists=True, file_okay=False))
+    @click.option("--out", default=None, help="Output directory.")
+    @click.option("--label", default="", help="Filename prefix.")
+    @click.option("--no-plots", is_flag=True, help="Write tables only.")
+    @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+    @_reference_options
+    def _command(
+        data_dir: str,
+        out: str | None,
+        label: str,
+        no_plots: bool,
+        as_json: bool,
+        **shared: object,
+    ) -> None:
+        from nr_workbench.commands.tnr_cmd import run_metric
+
+        run_metric(
+            name,
+            data_dir=data_dir,
+            out=out,
+            label=label,
+            as_json=as_json,
+            extra={"no_plots": no_plots},
+            **shared,
+        )
+
+    _command.__name__ = f"tnr_{name}_command"
+
+
+for _name, _help in (
+    ("amplitude", "The change amplitude a(t) +- sigma: the primary metric."),
+    ("variogram", "The lag variogram: is anything changing, and on what timescale?"),
+    ("qbands", "Where in Q the change lives."),
+    ("chi2", "Running chi-squared, the fractional change delta, and significance."),
+    ("pca", "PCA of the R(Q,t) matrix."),
+    ("kl", "Symmetric KL divergence per interval."),
+):
+    _add_metric_command(_name, _help)
+
+
 @main.command("whence")
 @click.argument("path")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")

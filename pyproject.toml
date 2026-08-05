@@ -66,7 +66,7 @@ dev = [
     "types-PyYAML",
 ]
 docs = ["mkdocs-material>=9.5", "sphinx>=7.2", "myst-parser>=2.0"]
-all = ["nr-workbench[aure,nexus,dev,docs]"]
+all = ["nr-workbench[nexus,dev,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/neutrons-ai/nr-workbench"
@@ -176,6 +176,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/**/*.py" = ["ARG", "S101"]
+# The tNR modules hold numerics moved byte-for-byte from experiments-2025.
+# Adding `strict=` to those zips would change behaviour -- raising instead of
+# truncating -- in code the characterization tests pin exactly. Left alone
+# deliberately; see docs/ground_truths.md.
+"src/nr_workbench/tnr/ascii.py" = ["B905"]
+"src/nr_workbench/tnr/plots.py" = ["B905"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nr_workbench"]

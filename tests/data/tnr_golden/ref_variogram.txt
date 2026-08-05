@@ -1,0 +1,25 @@
+# tNR lag variogram (same-type interval pairs, no reference)
+# gamma = mean_Q((R_i-R_j)^2 / (dR_i^2 + dR_j^2)) binned by |t_i-t_j|
+# E[gamma] = 1 exactly under 'nothing changed'; excess is real change
+# excess_amp = sqrt(max(0, gamma-1)) = change / noise on that timescale
+# gamma_err is the SEM over pairs; it UNDERSTATES the error because
+# pairs share intervals (see n_intervals). gamma_err_theory is the
+# pure-noise expectation sqrt(2/N_Q)/sqrt(n_pairs).
+# source_dir: data
+# json: data/r999001_eis_reduction.json
+#
+# interval_type: hold
+# lag_lo_s	lag_hi_s	lag_center_s	gamma	gamma_err	gamma_err_theory	excess_amp	n_pairs	n_intervals
+0.000	57.623	30.000	1.040710	0.040578	0.055902	0.201767	8	9
+57.623	110.680	73.846	1.047741	0.035442	0.043853	0.218498	13	9
+110.680	212.592	141.071	1.013078	0.022758	0.029881	0.114361	28	20
+212.592	408.339	296.875	1.067436	0.034289	0.027951	0.259685	32	20
+408.339	784.324	581.170	1.310628	0.039195	0.023063	0.557340	47	20
+784.324	1506.505	1082.661	1.750905	0.030729	0.020080	0.866548	62	20
+#
+# interval_type: eis
+# lag_lo_s	lag_hi_s	lag_center_s	gamma	gamma_err	gamma_err_theory	excess_amp	n_pairs	n_intervals
+110.680	212.592	115.000	0.971598	0.022779	0.047673	0.000000	11	12
+212.592	408.339	284.474	1.154752	0.062117	0.036274	0.393386	19	12
+408.339	784.324	564.048	1.782572	0.124520	0.034503	0.884631	21	12
+784.324	1506.505	958.333	2.821794	0.182924	0.040825	1.349739	15	10

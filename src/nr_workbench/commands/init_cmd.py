@@ -18,7 +18,16 @@ from nr_workbench.skills_install import discover_skills, plan_skill_files
 
 #: Skills installed by default. Kept small on purpose: three that are relevant
 #: to almost every task beat fifteen that dilute the assistant's attention.
-SEED_SKILLS = ("nr-workbench-project", "neutron-reflectometry", "tnr-change-assessment")
+SEED_SKILLS = (
+    "nr-workbench-project",
+    "analysis-provenance",
+    "neutron-reflectometry",
+    "tnr-change-assessment",
+    "tnr-amplitude",
+    "tnr-variogram",
+    "tnr-chi2",
+    "tnr-pca-kl",
+)
 
 #: Created empty so the layout is legible before any data arrives. Needs a
 #: .gitkeep because git cannot track an empty directory. `docs/` is not listed

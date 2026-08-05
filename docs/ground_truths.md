@@ -195,6 +195,59 @@ across analyzer_tools, data-assembler and nr_isaac_format. A plain
 `tests/test_vendor.py` on its first real run. `extend-exclude` in
 `[tool.ruff]` now covers `src/nr_workbench/_vendor`.
 
+### 2026-08-05: The tNR refactor is pinned by golden files, not by review
+
+`tnr_chi2.py` was 1992 lines in one module. Splitting it was worth doing, but a
+subtle change to a coadd weight or a variance sign would be invisible in review
+and would quietly corrupt every future assessment.
+
+So the split was done **mechanically**, extracting source by line range so the
+numerics moved byte-for-byte, and the ASCII tables in `tests/data/tnr_golden/`
+were captured from the **original** tool before any of it started. All six
+tables still compare byte-for-byte identical.
+
+Two consequences worth keeping:
+
+- `tests/data/tnr_golden/` is only regenerated when a numerics change is
+  deliberate, and the commit has to say so.
+- `zip(strict=)` is *not* added in `tnr/ascii.py` or `tnr/plots.py`, because it
+  changes behaviour — raising instead of truncating — in code nobody has
+  re-derived. Ruff has a per-file ignore for B905 there.
+
+Structural notes: `type_style`/`ordered_types` moved to `tnr/intervals.py`
+because both the metrics and the plots need them and neither should drag
+matplotlib into the other; `plots.py` forces the Agg backend at import;
+`click.echo(..., err=True)` became `tnr/notify.py` so `metrics/` has no CLI
+dependency.
+
+### 2026-08-05: Three interpretation bugs the fixture caught
+
+The synthetic run in `tests/tnr_fixture.py` injects a *known* sigmoidal
+trajectory and a *known* oscillatory Q template, so the assessment can be
+checked against ground truth rather than merely for plausibility. That caught
+three wrong answers that all looked reasonable:
+
+1. **Trajectory: chord-residual tests break on overshoot.** Comparing a(t)
+   against a straight line through its endpoints classifies a textbook sigmoid
+   as `non-monotonic` whenever the curve overshoots and settles back, because
+   the chord then ends below the plateau. Slope *concentration* is the actual
+   defining property of a sigmoid and is unaffected by where the endpoints land.
+2. **Flat needs error bars.** Without `sigma_a` the classifier has no noise
+   scale, so pure noise reliably reads as `non-monotonic` — it wanders. The
+   test is now whether the first and last thirds differ by more than 3 combined
+   standard errors.
+3. **Variogram: a fixed threshold is wrong.** γ = 1 is the noise floor and the
+   metric reports its own spread, so "is it rising?" is a significance question.
+   Real run 223995 sits at γ = 1.16 with an error of 0.032 — a 5σ rise that the
+   original threshold of γ > 1.3 called flat. That produced output which said
+   "nothing is changing" directly above "max |a/σ| = 7.3".
+
+Related: when the variogram and the amplitude disagree, `build_verdict` now
+says `ambiguous` and names the likely cause (a reference block spanning a
+period when the sample was already moving) rather than silently believing the
+amplitude. The reading order says *if the variogram is flat, stop*, and the
+verdict has to honour that.
+
 ### 2026-08-05: A NUL byte is the binary test, not a failed decode
 
 `_render_diff` originally detected binary content with `try: decode('utf-8')`.

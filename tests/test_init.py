@@ -16,16 +16,13 @@ from nr_workbench.commands.sample import plan_sample_files, validate_sample_id
 from nr_workbench.project.layout import SAMPLE_SUBDIRS, ProjectLayout
 from nr_workbench.project.render import RenderContext
 
-#: Every file `nrw init` must produce. A golden list rather than a loose
-#: assertion, because the classic packaging failure is a file silently vanishing
-#: from the wheel -- and a test that only checks "some files appeared" misses it.
-EXPECTED_PROJECT_FILES = {
-    ".claude/agents/neutron-reflectometry.md",
-    ".claude/agents/nr-workbench-project.md",
-    ".claude/agents/tnr-change-assessment.md",
-    ".github/agents/neutron-reflectometry.md",
-    ".github/agents/nr-workbench-project.md",
-    ".github/agents/tnr-change-assessment.md",
+#: The scaffold's own files. A golden list rather than a loose assertion,
+#: because the classic packaging failure is a file silently vanishing from the
+#: wheel -- and a test that only checks "some files appeared" misses it.
+#:
+#: The skill files are derived below rather than listed: which skills ship is
+#: data that changes as the library grows, whereas this shape should not.
+EXPECTED_SCAFFOLD_FILES = {
     ".github/copilot-instructions.md",
     ".gitignore",
     ".vscode/extensions.json",
@@ -36,11 +33,19 @@ EXPECTED_PROJECT_FILES = {
     "nrw.toml",
     "samples/.gitkeep",
     "scripts/install_skills.py",
-    "skills/reflectometry/neutron-reflectometry/SKILL.md",
-    "skills/reflectometry/neutron-reflectometry/references/refinement-strategy.md",
-    "skills/reflectometry/nr-workbench-project/SKILL.md",
-    "skills/reflectometry/tnr-change-assessment/SKILL.md",
 }
+
+
+def expected_project_files() -> set[str]:
+    """The full file set `nrw init` should produce, skills included."""
+    from nr_workbench.commands.init_cmd import SEED_SKILLS
+    from nr_workbench.skills_install import discover_skills, plan_skill_files
+
+    files = set(EXPECTED_SCAFFOLD_FILES)
+    bundled = {s.name: s for s in discover_skills()}
+    for name in SEED_SKILLS:
+        files.update(relpath for relpath, _ in plan_skill_files(bundled[name]))
+    return files
 
 
 def installed_files(root: Path) -> set[str]:
@@ -64,7 +69,7 @@ def test_init_produces_the_expected_file_set(
 
     apply_scaffold(tmp_path, plan_project_files(context))
 
-    assert installed_files(tmp_path) == EXPECTED_PROJECT_FILES
+    assert installed_files(tmp_path) == expected_project_files()
 
 
 def test_init_writes_skills_to_repo_root_not_dot_claude(project: Path) -> None:
@@ -142,7 +147,7 @@ def test_scaffold_lock_records_every_installed_file(project: Path) -> None:
     )
 
     assert lock["schema"] == "nrw-scaffold-lock/1"
-    assert set(lock["files"]) >= EXPECTED_PROJECT_FILES
+    assert set(lock["files"]) >= expected_project_files()
 
 
 # --------------------------------------------------------------------------

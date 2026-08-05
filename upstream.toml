@@ -66,3 +66,38 @@ Now that neutrons-ai/aure#20 has merged, aure ships its SKILL.md files in the
 wheel -- so the remaining pure-AuRE skills should be READ from the installed
 package rather than copied here. See docs/ground_truths.md.
 """
+
+[[adapted]]
+dest = "src/nr_workbench/tnr/"
+repo = "mdoucet/experiments-2025"
+path = "tnr_chi2.py"
+synced = "2026-08-05"
+adaptation = """
+Split a 1992-line module with one ~60-option Click command into io / reference /
+metrics / plots / ascii / report. The numerics were extracted BY LINE RANGE so
+they moved byte-for-byte; tests/data/tnr_golden/ holds tables captured from the
+original tool and tests/test_tnr_characterization.py compares against them.
+
+Changed deliberately: click.echo -> tnr/notify.py so metrics/ has no CLI
+dependency; type_style/ordered_types -> tnr/intervals.py so metrics and plots
+can share them without matplotlib; figures always close (the tool never shows
+them interactively); and assessment.json is new.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/tnr-*"
+repo = "mdoucet/experiments-2025"
+paths = [
+    "docs/notes.md",
+    "docs/tnr-amplitude.md",
+    "docs/tnr-variogram.md",
+    "docs/tnr-chi2.md",
+    "docs/tnr-pca.md",
+    "docs/tnr-kl.md",
+]
+synced = "2026-08-05"
+adaptation = """
+Restructured into the neutron-skills v2 anatomy and pointed at `nrw tnr`. The
+physics, formulas, worked numbers and interpretation rules are unchanged.
+tnr-pca and tnr-kl are merged: both answer the same follow-up question.
+"""
