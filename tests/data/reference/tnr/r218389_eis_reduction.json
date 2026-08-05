@@ -1,0 +1,919 @@
+{
+  "run_number": 218389,
+  "duration": 6546.09033203125,
+  "n_intervals": 130,
+  "intervals": [
+    {
+      "label": "hold_initial_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:55:16.521000",
+      "end": "2025-04-20T10:55:46.521000"
+    },
+    {
+      "label": "hold_initial_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:55:46.521000",
+      "end": "2025-04-20T10:56:16.521000"
+    },
+    {
+      "label": "hold_initial_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:56:16.521000",
+      "end": "2025-04-20T10:56:46.521000"
+    },
+    {
+      "label": "hold_initial_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:56:46.521000",
+      "end": "2025-04-20T10:57:16.521000"
+    },
+    {
+      "label": "hold_initial_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:57:16.521000",
+      "end": "2025-04-20T10:57:46.521000"
+    },
+    {
+      "label": "hold_initial_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:57:46.521000",
+      "end": "2025-04-20T10:58:16.521000"
+    },
+    {
+      "label": "hold_initial_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:58:16.521000",
+      "end": "2025-04-20T10:58:46.521000"
+    },
+    {
+      "label": "hold_initial_7",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:58:46.521000",
+      "end": "2025-04-20T10:59:16.521000"
+    },
+    {
+      "label": "hold_initial_8",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:59:16.521000",
+      "end": "2025-04-20T10:59:46.521000"
+    },
+    {
+      "label": "hold_initial_9",
+      "interval_type": "hold",
+      "start": "2025-04-20T10:59:46.521000",
+      "end": "2025-04-20T11:00:16.521000"
+    },
+    {
+      "label": "hold_initial_10",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:00:16.521000",
+      "end": "2025-04-20T11:00:46.521000"
+    },
+    {
+      "label": "hold_initial_11",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:00:46.521000",
+      "end": "2025-04-20T11:01:16.521000"
+    },
+    {
+      "label": "hold_initial_12",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:01:16.521000",
+      "end": "2025-04-20T11:01:46.521000"
+    },
+    {
+      "label": "hold_initial_13",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:01:46.521000",
+      "end": "2025-04-20T11:02:16.521000"
+    },
+    {
+      "label": "hold_initial_14",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:02:16.521000",
+      "end": "2025-04-20T11:02:46.521000"
+    },
+    {
+      "label": "hold_initial_15",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:02:46.521000",
+      "end": "2025-04-20T11:03:16.521000"
+    },
+    {
+      "label": "hold_initial_16",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:03:16.521000",
+      "end": "2025-04-20T11:03:44.483170"
+    },
+    {
+      "label": "sequence_1_eis_1",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:03:44.483170",
+      "end": "2025-04-20T11:05:06.361862"
+    },
+    {
+      "label": "hold_gap_1_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:05:06.361862",
+      "end": "2025-04-20T11:05:36.361862"
+    },
+    {
+      "label": "hold_gap_1_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:05:36.361862",
+      "end": "2025-04-20T11:06:06.361862"
+    },
+    {
+      "label": "hold_gap_1_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:06:06.361862",
+      "end": "2025-04-20T11:06:36.361862"
+    },
+    {
+      "label": "hold_gap_1_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:06:36.361862",
+      "end": "2025-04-20T11:07:06.361862"
+    },
+    {
+      "label": "hold_gap_1_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:07:06.361862",
+      "end": "2025-04-20T11:07:36.361862"
+    },
+    {
+      "label": "hold_gap_1_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:07:36.361862",
+      "end": "2025-04-20T11:08:06.361862"
+    },
+    {
+      "label": "hold_gap_1_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:08:06.361862",
+      "end": "2025-04-20T11:08:08.665171"
+    },
+    {
+      "label": "sequence_2_eis_2",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:08:08.665171",
+      "end": "2025-04-20T11:09:30.889904"
+    },
+    {
+      "label": "hold_gap_2_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:09:30.889904",
+      "end": "2025-04-20T11:10:00.889904"
+    },
+    {
+      "label": "hold_gap_2_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:10:00.889904",
+      "end": "2025-04-20T11:10:30.889904"
+    },
+    {
+      "label": "hold_gap_2_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:10:30.889904",
+      "end": "2025-04-20T11:11:00.889904"
+    },
+    {
+      "label": "hold_gap_2_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:11:00.889904",
+      "end": "2025-04-20T11:11:30.889904"
+    },
+    {
+      "label": "hold_gap_2_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:11:30.889904",
+      "end": "2025-04-20T11:12:00.889904"
+    },
+    {
+      "label": "hold_gap_2_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:12:00.889904",
+      "end": "2025-04-20T11:12:30.889904"
+    },
+    {
+      "label": "hold_gap_2_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:12:30.889904",
+      "end": "2025-04-20T11:12:32.873189"
+    },
+    {
+      "label": "sequence_3_eis_3",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:12:32.873189",
+      "end": "2025-04-20T11:13:56.299424"
+    },
+    {
+      "label": "hold_gap_3_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:13:56.299424",
+      "end": "2025-04-20T11:14:26.299424"
+    },
+    {
+      "label": "hold_gap_3_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:14:26.299424",
+      "end": "2025-04-20T11:14:56.299424"
+    },
+    {
+      "label": "hold_gap_3_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:14:56.299424",
+      "end": "2025-04-20T11:15:26.299424"
+    },
+    {
+      "label": "hold_gap_3_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:15:26.299424",
+      "end": "2025-04-20T11:15:56.299424"
+    },
+    {
+      "label": "hold_gap_3_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:15:56.299424",
+      "end": "2025-04-20T11:16:26.299424"
+    },
+    {
+      "label": "hold_gap_3_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:16:26.299424",
+      "end": "2025-04-20T11:16:56.299424"
+    },
+    {
+      "label": "hold_gap_3_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:16:56.299424",
+      "end": "2025-04-20T11:16:58.602196"
+    },
+    {
+      "label": "sequence_4_eis_4",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:16:58.602196",
+      "end": "2025-04-20T11:18:20.360897"
+    },
+    {
+      "label": "hold_gap_4_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:18:20.360897",
+      "end": "2025-04-20T11:18:50.360897"
+    },
+    {
+      "label": "hold_gap_4_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:18:50.360897",
+      "end": "2025-04-20T11:19:20.360897"
+    },
+    {
+      "label": "hold_gap_4_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:19:20.360897",
+      "end": "2025-04-20T11:19:50.360897"
+    },
+    {
+      "label": "hold_gap_4_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:19:50.360897",
+      "end": "2025-04-20T11:20:20.360897"
+    },
+    {
+      "label": "hold_gap_4_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:20:20.360897",
+      "end": "2025-04-20T11:20:50.360897"
+    },
+    {
+      "label": "hold_gap_4_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:20:50.360897",
+      "end": "2025-04-20T11:21:20.360897"
+    },
+    {
+      "label": "hold_gap_4_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:21:20.360897",
+      "end": "2025-04-20T11:21:22.701222"
+    },
+    {
+      "label": "sequence_5_eis_5",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:21:22.701222",
+      "end": "2025-04-20T11:22:48.400835"
+    },
+    {
+      "label": "hold_gap_5_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:22:48.400835",
+      "end": "2025-04-20T11:23:18.400835"
+    },
+    {
+      "label": "hold_gap_5_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:23:18.400835",
+      "end": "2025-04-20T11:23:48.400835"
+    },
+    {
+      "label": "hold_gap_5_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:23:48.400835",
+      "end": "2025-04-20T11:24:18.400835"
+    },
+    {
+      "label": "hold_gap_5_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:24:18.400835",
+      "end": "2025-04-20T11:24:48.400835"
+    },
+    {
+      "label": "hold_gap_5_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:24:48.400835",
+      "end": "2025-04-20T11:25:18.400835"
+    },
+    {
+      "label": "hold_gap_5_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:25:18.400835",
+      "end": "2025-04-20T11:25:48.400835"
+    },
+    {
+      "label": "hold_gap_5_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:25:48.400835",
+      "end": "2025-04-20T11:25:51.055244"
+    },
+    {
+      "label": "sequence_6_eis_6",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:25:51.055244",
+      "end": "2025-04-20T11:27:15.083856"
+    },
+    {
+      "label": "hold_gap_6_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:27:15.083856",
+      "end": "2025-04-20T11:27:45.083856"
+    },
+    {
+      "label": "hold_gap_6_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:27:45.083856",
+      "end": "2025-04-20T11:28:15.083856"
+    },
+    {
+      "label": "hold_gap_6_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:28:15.083856",
+      "end": "2025-04-20T11:28:45.083856"
+    },
+    {
+      "label": "hold_gap_6_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:28:45.083856",
+      "end": "2025-04-20T11:29:15.083856"
+    },
+    {
+      "label": "hold_gap_6_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:29:15.083856",
+      "end": "2025-04-20T11:29:45.083856"
+    },
+    {
+      "label": "hold_gap_6_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:29:45.083856",
+      "end": "2025-04-20T11:30:15.083856"
+    },
+    {
+      "label": "hold_gap_6_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:30:15.083856",
+      "end": "2025-04-20T11:30:17.578257"
+    },
+    {
+      "label": "sequence_7_eis_7",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:30:17.578257",
+      "end": "2025-04-20T11:31:40.955844"
+    },
+    {
+      "label": "hold_gap_7_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:31:40.955844",
+      "end": "2025-04-20T11:32:10.955844"
+    },
+    {
+      "label": "hold_gap_7_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:32:10.955844",
+      "end": "2025-04-20T11:32:40.955844"
+    },
+    {
+      "label": "hold_gap_7_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:32:40.955844",
+      "end": "2025-04-20T11:33:10.955844"
+    },
+    {
+      "label": "hold_gap_7_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:33:10.955844",
+      "end": "2025-04-20T11:33:40.955844"
+    },
+    {
+      "label": "hold_gap_7_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:33:40.955844",
+      "end": "2025-04-20T11:34:10.955844"
+    },
+    {
+      "label": "hold_gap_7_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:34:10.955844",
+      "end": "2025-04-20T11:34:40.955844"
+    },
+    {
+      "label": "hold_gap_7_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:34:40.955844",
+      "end": "2025-04-20T11:34:43.770255"
+    },
+    {
+      "label": "sequence_8_eis_8",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:34:43.770255",
+      "end": "2025-04-20T11:36:07.247588"
+    },
+    {
+      "label": "hold_gap_8_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:36:07.247588",
+      "end": "2025-04-20T11:36:37.247588"
+    },
+    {
+      "label": "hold_gap_8_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:36:37.247588",
+      "end": "2025-04-20T11:37:07.247588"
+    },
+    {
+      "label": "hold_gap_8_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:37:07.247588",
+      "end": "2025-04-20T11:37:37.247588"
+    },
+    {
+      "label": "hold_gap_8_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:37:37.247588",
+      "end": "2025-04-20T11:38:07.247588"
+    },
+    {
+      "label": "hold_gap_8_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:38:07.247588",
+      "end": "2025-04-20T11:38:37.247588"
+    },
+    {
+      "label": "hold_gap_8_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:38:37.247588",
+      "end": "2025-04-20T11:39:07.247588"
+    },
+    {
+      "label": "hold_gap_8_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:39:07.247588",
+      "end": "2025-04-20T11:39:09.901255"
+    },
+    {
+      "label": "sequence_9_eis_9",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:39:09.901255",
+      "end": "2025-04-20T11:40:33.411957"
+    },
+    {
+      "label": "hold_gap_9_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:40:33.411957",
+      "end": "2025-04-20T11:41:03.411957"
+    },
+    {
+      "label": "hold_gap_9_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:41:03.411957",
+      "end": "2025-04-20T11:41:33.411957"
+    },
+    {
+      "label": "hold_gap_9_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:41:33.411957",
+      "end": "2025-04-20T11:42:03.411957"
+    },
+    {
+      "label": "hold_gap_9_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:42:03.411957",
+      "end": "2025-04-20T11:42:33.411957"
+    },
+    {
+      "label": "hold_gap_9_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:42:33.411957",
+      "end": "2025-04-20T11:43:03.411957"
+    },
+    {
+      "label": "hold_gap_9_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:43:03.411957",
+      "end": "2025-04-20T11:43:33.411957"
+    },
+    {
+      "label": "hold_gap_9_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:43:33.411957",
+      "end": "2025-04-20T11:43:36.226246"
+    },
+    {
+      "label": "sequence_10_eis_10",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:43:36.226246",
+      "end": "2025-04-20T11:44:59.918736"
+    },
+    {
+      "label": "hold_gap_10_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:44:59.918736",
+      "end": "2025-04-20T11:45:29.918736"
+    },
+    {
+      "label": "hold_gap_10_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:45:29.918736",
+      "end": "2025-04-20T11:45:59.918736"
+    },
+    {
+      "label": "hold_gap_10_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:45:59.918736",
+      "end": "2025-04-20T11:46:29.918736"
+    },
+    {
+      "label": "hold_gap_10_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:46:29.918736",
+      "end": "2025-04-20T11:46:59.918736"
+    },
+    {
+      "label": "hold_gap_10_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:46:59.918736",
+      "end": "2025-04-20T11:47:29.918736"
+    },
+    {
+      "label": "hold_gap_10_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:47:29.918736",
+      "end": "2025-04-20T11:47:59.918736"
+    },
+    {
+      "label": "hold_gap_10_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:47:59.918736",
+      "end": "2025-04-20T11:48:02.892281"
+    },
+    {
+      "label": "sequence_11_eis_11",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:48:02.892281",
+      "end": "2025-04-20T11:49:26.377864"
+    },
+    {
+      "label": "hold_gap_11_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:49:26.377864",
+      "end": "2025-04-20T11:49:56.377864"
+    },
+    {
+      "label": "hold_gap_11_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:49:56.377864",
+      "end": "2025-04-20T11:50:26.377864"
+    },
+    {
+      "label": "hold_gap_11_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:50:26.377864",
+      "end": "2025-04-20T11:50:56.377864"
+    },
+    {
+      "label": "hold_gap_11_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:50:56.377864",
+      "end": "2025-04-20T11:51:26.377864"
+    },
+    {
+      "label": "hold_gap_11_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:51:26.377864",
+      "end": "2025-04-20T11:51:56.377864"
+    },
+    {
+      "label": "hold_gap_11_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:51:56.377864",
+      "end": "2025-04-20T11:52:26.377864"
+    },
+    {
+      "label": "hold_gap_11_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:52:26.377864",
+      "end": "2025-04-20T11:52:28.520307"
+    },
+    {
+      "label": "sequence_12_eis_12",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:52:28.520307",
+      "end": "2025-04-20T11:54:02.088082"
+    },
+    {
+      "label": "hold_gap_12_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:54:02.088082",
+      "end": "2025-04-20T11:54:32.088082"
+    },
+    {
+      "label": "hold_gap_12_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:54:32.088082",
+      "end": "2025-04-20T11:55:02.088082"
+    },
+    {
+      "label": "hold_gap_12_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:55:02.088082",
+      "end": "2025-04-20T11:55:32.088082"
+    },
+    {
+      "label": "hold_gap_12_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:55:32.088082",
+      "end": "2025-04-20T11:56:02.088082"
+    },
+    {
+      "label": "hold_gap_12_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:56:02.088082",
+      "end": "2025-04-20T11:56:32.088082"
+    },
+    {
+      "label": "hold_gap_12_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:56:32.088082",
+      "end": "2025-04-20T11:57:02.088082"
+    },
+    {
+      "label": "hold_gap_12_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:57:02.088082",
+      "end": "2025-04-20T11:57:04.742287"
+    },
+    {
+      "label": "sequence_13_eis_13",
+      "interval_type": "eis",
+      "start": "2025-04-20T11:57:04.742287",
+      "end": "2025-04-20T11:58:30.664703"
+    },
+    {
+      "label": "hold_gap_13_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:58:30.664703",
+      "end": "2025-04-20T11:59:00.664703"
+    },
+    {
+      "label": "hold_gap_13_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:59:00.664703",
+      "end": "2025-04-20T11:59:30.664703"
+    },
+    {
+      "label": "hold_gap_13_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T11:59:30.664703",
+      "end": "2025-04-20T12:00:00.664703"
+    },
+    {
+      "label": "hold_gap_13_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:00:00.664703",
+      "end": "2025-04-20T12:00:30.664703"
+    },
+    {
+      "label": "hold_gap_13_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:00:30.664703",
+      "end": "2025-04-20T12:01:00.664703"
+    },
+    {
+      "label": "hold_gap_13_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:01:00.664703",
+      "end": "2025-04-20T12:01:30.664703"
+    },
+    {
+      "label": "hold_gap_13_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:01:30.664703",
+      "end": "2025-04-20T12:01:32.647323"
+    },
+    {
+      "label": "sequence_14_eis_14",
+      "interval_type": "eis",
+      "start": "2025-04-20T12:01:32.647323",
+      "end": "2025-04-20T12:02:55.244121"
+    },
+    {
+      "label": "hold_gap_14_0",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:02:55.244121",
+      "end": "2025-04-20T12:03:25.244121"
+    },
+    {
+      "label": "hold_gap_14_1",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:03:25.244121",
+      "end": "2025-04-20T12:03:55.244121"
+    },
+    {
+      "label": "hold_gap_14_2",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:03:55.244121",
+      "end": "2025-04-20T12:04:25.244121"
+    },
+    {
+      "label": "hold_gap_14_3",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:04:25.244121",
+      "end": "2025-04-20T12:04:55.244121"
+    },
+    {
+      "label": "hold_gap_14_4",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:04:55.244121",
+      "end": "2025-04-20T12:05:25.244121"
+    },
+    {
+      "label": "hold_gap_14_5",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:05:25.244121",
+      "end": "2025-04-20T12:05:55.244121"
+    },
+    {
+      "label": "hold_gap_14_6",
+      "interval_type": "hold",
+      "start": "2025-04-20T12:05:55.244121",
+      "end": "2025-04-20T12:05:57.547319"
+    },
+    {
+      "label": "sequence_15_eis_15",
+      "interval_type": "eis",
+      "start": "2025-04-20T12:05:57.547319",
+      "end": "2025-04-20T12:07:29.991880"
+    }
+  ],
+  "reduced_files": [
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_7.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_8.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_9.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_10.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_11.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_12.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_13.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_14.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_15.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_initial_16.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_1_eis_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_1_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_2_eis_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_2_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_3_eis_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_3_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_4_eis_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_4_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_5_eis_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_5_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_6_eis_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_6_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_7_eis_7.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_7_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_8_eis_8.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_8_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_9_eis_9.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_9_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_10_eis_10.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_10_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_11_eis_11.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_11_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_12_eis_12.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_12_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_13_eis_13.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_13_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_14_eis_14.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_0.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_1.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_2.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_3.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_4.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_5.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_hold_gap_14_6.txt",
+    "/SNS/REF_L/IPTS-34347/shared/isaac/tNR/per-file/r218389_sequence_15_eis_15.txt"
+  ]
+}

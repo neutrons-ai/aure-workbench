@@ -100,6 +100,71 @@ def sample_new_command(sample_id: str, title: str | None, beamtime: str | None) 
     run_sample_new(sample_id=sample_id, title=title, beamtime=beamtime)
 
 
+@main.group("model")
+def model_group() -> None:
+    """Write, check, and generate fit scripts from a model spec."""
+
+
+@model_group.command("validate")
+@click.argument("spec", type=click.Path(exists=True, dir_okay=False))
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+@click.option(
+    "--result-out", default=None, help="Write an ndip-tool-result/1 manifest here."
+)
+def model_validate_command(**kwargs: object) -> None:
+    """Check SPEC against the project: paths, layers, bounds, degrees of freedom."""
+    from nr_workbench.commands.model import run_validate
+
+    run_validate(**kwargs)  # type: ignore[arg-type]
+
+
+@model_group.command("preview")
+@click.argument("spec", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--build", is_flag=True, help="Also build the problem and report the initial chisq."
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def model_preview_command(**kwargs: object) -> None:
+    """Show the parameter table SPEC resolves to, without writing anything.
+
+    The check worth running before a long fit: it says how many parameters will
+    vary and how they are grouped.
+    """
+    from nr_workbench.commands.model import run_preview
+
+    run_preview(**kwargs)  # type: ignore[arg-type]
+
+
+@model_group.command("generate")
+@click.argument("spec", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--out", default=None, help="Output path [default: the spec with a .py suffix]."
+)
+@click.option("--force", is_flag=True, help="Overwrite a hand-edited script.")
+def model_generate_command(**kwargs: object) -> None:
+    """Write the standalone refl1d script for SPEC."""
+    from nr_workbench.commands.model import run_generate
+
+    run_generate(**kwargs)  # type: ignore[arg-type]
+
+
+@model_group.command("schema")
+@click.option("--out", default=None, help="Where to write it; '-' for stdout.")
+def model_schema_command(out: str | None) -> None:
+    """Emit the JSON Schema for nrw-model/1."""
+    from nr_workbench.commands.model import run_schema
+
+    run_schema(out=out)
+
+
+@model_group.command("forms")
+def model_forms_command() -> None:
+    """List the constraint forms available for a series."""
+    from nr_workbench.commands.model import run_forms
+
+    run_forms()
+
+
 @main.group("fit")
 def fit_group() -> None:
     """Run fits and record what produced every result."""

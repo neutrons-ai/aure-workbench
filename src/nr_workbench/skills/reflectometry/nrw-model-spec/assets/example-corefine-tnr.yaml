@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=../../../.nrw/schema/nrw-model-1.json
+schema: nrw-model/1
+name: cu-thf-218389-full-sequence
+sample: Sample6
+description: >
+  Cu on Ti/Si in THF. Two OCV states either side of an EIS sequence,
+  co-refined with the 15 tNR slices measured during it.
+
+  Reproduces experiments-2025/jen-apr2025/models/Cu-THF-218386-full-sequence.py.
+
+materials:
+  THF: {rho: 6.2}
+  CuOx: {rho: 5.0, irho: 0.0}
+  Cu: {rho: 6.3}
+  Ti: {rho: -3.0}
+  Si: {rho: 2.07}
+
+stack:                                      # ambient -> substrate
+  - {name: THF,  material: THF,  thickness: 0,   roughness: 25}
+  - {name: CuOx, material: CuOx, thickness: 60,  roughness: 20}
+  - {name: Cu,   material: Cu,   thickness: 500, roughness: 5}
+  - {name: Ti,   material: Ti,   thickness: 40,  roughness: 10}
+  - {name: Si,   material: Si}
+
+probe: {resolution: moderator, dq_is_fwhm: true}
+
+states:
+  - name: ocv1
+    condition: OCV before the EIS sequence
+    run: 218386
+    segments: auto
+    thetas: [0.45, 1.2, 3.5]
+    data_dir: samples/Sample6/data/steady
+  - name: ocv2
+    condition: OCV after the EIS sequence
+    run: 218393
+    segments: auto
+    thetas: [0.45, 1.2, 3.5]
+    data_dir: samples/Sample6/data/steady
+
+series:
+  - name: tnr
+    condition: during the EIS sequence
+    run: 218389
+    reduced_dir: samples/Sample6/data/tnr/218389
+    theta: 0.6
+    time_from: reduction_json
+    select:
+      labels: ["sequence_*_eis_*"]
+
+parameters:
+  # --- shared across every state and every tNR slice --------------------
+  - {path: THF.rho, range: [4, 7],  per: model, name: THF rho}
+  - {path: Cu.rho,  range: [5, 7],  per: model, name: Cu rho}
+
+  # --- independent per steady state (the reference frees Ti in both) ----
+  - {path: THF.roughness,  range: [3, 35],    per: state, in: [ocv1, ocv2]}
+  - {path: Ti.thickness,   range: [25, 60],   per: state, in: [ocv1, ocv2]}
+  - {path: Ti.rho,         range: [-4, 0],    per: state, in: [ocv1, ocv2]}
+  - {path: Ti.roughness,   range: [1, 22],    per: state, in: [ocv1, ocv2]}
+  - {path: Cu.roughness,   range: [1, 25],    per: state, in: [ocv1, ocv2]}
+  - {path: Cu.thickness,   range: [400, 600], per: state, in: [ocv1, ocv2]}
+  - {path: CuOx.thickness, range: [10, 125],  per: state, in: [ocv1, ocv2]}
+  - {path: CuOx.rho,       range: [1, 6.5],   per: state, in: [ocv1, ocv2]}
+  - {path: CuOx.roughness, range: [3, 33],    per: state, in: [ocv1, ocv2]}
+
+  # --- nuisance ----------------------------------------------------------
+  # One intensity per state, shared across its angle segments...
+  - {path: probe.intensity, value: 1.0, pm: 0.1, per: state}
+  # ...except ocv1's 3.5 deg segment, which the reference gives its own
+  # normalisation and a wider range. Measurement-level targeting outranks the
+  # state-level declaration above.
+  - {path: probe.intensity, range: [0.5, 1.1], per: measurement, in: [ocv1#2],
+     name: Intensity_386_3}
+  - {path: probe.theta_offset, range: [-0.01, 0.01], per: state, in: [tnr]}
+
+  # Cu thickness is free per slice: it is the one structural parameter the
+  # reference lets move independently during the sequence.
+  - {path: Cu.thickness, per: measurement, in: [tnr], init: stack, pm: 100}
+
+constraints:
+  # Everything else evolves linearly between the two OCV endpoints, so only
+  # the endpoints are fitted. This is what linear_constraints() did by hand.
+  - series: tnr
+    form: linear_in_index
+    from: ocv1
+    to: ocv2
+    paths:
+      - THF.roughness
+      - CuOx.roughness
+      - Cu.roughness
+      - Ti.roughness
+      - CuOx.thickness
+      - Ti.thickness
+      - CuOx.rho
+      - Ti.rho
+
+fit: {method: dream, samples: 5000, burn: 2000}

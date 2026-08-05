@@ -248,6 +248,57 @@ period when the sample was already moving) rather than silently believing the
 amplitude. The reading order says *if the variogram is flat, stop*, and the
 verdict has to honour that.
 
+### 2026-08-05: bumps CAN express logistic and exponential constraints
+
+The plan flagged this as a spike that might force `exponential` and `logistic`
+to be deferred. It does not. Verified against bumps 1.0.4:
+
+- `bumps.parameter.exp` does **not** exist, which is what makes it look
+  impossible at first glance. But `bumps.parameter.pmath` carries the full set
+  (`exp`, `log`, `sqrt`, `sin`, `tanh`, …), and `np.exp(parameter)` also
+  dispatches correctly and returns an `Expression`.
+- A `FitProblem` whose stack contains such an expression **serializes and
+  round-trips** through `bumps.serialize`.
+
+So every constraint form ships. Do not conclude from a missing
+`bumps.parameter.exp` that transcendental constraints are unavailable.
+
+### 2026-08-05: the model gate, and the two things it caught
+
+`tests/test_model_gate.py` drives the hand-written
+`Cu-THF-218386-full-sequence.py` and the generated script from the *same*
+parameter vector and compares chi-squared. It passes at 1.7e-16 — floating-point
+noise — across 21 experiments and 40 free parameters, with a 62-line spec
+standing in for 343 lines of Python.
+
+Getting there required two corrections that no amount of reading would have
+found:
+
+**1. The apr2025 scripts use the moderator resolution, not `dL = 0`.** The
+initial generated script differed from the reference by ~1e-4 in chi-squared —
+small enough to look like rounding, large enough to be real. The cause was
+`dL`: the reference computes the SNS moderator emission-time polynomial, while
+`resolution: angular_only` sets `dL = 0`. Two conventions exist in this
+codebase and **fits made under one are not comparable with the other**, so the
+spec must say which.
+
+Note the reference computes `dL = delta_wl_over_wl(wl) * q` — multiplied by q,
+not by wl, which looks like a units slip. It is reproduced exactly anyway: it
+is the long-standing REF_L convention and every published fit from this
+beamline uses it. Changing it would silently invalidate comparisons with older
+work. The generated script carries a comment saying so.
+
+**2. Angle segments do not always share a normalisation.** The reference gives
+ocv1's 3.5° segment its own intensity with a wider range, and says why:
+*"The third run has a different intensity, so we don't share that parameter
+with the first two runs."* The schema's original `per: model|state|measurement`
+could not express "share within the state, except this one segment".
+
+Fixed by letting `in:` name a single measurement as `group#index`, with a
+specificity rule: a measurement-level declaration outranks a group-level one.
+Unreferenced parameters are then pruned, so a fully-overridden group parameter
+does not linger and inflate the count.
+
 ### 2026-08-05: A NUL byte is the binary test, not a failed decode
 
 `_render_diff` originally detected binary content with `try: decode('utf-8')`.

@@ -27,6 +27,8 @@ SEED_SKILLS = (
     "tnr-variogram",
     "tnr-chi2",
     "tnr-pca-kl",
+    "nrw-model-spec",
+    "tnr-functional-constraints",
 )
 
 #: Created empty so the layout is legible before any data arrives. Needs a

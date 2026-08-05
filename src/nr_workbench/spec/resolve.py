@@ -1,0 +1,869 @@
+"""Turn a spec into a parameter table: which object every slot points at.
+
+This is where the aliasing pitfall is eliminated. ``corefine-model/SKILL.md``
+documents the trap: once angle segments 1..N alias segment 0's Parameter
+object, later *reassigning* segment 0's parameter does not propagate, and the
+cross-dataset constraint silently fails. It has produced wrong results.
+
+The fix is structural rather than procedural. Resolution answers, for every
+``(group, measurement, path)`` slot, *which key it reads from* -- and the
+generated code then assigns from that table in three passes:
+
+1. create every free parameter, once, from the table;
+2. build every constrained expression from those free parameters;
+3. assign every slot from the table.
+
+No assignment ever reads from another Experiment, so there is no "segment 0" to
+go stale. Segment 0 is not the source of truth; the table is.
+
+This module is pure: no refl1d, no bumps, no filesystem beyond the discovery
+helpers. That makes the hard part testable on its own.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from nr_workbench.spec.constraints import FORMS, ConstraintError, FormContext
+from nr_workbench.spec.models import (
+    Constraint,
+    ModelSpec,
+    ParameterPath,
+    ParameterSpec,
+    Series,
+    SpecError,
+    State,
+)
+
+#: Filename pattern for a time-binned tNR slice: r<run>_t<seconds>.txt.
+_SLICE_RE = re.compile(r"^r(?P<run>\d+)_t(?P<t>\d+)\.txt$")
+
+
+@dataclass(frozen=True)
+class Measurement:
+    """One data file that becomes one refl1d Experiment.
+
+    Attributes:
+        group: The state or series it belongs to.
+        index: Zero-based position within that group.
+        file: Path to the data, relative to the project root.
+        theta: Incident angle in degrees.
+        time: Elapsed seconds, for a series member; ``None`` for steady state.
+        label: Interval label, when one is known.
+    """
+
+    group: str
+    index: int
+    file: str
+    theta: float
+    time: float | None = None
+    label: str | None = None
+
+    @property
+    def key(self) -> str:
+        """A stable identifier, e.g. ``ocv1#0`` or ``tnr#7``."""
+        return f"{self.group}#{self.index}"
+
+
+@dataclass
+class FreeParameter:
+    """A parameter created exactly once and read from everywhere.
+
+    Attributes:
+        key: Table key, e.g. ``Cu.thickness@ocv1``.
+        display: Name shown by bumps in fit output.
+        value: Starting value.
+        bounds: ``(min, max)``, or ``None`` when fixed.
+        fixed: Pinned rather than fitted.
+        comment: Why it exists, for the generated script.
+    """
+
+    key: str
+    display: str
+    value: float
+    bounds: tuple[float, float] | None = None
+    fixed: bool = False
+    comment: str = ""
+
+
+@dataclass
+class Expression:
+    """A constrained value built from free parameters.
+
+    Attributes:
+        key: Table key, e.g. ``CuOx.thickness@tnr#3``.
+        source: Python source referring only to ``P[...]``.
+        comment: The form and endpoints, for the generated script.
+    """
+
+    key: str
+    source: str
+    comment: str = ""
+
+
+@dataclass
+class Slot:
+    """Where a value goes, and what it reads from.
+
+    Attributes:
+        measurement: The measurement being configured.
+        path: The layer or probe attribute being set.
+        ref: Key into the free-parameter or expression table.
+        kind: ``P`` for a free parameter, ``E`` for an expression.
+    """
+
+    measurement: Measurement
+    path: ParameterPath
+    ref: str
+    kind: str
+
+
+@dataclass
+class ParameterTable:
+    """The complete resolution of a spec.
+
+    Attributes:
+        spec: The spec this came from.
+        measurements: Measurements per group, in order.
+        free: Free parameters, in creation order.
+        expressions: Constrained expressions, in creation order.
+        slots: Every assignment to make.
+        warnings: Non-fatal problems worth surfacing.
+    """
+
+    spec: ModelSpec
+    measurements: dict[str, list[Measurement]] = field(default_factory=dict)
+    free: list[FreeParameter] = field(default_factory=list)
+    expressions: list[Expression] = field(default_factory=list)
+    slots: list[Slot] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def n_free(self) -> int:
+        """How many parameters the fit will vary."""
+        return sum(1 for p in self.free if not p.fixed)
+
+    @property
+    def n_experiments(self) -> int:
+        """How many refl1d Experiments the problem will hold."""
+        return sum(len(v) for v in self.measurements.values())
+
+    @property
+    def all_files(self) -> list[str]:
+        """Every data file the model reads, in order."""
+        return [m.file for group in self.measurements.values() for m in group]
+
+    def free_by_key(self, key: str) -> FreeParameter | None:
+        """Look up a free parameter.
+
+        Args:
+            key: The table key.
+
+        Returns:
+            The parameter, or ``None``.
+        """
+        return next((p for p in self.free if p.key == key), None)
+
+    def slots_for(self, measurement: Measurement) -> list[Slot]:
+        """Every assignment for one measurement.
+
+        Args:
+            measurement: The measurement.
+
+        Returns:
+            Its slots, in table order.
+        """
+        return [s for s in self.slots if s.measurement.key == measurement.key]
+
+
+# --------------------------------------------------------------------------
+# Discovery: spec + filesystem -> measurements
+# --------------------------------------------------------------------------
+
+
+def discover_measurements(spec: ModelSpec, root: Path) -> dict[str, list[Measurement]]:
+    """Resolve every state and series to concrete data files.
+
+    Args:
+        spec: The model spec.
+        root: Project root, which all paths are relative to.
+
+    Returns:
+        Measurements per group name, in declaration order.
+
+    Raises:
+        SpecError: If a referenced file or directory is missing.
+    """
+    found: dict[str, list[Measurement]] = {}
+    for state in spec.states:
+        found[state.name] = _discover_state(state, root)
+    for series in spec.series:
+        found[series.name] = _discover_series(series, root)
+    return found
+
+
+def _discover_state(state: State, root: Path) -> list[Measurement]:
+    """Resolve one steady-state measurement's files."""
+    if state.segments != "auto":
+        return [
+            Measurement(state.name, i, seg.file, seg.theta)
+            for i, seg in enumerate(state.segments)
+        ]
+
+    directory = Path(state.data_dir) if state.data_dir else Path("data/steady")
+    absolute = root / directory
+    if not absolute.is_dir():
+        raise SpecError(f"state {state.name!r}: no such data directory: {directory}")
+
+    if state.kind == "combined":
+        name = f"REFL_{state.run}_combined_data_auto.txt"
+        if not (absolute / name).is_file():
+            raise SpecError(f"state {state.name!r}: missing {directory / name}")
+        return [
+            Measurement(state.name, 0, (directory / name).as_posix(), state.thetas[0])
+        ]
+
+    # Partial files are REFL_<run>_<segment>_<subrun>_partial.txt, and the
+    # subrun usually but not always runs consecutively from the run number --
+    # so glob on the segment rather than assuming run+i.
+    measurements: list[Measurement] = []
+    for i, theta in enumerate(state.thetas, start=1):
+        matches = sorted(absolute.glob(f"REFL_{state.run}_{i}_*_partial.txt"))
+        if not matches:
+            raise SpecError(
+                f"state {state.name!r}: no file matching "
+                f"REFL_{state.run}_{i}_*_partial.txt in {directory}"
+            )
+        if len(matches) > 1:
+            raise SpecError(
+                f"state {state.name!r}: {len(matches)} files match segment {i}: "
+                f"{[m.name for m in matches]}. List them explicitly under `segments`."
+            )
+        relative = matches[0].relative_to(root).as_posix()
+        measurements.append(Measurement(state.name, i - 1, relative, theta))
+    return measurements
+
+
+def _discover_series(series: Series, root: Path) -> list[Measurement]:
+    """Resolve one time-resolved series' slices."""
+    directory = Path(series.reduced_dir)
+    absolute = root / directory
+    if not absolute.is_dir():
+        raise SpecError(f"series {series.name!r}: no such directory: {directory}")
+
+    if series.time_from == "reduction_json":
+        return _discover_series_from_json(series, root, absolute, directory)
+
+    select = series.select
+    available: dict[int, Path] = {}
+    for path in sorted(absolute.iterdir()):
+        match = _SLICE_RE.match(path.name)
+        if match and (series.run is None or int(match.group("run")) == series.run):
+            available[int(match.group("t"))] = path
+
+    if not available:
+        raise SpecError(
+            f"series {series.name!r}: no r<run>_t<seconds>.txt slices in {directory}. "
+            "If the run has interval labels instead, set `time_from: reduction_json`."
+        )
+
+    if select.t_step is not None:
+        wanted = list(
+            range(int(select.t_start or 0), int(select.t_stop) + 1, int(select.t_step))
+        )
+    else:
+        wanted = sorted(available)
+
+    measurements: list[Measurement] = []
+    missing: list[int] = []
+    for i, t in enumerate(wanted):
+        path = available.get(t)
+        if path is None:
+            missing.append(t)
+            continue
+        measurements.append(
+            Measurement(
+                series.name,
+                len(measurements),
+                path.relative_to(root).as_posix(),
+                series.theta,
+                time=float(t),
+                label=path.stem,
+            )
+        )
+        del i
+
+    if missing:
+        raise SpecError(
+            f"series {series.name!r}: {len(missing)} requested slice(s) not on disk "
+            f"(first missing t={missing[0]} s). Available: "
+            f"{min(available)}..{max(available)} s."
+        )
+    if len(measurements) < 2:
+        raise SpecError(
+            f"series {series.name!r}: resolved {len(measurements)} slice(s); need >= 2"
+        )
+    return measurements
+
+
+def _discover_series_from_json(
+    series: Series, root: Path, absolute: Path, directory: Path
+) -> list[Measurement]:
+    """Resolve a series from its reduction JSON sidecar.
+
+    The sidecar is the only source that carries interval *types*, so it is what
+    makes ``select.interval_types`` possible. It is also authoritative for
+    order -- filenames sort lexically.
+    """
+    import json
+    from datetime import datetime
+
+    candidates = sorted(absolute.glob("*_reduction.json"))
+    if series.run is not None:
+        preferred = [c for c in candidates if str(series.run) in c.name]
+        candidates = preferred or candidates
+    if not candidates:
+        raise SpecError(f"series {series.name!r}: no *_reduction.json in {directory}")
+
+    payload = json.loads(candidates[0].read_text(encoding="utf-8"))
+    run = payload.get("run_number", series.run)
+    intervals = payload.get("intervals") or []
+    if not intervals:
+        raise SpecError(
+            f"series {series.name!r}: {candidates[0].name} lists no intervals"
+        )
+
+    t0 = datetime.fromisoformat(intervals[0]["start"])
+    select = series.select
+
+    measurements: list[Measurement] = []
+    for entry in intervals:
+        label = entry["label"]
+        itype = entry.get("interval_type", "unknown")
+        if select.interval_types and itype not in select.interval_types:
+            continue
+        if select.labels and not any(fnmatch.fnmatch(label, p) for p in select.labels):
+            continue
+
+        elapsed = (datetime.fromisoformat(entry["start"]) - t0).total_seconds()
+        if select.t_start is not None and elapsed < select.t_start:
+            continue
+        if select.t_stop is not None and elapsed > select.t_stop:
+            continue
+
+        path = absolute / f"r{run}_{label}.txt"
+        if not path.is_file():
+            continue
+        measurements.append(
+            Measurement(
+                series.name,
+                len(measurements),
+                path.relative_to(root).as_posix(),
+                series.theta,
+                time=elapsed,
+                label=label,
+            )
+        )
+
+    if len(measurements) < 2:
+        raise SpecError(
+            f"series {series.name!r}: selection resolved {len(measurements)} slice(s); need >= 2"
+        )
+    return measurements
+
+
+# --------------------------------------------------------------------------
+# Resolution: spec + measurements -> parameter table
+# --------------------------------------------------------------------------
+
+
+def build_table(
+    spec: ModelSpec, measurements: dict[str, list[Measurement]]
+) -> ParameterTable:
+    """Resolve a spec into the table the generator emits from.
+
+    Args:
+        spec: The model spec.
+        measurements: Discovered measurements per group.
+
+    Returns:
+        The parameter table.
+
+    Raises:
+        SpecError: If the spec references something that does not exist, or a
+            path is both freely fitted and constrained.
+    """
+    table = ParameterTable(spec=spec, measurements=measurements)
+
+    _add_free_parameters(spec, table)
+    _add_constraints(spec, table)
+    _check_no_double_assignment(table)
+    return table
+
+
+#: Specificity ranks. A declaration naming an individual measurement beats one
+#: naming a whole group, in the same way a more specific CSS rule wins. That is
+#: what lets a spec say "segments share an intensity, except the high-angle one
+#: which has its own" -- a real pattern in the hand-written scripts, where the
+#: 3.5-degree segment carries a different normalisation.
+_RANK_GROUP = 1
+_RANK_MEASUREMENT = 2
+
+
+def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
+    """Create free parameters and the slots that read them.
+
+    Slots are collected with a specificity rank first and resolved afterwards,
+    so a measurement-level declaration can override a group-level one without
+    the two racing on declaration order.
+    """
+    claims: dict[tuple[str, str], tuple[int, str, Measurement, ParameterPath]] = {}
+
+    for parameter in spec.parameters:
+        path = parameter.parsed
+        _check_owner_exists(spec, path, parameter.path)
+
+        for group, index in _targets_for(spec, table, parameter):
+            measurements = table.measurements.get(group, [])
+            if index is not None:
+                selected = [m for m in measurements if m.index == index]
+                rank = _RANK_MEASUREMENT
+            else:
+                selected = measurements
+                rank = _RANK_GROUP
+
+            for measurement in selected:
+                if parameter.per == "model":
+                    key = f"{path.render()}@model"
+                    label = "all states"
+                elif parameter.per == "state" and index is None:
+                    key = f"{path.render()}@{group}"
+                    label = group
+                else:
+                    key = f"{path.render()}@{measurement.key}"
+                    label = measurement.key
+
+                identity = (measurement.key, path.render())
+                previous = claims.get(identity)
+                if previous is not None:
+                    if previous[0] == rank and previous[1] != key:
+                        raise SpecError(
+                            f"{path.render()} is declared twice for {measurement.key} at "
+                            f"the same specificity ({previous[1]!r} and {key!r}). "
+                            "Make one of them measurement-specific, e.g. "
+                            f"`in: [{measurement.key}]`."
+                        )
+                    if previous[0] > rank:
+                        continue
+
+                claims[identity] = (rank, key, measurement, path)
+                _create_free(table, key, path, parameter, spec, label=label)
+
+    for _, key, measurement, path in claims.values():
+        table.slots.append(Slot(measurement, path, key, "P"))
+
+    _prune_unreferenced(table)
+
+
+def _prune_unreferenced(table: ParameterTable) -> None:
+    """Drop free parameters no surviving slot reads.
+
+    A group-level declaration that every measurement overrode would otherwise
+    linger as an unused parameter, inflating the count `nrw model preview`
+    reports and the fit's degrees of freedom.
+    """
+    referenced = {slot.ref for slot in table.slots if slot.kind == "P"}
+    referenced |= {
+        key for expression in table.expressions for key in _keys_in(expression.source)
+    }
+    table.free = [p for p in table.free if p.key in referenced]
+
+
+def _keys_in(source: str) -> set[str]:
+    """Extract the P[...] keys an expression refers to."""
+    return set(re.findall(r"P\[[\"'](.+?)[\"']\]", source))
+
+
+def _add_constraints(spec: ModelSpec, table: ParameterTable) -> None:
+    """Create expressions and the slots that read them."""
+    for constraint in spec.constraints:
+        series = spec.series_by_name(constraint.series)
+        if series is None:
+            raise SpecError(
+                f"constraint references unknown series {constraint.series!r}. "
+                f"Known: {', '.join(spec.group_names)}."
+            )
+        slices = table.measurements.get(series.name, [])
+        if not slices:
+            raise SpecError(f"series {series.name!r} resolved no measurements")
+
+        form = FORMS[constraint.form]
+        for path in _expand_paths(spec, constraint):
+            if constraint.form == "free":
+                _add_free_per_slice(table, spec, constraint, path, slices)
+                continue
+
+            start_key = (
+                _endpoint_key(table, path, constraint.from_, constraint)
+                if constraint.from_
+                else None
+            )
+            end_key = (
+                _endpoint_key(table, path, constraint.to, constraint)
+                if constraint.to
+                else None
+            )
+
+            extra_keys = _create_extras(table, spec, constraint, path, form, start_key)
+
+            context = FormContext(
+                start_key=start_key,
+                end_key=end_key,
+                extra_keys=extra_keys,
+                times=[
+                    m.time if m.time is not None else float(i)
+                    for i, m in enumerate(slices)
+                ],
+                n=len(slices),
+            )
+
+            for i, measurement in enumerate(slices):
+                key = f"{path.render()}@{measurement.key}"
+                try:
+                    source = form.expression(i, context)
+                except ConstraintError as exc:
+                    raise SpecError(
+                        f"{path.render()} in {series.name!r}: {exc}"
+                    ) from exc
+                table.expressions.append(
+                    Expression(
+                        key=key,
+                        source=source,
+                        comment=f"{constraint.form} across {series.name}",
+                    )
+                )
+                table.slots.append(Slot(measurement, path, key, "E"))
+
+
+def _add_free_per_slice(
+    table: ParameterTable,
+    spec: ModelSpec,
+    constraint: Constraint,
+    path: ParameterPath,
+    slices: list[Measurement],
+) -> None:
+    """Handle ``form: free`` -- one independent parameter per slice."""
+    anchor = _anchor_bounds(table, spec, path, constraint)
+    for measurement in slices:
+        key = f"{path.render()}@{measurement.key}"
+        table.free.append(
+            FreeParameter(
+                key=key,
+                display=f"{measurement.group}[{measurement.index}] {path.owner} {path.attr}",
+                value=anchor[0],
+                bounds=anchor[1],
+                comment=f"free per slice across {constraint.series}",
+            )
+        )
+        table.slots.append(Slot(measurement, path, key, "P"))
+
+    table.warnings.append(
+        f"{path.render()} is `free` across {constraint.series}: "
+        f"{len(slices)} extra parameters. The fit can use them to absorb noise."
+    )
+
+
+def _create_free(
+    table: ParameterTable,
+    key: str,
+    path: ParameterPath,
+    parameter: ParameterSpec,
+    spec: ModelSpec,
+    *,
+    label: str,
+) -> None:
+    """Create one free (or fixed) parameter if it does not already exist."""
+    if table.free_by_key(key) is not None:
+        return
+
+    # The stack declares the starting guess; `range` declares where it may go.
+    # So an unspecified value comes from the stack, and the range midpoint is
+    # only a fallback for when the stack value lies outside the bounds (which
+    # bumps would reject).
+    value = parameter.value
+    if value is None:
+        value = _stack_default(spec, path)
+        if (
+            parameter.range is not None
+            and not parameter.range[0] <= value <= parameter.range[1]
+        ):
+            value = _midpoint(parameter)
+
+    if parameter.is_fixed:
+        pinned = parameter.fixed if isinstance(parameter.fixed, int | float) else value
+        table.free.append(
+            FreeParameter(
+                key,
+                parameter.name or f"{label} {path.owner} {path.attr}",
+                float(pinned),
+                None,
+                fixed=True,
+                comment="fixed",
+            )
+        )
+        return
+
+    bounds = parameter.range
+    if bounds is None and parameter.pm is not None:
+        bounds = (value - parameter.pm, value + parameter.pm)
+
+    table.free.append(
+        FreeParameter(
+            key=key,
+            display=parameter.name or f"{label} {path.owner} {path.attr}",
+            value=float(value),
+            bounds=(float(bounds[0]), float(bounds[1])) if bounds else None,
+        )
+    )
+
+
+def _create_extras(
+    table: ParameterTable,
+    spec: ModelSpec,
+    constraint: Constraint,
+    path: ParameterPath,
+    form: Any,
+    start_key: str | None,
+) -> dict[str, str]:
+    """Create the free parameters a constraint form introduces."""
+    keys: dict[str, str] = {}
+    anchor_value, anchor_bounds = _anchor_bounds(table, spec, path, constraint)
+
+    for extra in form.extra_parameters(constraint):
+        key = f"{path.render()}@{constraint.series}:{extra.suffix}"
+        if table.free_by_key(key) is None:
+            # A knot's sensible range is the anchor parameter's own range, not
+            # the placeholder the form declares.
+            bounds = extra.bounds
+            value = extra.default
+            if "knot" in extra.suffix and anchor_bounds is not None:
+                bounds, value = anchor_bounds, anchor_value
+            table.free.append(
+                FreeParameter(
+                    key=key,
+                    display=f"{constraint.series} {path.owner} {path.attr} {extra.suffix}",
+                    value=float(value),
+                    bounds=(float(bounds[0]), float(bounds[1])),
+                    comment=extra.description,
+                )
+            )
+        keys[extra.suffix] = key
+    del start_key
+    return keys
+
+
+def _anchor_bounds(
+    table: ParameterTable, spec: ModelSpec, path: ParameterPath, constraint: Constraint
+) -> tuple[float, tuple[float, float] | None]:
+    """Borrow a starting value and bounds from the constraint's `from` state."""
+    if constraint.from_:
+        anchor = table.free_by_key(f"{path.render()}@{constraint.from_}")
+        if anchor is not None:
+            return anchor.value, anchor.bounds
+    value = _stack_default(spec, path)
+    return value, None
+
+
+def _endpoint_key(
+    table: ParameterTable, path: ParameterPath, group: str, constraint: Constraint
+) -> str:
+    """Resolve an endpoint to a free-parameter key.
+
+    Raises:
+        SpecError: If the endpoint state has no free parameter for this path.
+            Interpolating between two constants would silently freeze every
+            slice, which looks like a working fit and is not one.
+    """
+    key = f"{path.render()}@{group}"
+    if table.free_by_key(key) is not None:
+        return key
+
+    model_key = f"{path.render()}@model"
+    if table.free_by_key(model_key) is not None:
+        table.warnings.append(
+            f"{path.render()} is `per: model`, so the {constraint.form} constraint "
+            f"across {constraint.series} interpolates between the same value at "
+            "both ends and is constant."
+        )
+        return model_key
+
+    raise SpecError(
+        f"constraint on {path.render()} across {constraint.series!r} anchors at "
+        f"state {group!r}, but {path.render()} is not a free parameter there. "
+        f"Add it to `parameters` with `per: state, in: [{group}, ...]`, or the "
+        "interpolation would run between two constants."
+    )
+
+
+def _expand_paths(spec: ModelSpec, constraint: Constraint) -> list[ParameterPath]:
+    """Expand a constraint's path globs against the stack."""
+    resolved: list[ParameterPath] = []
+    seen: set[str] = set()
+
+    for pattern in constraint.paths:
+        if "*" not in pattern and "?" not in pattern:
+            path = ParameterPath.parse(pattern)
+            _check_owner_exists(spec, path, pattern)
+            if path.render() not in seen:
+                seen.add(path.render())
+                resolved.append(path)
+            continue
+
+        owner_pattern, _, attr = pattern.partition(".")
+        if not attr:
+            raise SpecError(f"constraint path {pattern!r} must be 'Layer.attr'")
+        matches = [n for n in spec.layer_names if fnmatch.fnmatch(n, owner_pattern)]
+        if not matches:
+            raise SpecError(
+                f"constraint path {pattern!r} matched no layer. "
+                f"Stack: {', '.join(spec.layer_names)}."
+            )
+        for name in matches:
+            path = ParameterPath.parse(f"{name}.{attr}")
+            if path.render() not in seen:
+                seen.add(path.render())
+                resolved.append(path)
+
+    return resolved
+
+
+def _targets_for(
+    spec: ModelSpec, table: ParameterTable, parameter: ParameterSpec
+) -> list[tuple[str, int | None]]:
+    """Resolve a parameter's ``in`` list to (group, measurement index) pairs.
+
+    An entry may name a whole group (``ocv1``) or one measurement within it
+    (``ocv1#2``). The second form is what expresses "this segment differs",
+    and it outranks the group form.
+
+    Args:
+        spec: The model spec.
+        table: The table being built, for measurement counts.
+        parameter: The parameter declaration.
+
+    Returns:
+        Pairs of (group name, index or None for the whole group).
+
+    Raises:
+        SpecError: If a target names an unknown group or an out-of-range index.
+    """
+    if parameter.in_ is None:
+        return [(group, None) for group in spec.group_names]
+
+    targets: list[tuple[str, int | None]] = []
+    for entry in parameter.in_:
+        group, _, suffix = entry.partition("#")
+        if group not in spec.group_names:
+            raise SpecError(
+                f"{parameter.path}: `in` names unknown state/series {group!r}. "
+                f"Known: {', '.join(spec.group_names)}."
+            )
+        if not suffix:
+            targets.append((group, None))
+            continue
+
+        try:
+            index = int(suffix)
+        except ValueError as exc:
+            raise SpecError(
+                f"{parameter.path}: {entry!r} -- the part after '#' must be a "
+                "zero-based measurement index."
+            ) from exc
+
+        available = len(table.measurements.get(group, []))
+        if not 0 <= index < available:
+            raise SpecError(
+                f"{parameter.path}: {entry!r} is out of range; {group!r} has "
+                f"{available} measurement(s), so valid indices are 0..{available - 1}."
+            )
+        targets.append((group, index))
+
+    return targets
+
+
+def _check_owner_exists(spec: ModelSpec, path: ParameterPath, original: str) -> None:
+    """Fail clearly when a path names a layer that is not in the stack."""
+    if path.is_probe:
+        return
+    if spec.layer(path.owner) is None:
+        suggestion = _closest(path.owner, spec.layer_names)
+        hint = f" Did you mean {suggestion!r}?" if suggestion else ""
+        raise SpecError(
+            f"{original!r} names layer {path.owner!r}, which is not in the stack "
+            f"({', '.join(spec.layer_names)}).{hint}"
+        )
+
+
+def _check_no_double_assignment(table: ParameterTable) -> None:
+    """Reject a slot written by both a free parameter and a constraint.
+
+    The likeliest user error: declaring ``Cu.thickness`` free per state and
+    also constraining it across the series. Whichever ran last would silently
+    win.
+    """
+    seen: dict[tuple[str, str], str] = {}
+    for slot in table.slots:
+        identity = (slot.measurement.key, slot.path.render())
+        previous = seen.get(identity)
+        if previous is not None and previous != slot.ref:
+            raise SpecError(
+                f"{slot.path.render()} is assigned twice for {slot.measurement.key}: "
+                f"once as {previous!r} and once as {slot.ref!r}. A path cannot be both "
+                "freely fitted and constrained for the same measurement -- remove it "
+                "from `parameters` or from the constraint's `paths`."
+            )
+        seen[identity] = slot.ref
+
+
+def _stack_default(spec: ModelSpec, path: ParameterPath) -> float:
+    """The starting value a path takes from the stack definition."""
+    if path.is_probe:
+        return {
+            "intensity": 1.0,
+            "background": 0.0,
+            "theta_offset": 0.0,
+            "sample_broadening": 0.0,
+        }.get(path.attr, 0.0)
+    layer = spec.layer(path.owner)
+    if layer is None:
+        return 0.0
+    if path.attr == "thickness":
+        return layer.thickness
+    if path.attr == "roughness":
+        return layer.roughness
+    material = spec.materials.get(layer.material_key)
+    if material is None:
+        return 0.0
+    return float(material.rho or 0.0) if path.attr == "rho" else float(material.irho)
+
+
+def _midpoint(parameter: ParameterSpec) -> float:
+    """Midpoint of a parameter's range."""
+    low, high = parameter.range  # type: ignore[misc]
+    return (low + high) / 2.0
+
+
+def _closest(word: str, options: list[str]) -> str | None:
+    """Nearest option by case-insensitive similarity, for a did-you-mean."""
+    import difflib
+
+    matches = difflib.get_close_matches(
+        word.lower(), [o.lower() for o in options], n=1, cutoff=0.6
+    )
+    if not matches:
+        return None
+    return next((o for o in options if o.lower() == matches[0]), None)

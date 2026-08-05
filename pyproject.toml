@@ -153,7 +153,13 @@ src = ["src", "tests"]
 # neutron-ai repos. Formatting them would fork a shared file for cosmetic
 # reasons -- and `ruff format .` did exactly that once, caught by
 # tests/test_vendor.py. Excluded so it cannot happen again.
-extend-exclude = ["src/nr_workbench/_vendor"]
+extend-exclude = [
+    "src/nr_workbench/_vendor",
+    # The vendored hand-written reference the model gate compares against. It
+    # is kept verbatim on purpose: reformatting it would weaken the comparison
+    # and obscure what the generator is being measured against.
+    "tests/data/reference",
+]
 
 [tool.ruff.lint]
 select = [
@@ -182,6 +188,9 @@ ignore = [
 # deliberately; see docs/ground_truths.md.
 "src/nr_workbench/tnr/ascii.py" = ["B905"]
 "src/nr_workbench/tnr/plots.py" = ["B905"]
+# ConstraintForm's classmethods define the interface subclasses implement; a
+# form that does not need `constraint` or `context` still has to accept them.
+"src/nr_workbench/spec/constraints.py" = ["ARG003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["nr_workbench"]

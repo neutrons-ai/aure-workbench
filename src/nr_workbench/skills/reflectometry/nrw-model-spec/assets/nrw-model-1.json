@@ -1,0 +1,749 @@
+{
+  "$defs": {
+    "Constraint": {
+      "additionalProperties": false,
+      "description": "A functional form tying a series' parameters to its endpoints.\n\nThis is what the hand-written ``linear_constraints()`` does, declared\ninstead of coded: each slice's value becomes an expression in the endpoint\nparameters, so only the endpoints are free.\n\nAttributes:\n    series: The series this applies to.\n    form: The functional form. See :mod:`nr_workbench.spec.constraints`.\n    paths: Parameter paths to constrain. Globs allowed, e.g. ``*.roughness``.\n    from_: State supplying the starting value, for interpolating forms.\n    to: State supplying the final value.\n    knots: Number of free knots, for ``piecewise_linear``.\n    tau: Bounds for the time constant, for ``exponential``.\n    t_half: Bounds for the midpoint, for ``logistic``.\n    width: Bounds for the transition width, for ``logistic``.",
+      "properties": {
+        "series": {
+          "title": "Series",
+          "type": "string"
+        },
+        "form": {
+          "title": "Form",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To"
+        },
+        "knots": {
+          "default": 3,
+          "title": "Knots",
+          "type": "integer"
+        },
+        "tau": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tau"
+        },
+        "t_half": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Half"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "series",
+        "form",
+        "paths"
+      ],
+      "title": "Constraint",
+      "type": "object"
+    },
+    "FitSettings": {
+      "additionalProperties": false,
+      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Bumps fitter name.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    seed: Random seed.",
+      "properties": {
+        "method": {
+          "default": "amoeba",
+          "title": "Method",
+          "type": "string"
+        },
+        "steps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Steps"
+        },
+        "samples": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Samples"
+        },
+        "burn": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Burn"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        }
+      },
+      "title": "FitSettings",
+      "type": "object"
+    },
+    "Layer": {
+      "additionalProperties": false,
+      "description": "One slab in the stack.\n\nAttributes:\n    name: Layer name; how it is addressed in paths, and how the generated\n        script indexes the refl1d sample.\n    material: Key into ``materials``. Defaults to the layer name.\n    thickness: Starting thickness in Angstroms. Ignored for the ambient\n        and substrate, which are semi-infinite.\n    roughness: Starting interfacial roughness in Angstroms.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "material": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material"
+        },
+        "thickness": {
+          "default": 0.0,
+          "title": "Thickness",
+          "type": "number"
+        },
+        "roughness": {
+          "default": 0.0,
+          "title": "Roughness",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Layer",
+      "type": "object"
+    },
+    "Material": {
+      "additionalProperties": false,
+      "description": "A material's scattering length density.\n\nAttributes:\n    rho: Real SLD in 1e-6 A^-2.\n    irho: Imaginary SLD (absorption).\n    formula: Chemical formula, for SLD lookup when ``rho`` is omitted.\n    density: Mass density in g/cm^3, used with ``formula``.",
+      "properties": {
+        "rho": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rho"
+        },
+        "irho": {
+          "default": 0.0,
+          "title": "Irho",
+          "type": "number"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formula"
+        },
+        "density": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Density"
+        }
+      },
+      "title": "Material",
+      "type": "object"
+    },
+    "ParameterSpec": {
+      "additionalProperties": false,
+      "description": "One free or fixed parameter.\n\nAttributes:\n    path: What it addresses, e.g. ``Cu.thickness`` or ``probe.intensity``.\n    per: How it is shared. See the module docstring.\n    in_: Restrict to these states or series. ``None`` means all of them.\n    range: Bounds as ``[min, max]``.\n    value: Starting value. Defaults to the stack's.\n    pm: Symmetric bounds around ``value``, as an alternative to ``range``.\n    fixed: Pin to ``value`` and do not fit it.\n    init: ``stack`` takes the starting value from the layer definition.\n    name: Override the generated parameter name.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "per": {
+          "default": "state",
+          "enum": [
+            "model",
+            "state",
+            "measurement"
+          ],
+          "title": "Per",
+          "type": "string"
+        },
+        "in": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In"
+        },
+        "range": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Range"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "pm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pm"
+        },
+        "fixed": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fixed"
+        },
+        "init": {
+          "anyOf": [
+            {
+              "const": "stack",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Init"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ParameterSpec",
+      "type": "object"
+    },
+    "Probe": {
+      "additionalProperties": false,
+      "description": "How the probe is constructed from the data.\n\nAttributes:\n    resolution: ``angular_only`` builds dT from dQ and sets dL = 0, which\n        is the BL-4B convention and what the hand-written scripts do.\n        ``moderator`` additionally models the wavelength spread.\n    dq_is_fwhm: Whether the 4th data column is FWHM. It is, for REF_L --\n        treating it as sigma scales every resolution by 2.355.\n    back_reflection: Neutrons enter through the substrate.",
+      "properties": {
+        "resolution": {
+          "default": "angular_only",
+          "enum": [
+            "angular_only",
+            "moderator"
+          ],
+          "title": "Resolution",
+          "type": "string"
+        },
+        "dq_is_fwhm": {
+          "default": true,
+          "title": "Dq Is Fwhm",
+          "type": "boolean"
+        },
+        "back_reflection": {
+          "default": false,
+          "title": "Back Reflection",
+          "type": "boolean"
+        }
+      },
+      "title": "Probe",
+      "type": "object"
+    },
+    "Segment": {
+      "additionalProperties": false,
+      "description": "One angle segment of a steady-state measurement.\n\nAttributes:\n    file: Path to the reduced data, relative to the project root.\n    theta: Incident angle in degrees -- theta, not two-theta.",
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "theta": {
+          "title": "Theta",
+          "type": "number"
+        }
+      },
+      "required": [
+        "file",
+        "theta"
+      ],
+      "title": "Segment",
+      "type": "object"
+    },
+    "Series": {
+      "additionalProperties": false,
+      "description": "A time-resolved measurement: a state with a time axis.\n\nAttributes:\n    name: Identifier used in paths, ``in`` lists and ``constraints.series``.\n    condition: Free text, e.g. \"during EIS\".\n    run: Run number.\n    reduced_dir: Directory of reduced slices, relative to the project root.\n    theta: Incident angle in degrees. tNR is a single angle.\n    select: Which slices to include.\n    time_from: Where slice times come from. ``filename`` parses\n        ``r<run>_t<seconds>.txt``; ``reduction_json`` reads the sidecar,\n        which is the only source that also carries interval types.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "condition": {
+          "default": "",
+          "title": "Condition",
+          "type": "string"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "reduced_dir": {
+          "title": "Reduced Dir",
+          "type": "string"
+        },
+        "theta": {
+          "default": 0.6,
+          "title": "Theta",
+          "type": "number"
+        },
+        "select": {
+          "$ref": "#/$defs/SeriesSelect"
+        },
+        "time_from": {
+          "default": "filename",
+          "enum": [
+            "filename",
+            "reduction_json"
+          ],
+          "title": "Time From",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "reduced_dir"
+      ],
+      "title": "Series",
+      "type": "object"
+    },
+    "SeriesSelect": {
+      "additionalProperties": false,
+      "description": "Which slices of a time-resolved run to include.\n\nAttributes:\n    t_start: First slice time in seconds.\n    t_stop: Last slice time in seconds, inclusive.\n    t_step: Spacing in seconds.\n    labels: Explicit interval labels or fnmatch globs, instead of a time range.\n    interval_types: Restrict to these interval types, e.g. ``[hold]``.",
+      "properties": {
+        "t_start": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Start"
+        },
+        "t_stop": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Stop"
+        },
+        "t_step": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T Step"
+        },
+        "labels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Labels"
+        },
+        "interval_types": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval Types"
+        }
+      },
+      "title": "SeriesSelect",
+      "type": "object"
+    },
+    "State": {
+      "additionalProperties": false,
+      "description": "A steady-state measurement of the sample under one condition.\n\nAttributes:\n    name: Identifier used in paths and ``in`` lists.\n    condition: Free text, e.g. \"OCV before EIS\". Carried into the record.\n    run: Run number, used to resolve ``segments: auto``.\n    kind: ``partials`` (one file per angle) or ``combined``.\n    segments: Explicit segment list, or ``auto`` to resolve from ``run``.\n    thetas: Angles for ``segments: auto``.\n    data_dir: Directory holding the files, relative to the project root.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "condition": {
+          "default": "",
+          "title": "Condition",
+          "type": "string"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "kind": {
+          "default": "partials",
+          "enum": [
+            "partials",
+            "combined"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "segments": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Segment"
+              },
+              "type": "array"
+            },
+            {
+              "const": "auto",
+              "type": "string"
+            }
+          ],
+          "default": "auto",
+          "title": "Segments"
+        },
+        "thetas": {
+          "items": {
+            "type": "number"
+          },
+          "title": "Thetas",
+          "type": "array"
+        },
+        "data_dir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data Dir"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "State",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A neutron reflectometry model: one layer stack, any number of steady-state states and time-resolved series, with functional constraints across a series.",
+  "properties": {
+    "schema": {
+      "const": "nrw-model/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "sample": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Sample"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "materials": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Material"
+      },
+      "title": "Materials",
+      "type": "object"
+    },
+    "stack": {
+      "items": {
+        "$ref": "#/$defs/Layer"
+      },
+      "title": "Stack",
+      "type": "array"
+    },
+    "probe": {
+      "$ref": "#/$defs/Probe"
+    },
+    "states": {
+      "items": {
+        "$ref": "#/$defs/State"
+      },
+      "title": "States",
+      "type": "array"
+    },
+    "series": {
+      "items": {
+        "$ref": "#/$defs/Series"
+      },
+      "title": "Series",
+      "type": "array"
+    },
+    "parameters": {
+      "items": {
+        "$ref": "#/$defs/ParameterSpec"
+      },
+      "title": "Parameters",
+      "type": "array"
+    },
+    "constraints": {
+      "items": {
+        "$ref": "#/$defs/Constraint"
+      },
+      "title": "Constraints",
+      "type": "array"
+    },
+    "fit": {
+      "$ref": "#/$defs/FitSettings"
+    },
+    "post_build": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Post Build"
+    }
+  },
+  "required": [
+    "schema",
+    "name",
+    "stack"
+  ],
+  "title": "nrw-model/1",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
