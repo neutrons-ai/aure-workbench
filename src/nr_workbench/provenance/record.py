@@ -151,6 +151,9 @@ class FitRecord:
         n_free: Number of free parameters.
         n_points: Number of data points.
         artifacts: Named output files, relative to the fit directory.
+        models: Export position to model name, so a consumer can tie
+            ``<basename>-3-refl.dat`` back to the measurement it came from
+            rather than inferring it from build order.
         command: The command line that produced this record.
         note: Optional free-text note supplied at run time.
         error: Failure message when ``status`` is ``failed``.
@@ -171,6 +174,7 @@ class FitRecord:
     n_free: int | None = None
     n_points: int | None = None
     artifacts: dict[str, str] = field(default_factory=dict)
+    models: list[dict[str, Any]] = field(default_factory=list)
     command: str = ""
     note: str | None = None
     error: str | None = None
@@ -335,6 +339,7 @@ class FitDirectory:
                 "chisq": record.chisq,
                 "n_free": record.n_free,
                 "n_points": record.n_points,
+                "models": record.models,
                 "error": record.error,
             },
             exit_code=0 if record.status == "ok" else 1,

@@ -32,7 +32,6 @@ EXPECTED_SCAFFOLD_FILES = {
     "docs/ground_truths.md",
     "nrw.toml",
     "samples/.gitkeep",
-    "scripts/install_skills.py",
 }
 
 
@@ -118,24 +117,35 @@ def test_init_never_installs_byte_compiled_files(
 ) -> None:
     """Stale .pyc files must never leak into a scaffolded project.
 
-    The template tree lives inside the package, so pip byte-compiles any `.py`
-    template on install: `templates/project/scripts/install_skills.py` gains a
-    sibling `__pycache__/install_skills.cpython-3xx.pyc` in site-packages.
-    Copying it into the user's project is wrong and confusing. An editable
-    install never shows this, so the condition is simulated here.
+    Both the template tree and the skills tree live inside the package, so pip
+    byte-compiles any `.py` they carry on install: a skill's `scripts/*.py`
+    gains a sibling `__pycache__/*.cpython-3xx.pyc` in site-packages. Copying
+    that into a user's project is wrong and confusing. An editable install
+    never shows it -- nothing compiles the source tree -- so the condition is
+    simulated here for both trees.
     """
+    from nr_workbench import skills_install
     from nr_workbench.project import render
     from nr_workbench.project.scaffold import apply_scaffold
 
     fake_templates = tmp_path / "pkg" / "templates"
     shutil.copytree(render.templates_root(), fake_templates)
-    cache = fake_templates / "project" / "scripts" / "__pycache__"
-    cache.mkdir(parents=True, exist_ok=True)
-    (cache / "install_skills.cpython-314.pyc").write_bytes(b"\x00compiled")
+    template_cache = fake_templates / "project" / "__pycache__"
+    template_cache.mkdir(parents=True, exist_ok=True)
+    (template_cache / "anything.cpython-314.pyc").write_bytes(b"\x00compiled")
     monkeypatch.setattr(render, "templates_root", lambda: fake_templates)
 
+    fake_skills = tmp_path / "pkg" / "skills"
+    shutil.copytree(skills_install.bundled_skills_root(), fake_skills)
+    scripts = next(fake_skills.rglob("scripts"), None)
+    assert scripts is not None, "expected at least one bundled skill with scripts/"
+    skill_cache = scripts / "__pycache__"
+    skill_cache.mkdir(parents=True, exist_ok=True)
+    (skill_cache / "summarize.cpython-314.pyc").write_bytes(b"\x00compiled")
+    monkeypatch.setattr(skills_install, "bundled_skills_root", lambda: fake_skills)
+
     target = tmp_path / "proj"
-    apply_scaffold(target, plan_project_files(context, include_skills=False))
+    apply_scaffold(target, plan_project_files(context))
 
     assert list(target.rglob("*.pyc")) == []
     assert list(target.rglob("__pycache__")) == []

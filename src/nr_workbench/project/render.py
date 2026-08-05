@@ -28,12 +28,12 @@ JINJA_SUFFIX = ".j2"
 
 #: Never installed into a user's project.
 #:
-#: `__pycache__` is not hypothetical: the template tree lives inside the
-#: package, so pip byte-compiles any `.py` template on install --
-#: `templates/project/scripts/install_skills.py` gains a sibling
-#: `__pycache__/install_skills.cpython-3xx.pyc` in site-packages. Without this
-#: filter that stale .pyc is copied into every scaffolded project. An editable
-#: install never shows it, because nothing compiles the source tree.
+#: `__pycache__` is not hypothetical: the template and skill trees live inside
+#: the package, so pip byte-compiles any `.py` they contain on install -- a
+#: skill's `scripts/*.py` gains a sibling `__pycache__/*.cpython-3xx.pyc` in
+#: site-packages. Without this filter that stale .pyc is copied into every
+#: scaffolded project. An editable install never shows it, because nothing
+#: compiles the source tree.
 _EXCLUDED_DIRS = frozenset({"__pycache__"})
 _EXCLUDED_SUFFIXES = frozenset({".pyc", ".pyo"})
 

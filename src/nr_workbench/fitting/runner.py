@@ -108,6 +108,7 @@ class FitOutcome:
         n_free: Number of free parameters.
         n_points: Number of data points.
         artifacts: Named output files relative to the fit directory.
+        models: Export position to model name; see :func:`describe_models`.
         export_ok: Whether the bumps export completed.
         export_error: Why the export failed, if it did.
     """
@@ -116,6 +117,7 @@ class FitOutcome:
     n_free: int | None = None
     n_points: int | None = None
     artifacts: dict[str, str] = field(default_factory=dict)
+    models: list[dict[str, Any]] = field(default_factory=list)
     export_ok: bool = True
     export_error: str | None = None
 
@@ -239,6 +241,47 @@ def describe_problem(problem: Any) -> tuple[int | None, int | None]:
     return n_free, n_points
 
 
+def describe_models(problem: Any) -> list[dict[str, Any]]:
+    """Map each model's export position to its name and size.
+
+    bumps writes its per-model exports as ``<basename>-<i+1>-refl.dat``,
+    numbered by position in ``problem.models`` and nothing else -- the name is
+    not used in the filename. Anything reading those files afterwards therefore
+    has to know the ordering, and reconstructing it by re-parsing the script is
+    guesswork that goes wrong quietly: a plot labelled ``ocv2`` showing
+    ``ocv1``'s data looks perfectly reasonable.
+
+    So the ordering is recorded here, once, from the object that was actually
+    fitted. Generated scripts name their Experiments after the spec slot
+    (``ocv1#0``); a hand-written script may not name them at all, in which case
+    only the position is recorded and consumers can say so honestly rather than
+    invent a label.
+
+    Args:
+        problem: A bumps ``FitProblem``.
+
+    Returns:
+        One entry per model, in export order, each with its 1-based ``index``
+        (matching the export filename), ``name`` if the script set one, and
+        ``n_points`` where obtainable. Empty if the problem exposes no models.
+    """
+    try:
+        models = list(problem.models)
+    except Exception:
+        return []
+
+    described: list[dict[str, Any]] = []
+    for position, model in enumerate(models, start=1):
+        entry: dict[str, Any] = {"index": position}
+        name = getattr(model, "name", None)
+        if name:
+            entry["name"] = str(name)
+        with suppress(Exception):
+            entry["n_points"] = int(model.numpoints())
+        described.append(entry)
+    return described
+
+
 def run_fit(
     problem: Any,
     output_dir: Path,
@@ -304,6 +347,7 @@ def run_fit(
     with suppress(Exception):
         outcome.chisq = float(problem.chisq())
     outcome.n_free, outcome.n_points = describe_problem(problem)
+    outcome.models = describe_models(problem)
 
     _export(problem, result, Path(output_dir), outcome)
     return outcome

@@ -226,7 +226,14 @@ def _stack(table: ParameterTable) -> str:
 
 
 def _experiments(table: ParameterTable) -> str:
-    """Create every Experiment, grouped, before any parameter is touched."""
+    """Create every Experiment, grouped, before any parameter is touched.
+
+    Each Experiment carries ``name=`` its slot key. bumps numbers its export
+    files by position alone (``basename-1-refl.dat``), so without a name there
+    is nothing in the output tying a file back to the measurement that produced
+    it -- and position is a fragile thing to rely on. The name also becomes the
+    title of bumps' own plots.
+    """
     lines = [
         "# --- experiments " + "-" * 58,
         "",
@@ -240,7 +247,8 @@ def _experiments(table: ParameterTable) -> str:
             lines += [
                 f"_probe = create_probe(PROJECT_ROOT / {m.file!r}, {m.theta!r}){comment}",
                 "_sample = create_sample()",
-                f"EXP[{group!r}].append(Experiment(sample=_sample, probe=_probe))",
+                f"EXP[{group!r}].append("
+                f"Experiment(sample=_sample, probe=_probe, name={m.key!r}))",
                 f"SAMPLES[{group!r}].append(_sample)",
             ]
     return "\n".join(lines)

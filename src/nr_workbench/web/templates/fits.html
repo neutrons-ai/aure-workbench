@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Fits — nr-workbench{% endblock %}
+
+{% block content %}
+<h1 class="h4 mb-3">Fits <span class="text-secondary small">{{ fits|length }} recorded</span></h1>
+
+{% if not fits %}
+<div class="alert alert-secondary">
+  No fits recorded yet. Run one with <code>nrw fit run &lt;script.py&gt;</code>.
+</div>
+{% else %}
+<table class="table table-sm table-hover">
+  <thead><tr>
+    <th>fit_id</th><th>sample</th><th>model</th>
+    <th class="text-end">χ²</th><th class="text-end">free</th>
+    <th>origin</th><th>when</th><th></th>
+  </tr></thead>
+  <tbody>
+  {% for row in fits %}
+    <tr>
+      <td><a class="mono" href="{{ url_for('fit', fit_id=row.fit_id) }}">{{ row.fit_id }}</a>
+        {% for label in row.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+      </td>
+      <td class="small">
+        {% if row.sample %}<a href="{{ url_for('sample', sample_id=row.sample) }}">{{ row.sample }}</a>{% endif %}
+      </td>
+      <td class="small">{{ row.model }}</td>
+      <td class="text-end mono">{{ '%.4g'|format(row.chisq) if row.chisq is not none else '—' }}</td>
+      <td class="text-end mono">{{ row.n_free or '—' }}</td>
+      <td class="small text-secondary">{{ row.script_origin or '—' }}</td>
+      <td class="small text-secondary">{{ row.started_at }}</td>
+      <td>{% if row.status != 'ok' %}<span class="badge text-bg-danger">{{ row.status }}</span>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

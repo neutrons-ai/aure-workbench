@@ -22,11 +22,9 @@ load the skill.
 
 **To change a standard, edit its `SKILL.md` — never the dispatcher.**
 
-Pull more domain skills from the neutron-skills library:
-
-```bash
-python scripts/install_skills.py --query "neutron reflectometry"
-```
+`nrw skills sync` reinstalls the bundled skills after a package upgrade. A
+skill you have edited locally is never silently replaced — the new version is
+written alongside as `.nrw-new` for you to merge.
 
 ## Provenance rules
 
@@ -52,12 +50,49 @@ project's memory between sessions.
 
 ## Commands
 
+**Setting up and looking around**
+
 | Task | Command |
 |---|---|
 | Check the environment | `nrw doctor` |
 | Add a sample | `nrw sample new <ID>` |
+| See what data is actually on disk | `nrw sample scan <ID>` |
+| Browse everything in a browser | `nrw serve` |
+
+**Understanding the data before modelling it**
+
+| Task | Command |
+|---|---|
 | Assess a tNR run | `nrw tnr assess data/tnr/<dir> --label <label>` |
-| Trace a figure to its fit | `nrw whence <path>` |
+| One metric at a time | `nrw tnr amplitude\|variogram\|chi2\|qbands\|pca <dir>` |
+
+Read the `assessment.json` verdict before choosing a constraint form — it
+reports whether anything is changing, whether one reaction coordinate explains
+it, and whether the change looks like a thickness or a contrast.
+
+**Modelling**
+
+| Task | Command |
+|---|---|
+| Start a spec from what the scan found | `nrw model new <ID> --name <name>` |
+| Check a spec without fitting | `nrw model validate <spec.yaml>` |
+| Build it in-process and report the parameter table | `nrw model preview <spec.yaml>` |
+| Write the refl1d script | `nrw model generate <spec.yaml>` |
+| Take manual ownership of a script | `nrw model fork <script.py>` |
+
+**Fitting and provenance**
+
+| Task | Command |
+|---|---|
+| Run a fit (spec-generated or hand-written) | `nrw fit run <script.py>` |
+| List fits | `nrw ls` |
+| Trace a figure, `.par`, or data file to its fit | `nrw whence <path>` |
+| Compare two fits | `nrw diff <fit_a> <fit_b>` |
+| Bless a result | `nrw promote <fit_id> --as final --reason '...'` |
 | Verify project integrity | `nrw check` |
 
-Run `nrw --help` for the full surface; not every command exists yet.
+`nrw serve` also exposes `/api/…`, which returns exactly what the browser
+renders — useful for reading a curve, an assessment, or a fit's provenance
+without opening a page.
+
+Run `nrw --help` for the full surface.

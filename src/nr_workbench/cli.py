@@ -514,6 +514,18 @@ def check_command(as_json: bool) -> None:
     run_check(as_json=as_json)
 
 
+@main.command("serve")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Interface.")
+@click.option("--port", default=8765, show_default=True, type=int, help="Port.")
+@click.option("--debug", is_flag=True, help="Enable the Flask reloader.")
+def serve_command(**kwargs: object) -> None:
+    """Browse the project: every measurement, fit, and SLD curve on one page."""
+    from nr_workbench.commands.serve import run_serve
+
+    run_serve(**kwargs)  # type: ignore[arg-type]
+
+
 @main.group("skills")
 def skills_group() -> None:
     """Manage the project's skills/ directory."""

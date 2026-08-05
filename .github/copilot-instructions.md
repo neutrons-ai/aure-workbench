@@ -112,13 +112,6 @@ while `src/nr_workbench/skills/` holds the reflectometry domain skills this
 package *ships to users*. The latter follow the neutron-skills v2 anatomy and
 are enforced by `tests/test_skills.py`.
 
-To pull more domain skills from
-[neutron-skills](https://github.com/neutrons-ai/neutron-skills):
-
-```bash
-python scripts/install_skills.py --query "<topic>"
-```
-
 ---
 
 **Remember**: every interaction should leave working, tested, documented code

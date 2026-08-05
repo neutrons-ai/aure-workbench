@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}{{ sample.id }} — nr-workbench{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('api.sample', sample_id=sample.id) }}">API</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-baseline gap-3 mb-2">
+  <h1 class="h4 mb-0">{{ sample.title }}</h1>
+  <span class="text-secondary mono">{{ sample.id }}</span>
+  <span class="text-secondary small">
+    {{ sample.steady|length }} steady ·
+    {{ sample.series|length }} series ·
+    {{ sample.fits|length }} fits
+  </span>
+</div>
+
+{% if problems %}
+<div class="alert alert-warning py-2 problem">
+  <strong>Notes on this data</strong>
+  <ul class="mb-0 mt-1">
+    {% for problem in problems %}
+    <li><span class="mono">{{ problem.scope }}</span> — {{ problem.message }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if sample.present_but_undocumented or sample.documented_but_absent %}
+<div class="alert alert-info py-2 problem">
+  {% if sample.present_but_undocumented %}
+  <div>Runs on disk that <code>sample.md</code> does not mention:
+    <span class="mono">{{ sample.present_but_undocumented|join(', ') }}</span></div>
+  {% endif %}
+  {% if sample.documented_but_absent %}
+  <div>Runs mentioned in <code>sample.md</code> with no data on disk:
+    <span class="mono">{{ sample.documented_but_absent|join(', ') }}</span></div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="landscape">
+  <div>
+    <!-- Panel 1: every steady state, plus the tNR slice under the cursor -->
+    <div class="panel">
+      <div class="panel-head">
+        <span>Reflectivity</span>
+        <span class="hint">
+          colour = run, marker = angle segment; segments are not stitched
+        </span>
+        <div class="form-check form-switch ms-auto mb-0">
+          <input class="form-check-input" type="checkbox" id="rq4-toggle">
+          <label class="form-check-label small" for="rq4-toggle">R·Q⁴</label>
+        </div>
+      </div>
+      <div id="plot-refl" class="plot plot-rq"></div>
+    </div>
+
+    {% if series %}
+    <!-- Panels 2 and 3 share one time axis, so a feature in the map lines up
+         with the point on the trajectory that produced it. -->
+    <div class="panel">
+      <div class="panel-head">
+        <span>Change vs reference — {{ series.name }}</span>
+        <span class="hint">click or drag to move the time cursor; ← → to step</span>
+        <span class="cursor-readout" id="cursor-readout">no slice selected</span>
+      </div>
+      <div id="plot-heatmap" class="plot plot-heatmap"></div>
+      {% if assessment and assessment.amplitude_series %}
+      <div id="plot-amplitude" class="plot plot-amplitude"></div>
+      {% endif %}
+      <div class="px-3 pb-2 small text-secondary">
+        reference: {{ series.reference.description }}
+        {%- if series.reference.median_rel_err %}
+        (median dR/R {{ '%.4f'|format(series.reference.median_rel_err) }})
+        {%- endif %}
+      </div>
+    </div>
+    {% elif sample.series %}
+    <div class="alert alert-secondary problem">
+      This sample has {{ sample.series|length }} series on disk, but none could
+      be plotted against time. See the notes above.
+    </div>
+    {% endif %}
+
+    {% if assessment %}
+    <div class="panel">
+      <div class="panel-head">
+        <span>Assessment — {{ assessment.label }}</span>
+      </div>
+      <div class="p-3">
+        <p class="mb-2"><strong>{{ assessment.assessment.verdict }}</strong></p>
+        <dl class="row mb-0 small">
+          {% set amp = assessment.assessment.amplitude %}
+          {% set tpl = assessment.assessment.template %}
+          {% if amp %}
+          <dt class="col-sm-3">amplitude</dt>
+          <dd class="col-sm-9 mono">
+            a ∈ [{{ amp.a_range[0] }}, {{ amp.a_range[1] }}],
+            max |a/σ| = {{ amp.max_significance }},
+            χ²_res = {{ amp.chi2_res_median }},
+            {{ amp.trajectory }}
+          </dd>
+          {% endif %}
+          {% if tpl %}
+          <dt class="col-sm-3">template</dt>
+          <dd class="col-sm-9 mono">
+            {{ tpl.classification }} → {{ tpl.implied_change }}
+            {%- if tpl.node_spacing_invA %}, ΔQ = {{ tpl.node_spacing_invA }} Å⁻¹{% endif %}
+          </dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if sample.fits %}
+    <div class="panel">
+      <div class="panel-head"><span>Fits</span></div>
+      <table class="table table-sm table-hover mb-0">
+        <thead><tr>
+          <th>fit_id</th><th>model</th><th class="text-end">χ²</th>
+          <th class="text-end">free</th><th>method</th><th>when</th><th></th>
+        </tr></thead>
+        <tbody>
+        {% for row in sample.fits %}
+          <tr>
+            <td><a class="mono" href="{{ url_for('fit', fit_id=row.fit_id) }}">{{ row.fit_id }}</a>
+              {% for label in row.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+            </td>
+            <td class="small">{{ row.model }}</td>
+            <td class="text-end mono">{{ '%.4g'|format(row.chisq) if row.chisq is not none else '—' }}</td>
+            <td class="text-end mono">{{ row.n_free or '—' }}</td>
+            <td class="small">{{ row.method or (row.settings or {}).get('method') or '—' }}</td>
+            <td class="small text-secondary">{{ row.started_at }}</td>
+            <td class="small">{% if row.status != 'ok' %}<span class="badge text-bg-danger">{{ row.status }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Right rail: the human record, kept beside the data it describes -->
+  <aside class="rail">
+    <div class="panel">
+      <div class="panel-head"><span>sample.md</span></div>
+      <div class="p-3 markdown" id="sample-md">
+        {%- set rendered = sample.markdown|markdown -%}
+        {%- if rendered -%}
+        {{ rendered }}
+        {%- else -%}
+        <p class="text-secondary small mb-0">
+          No notes yet. <code>sample.md</code> is where the conditions,
+          composition, and intent live.
+        </p>
+        {%- endif -%}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span>Measurements</span></div>
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for entry in sample.steady %}
+          <tr>
+            <td class="mono">{{ entry.run }}</td>
+            <td class="small text-secondary">
+              steady, {{ entry.segments|length }} segment(s)
+            </td>
+          </tr>
+        {% endfor %}
+        {% for entry in sample.series %}
+          <tr>
+            <td class="mono">{{ entry.run or entry.name }}</td>
+            <td class="small text-secondary">
+              series, {{ entry.n_slices }} slice(s), {{ entry.kind }}
+              {%- if not entry.plottable %} <span class="badge text-bg-warning">no JSON</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if sample.models or sample.scripts %}
+    <div class="panel">
+      <div class="panel-head"><span>Models</span></div>
+      <div class="p-3 small">
+        {% for name in sample.models %}
+        <div class="mono">{{ name }}</div>
+        {% endfor %}
+        {% for name in sample.scripts %}
+        <div class="mono text-secondary">{{ name }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  const curves = {{ curves|nrwjson|safe }};
+  const series = {{ (series or None)|nrwjson|safe }};
+  const amplitude = {{ ((assessment or {}).get('amplitude_series') or None)|nrwjson|safe }};
+  const sampleId = {{ sample.id|nrwjson|safe }};
+
+  const refl = NRW.reflPanel("plot-refl", curves, { toggleId: "rq4-toggle" });
+  if (!series) return;
+
+  /* The slice curves are fetched once, on first use of the cursor: the
+     landscape is useful without them, and they are the largest payload. */
+  let sliceCache = null;
+  let pending = null;
+  const readout = document.getElementById("cursor-readout");
+
+  function loadSlices() {
+    if (sliceCache) return Promise.resolve(sliceCache);
+    if (!pending) {
+      pending = fetch("/api/samples/" + encodeURIComponent(sampleId) +
+                      "/series/" + encodeURIComponent(series.name) + "/curves")
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.json();
+        })
+        .then(function (payload) {
+          sliceCache = payload.curves;
+          return sliceCache;
+        });
+    }
+    return pending;
+  }
+
+  const panels = NRW.seriesPanels(
+    "plot-heatmap",
+    amplitude ? "plot-amplitude" : null,
+    series,
+    amplitude,
+    function (index, time) {
+      readout.textContent = "t = " + time.toFixed(0) + " s · " + series.labels[index];
+      loadSlices().then(function (slices) {
+        const slice = slices[index];
+        if (!slice) return;
+        refl.setOverlay({
+          label: "t = " + time.toFixed(0) + " s",
+          q: slice.q,
+          r: slice.r,
+        });
+      }).catch(function (error) {
+        readout.textContent = "slice unavailable: " + error.message;
+      });
+    }
+  );
+
+  document.addEventListener("keydown", function (event) {
+    if (event.target.tagName === "INPUT") return;
+    if (event.key === "ArrowRight") { panels.step(1); event.preventDefault(); }
+    if (event.key === "ArrowLeft") { panels.step(-1); event.preventDefault(); }
+  });
+})();
+</script>
+{% endblock %}

@@ -49,6 +49,7 @@ dependencies = [
     "click>=8.1",
     "jinja2>=3.1",
     "flask>=3.0",
+    "markdown-it-py>=3.0",
     "refl1d>=1.0,<2",
     "bumps>=1.0,<2",
     "aure @ git+https://github.com/neutrons-ai/aure.git@3021fee37294b938134d052e16dac4f9c282e97f",

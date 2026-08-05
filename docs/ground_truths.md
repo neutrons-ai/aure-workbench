@@ -351,3 +351,75 @@ generates, and builds as written.
 That is insufficient: control bytes including NUL are valid UTF-8 code points,
 so `b"\x00\x01\x02"` decodes cleanly and got fed into a text diff. Now
 `_is_binary` checks for a NUL byte first, which is what git does.
+
+### 2026-08-05: bumps numbers its exports by position and ignores `Experiment.name`
+
+`FitProblem.save` is `for i, f in enumerate(self.models): f.save(basename + "-%d" % (i + 1))`.
+The name is used in plot titles but never in a filename, so
+`cu-thf-218389-full-sequence-7-refl.dat` says nothing about which measurement
+it holds. Anything reading those files afterwards has to know the build order.
+
+Reconstructing that order by re-parsing the script is guesswork that fails
+quietly -- a curve labelled `ocv2` showing `ocv1`'s data looks entirely
+reasonable. So the ordering is now recorded at fit time, from the object that
+was actually fitted: `describe_models(problem)` walks `problem.models` and
+writes `info.models: [{index, name, n_points}]` into the manifest. The
+generator additionally passes `name=<slot key>` (`ocv1#0`, `tnr#12`) to every
+`Experiment`, which also makes bumps' own plots self-describing.
+
+A hand-written script may name nothing. The UI then labels by position and
+says so, rather than inventing spec slot names that were never declared.
+
+Corollary for any `<basename>-<n>` glob: sort on the parsed integer. Lexical
+order puts model 10 between 1 and 2.
+
+### 2026-08-05: the tNR heatmap must not pick its own reference
+
+`series_data` computes the fractional residual with `tnr.run.load` plus
+`tnr.reference.fractional_residuals` -- the same functions `nrw tnr assess`
+uses. Choosing a reference block independently in the web layer would let the
+picture and the numbers drift apart, so that the map shows change against one
+baseline while `a(t)` beneath it is normalised against another.
+
+Unmeasured cells are `NaN`, not 0. On a diverging colour scale zero-fill and
+"did not change" are the same colour, and only one of them is a measurement.
+
+### 2026-08-05: analysis warnings are data, not chatter
+
+"101 interval file(s) listed in JSON not found" is a fact about the run that
+the scientist needs. It was going to stderr, which for a web request means a
+server log nobody reads. `tnr.notify.collect()` now redirects the channel on a
+thread-local, so `ProjectData` returns those messages in the response and the
+page shows them beside the plot they qualify.
+
+### 2026-08-05: refl1d's profile grid is an integration grid, not a display grid
+
+`-profile.dat` is written at refl1d's `dz` -- 0.1 Å here, giving 7,108 points
+per profile and 149k points for a 21-model fit. That is one to two orders of
+magnitude finer than anything physical in these models: the thinnest oxide is
+tens of angstroms and the smallest interfacial roughness a few.
+
+The reader thins to a 0.5 Å spacing, well below the roughness, keeping the
+final point regardless of where the stride lands so the profile still reaches
+the substrate. Measured on a real fit: worst-case interpolation error is
+1.65e-4 of the SLD span, and the payload drops from 2.44 MB to 614 KB. Pass
+`max_spacing=0` for the unthinned read; a numerical consumer should.
+
+### 2026-08-05: `json.dumps` does not escape `</script>`
+
+Data embedded in a `<script>` block is not protected by Jinja's autoescaping,
+and the HTML tokeniser ends the block at the first literal `</script>` -- even
+inside a JSON string. A run label or a fit note containing that text would
+truncate the page's JavaScript and spill the remainder as markup. The template
+filter escapes `</` to `<\/`, which is inert in JSON and invisible to the
+tokeniser.
+
+### 2026-08-05: `sample.md`'s commented example must not reach the rendered page
+
+The scaffolded `sample.md` carries a worked measurement table inside an HTML
+comment, listing runs (230594, 230597, 230600) that were never measured.
+`web.prose.render` strips comments before rendering, for the same reason
+`scan._runs_mentioned` does: showing that example beside the real data would
+be actively misleading. Raw HTML is not rendered either -- a `sample.md`
+travels between beamtimes and collaborators, and prose in a side panel has no
+reason to run script.

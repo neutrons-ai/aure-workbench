@@ -1,0 +1,783 @@
+"""Everything the UI knows about a project, with no Flask anywhere.
+
+This module is deliberately free of any web framework. AuRE's equivalent grew
+to 1861 lines with the data access tangled into the route handlers, at which
+point neither half could be tested without the other. Keeping the two apart
+means :class:`ProjectData` is testable with nothing but a directory, and
+:mod:`nr_workbench.web.app` stays thin enough to read in one sitting.
+
+Every public method returns JSON-serialisable plain data, so
+:mod:`nr_workbench.web.api` can mirror this class one-to-one and an agent can
+``curl`` exactly what the browser renders.
+
+Nothing here raises on missing data. A live beamtime project is half-finished
+by definition -- a sample with no fits yet, an assessment that has not been
+run, a series whose reduction JSON has not arrived. Each of those is reported
+as a fact about the project rather than an error, because a UI that refuses to
+render until everything is present is a UI nobody can use during an experiment.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from nr_workbench.project.layout import ProjectLayout
+from nr_workbench.project.scan import scan_sample
+from nr_workbench.provenance.index import FitIndex
+from nr_workbench.web.readers import (
+    Curve,
+    DataFormatError,
+    Profile,
+    read_amplitude_txt,
+    read_profile_dat,
+    read_reduced,
+    read_refl_dat,
+)
+
+#: Cap on how many points a single curve sends to the browser. Reduced REF_L
+#: files run to a few hundred points, so this only ever trips on something
+#: unusual -- but one pathological file should degrade the plot, not the tab.
+MAX_CURVE_POINTS = 20_000
+
+#: Cap on heatmap cells (intervals x Q bins). A 21 x 250 series is 5k.
+MAX_HEATMAP_CELLS = 400_000
+
+
+@dataclass(frozen=True)
+class Problem:
+    """Something the UI could not do, stated plainly enough to act on.
+
+    Attributes:
+        scope: What was being read, e.g. ``series:218389``.
+        message: What went wrong, in terms the reader can fix.
+    """
+
+    scope: str
+    message: str
+
+    def as_dict(self) -> dict[str, str]:
+        """Return the JSON form."""
+        return {"scope": self.scope, "message": self.message}
+
+
+class ProjectData:
+    """Read-only access to a workbench project, shaped for plotting.
+
+    Args:
+        root: Project root, the directory holding ``nrw.toml``.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.layout = ProjectLayout(root=Path(root).resolve())
+        self.root = self.layout.root
+        self.index = FitIndex(self.layout.index_file)
+
+    # ------------------------------------------------------------------
+    # Project level
+    # ------------------------------------------------------------------
+
+    def config(self) -> Any:
+        """Return the parsed ``nrw.toml``, or ``None`` if it cannot be read.
+
+        A project with an unreadable config is still worth rendering -- the
+        samples and fits are on disk regardless -- so this reports absence
+        rather than raising.
+        """
+        from nr_workbench.project.config import ProjectConfigError, load_config
+
+        try:
+            return load_config(self.root)
+        except (ProjectConfigError, OSError):
+            return None
+
+    def overview(self) -> dict[str, Any]:
+        """Summarise the project and every sample in it.
+
+        Returns:
+            The project block and one card per sample.
+        """
+        config = self.config()
+
+        fits_by_sample: dict[str, list[dict[str, Any]]] = {}
+        for row in self.index.fits():
+            fits_by_sample.setdefault(str(row.get("sample")), []).append(row)
+
+        cards = []
+        for sample_id in self.layout.list_samples():
+            rows = fits_by_sample.get(sample_id, [])
+            scan = self._scan(sample_id)
+            cards.append(
+                {
+                    "id": sample_id,
+                    "title": self._sample_title(sample_id),
+                    "n_steady": len(scan.steady) if scan else 0,
+                    "n_series": len(scan.series) if scan else 0,
+                    "n_fits": len(rows),
+                    "latest_fit": rows[0].get("fit_id") if rows else None,
+                    "latest_chisq": rows[0].get("chisq") if rows else None,
+                    "assessments": self.assessment_labels(sample_id),
+                }
+            )
+
+        return {
+            "root": str(self.root),
+            "name": config.name if config else self.root.name,
+            "beamtime": config.beamtime if config else None,
+            "ipts": config.ipts if config else None,
+            "instrument": config.instrument if config else None,
+            "facility": config.facility if config else None,
+            "samples": cards,
+            "n_fits": len(self.index.fits()),
+        }
+
+    # ------------------------------------------------------------------
+    # Sample level
+    # ------------------------------------------------------------------
+
+    def sample(self, sample_id: str) -> dict[str, Any]:
+        """Describe one sample: its prose, its data register, and its fits.
+
+        Args:
+            sample_id: The sample identifier.
+
+        Returns:
+            The sample detail block.
+
+        Raises:
+            FileNotFoundError: If the sample does not exist.
+        """
+        directory = self.layout.sample(sample_id)
+        if not directory.is_dir():
+            raise FileNotFoundError(f"No sample {sample_id!r} in {self.root}")
+
+        scan = self._scan(sample_id)
+        problems: list[Problem] = []
+
+        steady = []
+        if scan:
+            for run in sorted(scan.steady):
+                measurement = scan.steady[run]
+                steady.append(
+                    {
+                        "run": run,
+                        "combined": measurement.combined,
+                        "segments": [
+                            measurement.partials[k]
+                            for k in sorted(measurement.partials)
+                        ],
+                    }
+                )
+
+        series = []
+        if scan:
+            for found in scan.series:
+                entry = found.as_dict()
+                entry["name"] = Path(found.directory).name
+                entry["plottable"] = found.reduction_json is not None
+                if found.reduction_json is None:
+                    problems.append(
+                        Problem(
+                            scope=f"series:{entry['name']}",
+                            message=(
+                                "No *_eis_reduction.json in this directory, so "
+                                "the interval order and timings are unknown. "
+                                "The slices are listed but not plotted against "
+                                "time -- the same limitation `nrw tnr assess` "
+                                "has on this directory."
+                            ),
+                        )
+                    )
+                series.append(entry)
+
+        return {
+            "id": sample_id,
+            "title": self._sample_title(sample_id),
+            "markdown": self._read_text(directory / "sample.md"),
+            "steady": steady,
+            "series": series,
+            "assessments": self.assessment_labels(sample_id),
+            "models": sorted(p.name for p in (directory / "models").glob("*.yaml")),
+            "scripts": sorted(p.name for p in (directory / "models").glob("*.py")),
+            "fits": self.fits(sample_id),
+            "documented_but_absent": scan.documented_but_absent if scan else [],
+            "present_but_undocumented": (scan.present_but_undocumented if scan else []),
+            "problems": [p.as_dict() for p in problems],
+        }
+
+    def steady_curves(self, sample_id: str) -> dict[str, Any]:
+        """Read every steady-state measurement for a sample.
+
+        Each angle segment stays a separate curve rather than being stitched:
+        the overlap between segments is where a scaling error shows up, and
+        stitching hides exactly that.
+
+        Args:
+            sample_id: The sample identifier.
+
+        Returns:
+            ``curves`` plus any ``problems`` encountered reading them.
+        """
+        scan = self._scan(sample_id)
+        curves: list[dict[str, Any]] = []
+        problems: list[Problem] = []
+        if scan is None:
+            return {"curves": curves, "problems": []}
+
+        for run in sorted(scan.steady):
+            measurement = scan.steady[run]
+            files: list[tuple[str, str]] = []
+            for segment in sorted(measurement.partials):
+                files.append((f"{run}#{segment}", measurement.partials[segment]))
+            if measurement.combined and not files:
+                files.append((f"{run} combined", measurement.combined))
+
+            for label, relative in files:
+                try:
+                    curve = read_reduced(
+                        self.root / relative, label=label, root=self.root
+                    )
+                except (DataFormatError, OSError) as exc:
+                    problems.append(Problem(scope=f"steady:{label}", message=str(exc)))
+                    continue
+                if curve.n_points > MAX_CURVE_POINTS:
+                    problems.append(
+                        Problem(
+                            scope=f"steady:{label}",
+                            message=(
+                                f"{curve.n_points} points exceeds the "
+                                f"{MAX_CURVE_POINTS} plotted; showing the first."
+                            ),
+                        )
+                    )
+                    curve = _truncate(curve, MAX_CURVE_POINTS)
+                payload = curve.as_dict()
+                payload["run"] = run
+                curves.append(payload)
+
+        return {"curves": curves, "problems": [p.as_dict() for p in problems]}
+
+    def series_data(self, sample_id: str, name: str) -> dict[str, Any]:
+        """Load a time-resolved series as a time-Q residual map.
+
+        The residual is computed against the same coadded reference block that
+        ``nrw tnr assess`` resolves, using the same functions. That is the point
+        of reusing them rather than picking a reference here: the heatmap and
+        the assessment numbers cannot drift apart.
+
+        Args:
+            sample_id: The sample identifier.
+            name: The series directory name, e.g. ``218389``.
+
+        Returns:
+            Times, the Q grid, the fractional residual map, and the reference
+            description.
+
+        Raises:
+            FileNotFoundError: If the series directory does not exist.
+            ValueError: If the run cannot be loaded.
+        """
+        import numpy as np
+
+        from nr_workbench.tnr.notify import collect
+        from nr_workbench.tnr.reference import fractional_residuals
+        from nr_workbench.tnr.run import load
+
+        directory = self._series_dir(sample_id, name)
+        with collect() as warnings:
+            run = load(directory)
+
+        y, sigma, _, use = fractional_residuals(
+            run.R,
+            run.dR,
+            run.valid,
+            run.R_ref,
+            run.dR_ref,
+            run.ref_valid,
+            run.in_ref,
+            loo=run.options.loo,
+            min_ref_snr=run.options.min_ref_snr,
+        )
+
+        # Mask rather than zero-fill: an unmeasured cell and a cell that
+        # genuinely did not change both read as 0.0 on a diverging colour
+        # scale, and only one of them is a measurement.
+        masked = np.where(use, y, np.nan)
+        cells = masked.size
+        if cells > MAX_HEATMAP_CELLS:
+            raise ValueError(
+                f"Series {name} would render {cells} cells, over the "
+                f"{MAX_HEATMAP_CELLS} limit."
+            )
+
+        return {
+            "name": name,
+            "sample": sample_id,
+            "times": [float(t) for t in run.times],
+            "durations": [float(d) for d in run.durations],
+            "types": list(run.types),
+            "labels": list(run.labels),
+            "q": [float(v) for v in run.q],
+            "residual": [[_or_none(v) for v in row] for row in masked],
+            "sigma": [
+                [_or_none(v) for v in row] for row in np.where(use, sigma, np.nan)
+            ],
+            "reference": {
+                "description": run.ref_desc,
+                "indices": [int(i) for i in run.ref_idx],
+                "median_rel_err": _or_none(run.median_ref_rel_err),
+            },
+            "late": {
+                "description": run.late_desc,
+                "indices": [int(i) for i in run.late_idx],
+            },
+            "n_intervals": run.n_intervals,
+            "type_counts": run.type_counts,
+            "problems": [
+                Problem(scope=f"series:{name}", message=w).as_dict() for w in warnings
+            ],
+        }
+
+    def series_curves(self, sample_id: str, name: str) -> dict[str, Any]:
+        """Read a series as individual R(Q) curves, one per interval.
+
+        Args:
+            sample_id: The sample identifier.
+            name: The series directory name.
+
+        Returns:
+            One curve per interval, in time order.
+
+        Raises:
+            FileNotFoundError: If the series directory does not exist.
+        """
+        from nr_workbench.tnr.notify import collect
+        from nr_workbench.tnr.run import load
+
+        directory = self._series_dir(sample_id, name)
+        with collect():
+            run = load(directory)
+
+        curves = []
+        for i in range(run.n_intervals):
+            curves.append(
+                {
+                    "label": run.labels[i],
+                    "time": float(run.times[i]),
+                    "type": run.types[i],
+                    "q": [float(v) for v in run.q],
+                    "r": [_or_none(v) for v in run.R[i]],
+                    "dr": [_or_none(v) for v in run.dR[i]],
+                }
+            )
+        return {"name": name, "sample": sample_id, "curves": curves}
+
+    # ------------------------------------------------------------------
+    # Assessments
+    # ------------------------------------------------------------------
+
+    def assessment_labels(self, sample_id: str) -> list[str]:
+        """List assessment directories holding a written assessment.
+
+        ``nrw tnr assess`` prefixes its outputs with the run label, so the file
+        is ``<label>_assessment.json`` rather than a bare name. Globbing keeps
+        this working for an assessment directory assembled by hand, or one
+        whose label differs from its directory name.
+        """
+        directory = self.layout.sample(sample_id) / "assessments"
+        if not directory.is_dir():
+            return []
+        return sorted(
+            entry.name
+            for entry in directory.iterdir()
+            if entry.is_dir() and _find_suffix(entry, "assessment.json")
+        )
+
+    def assessment(self, sample_id: str, label: str) -> dict[str, Any]:
+        """Read one tNR assessment and its a(t) trajectory.
+
+        Args:
+            sample_id: The sample identifier.
+            label: The assessment directory name.
+
+        Returns:
+            The assessment payload plus the parsed amplitude series where one
+            was written.
+
+        Raises:
+            FileNotFoundError: If there is no such assessment.
+        """
+        directory = self.layout.sample(sample_id) / "assessments" / label
+        payload_file = _find_suffix(directory, "assessment.json")
+        if payload_file is None:
+            raise FileNotFoundError(f"No assessment {label!r} for {sample_id}")
+
+        payload = json.loads(payload_file.read_text(encoding="utf-8"))
+        result: dict[str, Any] = {
+            "sample": sample_id,
+            "label": label,
+            "assessment": payload,
+            "figures": sorted(p.name for p in directory.glob("*.png")),
+        }
+
+        amplitude_file = _find_suffix(directory, "amplitude.txt")
+        if amplitude_file is not None:
+            try:
+                result["amplitude_series"] = read_amplitude_txt(
+                    amplitude_file
+                ).as_dict()
+            except (DataFormatError, OSError) as exc:
+                result["problems"] = [
+                    Problem(scope=f"amplitude:{label}", message=str(exc)).as_dict()
+                ]
+        return result
+
+    # ------------------------------------------------------------------
+    # Fits
+    # ------------------------------------------------------------------
+
+    def fits(self, sample_id: str | None = None) -> list[dict[str, Any]]:
+        """List fit records, newest first.
+
+        Args:
+            sample_id: Restrict to one sample.
+
+        Returns:
+            One row per fit, with the promoted label attached where it has one.
+        """
+        promoted: dict[str, list[str]] = {}
+        for event in self.index.promotions():
+            fit_id = str(event.get("fit_id"))
+            label = str(event.get("label"))
+            promoted.setdefault(fit_id, [])
+            # Later promotions of the same label supersede earlier ones, but a
+            # fit can hold more than one label at once.
+            if label not in promoted[fit_id]:
+                promoted[fit_id].append(label)
+
+        rows = []
+        for row in self.index.fits(sample=sample_id):
+            entry = dict(row)
+            entry["labels"] = promoted.get(str(row.get("fit_id")), [])
+            rows.append(entry)
+        return rows
+
+    def fit(self, fit_id: str) -> dict[str, Any]:
+        """Load one fit in full: curves, profiles, parameters, provenance.
+
+        Args:
+            fit_id: The fit identifier, or a unique prefix of one.
+
+        Returns:
+            Everything the fit-detail view needs.
+
+        Raises:
+            FileNotFoundError: If no fit matches.
+            ValueError: If a prefix matches more than one fit.
+        """
+        record = self._resolve_fit(fit_id)
+        resolved = str(record["fit_id"])
+        sample = record.get("sample")
+        directory = self._fit_dir(resolved, sample)
+
+        manifest = self._read_json(directory / "manifest.json")
+        info = manifest.get("info", {}) if manifest else {}
+        names = _model_names(info.get("models") or [])
+
+        curves, profiles, problems = self._fit_arrays(directory / "fit", names)
+
+        return {
+            "fit_id": resolved,
+            "sample": sample,
+            "model": record.get("model"),
+            "record": record,
+            "manifest": manifest,
+            "labels": self._labels_for(resolved),
+            "curves": curves,
+            "profiles": profiles,
+            "parameters": self._parameters(directory / "fit"),
+            "spec": self._read_text(directory / "spec.yaml"),
+            "script": self._read_text(directory / "model.py"),
+            "notes": self._read_text(directory / "NOTES.md"),
+            "figures": sorted(
+                p.name for p in (directory / "figures").glob("*") if p.is_file()
+            ),
+            "directory": directory.relative_to(self.root).as_posix(),
+            "problems": [p.as_dict() for p in problems],
+        }
+
+    def _fit_arrays(
+        self, fit_dir: Path, names: dict[int, str]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[Problem]]:
+        """Read every exported curve and profile, in export order."""
+        curves: list[dict[str, Any]] = []
+        profiles: list[dict[str, Any]] = []
+        problems: list[Problem] = []
+        if not fit_dir.is_dir():
+            return (
+                curves,
+                profiles,
+                [Problem(scope="fit", message=f"No fit output at {fit_dir.name}/")],
+            )
+
+        for index, refl_path in _numbered(fit_dir, "-refl.dat"):
+            label = names.get(index) or f"model {index}"
+            try:
+                curve = read_refl_dat(refl_path, label=label, root=self.root)
+            except (DataFormatError, OSError) as exc:
+                problems.append(Problem(scope=f"model:{label}", message=str(exc)))
+                continue
+            payload = curve.as_dict()
+            payload["index"] = index
+            payload["named"] = index in names
+            curves.append(payload)
+
+        for index, profile_path in _numbered(fit_dir, "-profile.dat"):
+            label = names.get(index) or f"model {index}"
+            try:
+                profile = read_profile_dat(profile_path, label=label, root=self.root)
+            except (DataFormatError, OSError) as exc:
+                problems.append(Problem(scope=f"profile:{label}", message=str(exc)))
+                continue
+            payload = profile.as_dict()
+            payload["index"] = index
+            payload["named"] = index in names
+            profiles.append(payload)
+
+        if curves and not names:
+            problems.append(
+                Problem(
+                    scope="fit",
+                    message=(
+                        "This fit recorded no model names, so curves are "
+                        "labelled by export position only. Fits run with a "
+                        "generated script carry their spec slot names; a "
+                        "hand-written script can set them with "
+                        "Experiment(..., name='...')."
+                    ),
+                )
+            )
+        return curves, profiles, problems
+
+    def _parameters(self, fit_dir: Path) -> list[dict[str, Any]]:
+        """Read the fitted parameter values, with uncertainties where present.
+
+        The ``.par`` file is always written; ``-err.json`` only appears after a
+        fitter that estimates uncertainty, so a value with no error bar means
+        an optimiser was run, not that the uncertainty is zero.
+        """
+        rows: list[dict[str, Any]] = []
+        par_file = next(iter(sorted(fit_dir.glob("*.par"))), None)
+        if par_file is None:
+            return rows
+
+        errors = self._uncertainties(fit_dir)
+        for line in par_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            name, _, value = line.rpartition(" ")
+            name = name.strip()
+            try:
+                parsed = float(value)
+            except ValueError:
+                continue
+            row: dict[str, Any] = {"name": name, "value": parsed}
+            if name in errors:
+                row.update(errors[name])
+            rows.append(row)
+        return rows
+
+    def _uncertainties(self, fit_dir: Path) -> dict[str, dict[str, Any]]:
+        """Read ``-err.json`` into a name-keyed mapping, if it exists."""
+        err_file = next(iter(sorted(fit_dir.glob("*-err.json"))), None)
+        if err_file is None:
+            return {}
+        payload = self._read_json(err_file)
+        if not isinstance(payload, dict):
+            return {}
+
+        found: dict[str, dict[str, Any]] = {}
+        for key, value in payload.items():
+            if not isinstance(value, dict):
+                continue
+            entry: dict[str, Any] = {}
+            for source, target in (
+                ("mean", "mean"),
+                ("median", "median"),
+                ("std", "std"),
+                ("p68", "p68"),
+                ("p95", "p95"),
+            ):
+                if source in value:
+                    entry[target] = value[source]
+            if entry:
+                found[key] = entry
+        return found
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_fit(self, fit_id: str) -> dict[str, Any]:
+        """Find a fit record by exact id or unique prefix."""
+        exact = self.index.find(fit_id)
+        if exact is not None:
+            return exact
+        matches = self.index.resolve(fit_id)
+        if not matches:
+            raise FileNotFoundError(f"No fit matching {fit_id!r}")
+        if len(matches) > 1:
+            ids = ", ".join(str(m.get("fit_id")) for m in matches[:5])
+            raise ValueError(f"{fit_id!r} matches {len(matches)} fits: {ids}")
+        return matches[0]
+
+    def _fit_dir(self, fit_id: str, sample: Any) -> Path:
+        """Locate a fit directory, searching all samples if needed."""
+        if sample:
+            candidate = self.layout.sample(str(sample)) / "results" / fit_id
+            if candidate.is_dir():
+                return candidate
+        for sample_id in self.layout.list_samples():
+            candidate = self.layout.sample(sample_id) / "results" / fit_id
+            if candidate.is_dir():
+                return candidate
+        raise FileNotFoundError(f"Fit {fit_id} is in the index but not on disk")
+
+    def _labels_for(self, fit_id: str) -> list[str]:
+        """Return promotion labels currently held by a fit."""
+        labels = []
+        for event in self.index.promotions():
+            if str(event.get("fit_id")) == fit_id:
+                label = str(event.get("label"))
+                if label not in labels:
+                    labels.append(label)
+        return labels
+
+    def _series_dir(self, sample_id: str, name: str) -> Path:
+        """Resolve a series directory, rejecting anything outside the sample."""
+        base = (self.layout.sample(sample_id) / "data" / "tnr").resolve()
+        directory = (base / name).resolve()
+        if not _within(directory, base):
+            raise FileNotFoundError(f"No series {name!r} for {sample_id}")
+        if not directory.is_dir():
+            raise FileNotFoundError(f"No series {name!r} for {sample_id}")
+        return directory
+
+    def _scan(self, sample_id: str) -> Any:
+        """Scan a sample's data directories, or ``None`` if it has none."""
+        try:
+            return scan_sample(self.root, sample_id)
+        except FileNotFoundError:
+            return None
+
+    def _sample_title(self, sample_id: str) -> str:
+        """Read the sample title from the first heading of ``sample.md``."""
+        text = self._read_text(self.layout.sample(sample_id) / "sample.md")
+        for line in (text or "").splitlines():
+            if line.startswith("# "):
+                return line[2:].strip() or sample_id
+        return sample_id
+
+    @staticmethod
+    def _read_text(path: Path) -> str | None:
+        """Read a text file, returning ``None`` when it is absent."""
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    @staticmethod
+    def _read_json(path: Path) -> dict[str, Any]:
+        """Read a JSON file, returning an empty mapping on any failure."""
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return value if isinstance(value, dict) else {}
+
+
+def _find_suffix(directory: Path, suffix: str) -> Path | None:
+    """Find the one file in ``directory`` ending in ``suffix``.
+
+    Assessment outputs are label-prefixed (``r218389_assessment.json``), so an
+    exact name is not knowable from the directory alone.
+    """
+    if not directory.is_dir():
+        return None
+    exact = directory / suffix
+    if exact.is_file():
+        return exact
+    matches = sorted(directory.glob(f"*_{suffix}"))
+    return matches[0] if matches else None
+
+
+def _model_names(models: list[Any]) -> dict[int, str]:
+    """Build the export-position to name mapping recorded at fit time."""
+    names: dict[int, str] = {}
+    for entry in models:
+        if not isinstance(entry, dict):
+            continue
+        index = entry.get("index")
+        name = entry.get("name")
+        if isinstance(index, int) and isinstance(name, str) and name:
+            names[index] = name
+    return names
+
+
+def _numbered(directory: Path, suffix: str) -> list[tuple[int, Path]]:
+    """Find ``<basename>-<n><suffix>`` files, sorted by ``n``.
+
+    Sorting on the parsed integer matters: lexical order puts model 10 between
+    models 1 and 2, which would silently pair the wrong curve with the wrong
+    label.
+    """
+    found: list[tuple[int, Path]] = []
+    for path in directory.glob(f"*{suffix}"):
+        stem = path.name[: -len(suffix)]
+        _, _, tail = stem.rpartition("-")
+        try:
+            found.append((int(tail), path))
+        except ValueError:
+            continue
+    return sorted(found)
+
+
+def _truncate(curve: Curve, limit: int) -> Curve:
+    """Return the first ``limit`` points of a curve."""
+    return Curve(
+        label=curve.label,
+        q=curve.q[:limit],
+        r=curve.r[:limit],
+        dr=curve.dr[:limit],
+        dq=curve.dq[:limit],
+        theory=curve.theory[:limit],
+        theta=curve.theta,
+        time=curve.time,
+        source=curve.source,
+    )
+
+
+def _or_none(value: Any) -> float | None:
+    """Return a JSON-safe float, or ``None`` for anything non-finite."""
+    import math
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _within(path: Path, parent: Path) -> bool:
+    """Return whether ``path`` sits inside ``parent``."""
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+__all__ = ["ProjectData", "Problem", "Curve", "Profile"]

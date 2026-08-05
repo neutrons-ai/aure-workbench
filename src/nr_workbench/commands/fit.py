@@ -368,6 +368,7 @@ def run_fit_command(
     record.n_free = outcome.n_free
     record.n_points = outcome.n_points
     record.artifacts = outcome.artifacts
+    record.models = outcome.models
 
     stamped = stamp_directory(fit_dir / "figures", fit_id)
     if stamped:

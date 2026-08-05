@@ -19,7 +19,7 @@ skills/
 ├── python-code-standards/SKILL.md         # how to write Python here (code + docstrings)
 ├── python-testing/SKILL.md                # how to write tests here
 ├── python-integration-patterns/SKILL.md   # Flask / FastAPI / FastMCP / Click starters
-└── <domain>/<skill-name>/SKILL.md         # domain skills added by scripts/install_skills.py
+└── <domain>/<skill-name>/SKILL.md         # domain skills, grouped by domain
 ```
 
 Three kinds of skill live here:
@@ -31,9 +31,11 @@ Three kinds of skill live here:
   files. They have **no dispatcher agent**; the assistant reads them on demand,
   guided by the "Reference standards" pointers in
   [`.github/copilot-instructions.md`](../.github/copilot-instructions.md).
-- **Installed domain skills** (`<domain>/<skill-name>/`, domain-grouped) — pulled
-  from the neutron-skills library by `scripts/install_skills.py`; may carry
-  `assets/`, `scripts/`, or `references/` subfolders.
+- **Installed domain skills** (`<domain>/<skill-name>/`, domain-grouped) — the
+  science standards, grouped by domain; may carry `assets/`, `scripts/`, or
+  `references/` subfolders. In a *scaffolded project* these are installed from
+  the package by `nrw skills sync`; in this repo they are the sources under
+  `src/nr_workbench/skills/`.
 
 ## How skills are consumed (thin dispatcher + fat skill)
 
@@ -49,9 +51,9 @@ All the actual criteria live in the `SKILL.md`. The dispatcher files in the two
 trees are kept **byte-identical**, so the substantive content exists exactly
 once, here.
 
-`scripts/install_skills.py` uses the same pattern: it copies a domain skill's
-full folder into `skills/<domain>/<name>/` and auto-generates a matching thin
-dispatcher in both agents directories so the skill is immediately invocable.
+`nrw skills sync` uses the same pattern: it copies a domain skill's full folder
+into `skills/<domain>/<name>/` and auto-generates a matching thin dispatcher in
+both agents directories so the skill is immediately invocable.
 
 > **Edit policy:** to change a standard, edit its `SKILL.md` here — never the
 > dispatcher agents, which only load and apply it.

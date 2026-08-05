@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}{{ fit.fit_id }} — nr-workbench{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('api.fit', fit_id=fit.fit_id) }}">API</a>
+{% endblock %}
+
+{% block content %}
+{% set prov = (fit.manifest or {}).get('provenance') or {} %}
+{% set info = (fit.manifest or {}).get('info') or {} %}
+{% set env = prov.get('env') or {} %}
+
+<div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
+  <h1 class="h5 mb-0 mono">{{ fit.fit_id }}</h1>
+  {% for label in fit.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+  {% if fit.sample %}
+  <a class="small" href="{{ url_for('sample', sample_id=fit.sample) }}">{{ fit.sample }}</a>
+  {% endif %}
+  <span class="text-secondary small">{{ fit.model }}</span>
+  <span class="text-secondary small">
+    {% if info.chisq is not none %}χ² = {{ '%.6g'|format(info.chisq) }}{% endif %}
+    {% if info.n_free %} · {{ info.n_free }} free{% endif %}
+    {% if info.n_points %} · {{ info.n_points }} points{% endif %}
+  </span>
+</div>
+
+{% if fit.problems %}
+<div class="alert alert-warning py-2 problem">
+  <ul class="mb-0">
+    {% for problem in fit.problems %}
+    <li><span class="mono">{{ problem.scope }}</span> — {{ problem.message }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="landscape">
+  <div>
+    <div class="panel">
+      <div class="panel-head">
+        <span>Reflectivity and model</span>
+        <span class="hint">{{ fit.curves|length }} experiment(s)</span>
+      </div>
+      <div id="plot-fit" class="plot plot-rq"></div>
+      <div id="plot-residual" class="plot" style="height: 150px"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span>SLD profiles</span>
+        <span class="hint">ambient on the left, substrate on the right</span>
+      </div>
+      <div id="plot-sld" class="plot plot-sld"></div>
+    </div>
+
+    {% if fit.parameters %}
+    <div class="panel">
+      <div class="panel-head">
+        <span>Parameters</span>
+        <span class="hint">
+          {% if fit.parameters[0].get('std') is defined %}
+          uncertainties from the fit's own error estimate
+          {% else %}
+          no uncertainty estimate — this was an optimiser run, not a sampler
+          {% endif %}
+        </span>
+      </div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>parameter</th><th class="text-end">value</th>
+          <th class="text-end">σ</th><th class="text-end">68% interval</th></tr></thead>
+        <tbody>
+        {% for row in fit.parameters %}
+          <tr>
+            <td class="small">{{ row.name }}</td>
+            <td class="text-end mono">{{ '%.6g'|format(row.value) }}</td>
+            <td class="text-end mono">{{ '%.3g'|format(row.std) if row.std is defined else '—' }}</td>
+            <td class="text-end mono small">
+              {%- if row.p68 is defined and row.p68 -%}
+                [{{ '%.5g'|format(row.p68[0]) }}, {{ '%.5g'|format(row.p68[1]) }}]
+              {%- else -%}—{%- endif -%}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    {% if fit.figures %}
+    <div class="panel">
+      <div class="panel-head"><span>Figures</span></div>
+      <div class="p-3 d-flex flex-wrap gap-3">
+        {% for name in fit.figures %}
+        <a href="{{ url_for('result_file', sample_id=fit.sample, fit_id=fit.fit_id, filename='figures/' ~ name) }}">
+          <img src="{{ url_for('result_file', sample_id=fit.sample, fit_id=fit.fit_id, filename='figures/' ~ name) }}"
+               alt="{{ name }}" style="max-width: 320px; max-height: 240px">
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- The provenance panel: what this result is, and how to make it again -->
+  <aside class="rail">
+    <div class="panel">
+      <div class="panel-head"><span>Provenance</span></div>
+      <div class="p-3">
+        <dl class="prov mb-0">
+          <dt>status</dt>
+          <dd>{{ (fit.manifest or {}).get('status', 'unknown') }}</dd>
+
+          <dt>ran</dt>
+          <dd>{{ prov.get('started_at') }}{% if prov.get('finished_at') %} → {{ prov.get('finished_at') }}{% endif %}</dd>
+
+          <dt>origin</dt>
+          <dd>{{ prov.get('script_origin', '—') }}</dd>
+
+          {% set identity = prov.get('identity') or {} %}
+          <dt>script sha256</dt>
+          <dd class="hash">{{ identity.get('script_sha256', '—') }}</dd>
+
+          <dt>inputs digest</dt>
+          <dd class="hash">{{ identity.get('inputs_digest', '—') }}</dd>
+          <dd class="small text-secondary" style="font-family: inherit">
+            {{ prov.get('inputs_count', 0) }} input file(s)
+          </dd>
+
+          <dt>environment</dt>
+          <dd>
+            python {{ env.get('python', '—') }}<br>
+            {% for name, version in (env.get('packages') or {}).items() %}
+            {{ name }} {{ version }}<br>
+            {% endfor %}
+          </dd>
+
+          {% set git = env.get('git') or {} %}
+          {% if git.get('available') %}
+          <dt>git</dt>
+          <dd>
+            {{ git.get('branch') }} @ {{ (git.get('commit') or '')[:12] }}
+            {% if git.get('dirty') %}<span class="badge text-bg-warning">dirty</span>{% endif %}
+          </dd>
+          {% endif %}
+
+          {% if env.get('aure_commit') %}
+          <dt>aure</dt>
+          <dd class="hash">{{ env.get('aure_commit')[:12] }}</dd>
+          {% endif %}
+
+          {% if prov.get('note') %}
+          <dt>note</dt>
+          <dd style="font-family: inherit">{{ prov.get('note') }}</dd>
+          {% endif %}
+        </dl>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span>Reproduce</span></div>
+      <div class="p-3">
+        <p class="small text-secondary mb-2">
+          Everything below is frozen in the result directory, so this runs the
+          same model against the same data regardless of what has changed since.
+        </p>
+        <pre class="mono small mb-2" id="reproduce">nrw whence {{ fit.fit_id }}</pre>
+        <button class="btn btn-sm btn-outline-secondary" id="copy-reproduce">Copy</button>
+        <div class="small text-secondary mt-2 mono">{{ fit.directory }}</div>
+      </div>
+    </div>
+
+    {% if fit.notes %}
+    <div class="panel">
+      <div class="panel-head"><span>NOTES.md</span></div>
+      <div class="p-3"><pre class="small mb-0">{{ fit.notes }}</pre></div>
+    </div>
+    {% endif %}
+
+    {% if fit.spec %}
+    <div class="panel">
+      <div class="panel-head"><span>spec.yaml</span><span class="hint">frozen</span></div>
+      <div class="p-3"><pre class="small mb-0" style="max-height: 24rem; overflow: auto">{{ fit.spec }}</pre></div>
+    </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  NRW.fitPanel("plot-fit", "plot-residual", {{ fit.curves|nrwjson|safe }});
+  NRW.sldPanel("plot-sld", {{ fit.profiles|nrwjson|safe }});
+
+  const button = document.getElementById("copy-reproduce");
+  if (button && navigator.clipboard) {
+    button.addEventListener("click", function () {
+      navigator.clipboard
+        .writeText(document.getElementById("reproduce").textContent)
+        .then(function () {
+          button.textContent = "Copied";
+          setTimeout(function () { button.textContent = "Copy"; }, 1500);
+        });
+    });
+  }
+})();
+</script>
+{% endblock %}

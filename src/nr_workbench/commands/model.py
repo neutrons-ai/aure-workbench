@@ -419,7 +419,9 @@ def _scaffold_document(sample: str, name: str, found) -> dict[str, Any]:
     series = []
     for found_series in found.series:
         block: dict[str, Any] = {
-            "name": f"tnr{found_series.run or ''}" or "tnr",
+            # A series with no resolvable run number is just "tnr"; the inner
+            # fallback already covers that, so there is no outer default.
+            "name": f"tnr{found_series.run or ''}",
             "condition": "",
             "run": found_series.run,
             "reduced_dir": found_series.directory,

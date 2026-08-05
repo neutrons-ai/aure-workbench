@@ -68,6 +68,8 @@ lists `TwoTheta(deg)` per segment — **halve it** to get theta.
 **Combined file** — `load4` with the FWHM flag set:
 
 ```python
+from refl1d.probe.data_loaders.load4 import load4
+
 probe = load4(data_file, FWHM=True)
 ```
 
@@ -75,15 +77,23 @@ probe = load4(data_file, FWHM=True)
 `sample_broadening` and `theta_offset` fittable:
 
 ```python
+import numpy as np
+from refl1d.probe import make_probe
+
+
 def create_probe(data_file, theta):
     q, data, errors, dq = np.loadtxt(data_file).T
     wl = 4 * np.pi * np.sin(np.pi / 180 * theta) / q
     dT = dq / q * np.tan(np.pi / 180 * theta) * 180 / np.pi
-    dL = 0 * q          # angular-only resolution; see the BL-4B skill
+    dL = 0 * q  # angular-only resolution; see the BL-4B skill
     return make_probe(
-        T=theta, dT=dT, L=wl, dL=dL,
+        T=theta,
+        dT=dT,
+        L=wl,
+        dL=dL,
         data=(data, errors),
-        radiation="neutron", resolution="uniform",
+        radiation="neutron",
+        resolution="uniform",
     )
 ```
 
