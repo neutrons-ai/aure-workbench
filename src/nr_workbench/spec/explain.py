@@ -250,46 +250,135 @@ def _what_is_shared(table: ParameterTable) -> str:
 
 
 def _what_varies_with_time(table: ParameterTable) -> str:
-    """Constraints, described by what they assert about the physics."""
+    """Constraints, with the arithmetic they actually apply."""
     spec = table.spec
     if not spec.constraints:
         return ""
 
     lines = [
-        "## What changes during the time series",
+        "## What changes during the time series, and how",
         "",
-        "A constraint says how a quantity moves between two known states. The "
-        "endpoints are the steady-state parameters themselves, so these add no "
-        "new free parameters — the series is described entirely by the states "
-        "either side of it.",
+        "A constraint replaces one free parameter per slice with a *functional "
+        "form*: the slice values are computed from a handful of numbers rather "
+        "than fitted independently. The formulas below are the ones the "
+        "generated script evaluates, not a paraphrase of them.",
     ]
 
     for constraint in spec.constraints:
-        measurements = table.measurements.get(constraint.series, [])
-        times = [m.time for m in measurements if m.time is not None]
-        span = (
-            f"{len(measurements)} slices spanning t = {min(times):g}–{max(times):g} s"
-            if times
-            else f"{len(measurements)} slices"
-        )
-        lines += [
-            "",
-            f"### `{constraint.series}`: {constraint.form}",
-            "",
-            f"Applies to {span}.",
-            "",
-            f"{_form_prose(constraint)}.",
-            "",
-            "Paths held to this form:",
-            "",
-        ]
-        lines += [f"- `{path}`" for path in constraint.paths]
+        lines.extend(_constraint_section(table, constraint))
 
     return "\n".join(lines)
 
 
+def _constraint_section(table: ParameterTable, constraint: Any) -> list[str]:
+    """One constraint: the formula, the numbers in it, and what it costs."""
+    measurements = table.measurements.get(constraint.series, [])
+    times = [m.time for m in measurements if m.time is not None]
+    n = len(measurements)
+    start = getattr(constraint, "from_", None)
+    end = getattr(constraint, "to", None)
+
+    lines = ["", f"### `{constraint.series}` — {constraint.form}", ""]
+    if times:
+        lines.append(f"{n} slices, t = {min(times):g} to {max(times):g} s.")
+    else:
+        lines.append(f"{n} slices.")
+
+    lines += ["", "```", *_formula(constraint, start, end), "```", ""]
+    lines.append(_form_prose(constraint) + ".")
+
+    extra = _extra_free(table, constraint)
+    if extra:
+        lines += [
+            "",
+            "This form fits its own shape parameters:",
+            "",
+        ]
+        lines += [
+            f"- `{parameter.key}` — start {parameter.value:g}"
+            + (
+                f", range {parameter.bounds[0]:g} to {parameter.bounds[1]:g}"
+                if parameter.bounds
+                else ""
+            )
+            for parameter in extra
+        ]
+    elif start and end:
+        lines += [
+            "",
+            f"**No new free parameters.** The endpoints are `{start}`'s and "
+            f"`{end}`'s own values, which the steady-state data already "
+            "constrains, so the series is described entirely by the states "
+            "either side of it.",
+        ]
+
+    schedule = _schedule(constraint, measurements)
+    if schedule:
+        lines += ["", *schedule]
+
+    paths = list(constraint.paths)
+    lines += ["", "Applied to:", ""]
+    lines += [f"- `{path}`" for path in paths]
+
+    determined = sum(
+        1
+        for expression in table.expressions
+        if expression.key.split("@", 1)[-1].split("#", 1)[0] == constraint.series
+    )
+    if determined:
+        lines += [
+            "",
+            f"That is **{determined} slice values** "
+            f"({len(paths)} path{'s' if len(paths) != 1 else ''} x {n} slices) "
+            f"computed from {len(extra) if extra else 'no'} new free "
+            f"parameter{'' if len(extra) == 1 else 's'}.",
+        ]
+    return lines
+
+
+def _formula(constraint: Any, start: str | None, end: str | None) -> list[str]:
+    """The expression the generated script evaluates, for slice i."""
+    a = f"p[{start}]" if start else "p_start"
+    b = f"p[{end}]" if end else "p_end"
+    forms = {
+        "linear_in_index": [
+            f"p_i  =  {a} + ({b} - {a}) * f_i",
+            "",
+            "f_i  =  i / (N - 1)            fraction by slice index",
+        ],
+        "linear_in_time": [
+            f"p_i  =  {a} + ({b} - {a}) * f_i",
+            "",
+            "f_i  =  (t_i - t_0) / (t_last - t_0)    fraction by elapsed time",
+        ],
+        "piecewise_linear": [
+            "p_i  =  k_left + (k_right - k_left) * w_i",
+            "",
+            "k_*  =  fitted knot values, evenly spaced in slice index",
+            "w_i  =  position of slice i between its two bracketing knots",
+        ],
+        "exponential": [
+            f"p_i  =  {b} + ({a} - {b}) * exp(-(t_i - t_0) / tau)",
+            "",
+            "tau  =  fitted decay constant, in seconds",
+        ],
+        "logistic": [
+            f"p_i  =  {a} + ({b} - {a}) / (1 + exp(-(t_i - t_half) / w))",
+            "",
+            "t_half =  fitted midpoint, in seconds",
+            "w      =  fitted width; large w is a slow transition",
+        ],
+        "free": ["p_i  =  fitted independently for every slice i"],
+        "fixed": [f"p_i  =  {a}      the same value in every slice"],
+    }
+    return forms.get(constraint.form, [f"form: {constraint.form}"])
+
+
 def _form_prose(constraint: Any) -> str:
-    """Say what a constraint form asserts, in words."""
+    """Say what a constraint form asserts, in words.
+
+    The formula says what is computed; this says why that shape was chosen.
+    """
     start = getattr(constraint, "from_", None)
     end = getattr(constraint, "to", None)
     forms = {
@@ -304,20 +393,108 @@ def _form_prose(constraint: Any) -> str:
         ),
         "piecewise_linear": (
             f"Each listed quantity follows a piecewise-linear path from `{start}` "
-            f"to `{end}` through fitted knots"
+            f"to `{end}` through fitted knots -- for a trajectory with structure "
+            "no closed form captures, without going to one parameter per slice"
         ),
         "exponential": (
-            "Each listed quantity relaxes exponentially towards its final value, "
-            "with a fitted time constant"
+            "Each listed quantity relaxes exponentially towards its final value. "
+            "Use when the process is a first-order approach to equilibrium"
         ),
         "logistic": (
-            "Each listed quantity follows a logistic curve, with a fitted "
-            "midpoint and width — an induction period followed by a transition"
+            "Each listed quantity follows a logistic curve: an induction period, "
+            "a transition, then a plateau. This is the form to reach for when "
+            "`nrw tnr assess` reports a sigmoidal a(t)"
         ),
-        "free": "Each listed quantity is fitted independently in every slice",
+        "free": (
+            "Each listed quantity is fitted independently in every slice. No "
+            "functional form is assumed, at the cost of one free parameter per "
+            "slice per path"
+        ),
         "fixed": "Each listed quantity is pinned and does not change",
     }
     return forms.get(constraint.form, f"Form `{constraint.form}` applied")
+
+
+#: How many slices to tabulate before eliding the middle.
+_SCHEDULE_ROWS = 3
+
+
+def _schedule(constraint: Any, measurements: list[Any]) -> list[str]:
+    """Tabulate the interpolation fractions, and show why time != index.
+
+    Only for the two linear forms, where the fraction is the whole content of
+    the model and the index/time difference is the reason to prefer one.
+    """
+    if constraint.form not in ("linear_in_index", "linear_in_time"):
+        return []
+    times = [m.time for m in measurements if m.time is not None]
+    n = len(measurements)
+    if n < 2 or len(times) != n:
+        return []
+
+    span = times[-1] - times[0]
+    if span <= 0:
+        return []
+
+    def by_time(i: int) -> float:
+        return (times[i] - times[0]) / span
+
+    def by_index(i: int) -> float:
+        return i / (n - 1)
+
+    shown = sorted({0, n // 2, n - 1}) if n <= 2 * _SCHEDULE_ROWS else None
+    rows = shown if shown is not None else [0, 1, n // 2, n - 2, n - 1]
+
+    lines = [
+        "| Slice | t (s) | f by time | f by index |",
+        "|---|---|---|---|",
+    ]
+    previous = -1
+    for i in rows:
+        if i - previous > 1:
+            lines.append("| … | | | |")
+        lines.append(f"| {i} | {times[i]:g} | {by_time(i):.3f} | {by_index(i):.3f} |")
+        previous = i
+
+    worst = max(range(n), key=lambda i: abs(by_time(i) - by_index(i)))
+    gap = abs(by_time(worst) - by_index(worst))
+    if gap > 0.01:
+        chosen, other = (
+            ("time", "index")
+            if constraint.form == "linear_in_time"
+            else ("index", "time")
+        )
+        lines += [
+            "",
+            f"The two disagree most at slice {worst}: "
+            f"{by_time(worst):.3f} by time against {by_index(worst):.3f} by "
+            f"index, a gap of {gap:.3f}. This model interpolates by "
+            f"**{chosen}**; choosing {other} would place that slice "
+            f"{gap * 100:.1f}% of the way along the trajectory from where this "
+            "one puts it.",
+        ]
+    else:
+        lines += [
+            "",
+            "The slices are near enough evenly spaced that index and time give "
+            "the same answer here.",
+        ]
+    return lines
+
+
+def _extra_free(table: ParameterTable, constraint: Any) -> list[Any]:
+    """Free parameters this constraint introduced -- tau, t_half, knots."""
+    marker = f"@{constraint.series}"
+    structural = {"thickness", "roughness", "rho", "irho"}
+    found = []
+    for parameter in table.free:
+        if marker not in parameter.key:
+            continue
+        attribute = parameter.key.split("@", 1)[0].split(".")[-1]
+        if attribute in structural or parameter.key.startswith("probe."):
+            continue
+        found.append(parameter)
+    return found
 
 
 def _nuisance(table: ParameterTable) -> str:

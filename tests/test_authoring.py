@@ -391,3 +391,116 @@ def test_from_notes_keeps_the_placeholder_when_the_reply_is_unusable(
     assert "Keeping the placeholder stack" in result.output
     written = (root / "samples/Sample1/models/m.yaml").read_text(encoding="utf-8")
     assert "PLACEHOLDER" in written
+
+
+def test_an_omitted_constraint_is_rebuilt_from_the_per_state_parameters() -> None:
+    """A proposal often describes the constraint change instead of returning it.
+
+    A real reply said "the existing linear_in_time constraint should be moved
+    from Film.thickness to CuOx.thickness" -- in `notes` -- and omitted the
+    block. Dropping it leaves every slice refitting the whole structure
+    independently, which is never what was wanted and is invisible in the spec.
+
+    The right paths are derivable: a parameter declared `per: state` across
+    both endpoints is by definition something the experiment changed between
+    them.
+    """
+    skeleton = {
+        "stack": [{"name": "Film", "material": "Film", "thickness": 100}],
+        "states": [{"name": "ocv1"}, {"name": "ocv2"}],
+        "series": [{"name": "tnr"}],
+        "constraints": [
+            {"series": "tnr", "form": "linear_in_time", "from": "ocv1",
+             "to": "ocv2", "paths": ["Film.thickness"]}
+        ],
+    }
+    reply = json.dumps({
+        "stack": [
+            {"name": "CuOx", "material": "CuOx", "thickness": 40},
+            {"name": "Cu", "material": "Cu", "thickness": 500},
+            {"name": "Si", "material": "Si"},
+        ],
+        "parameters": [
+            {"path": "CuOx.thickness", "range": [10, 80], "per": "state",
+             "in": ["ocv1", "ocv2"]},
+            {"path": "CuOx.rho", "range": [4, 5.5], "per": "model"},
+            {"path": "probe.intensity", "value": 1.0, "pm": 0.1, "per": "state"},
+        ],
+    })
+
+    merged = merge_proposal(skeleton, parse_proposal(reply))
+
+    assert merged["constraints"] == [
+        {"series": "tnr", "form": "linear_in_time", "from": "ocv1", "to": "ocv2",
+         "paths": ["CuOx.thickness"]}
+    ]
+
+
+def test_the_rebuild_excludes_model_scoped_and_probe_parameters() -> None:
+    """Only quantities that differ between the endpoints should interpolate.
+
+    A `per: model` value is the same in both states, so interpolating it would
+    be a no-op dressed up as physics; an intensity is a nuisance, not structure.
+    """
+    skeleton = {
+        "stack": [{"name": "Film", "material": "Film"}],
+        "states": [{"name": "a"}, {"name": "b"}],
+        "series": [{"name": "s"}],
+        "constraints": [
+            {"series": "s", "form": "linear_in_time", "from": "a", "to": "b",
+             "paths": ["Film.thickness"]}
+        ],
+    }
+    reply = json.dumps({
+        "stack": [{"name": "Cu", "material": "Cu"}],
+        "parameters": [
+            {"path": "Cu.rho", "range": [5, 7], "per": "model"},
+            {"path": "probe.intensity", "value": 1.0, "pm": 0.1, "per": "state"},
+        ],
+    })
+
+    merged = merge_proposal(skeleton, parse_proposal(reply))
+
+    assert "constraints" not in merged, "nothing varies between the states"
+
+
+def test_a_returned_constraint_is_preferred_over_a_rebuild() -> None:
+    """The rebuild is a fallback, not an override."""
+    skeleton = {
+        "stack": [{"name": "Film", "material": "Film"}],
+        "states": [{"name": "a"}, {"name": "b"}],
+        "series": [{"name": "s"}],
+        "constraints": [
+            {"series": "s", "form": "linear_in_time", "from": "a", "to": "b",
+             "paths": ["Film.thickness"]}
+        ],
+    }
+    reply = json.dumps({
+        "stack": [{"name": "Cu", "material": "Cu"}],
+        "parameters": [
+            {"path": "Cu.thickness", "range": [1, 2], "per": "state",
+             "in": ["a", "b"]},
+        ],
+        "constraints": [
+            {"series": "s", "form": "logistic", "from": "a", "to": "b",
+             "paths": ["Cu.thickness"]}
+        ],
+    })
+
+    merged = merge_proposal(skeleton, parse_proposal(reply))
+
+    assert merged["constraints"][0]["form"] == "logistic"
+
+
+def test_the_prompt_lists_the_constraint_forms_and_how_to_choose(
+    project: Path,
+) -> None:
+    """"How do I ask for a linear constraint" must have an answer in the prompt."""
+    system, _ = build_prompt(
+        skeleton=SKELETON, notes="", skills=find_skills(project)
+    )
+
+    for form in ("linear_in_time", "logistic", "exponential", "piecewise_linear"):
+        assert form in system
+    assert "RETURN a `constraints` block" in system
+    assert "oscillatory" in system.lower()

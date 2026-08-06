@@ -378,6 +378,62 @@ one is bundled but not installed:
       - solvent-contrast-matching
 ```
 
+### Asking for a particular constraint
+
+For a time series, the question that matters is *how* the sample changes.
+`nrw model forms` lists the options:
+
+```
+  linear_in_time    Straight line in elapsed time; use when slice spacing is uneven.
+  linear_in_index   Straight line in slice index; endpoints are the two states.
+  logistic          Sigmoid with fitted midpoint `t_half` and width `width`.
+  exponential       Exponential approach with a fitted time constant `tau`.
+  piecewise_linear  Linear interpolation between K free knots (`knots:`).
+  free              Independent per slice; costs one parameter per slice.
+  fixed             Pinned to the `from` state's value; costs nothing.
+```
+
+Three ways to ask for one, in increasing order of how much you have to know:
+
+**Let the data choose it.** Run `nrw tnr assess` first. Its verdict names the
+form:
+
+> changing; a single reaction coordinate describes it; **a(t) is monotonic, so
+> a linear-in-time constraint fits**; the template oscillates in Q, so **free a
+> thickness**
+
+Both `--from-notes` and `--print-prompt` read that verdict and act on it, so
+running the assessment before the model is the whole answer.
+
+**Say it in words** in `sample.md`, under *Fits to perform*:
+
+> Co-refine 218386 and 218393 with the 218389 series. The oxide should thicken
+> steadily through the EIS sequence — linear in time on `CuOx.thickness`.
+
+**Write it directly:**
+
+```yaml
+constraints:
+  - series: tnr
+    form: linear_in_time
+    from: ocv1
+    to: ocv2
+    paths: [CuOx.thickness, CuOx.roughness]
+```
+
+`from` and `to` are the steady states either side, so the interpolating forms
+add **no free parameters** — the 15 slices are described entirely by the two
+states. `logistic` and `exponential` do add some (`t_half` and `width`, or
+`tau`), and the generated explanation lists them.
+
+Time rather than index is the default because the tNR intervals are unequally
+spaced. The explanation quantifies the difference for your actual data, so you
+can see whether it matters:
+
+> The two disagree most at slice 17: 0.120 by time against 0.132 by index, a
+> gap of 0.012. This model interpolates by **time**; choosing index would place
+> that slice 1.2% of the way along the trajectory from where this one puts it.
+
 **3. By hand**, which is what the rest of this section shows. Worth doing once
 even if you plan to use the other two, because reviewing a proposed stack is
 much easier when you know what a good one looks like.

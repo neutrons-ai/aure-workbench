@@ -1003,8 +1003,14 @@ def _author_from_notes(
 def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
     """Summarise what the data itself says, for the prompt.
 
-    The critical edge constrains the topmost SLD independently of anything in
-    the notes, so it is worth putting in front of the model.
+    Two things the notes cannot supply and the data can:
+
+    * the critical edge, which constrains the topmost SLD independently of
+      anything anyone wrote down;
+    * the tNR assessment's verdict, which already names the constraint form the
+      trajectory calls for. `nrw tnr assess` decides that from a(t) and the
+      change template -- a far better source than either the notes or a guess,
+      and it was going unused.
     """
     from nr_workbench.aure_adapter import AureUnavailableError, extract_features
 
@@ -1027,4 +1033,54 @@ def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
                     f"implies a topmost SLD near {edge.get('estimated_SLD', 0):.2f} "
                     f"(confidence {edge.get('confidence', '?')})"
                 )
+
+    lines.extend(_assessment_facts(layout, document))
     return "\n".join(lines)
+
+
+def _assessment_facts(layout: ProjectLayout, document: dict[str, Any]) -> list[str]:
+    """Quote the tNR assessment's verdict, which names the constraint form."""
+    import json
+
+    if not document.get("series"):
+        return []
+
+    sample = str(document.get("sample", ""))
+    directory = layout.sample(sample) / "assessments"
+    if not directory.is_dir():
+        return [
+            "  No tNR assessment has been run. `nrw tnr assess <series dir>` "
+            "reports whether anything changed and which constraint form the "
+            "trajectory calls for."
+        ]
+
+    lines: list[str] = []
+    for payload_path in sorted(directory.glob("*/*assessment.json")):
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        label = payload_path.parent.name
+        verdict = str(payload.get("verdict") or "").strip()
+        if verdict:
+            lines.append(f"  tNR assessment [{label}]: {verdict}")
+
+        amplitude = payload.get("amplitude") or {}
+        template = payload.get("template") or {}
+        details = []
+        if amplitude.get("trajectory"):
+            details.append(f"a(t) is {amplitude['trajectory']}")
+        if amplitude.get("max_significance") is not None:
+            details.append(f"max |a/sigma| = {amplitude['max_significance']}")
+        if template.get("classification"):
+            details.append(
+                f"template is {template['classification']}"
+                + (
+                    f" -> implies a {template['implied_change']} change"
+                    if template.get("implied_change")
+                    else ""
+                )
+            )
+        if details:
+            lines.append("    " + "; ".join(details))
+    return lines

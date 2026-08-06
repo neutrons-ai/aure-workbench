@@ -53,4 +53,24 @@
 
 <!-- What you want out of this sample, in words. The agent turns these into
      model specs under models/. Say which measurements co-refine together and
-     what you expect to change between them. -->
+     what you expect to change between them.
+
+     For a time-resolved run, say HOW you expect it to change -- that becomes
+     the constraint form. `nrw model forms` lists them; the usual answers:
+
+       "changes steadily between the two OCV states"   -> linear_in_time
+       "slow start, then a transition, then levels off" -> logistic
+       "relaxes towards equilibrium"                    -> exponential
+       "no assumption, fit every slice"                 -> free
+
+     And say WHICH quantity you expect to change -- a thickness, an SLD, a
+     roughness. That becomes the constraint's `paths`.
+
+     You do not have to guess: `nrw tnr assess` reads it off the data and says
+     so in its verdict, e.g. "a(t) is monotonic, so a linear-in-time constraint
+     fits; the template oscillates in Q, so free a thickness". Run that first
+     and the answer is already written down.
+
+     e.g. "Co-refine 218386 and 218393 with the 218389 series. The oxide should
+           thicken steadily through the EIS sequence -- linear in time on
+           CuOx.thickness." -->

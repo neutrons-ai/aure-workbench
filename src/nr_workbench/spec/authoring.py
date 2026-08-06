@@ -218,6 +218,29 @@ def build_prompt(
         "`in:` lists.\n"
         "- Prefer FEWER layers. Every layer under about 30 A is barely "
         "resolvable; do not add one without a reason from the notes.\n"
+        "- If the skeleton has a `series`, RETURN a `constraints` block. Do "
+        "not describe the change you would make in `notes` and omit the block "
+        "-- an omitted constraint leaves every slice refitting the whole "
+        "structure independently. Without one "
+        "every slice refits the whole structure independently, which is almost "
+        "never what is wanted. Choose the form from the evidence, in this "
+        "order of preference:\n"
+        "    linear_in_time    a(t) rises steadily; slices unevenly spaced.\n"
+        "                      THE DEFAULT for a monotonic change.\n"
+        "    linear_in_index   same, but only if slices are evenly spaced.\n"
+        "    logistic          a(t) is sigmoidal -- induction, transition,\n"
+        "                      plateau. Fits t_half and width.\n"
+        "    exponential       a first-order relaxation to equilibrium.\n"
+        "                      Fits tau.\n"
+        "    piecewise_linear  structure no closed form captures. Costs K\n"
+        "                      knots; use only if the simpler forms fail.\n"
+        "    free              one parameter per slice. Last resort.\n"
+        "    fixed             nothing changes across the series.\n"
+        "  `from` and `to` are the steady states either side of the series, so "
+        "the interpolating forms add no free parameters.\n"
+        "  Put in `paths` only the quantities the change is in. If the "
+        "assessment says the template is oscillatory in Q, that is a THICKNESS "
+        "change; if it is one-sign, it is an SLD contrast change.\n"
         "- Give every free parameter a physically sensible range, not a wide "
         "one.\n"
         "- If the notes do not say what a layer is made of, say so in `notes` "
@@ -342,10 +365,69 @@ def _repair_constraints(document: dict[str, Any]) -> None:
         if paths:
             kept.append({**constraint, "paths": paths})
 
+    if not kept:
+        kept = _rebuild_constraints(document, layers)
+
     if kept:
         document["constraints"] = kept
     else:
         document.pop("constraints", None)
+
+
+def _rebuild_constraints(
+    document: dict[str, Any], layers: set[str]
+) -> list[dict[str, Any]]:
+    """Re-aim a constraint at the paths the new stack actually varies.
+
+    A proposal often replaces the stack and describes the constraint change in
+    prose instead of returning one -- a real reply said "the existing
+    linear_in_time constraint should be moved from Film.thickness to
+    CuOx.thickness" and then omitted the block. Dropping it leaves every slice
+    refitting the whole structure independently, which is never what was
+    wanted and is invisible in the spec.
+
+    The right paths are derivable: a parameter declared `per: state` across the
+    endpoint states is, by definition, a quantity the experiment changed
+    between them, so interpolating it across the series is exactly what the
+    form is for.
+
+    Args:
+        document: The merged spec.
+        layers: Layer names present in the stack.
+
+    Returns:
+        A single rebuilt constraint, or an empty list if nothing qualifies.
+    """
+    series = document.get("series") or []
+    states = document.get("states") or []
+    if not series or len(states) < 2:
+        return []
+
+    endpoints = [str(state.get("name")) for state in states[:1] + states[-1:]]
+    paths = []
+    for parameter in document.get("parameters") or []:
+        if not isinstance(parameter, dict):
+            continue
+        path = str(parameter.get("path", ""))
+        if parameter.get("per") != "state" or path.startswith("probe."):
+            continue
+        if "." not in path or path.split(".", 1)[0] not in layers:
+            continue
+        targets = [str(t) for t in (parameter.get("in") or endpoints)]
+        if all(name in targets for name in endpoints):
+            paths.append(path)
+
+    if not paths:
+        return []
+    return [
+        {
+            "series": str(series[0].get("name")),
+            "form": "linear_in_time",
+            "from": endpoints[0],
+            "to": endpoints[-1],
+            "paths": paths,
+        }
+    ]
 
 
 def agent_instructions(
@@ -406,12 +488,26 @@ Fill in the model spec at {spec_path} for sample {sample}.
 
    The first two need per-angle data; scope with `in:` if a state is combined.
 
-5. Check your work:
+5. If the spec has a `series`, it needs a `constraints:` block -- without one,
+   every slice refits the whole structure independently. Run
+   `nrw model forms` for the list. Choose from the evidence:
+
+     a(t) rises steadily        -> linear_in_time   (the usual answer)
+     a(t) is sigmoidal          -> logistic         (fits t_half, width)
+     first-order relaxation     -> exponential      (fits tau)
+     none of the above fits     -> piecewise_linear (costs K knots)
+
+   `nrw tnr assess` names the right one in its verdict -- read
+   `assessments/*/[label]_assessment.json` if it has been run. An oscillatory
+   template means a THICKNESS change; one-sign means an SLD contrast change,
+   and `paths` should say which.
+
+6. Check your work:
      nrw data features <one of the data files>   # critical edge -> top-layer SLD
      nrw model validate {spec_path}
      nrw model preview {spec_path} --build       # initial chi-squared
 
-6. If the notes do not say what a layer is made of, leave a TODO comment rather
+7. If the notes do not say what a layer is made of, leave a TODO comment rather
    than inventing a material.
 """
 

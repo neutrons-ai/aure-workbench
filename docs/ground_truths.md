@@ -791,3 +791,55 @@ parameter.
 field and `--print-prompt` raised `NameError: path`. Ruff's F821 caught it
 before a user did. Braces in an f-string template must be doubled -- worth
 remembering for any function that returns example code.
+
+### 2026-08-06: the assessment already chooses the constraint form; use it
+
+`nrw tnr assess` ends with a verdict that names the form the trajectory calls
+for -- "a(t) is monotonic, so a linear-in-time constraint fits; the template
+oscillates in Q, so free a thickness" -- and the authoring prompt was ignoring
+it entirely, leaving the model to guess from prose.
+
+`_measured_facts` now quotes the verdict, the trajectory shape, the peak
+significance and the template classification. Running `nrw tnr assess` before
+`nrw model new --from-notes` is therefore the whole answer to "how do I ask for
+a linear constraint": the data already said so.
+
+### 2026-08-06: a proposal will describe a constraint instead of returning one
+
+A real reply put this in its `notes` field:
+
+    the existing linear_in_time constraint should be moved from
+    Film.thickness to CuOx.thickness
+
+and then omitted the `constraints` block. The leftover constraint referenced a
+layer the new stack does not have, `_repair_constraints` dropped it, and the
+series ended up with every slice refitting the whole structure independently --
+never what was wanted, and invisible in the spec.
+
+The paths are derivable, so the fallback does not need the model: a parameter
+declared `per: state` across both endpoint states is by definition something
+the experiment changed between them, so interpolating it across the series is
+exactly what the form is for. `_rebuild_constraints` re-aims the constraint at
+those, excluding `per: model` values (identical at both ends, so interpolation
+is a no-op) and `probe.*` nuisances.
+
+The prompt was also strengthened to say RETURN the block rather than describe
+it, which fixed it on the next real run -- but the deterministic fallback stays,
+because a prompt is a request and this is a correctness property.
+
+### 2026-08-06: the explanation states the arithmetic, not a paraphrase
+
+`<name>.md` now carries the formula the generated script actually evaluates:
+
+    p_i  =  p[ocv1] + (p[ocv2] - p[ocv1]) * f_i
+    f_i  =  (t_i - t_0) / (t_last - t_0)
+
+plus the per-slice fraction table, the free parameters the form introduces
+(`tau`, `t_half`/`width`, knots) or a statement that it introduces none, and
+the arithmetic: "90 slice values (6 paths x 15 slices) computed from no new
+free parameters".
+
+It also quantifies time-vs-index for the actual data rather than asserting they
+differ. On run 218389's full 130 slices the worst disagreement is slice 17 at
+0.120 against 0.132 -- 1.2% along the trajectory. Small here, and the reader
+can see it is small instead of taking it on trust.
