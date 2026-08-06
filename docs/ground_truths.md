@@ -513,3 +513,24 @@ Only the dated geometry table was ported here. Vendoring the rest would mean
 shipping unverifiable physics into a package whose whole claim is that results
 are checkable -- and there is no raw event data in a workbench project to test
 it against, since `data/raw/` is gitignored by design.
+
+### 2026-08-06: a default argument bound at import cannot be overridden
+
+`sync_upstream.check(manifest_path: Path = MANIFEST)` looked fine and was
+untestable: the default is evaluated once when the module is imported, so
+monkeypatching `sync_upstream.MANIFEST` changed nothing and a caller passing an
+override to `load_manifest` was silently ignored. Both now take `None` and
+resolve inside the function. Caught by a test that asserted `main()` exits
+non-zero on drift and got 0.
+
+### 2026-08-06: upstream.toml entries without a commit were not actually tracked
+
+Six of eight `[[adapted]]` entries recorded a repo and a path but no commit, so
+there was nothing to compare against and the drift check could only skip them.
+The manifest looked like it was doing its job. Commits are backfilled from the
+checked-out source repos, and `test_every_manifest_entry_names_a_commit`
+now fails if a new entry omits one.
+
+The manifest also mixes key spellings -- one entry has several `paths` from a
+single `repo`, another has parallel `repos`/`paths`/`commits` -- so anything
+reading it has to handle both.

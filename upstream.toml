@@ -41,6 +41,7 @@ a result object, and the CLI layer decides what to print.
 dest = "src/nr_workbench/skills_install.py"
 repo = "mdoucet/ai-project-template"
 path = "scripts/install_skills.py"
+commit = "443246b6f1bbf266cd3acba9162416601d3c7495"
 synced = "2026-08-05"
 adaptation = """
 Same copytree-plus-dispatcher shape and the same dispatcher_markdown block
@@ -52,6 +53,7 @@ never clobbered.
 [[adapted]]
 dest = "src/nr_workbench/skills/reflectometry/neutron-reflectometry/SKILL.md"
 repos = ["neutrons-ai/aure", "mdoucet/experiments-2025"]
+commits = ["3021fee37294b938134d052e16dac4f9c282e97f", "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"]
 paths = [
     "src/aure/skills/neutron-reflectometry/SKILL.md",
     "docs/neutron-reflectometry.md",
@@ -71,6 +73,7 @@ package rather than copied here. See docs/ground_truths.md.
 dest = "src/nr_workbench/tnr/"
 repo = "mdoucet/experiments-2025"
 path = "tnr_chi2.py"
+commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
 synced = "2026-08-05"
 adaptation = """
 Split a 1992-line module with one ~60-option Click command into io / reference /
@@ -95,6 +98,7 @@ paths = [
     "docs/tnr-pca.md",
     "docs/tnr-kl.md",
 ]
+commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
 synced = "2026-08-05"
 adaptation = """
 Restructured into the neutron-skills v2 anatomy and pointed at `nrw tnr`. The
@@ -106,6 +110,7 @@ tnr-pca and tnr-kl are merged: both answer the same follow-up question.
 dest = "tests/data/reference/cu_thf_218386_full_sequence.py"
 repo = "mdoucet/experiments-2025"
 path = "jen-apr2025/models/Cu-THF-218386-full-sequence.py"
+commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
 synced = "2026-08-05"
 adaptation = """
 The hand-written co-refinement the nrw-model/1 gate compares against: two
@@ -128,6 +133,7 @@ original, which is what makes those two changes auditable.
 dest = "src/nr_workbench/instrument/geometry.py"
 repo = "neutrons-ai/nr-analyzer"
 path = "analyzer_tools/analysis/theta_offset.py"
+commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
 synced = "2026-08-06"
 adaptation = """
 Only the dated instrument-settings table is carried across, as a typed lookup

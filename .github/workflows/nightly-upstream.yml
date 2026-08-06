@@ -1,0 +1,88 @@
+name: Upstream drift
+
+# Vendoring code creates an obligation to notice when it changes. This is that
+# obligation, automated. It never merges anything -- it opens an issue and a
+# human decides, because for an `adapted` file the right answer depends on the
+# adaptation notes in upstream.toml.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"        # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check vendored files against upstream
+        id: check
+        run: |
+          python tools/sync_upstream.py --remote --json > drift.json || true
+          python tools/sync_upstream.py --remote | tee drift.txt || true
+          echo "ok=$(python -c "import json;print(json.load(open('drift.json'))['ok'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Report how far the AuRE pin has fallen behind
+        continue-on-error: true
+        run: |
+          # AuRE's metadata always says 0.1.0, so the pinned commit is the only
+          # way to tell which code is installed -- and the only way to measure
+          # how stale it is.
+          PINNED=$(grep -oE 'aure\.git@[0-9a-f]{40}' pyproject.toml | cut -d@ -f2)
+          echo "pinned: ${PINNED:-none found}"
+          if [ -n "$PINNED" ]; then
+            git clone --quiet --filter=blob:none https://github.com/neutrons-ai/aure.git /tmp/aure || exit 0
+            BEHIND=$(git -C /tmp/aure rev-list --count "$PINNED"..origin/main 2>/dev/null || echo "?")
+            echo "commits behind main: $BEHIND"
+            echo "AuRE pin is $BEHIND commit(s) behind main." >> drift.txt
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-drift
+          path: |
+            drift.json
+            drift.txt
+
+      - name: Open an issue when something drifted
+        if: steps.check.outputs.ok == 'False'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('drift.txt', 'utf8');
+            const title = 'Upstream drift in vendored files';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'upstream-drift',
+            });
+            const text = [
+              'The weekly check found vendored files that no longer match upstream.',
+              '',
+              'Nothing was changed. For a `verbatim` entry, take the upstream change',
+              'or fork consciously. For an `adapted` entry, re-read its adaptation',
+              'note in `upstream.toml` first -- we changed it for a reason, and that',
+              'reason decides whether following upstream is right.',
+              '',
+              '```', body.trim(), '```',
+            ].join('\n');
+            if (existing.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body: text,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body: text, labels: ['upstream-drift'],
+              });
+            }

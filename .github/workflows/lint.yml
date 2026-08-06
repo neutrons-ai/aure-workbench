@@ -30,3 +30,9 @@ jobs:
     # that developers run locally, so "passes locally" and "passes CI" always agree.
     - name: Run pre-commit on all files
       run: pre-commit run --all-files --show-diff-on-failure
+
+    # The offline half of the vendoring check: every file recorded in
+    # upstream.toml is present and unmodified. Needs no network, so it belongs
+    # on every push rather than only in the weekly job.
+    - name: Vendored files match their recorded hashes
+      run: python tools/sync_upstream.py
