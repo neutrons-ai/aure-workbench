@@ -472,3 +472,44 @@ Logging R alone leaves 0.043% -- `log R` is straight in `log Q`, not in `Q`.
 Log-log is exact for a power law: measured residual 2e-14 on a synthetic
 Fresnel curve, and 0.13% on one with strong fringes, which is honest since
 fringes are not a power law.
+
+### 2026-08-06: which direct beam normalised a segment is recorded only in the template XML
+
+The reduced ASCII does not say. `REF_L_<run>_auto_template.xml` does:
+
+    run 218386 <- direct beam 218274
+    run 218387 <- direct beam 218275
+    run 218388 <- direct beam 218338      <- measured much later
+
+That is the 3.5 deg segment `nrw data overlap` reports 27.6% out at 14.8 sigma.
+Different angles legitimately use different direct beams, so this is where to
+look first rather than a diagnosis -- but two segments normalised against
+references measured far apart are exactly the ones that come out on different
+scales, and `nrw data overlap` now prints the mapping whenever it flags a pair.
+
+Templates are named after the *first* run of a measurement, so looking one up
+by segment 218388's own number finds nothing; every template in the directory
+has to be read. Only one template exists in the apr2025 data (for 218386), so
+218393's normalisation history cannot be checked the same way.
+
+### 2026-08-06: the BL-4B detector moved, twice
+
+Sample-to-detector was 1830 mm until 2024-08-26, then 1355 mm, then back to
+1830 mm on 2025-01-01. Source-to-detector went 15750 -> 15282 -> 15750 mm.
+A run reduced with the wrong distance is wrong in a way that looks like a real
+sample. `instrument/geometry.py` holds the dated table and `spans_a_change`
+answers the question it exists for: may these runs be co-refined?
+
+The apr2025 data this project is built around sits after the move back, so it
+uses 1830/15750.
+
+### 2026-08-06: nr-analyzer's theta-offset physics is untested upstream
+
+`tests/test_theta_offset_json.py` writes an empty file and mocks
+`compute_theta_offset` entirely. So the 613 lines of NeXus event loading, peak
+fitting and gravity correction have no test anywhere.
+
+Only the dated geometry table was ported here. Vendoring the rest would mean
+shipping unverifiable physics into a package whose whole claim is that results
+are checkable -- and there is no raw event data in a workbench project to test
+it against, since `data/raw/` is gitignored by design.

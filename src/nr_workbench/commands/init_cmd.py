@@ -22,6 +22,7 @@ SEED_SKILLS = (
     "nr-workbench-project",
     "analysis-provenance",
     "neutron-reflectometry",
+    "refl-bl4b-instrument",
     "tnr-change-assessment",
     "tnr-amplitude",
     "tnr-variogram",

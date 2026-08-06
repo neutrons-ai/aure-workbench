@@ -49,6 +49,14 @@ def _segments_for(
     return {run: found.steady[run]}
 
 
+def _beam_summary(beams: dict[int, int | None]) -> str:
+    """Render the segment-to-direct-beam mapping on one line."""
+    return "  ".join(
+        f"{run}<-{beam if beam is not None else '?'}"
+        for run, beam in sorted(beams.items())
+    )
+
+
 def run_overlap(
     *,
     sample: str,
@@ -71,6 +79,7 @@ def run_overlap(
         SystemExit: Non-zero when any pair is inconsistent, so this can gate CI.
     """
     from nr_workbench.data.overlap import SIGNIFICANCE, compare_all, load_segment
+    from nr_workbench.instrument.template import direct_beams_for
 
     layout = _layout(root)
     try:
@@ -90,10 +99,16 @@ def run_overlap(
             for index in sorted(measurement.partials)
         ]
         comparisons = compare_all(segments)
+        # Which direct beam normalised each segment. Not part of the
+        # measurement -- it is where to look when one comes out on a
+        # different scale.
+        first_file = measurement.partials[min(measurement.partials)]
+        beams = direct_beams_for((layout.root / first_file).parent, run_number)
         report["runs"].append(
             {
                 "run": run_number,
                 "overlaps": [c.as_dict() for c in comparisons],
+                "direct_beams": {str(k): v for k, v in beams.items()},
             }
         )
 
@@ -120,6 +135,9 @@ def run_overlap(
                 f" Q {comparison.q_min:.4f}-{comparison.q_max:.4f}"
             )
 
+        if beams and not as_json and any(not c.consistent for c in comparisons):
+            click.echo("      direct beams: " + _beam_summary(beams))
+
     report["inconsistent"] = inconsistent
     _emit(report, result_out)
 
@@ -141,7 +159,11 @@ def run_overlap(
             "  significant ratio is a normalisation problem, not a feature. Either\n"
             "  re-reduce, or give that segment its own `probe.intensity` in the spec\n"
             "  so the fit accounts for it explicitly rather than absorbing it into a\n"
-            "  layer."
+            "  layer.\n\n"
+            "  The direct beams listed above are where to look first: segments\n"
+            "  normalised against direct-beam runs measured far apart are the ones\n"
+            "  that come out on different scales. Different angles legitimately use\n"
+            "  different direct beams, so this is a pointer, not a diagnosis."
         )
         raise SystemExit(1)
     click.echo("\n  All overlapping segments agree.")

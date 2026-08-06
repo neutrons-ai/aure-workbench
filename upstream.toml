@@ -123,3 +123,21 @@ Adapted rather than verbatim, in exactly two places, both noted in its banner:
 Excluded from ruff: reformatting it would obscure the diff against the
 original, which is what makes those two changes auditable.
 """
+
+[[adapted]]
+dest = "src/nr_workbench/instrument/geometry.py"
+repo = "neutrons-ai/nr-analyzer"
+path = "analyzer_tools/analysis/theta_offset.py"
+synced = "2026-08-06"
+adaptation = """
+Only the dated instrument-settings table is carried across, as a typed lookup
+returning millimetres rather than a bare dict of metres, plus `spans_a_change`
+for the co-refinement question the table exists to answer.
+
+The surrounding 600 lines -- NeXus event loading, peak fitting, gravity
+correction, theta-offset computation -- are deliberately NOT ported. They need
+raw event files this package never sees (`data/raw/` is gitignored), and
+upstream's own test mocks `compute_theta_offset` rather than exercising it, so
+vendoring them would mean shipping physics no test here could verify. Compute a
+theta offset with nr-analyzer and record the number.
+"""

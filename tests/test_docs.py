@@ -88,7 +88,9 @@ def test_the_getting_started_guide_covers_the_core_workflow() -> None:
         ("check",),
         ("serve",),
     ]:
-        assert required in documented, f"the guide no longer shows `nrw {' '.join(required)}`"
+        assert required in documented, (
+            f"the guide no longer shows `nrw {' '.join(required)}`"
+        )
 
 
 def test_docs_carry_no_absolute_user_paths() -> None:
