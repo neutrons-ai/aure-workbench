@@ -555,6 +555,26 @@ def data_check_command(**kwargs: object) -> None:
     run_check(**kwargs)  # type: ignore[arg-type]
 
 
+@main.command("import")
+@click.argument("source", type=click.Path(exists=True, file_okay=False))
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option(
+    "--sample",
+    default="Sample1",
+    show_default=True,
+    help="Sample for files that name none of their own.",
+)
+@click.option("--write", is_flag=True, help="Create the links; off by default.")
+@click.option("--verbose", is_flag=True, help="List every planned file.")
+@click.option("--result-out", type=click.Path(), help="Write the plan here as JSON.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def import_command(**kwargs: object) -> None:
+    """Import an existing beamtime directory, symlinking its data."""
+    from nr_workbench.commands.import_cmd import run_import
+
+    run_import(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("serve")
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface.")

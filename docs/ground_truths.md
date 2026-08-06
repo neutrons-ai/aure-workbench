@@ -534,3 +534,40 @@ now fails if a new entry omits one.
 The manifest also mixes key spellings -- one entry has several `paths` from a
 single `repo`, another has parallel `repos`/`paths`/`commits` -- so anything
 reading it has to handle both.
+
+### 2026-08-06: a refl1d script is identified by its last line, not its first
+
+`problem = FitProblem(...)` is the closing line by convention -- in the oct2025
+reference it is line 344 of 344 -- and these scripts import via
+`from refl1d.names import *`, so the name never appears near the top. The
+importer's first version sniffed the leading 4 KB, found the imports, missed
+the identifying token, and left every loose model script unclassified.
+
+### 2026-08-06: `\b` finds no boundary between `r` and a digit
+
+`re.search(r"\b(\d{6})\b", "r223995_eis_reduction.json")` matches nothing: `r`
+and `2` are both word characters, so there is no boundary between them. The
+pattern silently returned None and sent every tNR file into one flat directory
+instead of one per run. Now `(?:^|[^0-9])r?(\d{6})(?![0-9])`.
+
+### 2026-08-06: resolve both sides before asking whether one path contains another
+
+`_link_target` resolved the source but compared it against an unresolved root.
+On macOS `/tmp` resolves to `/private/tmp` and `/home` goes through autofs, so
+a source genuinely inside the project was judged foreign and silently linked
+with an absolute path. Any symlinked component on either side does this.
+
+### 2026-08-06: old fit outputs must not be imported
+
+`nrw import` recognises `.dat`, `.par`, `.err`, `.mc.gz` and `results/` and
+deliberately leaves them behind -- 310 files in apr2025, 527 in june2026.
+
+A `results/<fit_id>/` directory here means a manifest with the hash of every
+input, the resolved environment, the git SHA and the exact command. A `.dat`
+dumped by a bumps run in 2025 has none of that. Putting it where `nrw whence`
+promises an answer would fake provenance nobody recorded. Re-running the script
+through `nrw fit run` takes minutes and produces the real thing.
+
+The distinction from "not recognised" is reported separately for the same
+reason: "I know what this is and it should not come" is different information
+from "I do not know what this is".
