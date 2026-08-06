@@ -11,8 +11,13 @@ repos:
       - id: check-yaml
         args: [--allow-multiple-documents]
         exclude: "conda.recipe/meta.yaml"
+      # Reference data is a byte-exact capture of what the reduction wrote.
+      # Tidying its whitespace would make the fixtures disagree with the files
+      # a user actually has on disk, which is the whole point of keeping them.
       - id: end-of-file-fixer
+        exclude: "^tests/data/reference/"
       - id: trailing-whitespace
+        exclude: "^tests/data/reference/"
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.5
     hooks:

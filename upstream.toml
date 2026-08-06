@@ -53,10 +53,13 @@ never clobbered.
 [[adapted]]
 dest = "src/nr_workbench/skills/reflectometry/neutron-reflectometry/SKILL.md"
 repos = ["neutrons-ai/aure", "mdoucet/experiments-2025"]
-commits = ["3021fee37294b938134d052e16dac4f9c282e97f", "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"]
+commits = [
+  "3021fee37294b938134d052e16dac4f9c282e97f",
+  "e6cc7cf363cedda9ce7438a10f43313e9814ae5d",
+]
 paths = [
-    "src/aure/skills/neutron-reflectometry/SKILL.md",
-    "docs/neutron-reflectometry.md",
+  "src/aure/skills/neutron-reflectometry/SKILL.md",
+  "docs/neutron-reflectometry.md",
 ]
 synced = "2026-08-05"
 adaptation = """
@@ -91,12 +94,12 @@ them interactively); and assessment.json is new.
 dest = "src/nr_workbench/skills/reflectometry/tnr-*"
 repo = "mdoucet/experiments-2025"
 paths = [
-    "docs/notes.md",
-    "docs/tnr-amplitude.md",
-    "docs/tnr-variogram.md",
-    "docs/tnr-chi2.md",
-    "docs/tnr-pca.md",
-    "docs/tnr-kl.md",
+  "docs/notes.md",
+  "docs/tnr-amplitude.md",
+  "docs/tnr-variogram.md",
+  "docs/tnr-chi2.md",
+  "docs/tnr-pca.md",
+  "docs/tnr-kl.md",
 ]
 commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
 synced = "2026-08-05"

@@ -11,22 +11,22 @@ requires-python = ">=3.11"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Mat Doucet", email = "doucetm@ornl.gov" }]
 keywords = [
-    "neutron",
-    "reflectometry",
-    "refl1d",
-    "time-resolved",
-    "provenance",
-    "agent-skills",
+  "neutron",
+  "reflectometry",
+  "refl1d",
+  "time-resolved",
+  "provenance",
+  "agent-skills",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: BSD License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: BSD License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
 ]
 
 # Core dependencies. Deliberately fat: `pip install nr-workbench` into a fresh
@@ -41,31 +41,31 @@ classifiers = [
 # direct reference, nr-workbench is install-from-git (not PyPI) until aure
 # publishes -- see docs/ground_truths.md.
 dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.11",
-    "matplotlib>=3.8",
-    "pyyaml>=6.0",
-    "pydantic>=2.4",
-    "click>=8.1",
-    "jinja2>=3.1",
-    "flask>=3.0",
-    "markdown-it-py>=3.0",
-    "python-dotenv>=1.0",
-    "refl1d>=1.0,<2",
-    "bumps>=1.0,<2",
-    "aure @ git+https://github.com/neutrons-ai/aure.git@3021fee37294b938134d052e16dac4f9c282e97f",
+  "numpy>=1.24",
+  "scipy>=1.11",
+  "matplotlib>=3.8",
+  "pyyaml>=6.0",
+  "pydantic>=2.4",
+  "click>=8.1",
+  "jinja2>=3.1",
+  "flask>=3.0",
+  "markdown-it-py>=3.0",
+  "python-dotenv>=1.0",
+  "refl1d>=1.0,<2",
+  "bumps>=1.0,<2",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@3021fee37294b938134d052e16dac4f9c282e97f",
 ]
 
 [project.optional-dependencies]
 nexus = ["h5py>=3.9"]
 dev = [
-    "pytest>=7.4",
-    "pytest-cov>=4.1",
-    "ruff>=0.15",
-    "mypy>=1.5",
-    "pre-commit>=3.4",
-    "pip-audit>=2.7",
-    "types-PyYAML",
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "ruff>=0.15",
+  "mypy>=1.5",
+  "pre-commit>=3.4",
+  "pip-audit>=2.7",
+  "types-PyYAML",
 ]
 docs = ["mkdocs-material>=9.5", "sphinx>=7.2", "myst-parser>=2.0"]
 all = ["nr-workbench[nexus,dev,docs]"]
@@ -96,16 +96,16 @@ include = ["nr_workbench*"]
 # editor schema wiring, while an editable install looked perfectly fine.
 [tool.setuptools.package-data]
 nr_workbench = [
-    "py.typed",
-    "skills/**/*",
-    "skills/**/.*",
-    "templates/**/*",
-    "templates/**/.*",
-    "templates/*/.*/**/*",
-    "templates/*/.*/*",
-    "codegen/templates/*",
-    "web/templates/*",
-    "web/static/*",
+  "py.typed",
+  "skills/**/*",
+  "skills/**/.*",
+  "templates/**/*",
+  "templates/**/.*",
+  "templates/*/.*/**/*",
+  "templates/*/.*/*",
+  "codegen/templates/*",
+  "web/templates/*",
+  "web/static/*",
 ]
 
 [tool.pytest.ini_options]
@@ -116,18 +116,18 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
-    "-ra",
-    "--strict-markers",
-    "--strict-config",
-    "--cov=src/nr_workbench",
-    "--cov-report=term-missing",
-    "--cov-report=html",
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+  "--cov=src/nr_workbench",
+  "--cov-report=term-missing",
+  "--cov-report=html",
 ]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
-    "needs_aure: requires the optional aure extra to be installed",
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "integration: marks tests as integration tests",
+  "unit: marks tests as unit tests",
+  "needs_aure: requires the optional aure extra to be installed",
 ]
 
 [tool.coverage.run]
@@ -136,13 +136,13 @@ omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
 exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-    "@abstractmethod",
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+  "@abstractmethod",
 ]
 
 # Ruff handles BOTH linting and formatting here (`ruff check` + `ruff format`).
@@ -156,29 +156,29 @@ src = ["src", "tests"]
 # reasons -- and `ruff format .` did exactly that once, caught by
 # tests/test_vendor.py. Excluded so it cannot happen again.
 extend-exclude = [
-    "src/nr_workbench/_vendor",
-    # The vendored hand-written reference the model gate compares against. It
-    # is kept verbatim on purpose: reformatting it would weaken the comparison
-    # and obscure what the generator is being measured against.
-    "tests/data/reference",
+  "src/nr_workbench/_vendor",
+  # The vendored hand-written reference the model gate compares against. It
+  # is kept verbatim on purpose: reformatting it would weaken the comparison
+  # and obscure what the generator is being measured against.
+  "tests/data/reference",
 ]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "ARG", # flake8-unused-arguments
-    "SIM", # flake8-simplify
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "UP",  # pyupgrade
+  "ARG", # flake8-unused-arguments
+  "SIM", # flake8-simplify
 ]
 ignore = [
-    "E501", # line too long (handled by the formatter)
-    "B008", # function calls in argument defaults (click uses these)
-    "C901", # too complex
+  "E501", # line too long (handled by the formatter)
+  "B008", # function calls in argument defaults (click uses these)
+  "C901", # too complex
 ]
 
 [tool.ruff.lint.per-file-ignores]
