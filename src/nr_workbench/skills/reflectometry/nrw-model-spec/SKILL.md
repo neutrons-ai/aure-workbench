@@ -166,6 +166,40 @@ nrw model generate spec.yaml
 `preview` is the one that saves time: it says *47 free parameters, 1183 data
 points* before you spend an hour on DREAM.
 
+## Instrument nuisance parameters
+
+Four probe parameters, and the reason each exists is that leaving it out does
+not remove its effect -- it moves the effect into a layer.
+
+| Path | Range | Absorbs | Cost of omitting |
+|---|---|---|---|
+| `probe.intensity` | `value: 1.0, pm: 0.1` | incident-beam normalisation | a layer thickness compensates |
+| `probe.background` | `[0.0, 1.0e-5]` | flat additive background | high-Q points drag the fit |
+| `probe.theta_offset` | `[-0.02, 0.02]` | sample misalignment | shifts Q; becomes a thickness error |
+| `probe.sample_broadening` | `[0.0, 0.05]` | curvature, mosaic, extra divergence | damps fringes; every interface reads rougher |
+
+Ranges are AuRE's defaults, which this beamline's reductions already assume.
+
+**`theta_offset` and `sample_broadening` are partials-only.** Both describe the
+*incident angle*, and a combined file has already been stitched across several
+of them, so there is no single angle to offset or broaden. They require states
+with `segments: auto`; `nrw model validate` rejects them on a `kind: combined`
+state.
+
+```yaml
+parameters:
+  - {path: probe.intensity, value: 1.0, pm: 0.1, per: state}
+  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state, in: [ocv1, ocv2]}
+  - {path: probe.sample_broadening, range: [0.0, 0.05], per: state, in: [ocv1, ocv2]}
+```
+
+Fit them `per: state`: a realignment between two states is exactly the kind of
+thing that makes them differ, and tying them across would hide it.
+
+Declaring `sample_broadening` at all changes the resolution path refl1d takes,
+so a spec with it at 0.0 is not identical to one without it. Add it when there
+is a reason, not by default.
+
 ## Rationalizations
 
 | Excuse | Rebuttal |

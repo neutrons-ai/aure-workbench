@@ -504,3 +504,82 @@ def test_free_form_refuses_to_produce_an_expression() -> None:
     """It is handled by the resolver, so calling it here is a bug."""
     with pytest.raises(ConstraintError):
         FORMS["free"].expression(0, FormContext(start_key=None, end_key=None, n=1))
+
+
+def test_theta_offset_is_rejected_on_a_combined_state(tmp_path) -> None:
+    """A combined file has no single incident angle to offset.
+
+    The reduction has already stitched it across every angle setting, so the
+    parameter is meaningless -- and refl1d accepts it and fits it to something,
+    which is the worst of the three possible behaviours. AuRE draws the same
+    line: its nuisance keys are partials-only.
+    """
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.validate import validate_spec
+
+    data = tmp_path / "samples" / "S1" / "data" / "steady"
+    data.mkdir(parents=True)
+    (data / "REFL_100001_combined_data_auto.txt").write_text(
+        "0.01 1.0 0.1 0.001\n0.02 0.5 0.05 0.002\n"
+    )
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        "schema: nrw-model/1\nname: m\nsample: S1\n"
+        "materials: {Si: {rho: 2.07}, Film: {rho: 4.0}}\n"
+        "stack:\n"
+        "  - {name: Film, material: Film, thickness: 100, roughness: 5}\n"
+        "  - {name: Si, material: Si}\n"
+        "probe: {resolution: angular_only}\n"
+        "states:\n"
+        "  - name: s1\n    run: 100001\n    kind: combined\n    segments: auto\n"
+        "    thetas: [0.45]\n    data_dir: samples/S1/data/steady\n"
+        "parameters:\n"
+        "  - {path: Film.thickness, range: [50, 200], per: model}\n"
+        "  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state}\n",
+        encoding="utf-8",
+    )
+
+    report = validate_spec(load_spec(spec_path), tmp_path)
+
+    assert not report.ok
+    assert any("no single incident angle" in error for error in report.errors)
+
+
+def test_sample_broadening_is_accepted_on_a_per_angle_state(tmp_path) -> None:
+    """It is only combined states that cannot have one."""
+    import numpy as np
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.validate import validate_spec
+
+    data = tmp_path / "samples" / "S1" / "data" / "steady"
+    data.mkdir(parents=True)
+    q = np.linspace(0.01, 0.2, 20)
+    r = 1e-3 * (0.01 / q) ** 4
+    body = "\n".join(
+        f"{a:.6e} {b:.6e} {c:.6e} {d:.6e}"
+        for a, b, c, d in zip(q, r, 0.05 * r, 0.02 * q, strict=True)
+    )
+    (data / "REFL_100001_1_100001_partial.txt").write_text(body)
+
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        "schema: nrw-model/1\nname: m\nsample: S1\n"
+        "materials: {Si: {rho: 2.07}, Film: {rho: 4.0}}\n"
+        "stack:\n"
+        "  - {name: Film, material: Film, thickness: 100, roughness: 5}\n"
+        "  - {name: Si, material: Si}\n"
+        "probe: {resolution: angular_only}\n"
+        "states:\n"
+        "  - name: s1\n    run: 100001\n    segments: auto\n"
+        "    thetas: [0.45]\n    data_dir: samples/S1/data/steady\n"
+        "parameters:\n"
+        "  - {path: Film.thickness, range: [50, 200], per: model}\n"
+        "  - {path: probe.sample_broadening, range: [0.0, 0.05], per: state}\n"
+        "  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state}\n",
+        encoding="utf-8",
+    )
+
+    report = validate_spec(load_spec(spec_path), tmp_path)
+
+    assert report.ok, report.errors

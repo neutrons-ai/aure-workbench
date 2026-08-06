@@ -275,7 +275,22 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(source, encoding="utf-8")
 
+    # The explanation is derived from the same table, so it cannot describe a
+    # different model than the one just written.
+    from nr_workbench.spec.explain import explain
+
+    notes_target = target.with_suffix(".md")
+    notes_target.write_text(
+        explain(
+            table,
+            spec_path=path.relative_to(layout.root),
+            spec_sha256=_spec_sha256(path),
+        ),
+        encoding="utf-8",
+    )
+
     click.echo(f"Wrote {target.relative_to(layout.root)}")
+    click.echo(f"      {notes_target.relative_to(layout.root)}  (what it assumes)")
 
     click.echo(
         f"  {table.n_experiments} experiment(s), {table.n_free} free parameter(s), "

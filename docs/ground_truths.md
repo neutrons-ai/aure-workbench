@@ -744,3 +744,50 @@ a `.env.example` ships, and a test asserts both.
 
 Loading is lazy: `python-dotenv` costs ~40 ms and `nrw --help` is run
 constantly. A test asserts `dotenv` is not in `sys.modules` after `--help`.
+
+### 2026-08-06: the model explanation is derived, never authored
+
+`nrw model generate` writes `<name>.md` beside `<name>.py`: what is being
+fitted, what is held equal to what, what each instrument parameter absorbs, and
+every assumption the fit makes silently.
+
+Every sentence comes from the resolved `ParameterTable`, so it cannot describe
+a model other than the one that will run. A hand-written explanation drifts the
+first time someone edits one and not the other, and a stale explanation is
+worse than none because it reads as authoritative. `nrw check` reports
+`stale-explanation` and `missing-explanation` against the recorded spec hash.
+
+It is suppressed when the *script* is already stale -- one message about the
+spec having moved on is enough.
+
+### 2026-08-06: theta_offset and sample_broadening are partials-only
+
+Both describe the *incident angle*. A combined file is the reduction's stitch
+of every angle setting, so it has no single angle to offset or broaden. refl1d
+accepts the parameter and fits it to something meaningless, which is the worst
+of the three possible behaviours -- so `nrw model validate` rejects them on a
+`kind: combined` state. AuRE draws the same line via its `_NUISANCE_KEYS`.
+
+Canonical ranges, from AuRE's `_TRIPLET_DEFAULTS`:
+
+    theta_offset       [-0.02, 0.02]
+    sample_broadening  [ 0.0,  0.05]
+    background         [ 0.0,  1e-5]
+
+Declaring `sample_broadening` at all changes which resolution path refl1d
+takes: the guide's model builds to chi-squared 101.632 without it and 101.689
+with it pinned at 0.0. So a spec carrying it at zero is not equivalent to one
+without it -- add it when there is a reason, not by default.
+
+`sample.md` gained a **Measurement conditions** section for describing these in
+words ("sample bowed slightly after mounting"), and both authoring paths read
+it: the prompt maps alignment/curvature/background language onto the matching
+parameter.
+
+### 2026-08-06: an f-string return value will eat a YAML example
+
+`agent_instructions` returns an f-string, and the instruction text contains
+`{path: probe.theta_offset, ...}` as an example. Python read that as a format
+field and `--print-prompt` raised `NameError: path`. Ruff's F821 caught it
+before a user did. Braces in an f-string template must be doubled -- worth
+remembering for any function that returns example code.

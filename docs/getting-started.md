@@ -449,6 +449,8 @@ parameters:
 
   # nuisance: one intensity per state, shared across its angle segments...
   - {path: probe.intensity, value: 1.0, pm: 0.1, per: state}
+  # alignment error, from the notes. Range is AuRE's default.
+  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state, in: [ocv1, ocv2]}
   # ...except ocv1's 3.5 deg segment -- the 27.6% that `nrw data overlap`
   # found. Measurement-level targeting outranks the state-level line above.
   - {path: probe.intensity, range: [0.5, 1.1], per: measurement, in: [ocv1#2],
@@ -522,7 +524,30 @@ ratio is the point of the whole exercise.
 nrw model generate samples/Sample6/models/cu-thf-218389.yaml
 ```
 
-That writes a standalone 778-line refl1d script. It runs under plain
+```
+Wrote samples/Sample6/models/cu-thf-218389.py
+      samples/Sample6/models/cu-thf-218389.md  (what it assumes)
+```
+
+Two files. The `.md` explains the model in English — what is being fitted, what
+is held equal to what, what each instrument parameter absorbs, and every
+assumption the fit makes without saying so:
+
+> **`probe.sample_broadening`** — extra angular divergence beyond the
+> calculated resolution, from sample curvature or mosaic. It damps the fringes,
+> so leaving it fixed when it is real makes every interface look rougher than
+> it is.
+>
+> **Layers below the resolution limit.** `CuOx` (60 Å). Reflectivity constrains
+> a thin layer mainly through the product of contrast and thickness, so its SLD
+> and thickness are individually poorly determined even when their product is not.
+
+It is **derived from the spec, not written**, so it cannot describe a different
+model than the one that will run — and `nrw check` reports it stale if the spec
+moves on without it. That is the file to hand a collaborator, or to read
+yourself in six months.
+
+The `.py` is a standalone 778-line refl1d script. It runs under plain
 refl1d/bumps with nr-workbench uninstalled, uses no absolute paths, and is
 meant to be committed and read. It ends with runtime assertions that every
 parameter which should be shared actually *is* the same object — the aliasing

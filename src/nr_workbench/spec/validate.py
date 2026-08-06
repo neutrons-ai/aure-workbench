@@ -75,6 +75,7 @@ def validate_spec(spec: ModelSpec, root: Path) -> ValidationReport:
     _check_degrees_of_freedom(table, root, report)
     _check_series_times(table, report)
     _check_unfitted(spec, table, report)
+    _check_angle_nuisance(spec, report)
     _note_escape_hatches(spec, report)
 
     report.info.append(
@@ -195,3 +196,44 @@ def _note_escape_hatches(spec: ModelSpec, report: ValidationReport) -> None:
             "the schema cannot express. That is supported, but each use is a "
             "report that the schema is missing something -- please say what."
         )
+
+
+#: Probe parameters that only mean anything on an angle-based probe. Both
+#: describe the *incident angle*, and a combined file has already been stitched
+#: across several of them.
+_PARTIALS_ONLY = ("theta_offset", "sample_broadening")
+
+
+def _check_angle_nuisance(spec, report) -> None:
+    """Reject theta_offset and sample_broadening on a combined state.
+
+    A combined file is the reduction's stitch of every angle setting, so it has
+    no single incident angle to offset or broaden. refl1d accepts the parameter
+    and fits it to something meaningless, which is the worst of the three
+    possible behaviours.
+
+    AuRE draws the same line -- its ``_NUISANCE_KEYS`` are partials-only for
+    this reason.
+    """
+    combined = {
+        state.name for state in spec.states if getattr(state, "kind", "") == "combined"
+    }
+    if not combined:
+        return
+
+    for parameter in spec.parameters:
+        attribute = parameter.path.split(".", 1)[-1]
+        if not parameter.path.startswith("probe.") or attribute not in _PARTIALS_ONLY:
+            continue
+        targets = set(parameter.in_ or []) or combined
+        offending = sorted({t.split("#", 1)[0] for t in targets} & combined)
+        if offending:
+            report.errors.append(
+                f"probe.{attribute} is declared for {', '.join(offending)}, which "
+                f"{'is a' if len(offending) == 1 else 'are'} combined state"
+                f"{'' if len(offending) == 1 else 's'}. A combined file is the "
+                "reduction's stitch of every angle setting, so it has no single "
+                "incident angle to offset or broaden. Either reduce that run per "
+                "angle (segments: auto) or scope this parameter to the states "
+                "that have segments with `in:`."
+            )

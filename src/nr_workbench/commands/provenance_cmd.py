@@ -758,8 +758,56 @@ def check_generated_scripts(layout: ProjectLayout) -> list[dict[str, str]]:
                     ),
                 }
             )
+            continue
+
+        _check_explanation(script, spec, layout, actual, problems)
 
     return problems
+
+
+def _check_explanation(
+    script: Path,
+    spec: Path,
+    layout: ProjectLayout,
+    spec_hash: str,
+    problems: list[dict[str, str]],
+) -> None:
+    """Verify the model's explanation still describes the current spec.
+
+    The explanation is what a reader -- a collaborator, a reviewer, yourself in
+    six months -- will actually read. One describing a model that has since
+    changed is worse than none, because it reads as authoritative.
+    """
+    notes = script.with_suffix(".md")
+    relative = notes.relative_to(layout.root).as_posix()
+    if not notes.is_file():
+        problems.append(
+            {
+                "fit_id": "-",
+                "kind": "missing-explanation",
+                "detail": (
+                    f"{relative} is missing; re-run "
+                    f"`nrw model generate {spec.relative_to(layout.root)}`"
+                ),
+            }
+        )
+        return
+
+    try:
+        recorded = _recorded_spec_hash(notes.read_text(encoding="utf-8"))
+    except OSError:
+        return
+    if recorded and recorded != spec_hash:
+        problems.append(
+            {
+                "fit_id": "-",
+                "kind": "stale-explanation",
+                "detail": (
+                    f"{relative} describes an older version of {spec.name}; re-run "
+                    f"`nrw model generate {spec.relative_to(layout.root)}`"
+                ),
+            }
+        )
 
 
 def _recorded_spec_hash(source: str) -> str | None:

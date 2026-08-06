@@ -26,6 +26,29 @@
 |-----|------|-----------|
 |     |      |           |
 
+## Measurement conditions
+
+<!-- Anything about the *measurement* rather than the sample. These become
+     nuisance parameters in the model, and each one left out pushes its error
+     into a layer thickness or a roughness instead.
+
+     Write it in plain words -- `nrw model new --from-notes` and the coding
+     assistant both read this section and add the right parameter.
+
+     - alignment: was the sample well aligned? A doubt here becomes
+       `probe.theta_offset`, which shifts the whole curve in Q.
+     - flatness: is the substrate curved, bent, or clamped under strain? That
+       becomes `probe.sample_broadening`, which damps the fringes. Left out,
+       every interface comes back rougher than it is.
+     - background: anything unusual about the high-Q statistics becomes
+       `probe.background`.
+     - normalisation: did any angle segment need a different direct beam?
+       `nrw data overlap` measures this; note what you already know.
+
+     e.g. "Sample bowed slightly after mounting -- expect some broadening."
+          "Realigned between 218386 and 218393, so the two may differ in theta."
+          "0.45 deg segment looks 20% high against the 1.2 deg one." -->
+
 ## Fits to perform
 
 <!-- What you want out of this sample, in words. The agent turns these into

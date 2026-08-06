@@ -222,6 +222,19 @@ def build_prompt(
         "one.\n"
         "- If the notes do not say what a layer is made of, say so in `notes` "
         "rather than inventing a material.\n"
+        "- Read the notes for *instrument* problems as well as sample "
+        "composition, and add the matching nuisance parameter when one is "
+        "described. These are easy to miss and each one, left out, pushes its "
+        "error into a layer:\n"
+        "    sample misaligned / angle uncertain / offset\n"
+        "      -> {path: probe.theta_offset, range: [-0.02, 0.02], per: state}\n"
+        "    sample curved / bent / warped / mosaic / fringes damped\n"
+        "      -> {path: probe.sample_broadening, range: [0.0, 0.05], per: state}\n"
+        "    high background / poor statistics at high Q\n"
+        "      -> {path: probe.background, range: [0.0, 1.0e-5], per: state}\n"
+        "  theta_offset and sample_broadening only work on states measured per "
+        "angle (`segments: auto`); scope them with `in:` if any state is "
+        "`kind: combined`.\n"
         "- Output JSON only. No markdown fence, no commentary outside the JSON."
     )
 
@@ -380,6 +393,18 @@ Fill in the model spec at {spec_path} for sample {sample}.
 4. Order the stack ambient first, substrate last. Prefer fewer layers: below
    about 30 A a layer is barely resolvable, so do not add one without a reason
    from the notes.
+
+   Read the notes for instrument problems too, and add the matching nuisance
+   parameter -- left out, each pushes its error into a layer:
+
+     misaligned / angle uncertain
+       {{path: probe.theta_offset, range: [-0.02, 0.02], per: state}}
+     curved / bent / mosaic / fringes look damped
+       {{path: probe.sample_broadening, range: [0.0, 0.05], per: state}}
+     high background at high Q
+       {{path: probe.background, range: [0.0, 1.0e-5], per: state}}
+
+   The first two need per-angle data; scope with `in:` if a state is combined.
 
 5. Check your work:
      nrw data features <one of the data files>   # critical edge -> top-layer SLD
