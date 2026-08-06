@@ -104,3 +104,9 @@ def fits() -> Any:
 def fit(fit_id: str) -> Any:
     """One fit: curves, profiles, parameters, and provenance."""
     return jsonify(data().fit(fit_id))
+
+
+@api.get("/fits/<fit_id>/trajectory")
+def trajectory(fit_id: str) -> Any:
+    """Layer parameters against time, for a fit that includes a series."""
+    return jsonify(data().trajectory(fit_id))

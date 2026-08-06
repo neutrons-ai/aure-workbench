@@ -140,7 +140,8 @@ def _register_views(app: Flask) -> None:
             abort(404, str(exc))
         except ValueError as exc:
             abort(400, str(exc))
-        return render_template("fit.html", fit=detail)
+        trajectory = data().trajectory(fit_id)
+        return render_template("fit.html", fit=detail, trajectory=trajectory)
 
     @app.get("/fits")
     def fits() -> str:

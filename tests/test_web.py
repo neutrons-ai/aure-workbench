@@ -730,3 +730,240 @@ def test_fit_view_says_so_when_a_script_named_no_models(
     assert detail["curves"][0]["label"] == "model 1"
     assert detail["curves"][0]["named"] is False
     assert any("no model names" in p["message"] for p in detail["problems"])
+
+
+# --------------------------------------------------------------------------
+# Layer parameters through time
+# --------------------------------------------------------------------------
+
+
+def sample_with_series(project: Path) -> Path:
+    """A project with two steady states and a three-slice series."""
+    import numpy as np
+
+    q = np.linspace(0.01, 0.2, 25)
+    r = 1e-3 * (0.01 / q) ** 4
+    body = "\n".join(
+        f"{a:.6e} {b:.6e} {c:.6e} {d:.6e}"
+        for a, b, c, d in zip(q, r, 0.05 * r, 0.02 * q, strict=True)
+    )
+    steady = project / "samples" / "Sample1" / "data" / "steady"
+    steady.mkdir(parents=True, exist_ok=True)
+    for run in (100001, 100002):
+        (steady / f"REFL_{run}_1_{run}_partial.txt").write_text(body)
+    tnr = project / "samples" / "Sample1" / "data" / "tnr" / "100003"
+    tnr.mkdir(parents=True, exist_ok=True)
+    for seconds in (0, 240, 480):
+        (tnr / f"r100003_t{seconds:06d}.txt").write_text(body)
+
+    models = project / "samples" / "Sample1" / "models"
+    models.mkdir(parents=True, exist_ok=True)
+    (models / "m.yaml").write_text(
+        "schema: nrw-model/1\nname: m\nsample: Sample1\n"
+        "materials: {D2O: {rho: 6.36}, Cu: {rho: 6.55}, Si: {rho: 2.07}}\n"
+        "stack:\n"
+        "  - {name: D2O, material: D2O, thickness: 0, roughness: 5}\n"
+        "  - {name: Cu, material: Cu, thickness: 500, roughness: 5}\n"
+        "  - {name: Si, material: Si}\n"
+        "probe: {resolution: angular_only}\n"
+        "states:\n"
+        "  - {name: ocv1, run: 100001, segments: auto, thetas: [0.45],\n"
+        "     data_dir: samples/Sample1/data/steady}\n"
+        "  - {name: ocv2, run: 100002, segments: auto, thetas: [0.45],\n"
+        "     data_dir: samples/Sample1/data/steady}\n"
+        "series:\n"
+        "  - {name: tnr, run: 100003, reduced_dir: samples/Sample1/data/tnr/100003,\n"
+        "     theta: 0.6, time_from: filename}\n"
+        "parameters:\n"
+        "  - {path: Cu.thickness, range: [400, 600], per: state, in: [ocv1, ocv2]}\n"
+        "constraints:\n"
+        "  - series: tnr\n    form: linear_in_time\n    from: ocv1\n    to: ocv2\n"
+        "    paths: [Cu.thickness]\n",
+        encoding="utf-8",
+    )
+    return project
+
+
+def test_slabs_are_read_in_stack_order(tmp_path: Path) -> None:
+    """bumps writes thickness, interface, rho, irho -- ambient row first."""
+    from nr_workbench.web.trajectory import read_slabs
+
+    path = tmp_path / "m-1-slabs.dat"
+    path.write_text(
+        "#  thickness   interface   rho   irho\n"
+        "0    14.5   5.94   0\n"
+        "44.9  8.07   5.19   0\n"
+        "0     0      2.07   0\n",
+        encoding="utf-8",
+    )
+
+    rows = read_slabs(path)
+
+    assert len(rows) == 3
+    assert rows[1]["thickness"] == pytest.approx(44.9)
+    assert rows[1]["roughness"] == pytest.approx(8.07)
+    assert rows[1]["rho"] == pytest.approx(5.19)
+
+
+def test_posterior_columns_are_taken_verbatim_from_err_json(tmp_path: Path) -> None:
+    """`index` in -err.json is already the chain column, not an offset.
+
+    Column 0 is logp and the indices start at 1, so adding one shifts every
+    parameter onto its neighbour. That produces bands which look entirely
+    plausible and describe a different quantity -- a copper *roughness* with a
+    500 A interval, because it got the thickness column. Nothing crashes and
+    no value is obviously wrong; only bracketing the fitted value catches it.
+    """
+    import gzip
+
+    import numpy as np
+
+    from nr_workbench.web.trajectory import load_posterior
+
+    samples = np.column_stack(
+        [
+            np.full(50, -10.0),  # logp
+            np.full(50, 5.0),  # parameter at index 1
+            np.full(50, 500.0),  # parameter at index 2
+        ]
+    )
+    with gzip.open(tmp_path / "m-point.mc.gz", "wt") as handle:
+        np.savetxt(handle, samples)
+    (tmp_path / "m-err.json").write_text(
+        json.dumps(
+            {
+                "a roughness": {"index": 1, "best": 5.0},
+                "a thickness": {"index": 2, "best": 500.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded, columns = load_posterior(tmp_path)
+
+    assert loaded is not None
+    assert columns == {"a roughness": 1, "a thickness": 2}
+    assert loaded[0, columns["a roughness"]] == pytest.approx(5.0)
+    assert loaded[0, columns["a thickness"]] == pytest.approx(500.0)
+
+
+def test_the_band_is_evaluated_from_paired_samples() -> None:
+    """Correlated endpoints must stay correlated.
+
+    A trajectory is a function of two fitted endpoints, and for an
+    interpolating form they are strongly anti-correlated. Propagating each
+    parameter's `std` independently would widen the band in the middle of the
+    series; using paired posterior samples narrows it there, which is the
+    physically right answer.
+    """
+    import numpy as np
+
+    from nr_workbench.web.trajectory import band_for
+
+    # Perfectly anti-correlated endpoints: their midpoint is exactly constant.
+    n = 400
+    start = np.linspace(90.0, 110.0, n)
+    end = 200.0 - start
+    samples = np.column_stack([np.zeros(n), start, end])
+    columns = {"S": 1, "E": 2}
+
+    band = band_for(
+        {
+            "L.t@s#0": "P['a'] + (P['b'] - P['a']) * 0.0",
+            "L.t@s#1": "P['a'] + (P['b'] - P['a']) * 0.5",
+            "L.t@s#2": "P['a'] + (P['b'] - P['a']) * 1.0",
+        },
+        {"a": "S", "b": "E"},
+        samples,
+        columns,
+    )
+
+    width = {k: hi - lo for k, (lo, hi) in band.items()}
+    assert width["L.t@s#1"] < width["L.t@s#0"] / 10, (
+        "the midpoint band must collapse; it did not, so the samples were not paired"
+    )
+
+
+def test_an_expression_naming_an_unknown_parameter_is_skipped() -> None:
+    """Better no band than one computed from a parameter we could not find."""
+    import numpy as np
+
+    from nr_workbench.web.trajectory import band_for
+
+    samples = np.column_stack([np.zeros(10), np.ones(10)])
+
+    band = band_for({"L.t@s#0": "P['missing'] * 2"}, {"a": "S"}, samples, {"S": 1})
+
+    assert band == {}
+
+
+@pytest.mark.integration
+def test_a_trajectory_band_brackets_the_fitted_values(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The end-to-end property, and the one the column bug violated.
+
+    Every fitted slice value must lie inside its own credible band. That is
+    true by construction when the columns line up and false in an obvious way
+    when they do not.
+    """
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+
+    runner = CliRunner()
+    generated = runner.invoke(
+        main, ["model", "generate", "samples/Sample1/models/m.yaml"]
+    )
+    assert generated.exit_code == 0, generated.output
+    fitted = runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "dream",
+            "--samples",
+            "2000",
+            "--burn",
+            "50",
+            "--pop",
+            "6",
+            "--seed",
+            "1",
+            "--parallel",
+            "1",
+        ],
+    )
+    assert fitted.exit_code == 0, fitted.output
+
+    data = ProjectData(root)
+    result = data.trajectory(data.fits("Sample1")[0]["fit_id"])
+
+    assert result["traces"], "a series fit must produce trajectories"
+    banded = [t for t in result["traces"] if "lo" in t]
+    assert banded, "a dream fit must produce a band"
+
+    # The band must describe the same quantity as the value. Tolerance of one
+    # band width, not zero: the reported value is the maximum-likelihood point,
+    # which is not obliged to sit inside a *central* 68% interval and routinely
+    # sits just outside it for a parameter railed against its bound.
+    #
+    # An order of magnitude is what the column bug produced -- a copper
+    # roughness of 5 A carrying the thickness column's [500, 530] band -- and
+    # that is what this catches.
+    for trace in banded:
+        for lo, value, hi in zip(
+            trace["lo"], trace["values"], trace["hi"], strict=True
+        ):
+            width = max(hi - lo, abs(value) * 1e-6)
+            assert lo - width <= value <= hi + width, (
+                f"{trace['path']}: fitted {value} is not on the same scale as "
+                f"its band [{lo}, {hi}] -- the posterior column is probably "
+                "matched to the wrong parameter"
+            )

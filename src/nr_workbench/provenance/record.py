@@ -277,12 +277,30 @@ class FitDirectory:
         (self.path / "figures").mkdir()
 
     def freeze_script(self, script: Path) -> None:
-        """Copy the executed script into the record.
+        """Copy the executed script, and the spec it came from, into the record.
+
+        The spec matters as much as the script. It is the thing a human edits
+        and the only place the *intent* is written down -- which layers are
+        tied, what the constraint asserts, which endpoints are anchored. A
+        record holding only the generated Python can be re-run but not
+        re-reasoned about, and anything reading the model back (the trajectory
+        view, `nrw diff`) has to reconstruct from generated code instead.
+
+        A hand-written script has no spec, and that is normal rather than an
+        error -- running one unchanged is a supported path.
 
         Args:
             script: The script that was run.
         """
         shutil.copy2(script, self.path / "model.py")
+
+        spec = script.with_suffix(".yaml")
+        if spec.is_file():
+            shutil.copy2(spec, self.path / "spec.yaml")
+
+        explanation = script.with_suffix(".md")
+        if explanation.is_file():
+            shutil.copy2(explanation, self.path / "model.md")
 
     def write_inputs(self, inputs: list[FileDigest]) -> None:
         """Write ``inputs.json``.

@@ -54,6 +54,28 @@
       <div id="plot-sld" class="plot plot-sld"></div>
     </div>
 
+    {% if trajectory and trajectory.traces %}
+    <div class="panel">
+      <div class="panel-head">
+        <span>Layer parameters through time</span>
+        <span class="hint">
+          {{ trajectory.n_slices }} slices of <code>{{ trajectory.series }}</code>;
+          shaded band is the 68% credible interval from the posterior
+        </span>
+        <div class="form-check form-switch ms-auto mb-0">
+          <input class="form-check-input" type="checkbox" id="traj-all">
+          <label class="form-check-label small" for="traj-all">show unchanging</label>
+        </div>
+      </div>
+      <div id="plot-trajectory" class="plot"></div>
+      <div class="px-3 pb-2 small text-secondary">
+        Values are read from each slice's own layer table, so they are what the
+        fit used rather than a recomputation. A path marked <code>*</code> is
+        not governed by a constraint.
+      </div>
+    </div>
+    {% endif %}
+
     {% if fit.parameters %}
     <div class="panel">
       <div class="panel-head">
@@ -191,6 +213,17 @@
 <script>
 (function () {
   NRW.fitPanel("plot-fit", "plot-residual", {{ fit.curves|nrwjson|safe }});
+
+  const traces = {{ ((trajectory or {}).get('traces') or [])|nrwjson|safe }};
+  if (traces.length) {
+    NRW.trajectoryPanel("plot-trajectory", traces);
+    const toggle = document.getElementById("traj-all");
+    if (toggle) {
+      toggle.addEventListener("change", function (e) {
+        NRW.trajectoryPanel("plot-trajectory", traces, { all: e.target.checked });
+      });
+    }
+  }
   NRW.sldPanel("plot-sld", {{ fit.profiles|nrwjson|safe }});
 
   const button = document.getElementById("copy-reproduce");

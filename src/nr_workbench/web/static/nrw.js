@@ -520,3 +520,77 @@ const NRW = (function () {
     havePlotly: HAVE_PLOTLY,
   };
 })();
+
+/* Layer parameters through time, for a fit with a series.
+ *
+ * The band is a credible interval from the posterior, so it is drawn as a
+ * filled region rather than error bars: the neighbouring points are strongly
+ * correlated -- they are computed from the same two endpoints -- and per-point
+ * bars would suggest an independence that is not there.
+ */
+NRW.trajectoryPanel = function (divId, traces, options) {
+  if (typeof Plotly === "undefined" || !traces.length) return;
+  const opts = options || {};
+
+  const shown = opts.all ? traces : traces.filter(function (t) { return t.varies; });
+  if (!shown.length) return;
+
+  const rows = shown.length;
+  const data = [];
+  const layout = {
+    margin: { l: 74, r: 24, t: 8, b: 44 },
+    font: { family: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', size: 11 },
+    showlegend: false,
+    hovermode: "x unified",
+    grid: { rows: rows, columns: 1, pattern: "independent", roworder: "top to bottom" },
+    height: Math.max(180, rows * 150),
+  };
+
+  shown.forEach(function (t, i) {
+    const axis = i === 0 ? "" : String(i + 1);
+    const colour = ["#0072b2", "#d55e00", "#009e73", "#cc79a7", "#56b4e9", "#e69f00"][i % 6];
+
+    if (t.lo && t.hi) {
+      data.push({
+        x: t.times.concat(t.times.slice().reverse()),
+        y: t.hi.concat(t.lo.slice().reverse()),
+        fill: "toself",
+        fillcolor: colour.replace("#", "rgba(").length ? colour + "33" : colour,
+        line: { width: 0 },
+        type: "scatter",
+        mode: "lines",
+        hoverinfo: "skip",
+        xaxis: "x" + axis,
+        yaxis: "y" + axis,
+      });
+    }
+    data.push({
+      x: t.times,
+      y: t.values,
+      mode: "lines+markers",
+      type: "scatter",
+      name: t.path,
+      line: { color: colour, width: 1.6 },
+      marker: { color: colour, size: 4 },
+      hovertemplate: t.path + " = %{y:.4g}<extra></extra>",
+      xaxis: "x" + axis,
+      yaxis: "y" + axis,
+    });
+
+    layout["yaxis" + axis] = {
+      title: { text: t.path + (t.constrained ? "" : " *"), font: { size: 10 } },
+      zeroline: false,
+    };
+    layout["xaxis" + axis] = {
+      title: i === rows - 1 ? { text: "Time (s)" } : undefined,
+      showticklabels: i === rows - 1,
+      zeroline: false,
+    };
+  });
+
+  Plotly.newPlot(divId, data, layout, {
+    displaylogo: false,
+    responsive: true,
+    modeBarButtonsToRemove: ["lasso2d", "select2d"],
+  });
+};

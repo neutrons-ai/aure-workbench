@@ -508,6 +508,120 @@ class ProjectData:
             "problems": [p.as_dict() for p in problems],
         }
 
+    def trajectory(self, fit_id: str) -> dict[str, Any]:
+        """Layer parameters against time, for a fit that includes a series.
+
+        Args:
+            fit_id: The fit identifier, or a unique prefix.
+
+        Returns:
+            One trace per layer property, with a credible band where the fit
+            produced a posterior. Empty ``traces`` when the fit has no series,
+            which is the common case and not an error.
+
+        Raises:
+            FileNotFoundError: If no fit matches.
+        """
+        from nr_workbench.web import trajectory as traj
+
+        record = self._resolve_fit(fit_id)
+        resolved = str(record["fit_id"])
+        directory = self._fit_dir(resolved, record.get("sample"))
+        manifest = self._read_json(directory / "manifest.json")
+        names = _model_names((manifest.get("info") or {}).get("models") or [])
+
+        spec_path = directory / "spec.yaml"
+        if not spec_path.is_file() or not names:
+            return {"fit_id": resolved, "traces": [], "series": None}
+
+        try:
+            table = self._resolve_frozen_spec(spec_path)
+        except Exception as exc:
+            return {
+                "fit_id": resolved,
+                "traces": [],
+                "series": None,
+                "problems": [Problem("trajectory", str(exc)).as_dict()],
+            }
+
+        spec = table.spec
+        if not spec.series:
+            return {"fit_id": resolved, "traces": [], "series": None}
+
+        series = spec.series[0].name
+        measurements = table.measurements.get(series, [])
+        times = [
+            m.time if m.time is not None else float(i)
+            for i, m in enumerate(measurements)
+        ]
+        constrained = {
+            expression.key.split("@", 1)[0] for expression in table.expressions
+        }
+
+        traces = traj.build(
+            directory / "fit",
+            model_names=names,
+            series=series,
+            times=times,
+            layers=[layer.name for layer in spec.stack],
+            constrained=constrained,
+        )
+        self._attach_band(directory / "fit", table, series, traces)
+
+        return {
+            "fit_id": resolved,
+            "sample": record.get("sample"),
+            "series": series,
+            "n_slices": len(measurements),
+            "traces": [trace.as_dict() for trace in traces],
+        }
+
+    def _resolve_frozen_spec(self, spec_path: Path):
+        """Resolve the spec frozen inside a fit directory.
+
+        Resolved against the *project*, not the result directory, because the
+        data paths in a spec are project-relative and the frozen copy is a
+        record rather than a working tree.
+        """
+        from nr_workbench.spec.models import load_spec
+        from nr_workbench.spec.resolve import build_table, discover_measurements
+
+        spec = load_spec(spec_path)
+        return build_table(spec, discover_measurements(spec, self.root))
+
+    def _attach_band(
+        self, fit_dir: Path, table: Any, series: str, traces: list[Any]
+    ) -> None:
+        """Fill in credible bands from the posterior, when there is one."""
+        from nr_workbench.web import trajectory as traj
+
+        samples, columns = traj.load_posterior(fit_dir)
+        if samples is None or not columns:
+            return
+
+        key_to_display = {p.key: p.display for p in table.free}
+        sources = {
+            expression.key: expression.source
+            for expression in table.expressions
+            if f"@{series}#" in expression.key
+        }
+        band = traj.band_for(sources, key_to_display, samples, columns)
+        if not band:
+            return
+
+        for trace in traces:
+            lo: list[float] = []
+            hi: list[float] = []
+            for index in range(len(trace.values)):
+                edges = band.get(f"{trace.path}@{series}#{index}")
+                if edges is None:
+                    lo, hi = [], []
+                    break
+                lo.append(edges[0])
+                hi.append(edges[1])
+            if lo and hi:
+                trace.lo, trace.hi = lo, hi
+
     def _fit_arrays(
         self, fit_dir: Path, names: dict[int, str]
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[Problem]]:

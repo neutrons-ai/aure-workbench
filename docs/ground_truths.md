@@ -1001,3 +1001,43 @@ Two things to know about the pool:
 * The fallback is deliberately narrow: it triggers on multiprocessing-shaped
   errors only, so a genuinely broken model still fails once and fast instead of
   being retried pointlessly.
+
+### 2026-08-06: the fit record was not freezing the spec
+
+`freeze_script` copied `model.py` and nothing else, so a result directory held
+generated Python and no statement of intent -- which layers are tied, what the
+constraint asserts, which endpoints are anchored. It could be re-run but not
+re-reasoned about, and anything reading the model back had to reconstruct it
+from generated code. `spec.yaml` and `model.md` are frozen alongside now. A
+hand-written script has neither, which is normal rather than an error.
+
+### 2026-08-06: `index` in bumps' -err.json is the chain column already
+
+`point.mc.gz` is `(n_samples, 1 + n_parameters)` with logp in column 0, and
+each parameter's `index` in `-err.json` runs 1..n -- it is the column, not an
+offset into the parameter block. Adding one shifts every parameter onto its
+neighbour.
+
+The result is the dangerous kind of wrong: nothing raises, no value looks
+impossible in isolation, and every band is a real interval from a real
+parameter. It showed up as a copper *roughness* of 5 A carrying a
+[500, 530] band, because it had been handed the thickness column.
+
+Caught by asserting each fitted value sits on the same scale as its own band.
+That check needs a tolerance of one band width rather than zero: the reported
+value is the maximum-likelihood point, which is not obliged to lie inside a
+*central* 68% interval and routinely sits just outside it when a parameter
+rails against a bound.
+
+### 2026-08-06: a trajectory band needs paired posterior samples
+
+A constrained slice value is a deterministic function of the fitted endpoints,
+so the band is computed by evaluating the constraint once per posterior sample.
+Propagating each endpoint's `std` independently would be wrong in a specific,
+visible way: for an interpolating form the endpoints are strongly
+anti-correlated, so the band should *narrow* towards the middle of the series
+and independent propagation widens it there instead.
+
+Values come from `-slabs.dat` rather than the same evaluation -- that is the
+layer table the fit actually used for each slice, so it needs no recomputation
+and works for an optimiser run with no posterior at all.
