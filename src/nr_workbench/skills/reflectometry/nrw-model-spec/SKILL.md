@@ -186,15 +186,43 @@ of them, so there is no single angle to offset or broaden. They require states
 with `segments: auto`; `nrw model validate` rejects them on a `kind: combined`
 state.
 
+**Scope them by asking whether the sample physically moved.**
+
+`theta_offset` and `sample_broadening` are properties of *how the sample sits
+in the beam* — its alignment and its flatness. So the question is not "did the
+sample change?" but "was it remounted?".
+
+For an in-situ cell measured continuously — a sample under potential, an OCV
+before and after, a tNR run in between — the sample never moves. There is one
+alignment for the whole experiment, so:
+
 ```yaml
 parameters:
+  # the sample was mounted once and never touched
+  - {path: probe.theta_offset, range: [-0.02, 0.02], per: model}
+  - {path: probe.sample_broadening, range: [0.0, 0.05], per: model}
+  # but the normalisation is genuinely per state: each reduction used its own
+  # direct beam
   - {path: probe.intensity, value: 1.0, pm: 0.1, per: state}
-  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state, in: [ocv1, ocv2]}
-  - {path: probe.sample_broadening, range: [0.0, 0.05], per: state, in: [ocv1, ocv2]}
 ```
 
-Fit them `per: state`: a realignment between two states is exactly the kind of
-thing that makes them differ, and tying them across would hide it.
+Fitting these `per: state` on a sample that never moved is worse than
+cosmetic. It is several free parameters describing one physical quantity, and
+they will absorb real structural differences between the states — the very
+thing the experiment is trying to measure.
+
+Use `per: state` only when the sample was **physically remounted or
+realigned** between measurements: taken out of the cell, moved to a different
+holder, re-aligned after a beam trip.
+
+```yaml
+  # sample remounted between the dry and wet measurements
+  - {path: probe.theta_offset, range: [-0.02, 0.02], per: state, in: [dry, wet]}
+```
+
+`probe.intensity` is the exception that is nearly always `per: state`: each
+angle segment was normalised against its own direct beam, and those genuinely
+differ.
 
 Declaring `sample_broadening` at all changes the resolution path refl1d takes,
 so a spec with it at 0.0 is not identical to one without it. Add it when there

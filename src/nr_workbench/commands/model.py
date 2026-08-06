@@ -367,19 +367,44 @@ def run_new(
             exists and ``force`` was not given.
     """
 
-    from nr_workbench.project.scan import scan_sample
+    from nr_workbench.project.scan import load_register, register_drift, scan_sample
 
     layout = _layout()
-    try:
-        found = scan_sample(layout.root, sample)
-    except FileNotFoundError as exc:
-        raise click.ClickException(str(exc)) from exc
+
+    # The register wins over the disk. `sample.yaml` is what this sample's
+    # analysis is about, and editing it is the supported way to co-refine a
+    # subset -- a beamtime directory routinely holds alignment scans, aborted
+    # runs and other conditions that belong to the sample but not to a model.
+    found = load_register(layout.root, sample)
+    from_register = found is not None
+    if found is None:
+        try:
+            found = scan_sample(layout.root, sample)
+        except FileNotFoundError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     if not found.steady and not found.series:
         raise click.ClickException(
             f"No data found for {sample!r}. Copy reduced files into "
             f"samples/{sample}/data/steady and data/tnr, then run `nrw sample scan`."
         )
+
+    if from_register:
+        unregistered, missing = register_drift(layout.root, sample)
+        if unregistered:
+            click.echo(
+                f"  note  using samples/{sample}/sample.yaml, which does not list "
+                f"run(s) {', '.join(str(r) for r in unregistered)} that are on "
+                "disk.\n"
+                "        If that is deliberate, nothing to do. If the register is "
+                f"stale, run `nrw sample scan {sample}`."
+            )
+        if missing:
+            click.echo(
+                f"  note  sample.yaml lists run(s) "
+                f"{', '.join(str(r) for r in missing)} with no data on disk; "
+                "they are skipped."
+            )
 
     target = Path(out) if out else layout.sample(sample) / "models" / f"{name}.yaml"
     if target.exists() and not force:

@@ -253,11 +253,22 @@ def build_prompt(
         "described. These are easy to miss and each one, left out, pushes its "
         "error into a layer:\n"
         "    sample misaligned / angle uncertain / offset\n"
-        "      -> {path: probe.theta_offset, range: [-0.02, 0.02], per: state}\n"
+        "      -> {path: probe.theta_offset, range: [-0.02, 0.02], per: ...}\n"
         "    sample curved / bent / warped / mosaic / fringes damped\n"
-        "      -> {path: probe.sample_broadening, range: [0.0, 0.05], per: state}\n"
+        "      -> {path: probe.sample_broadening, range: [0.0, 0.05], per: ...}\n"
         "    high background / poor statistics at high Q\n"
         "      -> {path: probe.background, range: [0.0, 1.0e-5], per: state}\n"
+        "  SCOPE the first two by asking whether the sample was physically "
+        "MOVED, not whether it changed. They describe how it sits in the beam. "
+        "An in-situ cell measured continuously -- an OCV, a tNR run, another "
+        "OCV -- is never remounted, so use `per: model`: one alignment for the "
+        "whole experiment. Use `per: state` only if the notes say the sample "
+        "was remounted, moved, or realigned between measurements. Fitting one "
+        "per state on a sample that never moved is several parameters "
+        "describing one quantity, and they absorb the real differences "
+        "between the states.\n"
+        "  `probe.intensity` is the exception and is nearly always `per: "
+        "state`: each reduction used its own direct beam.\n"
         "  theta_offset and sample_broadening only work on states measured per "
         "angle (`segments: auto`); scope them with `in:` if any state is "
         "`kind: combined`.\n"
@@ -483,13 +494,20 @@ Fill in the model spec at {spec_path} for sample {sample}.
    parameter -- left out, each pushes its error into a layer:
 
      misaligned / angle uncertain
-       {{path: probe.theta_offset, range: [-0.02, 0.02], per: state}}
+       {{path: probe.theta_offset, range: [-0.02, 0.02], per: ...}}
      curved / bent / mosaic / fringes look damped
-       {{path: probe.sample_broadening, range: [0.0, 0.05], per: state}}
+       {{path: probe.sample_broadening, range: [0.0, 0.05], per: ...}}
      high background at high Q
        {{path: probe.background, range: [0.0, 1.0e-5], per: state}}
 
-   The first two need per-angle data; scope with `in:` if a state is combined.
+   Scope the first two by asking whether the sample was physically MOVED, not
+   whether it changed -- they describe how it sits in the beam. An in-situ cell
+   measured continuously is never remounted, so `per: model`: one alignment for
+   the whole experiment. `per: state` only if the notes say it was remounted or
+   realigned. `probe.intensity` is nearly always `per: state`, since each
+   reduction used its own direct beam.
+
+   Both need per-angle data; scope with `in:` if a state is combined.
 
 5. If the spec has a `series`, it needs a `constraints:` block -- without one,
    every slice refits the whole structure independently. Run

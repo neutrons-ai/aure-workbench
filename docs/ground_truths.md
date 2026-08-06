@@ -869,3 +869,58 @@ default: an unbounded endpoint drags the whole trajectory with it.
 The explanation had to learn about this. Left alone it rendered `p[free]` in
 the formula and claimed "No new free parameters" while six had just been
 created -- the plausible-looking wrong document that is worse than none.
+
+### 2026-08-06: sample.yaml was written and never read
+
+`nrw sample scan` wrote the register; nothing consumed it. `nrw model new`
+re-scanned the disk instead, so curating the register -- deleting the alignment
+scans, the aborted runs, the other conditions -- did nothing at all. A
+write-only register is decoration.
+
+`load_register` reads it back, and `nrw model new` prefers it. The drift
+between register and disk is reported, not resolved: a stale register and a
+deliberately curated one are indistinguishable on disk, and silently re-adding
+a run would undo a choice.
+
+Two traps in doing this:
+
+* The scaffold ships `steady: []` and `series: []`. Treating an empty register
+  as a curated empty set would make `nrw model new` report "no data found" for
+  every sample whose owner copied files in before running `nrw sample scan`.
+  An empty register is a stub; fall back to scanning.
+* `yaml.YAMLError` derives from `Exception`, not `ValueError`, so
+  `except (OSError, ValueError)` sails straight past a malformed register.
+
+### 2026-08-06: theta_offset scope is a claim about remounting, not about change
+
+The skill said to fit `theta_offset` and `sample_broadening` `per: state`,
+reasoning that "a realignment between two states is exactly the kind of thing
+that makes them differ". That is backwards as a default here.
+
+Both describe *how the sample sits in the beam* -- its alignment and its
+flatness -- so the question is not "did the sample change?" but "was it
+remounted?". An in-situ electrochemical cell measured continuously (OCV, tNR,
+OCV) is mounted once and never touched: one alignment for the whole experiment,
+so `per: model`.
+
+Fitting one per state on a sample that never moved is several free parameters
+describing one physical quantity, and they will absorb the real structural
+differences between the states -- the thing being measured.
+
+`probe.intensity` is the exception and is nearly always `per: state`: each
+reduction used its own direct beam, and those genuinely differ.
+
+`sample.md` now asks the deciding question outright, because it is not
+derivable from the data.
+
+### 2026-08-06: an error message that names only the wrong fixes
+
+The double-assignment error said "remove it from `parameters` or from the
+constraint's `paths`". On the case that actually produces it, both are wrong:
+removing the declaration loses the range -- which a `free` endpoint borrows --
+and removing it from the constraint leaves the series unfitted.
+
+The real cause is nearly always a structural parameter declared `per: state`
+with no `in:`, which scopes it to *every* group including the series. The fix
+is to scope it to the steady states, and the message now says exactly that,
+with the state names filled in.

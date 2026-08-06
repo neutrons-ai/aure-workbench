@@ -119,6 +119,29 @@ yours: what the sample is, what was done to it, what you expect. The tool never
 edits it, and the `!` line is it telling you the two disagree. Write the runs up
 in `sample.md` and the warning goes away.
 
+**`sample.yaml` is also how you co-refine a subset.** It is a normal file, and
+`nrw model new` builds from it rather than from the disk. A beamtime directory
+routinely holds alignment scans, aborted runs and other conditions that belong
+to the sample without belonging to *this* model — delete those entries from the
+register and the model leaves them out:
+
+```bash
+nrw sample scan Sample6          # refresh the register from disk
+$EDITOR samples/Sample6/sample.yaml   # keep only what this model is about
+nrw model new Sample6 --name subset
+```
+
+```
+  note  using samples/Sample6/sample.yaml, which does not list run(s) 218400
+        that are on disk.
+        If that is deliberate, nothing to do. If the register is stale, run
+        `nrw sample scan Sample6`.
+```
+
+It reports the difference rather than resolving it: a stale register and a
+curated one look identical on disk, and silently re-adding the run would undo
+a deliberate choice.
+
 ## 3. Check the data before modelling it
 
 This step exists because both of the things it finds are invisible on a log-R

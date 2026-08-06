@@ -58,12 +58,16 @@ _NUISANCE_PROSE = {
     "theta_offset": (
         "a small error in the incident angle, from sample alignment. It shifts "
         "the whole curve in Q; leaving it fixed when the sample was misaligned "
-        "pushes the error into a layer thickness."
+        "pushes the error into a layer thickness. Its scope asserts whether "
+        "the sample was remounted: `per: model` says it was mounted once and "
+        "measured throughout, `per: state` says it moved between measurements."
     ),
     "sample_broadening": (
         "extra angular divergence beyond the calculated resolution, from "
         "sample curvature or mosaic. It damps the fringes, so leaving it fixed "
-        "when it is real makes every interface look rougher than it is."
+        "when it is real makes every interface look rougher than it is. Like "
+        "`theta_offset`, its scope is a claim about remounting, not about the "
+        "sample changing."
     ),
 }
 

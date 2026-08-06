@@ -40,13 +40,20 @@
      - flatness: is the substrate curved, bent, or clamped under strain? That
        becomes `probe.sample_broadening`, which damps the fringes. Left out,
        every interface comes back rougher than it is.
+     - **was the sample moved between measurements?** This decides the scope
+       of the two above. Mounted once and measured throughout -- an in-situ
+       cell, OCV / tNR / OCV -- means one alignment for the whole experiment
+       (`per: model`). Remounted or realigned between measurements means one
+       per state. Say which; it is not guessable from the data.
      - background: anything unusual about the high-Q statistics becomes
        `probe.background`.
      - normalisation: did any angle segment need a different direct beam?
        `nrw data overlap` measures this; note what you already know.
 
-     e.g. "Sample bowed slightly after mounting -- expect some broadening."
-          "Realigned between 218386 and 218393, so the two may differ in theta."
+     e.g. "Mounted once and left in the cell for the whole sequence, so one
+           alignment throughout."
+          "Sample bowed slightly after mounting -- expect some broadening."
+          "Realigned between 218386 and 218393, so the two differ in theta."
           "0.45 deg segment looks 20% high against the 1.2 deg one." -->
 
 ## Fits to perform

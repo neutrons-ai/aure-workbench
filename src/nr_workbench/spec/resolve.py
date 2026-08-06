@@ -901,9 +901,14 @@ def _check_owner_exists(spec: ModelSpec, path: ParameterPath, original: str) -> 
 def _check_no_double_assignment(table: ParameterTable) -> None:
     """Reject a slot written by both a free parameter and a constraint.
 
-    The likeliest user error: declaring ``Cu.thickness`` free per state and
-    also constraining it across the series. Whichever ran last would silently
-    win.
+    Overwhelmingly the same mistake every time: a structural parameter is
+    declared ``per: state`` with no ``in:``, which scopes it to *every* group
+    including the series, and the series is also covered by a constraint.
+
+    The fix is almost never to delete either declaration -- it is to scope the
+    parameter to the steady states, so the constraint owns the series. The
+    message says so specifically, because the generic advice ("remove one")
+    sends the reader to the two wrong answers.
     """
     seen: dict[tuple[str, str], str] = {}
     for slot in table.slots:
@@ -912,11 +917,40 @@ def _check_no_double_assignment(table: ParameterTable) -> None:
         if previous is not None and previous != slot.ref:
             raise SpecError(
                 f"{slot.path.render()} is assigned twice for {slot.measurement.key}: "
-                f"once as {previous!r} and once as {slot.ref!r}. A path cannot be both "
-                "freely fitted and constrained for the same measurement -- remove it "
-                "from `parameters` or from the constraint's `paths`."
+                f"once as {previous!r} and once as {slot.ref!r}.\n"
+                + _double_assignment_fix(table, slot)
             )
         seen[identity] = slot.ref
+
+
+def _double_assignment_fix(table: ParameterTable, slot: Slot) -> str:
+    """Name the fix that is actually right for this collision."""
+    spec = table.spec
+    group = slot.measurement.group
+    rendered = slot.path.render()
+
+    series_names = {series.name for series in spec.series}
+    state_names = [state.name for state in spec.states]
+
+    if group in series_names and state_names:
+        scoped = ", ".join(state_names)
+        return (
+            f"`{rendered}` is declared `per: state` with no `in:`, which scopes "
+            f"it to every group -- including the series {group!r} that the "
+            "constraint already owns.\n\n"
+            "Scope it to the steady states:\n\n"
+            f"    - {{path: {rendered}, ..., per: state, in: [{scoped}]}}\n\n"
+            "The constraint then supplies the series' values. Deleting the "
+            "declaration instead would lose the range -- which the constraint "
+            "borrows for a `free` endpoint -- and deleting it from the "
+            "constraint's `paths` would leave the series unconstrained."
+        )
+
+    return (
+        "A path cannot be both freely fitted and constrained for the same "
+        "measurement. Scope the `parameters` entry with `in:` so the two do not "
+        "overlap, or remove the path from the constraint's `paths`."
+    )
 
 
 def _stack_default(spec: ModelSpec, path: ParameterPath) -> float:

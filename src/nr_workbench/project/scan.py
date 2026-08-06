@@ -292,3 +292,103 @@ def _runs_mentioned(sample_md: Path) -> set[int]:
     text = sample_md.read_text(encoding="utf-8")
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     return {int(m) for m in RUN_IN_PROSE_RE.findall(text)}
+
+
+def load_register(root: Path, sample: str) -> ScanResult | None:
+    """Read ``sample.yaml`` back into the shape a scan produces.
+
+    ``sample.yaml`` is the *register*: what this sample's analysis is about.
+    ``nrw sample scan`` writes it from the disk, but it is a normal file and
+    editing it is the supported way to say "co-refine only these runs" -- a
+    beamtime directory routinely holds alignment scans, aborted runs and
+    measurements of other conditions that belong to the sample but not to this
+    model.
+
+    It was previously write-only, which made the curation silent: a user could
+    delete a run from the register and `nrw model new` would put it back,
+    because it re-scanned the disk instead.
+
+    Args:
+        root: Project root.
+        sample: Sample identifier.
+
+    Returns:
+        The registered measurements, or ``None`` when there is no usable
+        register -- absent, unparsable, or the empty stub `nrw sample new`
+        writes. The caller falls back to scanning.
+
+        The empty case matters: the scaffold ships `steady: []` and
+        `series: []`, so treating an empty register as a curated empty set
+        would make `nrw model new` report "no data" for every sample whose
+        owner copied files in without running `nrw sample scan` first.
+    """
+    import yaml
+
+    path = Path(root) / "samples" / sample / "sample.yaml"
+    if not path.is_file():
+        return None
+
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    if not (document.get("steady") or document.get("series")):
+        return None
+
+    result = ScanResult(sample=sample)
+    for entry in document.get("steady") or []:
+        if not isinstance(entry, dict) or entry.get("run") is None:
+            continue
+        run = int(entry["run"])
+        measurement = SteadyMeasurement(run=run, combined=entry.get("combined"))
+        for index, relative in enumerate(entry.get("segments") or [], start=1):
+            measurement.partials[index] = str(relative)
+        result.steady[run] = measurement
+
+    for entry in document.get("series") or []:
+        if not isinstance(entry, dict) or not entry.get("reduced_dir"):
+            continue
+        result.series.append(
+            SeriesMeasurement(
+                run=int(entry["run"]) if entry.get("run") is not None else None,
+                directory=str(entry["reduced_dir"]),
+                n_slices=int(entry.get("n_slices") or 0),
+                kind=str(entry.get("kind") or "labelled"),
+                reduction_json=entry.get("reduction_json"),
+                t_start=entry.get("t_start"),
+                t_stop=entry.get("t_stop"),
+                t_step=entry.get("t_step"),
+            )
+        )
+
+    result.runs_in_prose = _runs_mentioned(
+        Path(root) / "samples" / sample / "sample.md"
+    )
+    return result
+
+
+def register_drift(root: Path, sample: str) -> tuple[list[int], list[int]]:
+    """Compare the register against the disk.
+
+    Args:
+        root: Project root.
+        sample: Sample identifier.
+
+    Returns:
+        ``(on_disk_only, registered_only)`` run numbers. The first means the
+        register is stale; the second means data was removed or the register
+        was curated on purpose.
+    """
+    registered = load_register(root, sample)
+    if registered is None:
+        return ([], [])
+    try:
+        found = scan_sample(root, sample)
+    except FileNotFoundError:
+        return ([], sorted(registered.runs_on_disk))
+    return (
+        sorted(found.runs_on_disk - registered.runs_on_disk),
+        sorted(registered.runs_on_disk - found.runs_on_disk),
+    )
