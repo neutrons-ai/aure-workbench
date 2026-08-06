@@ -899,57 +899,78 @@ def _check_owner_exists(spec: ModelSpec, path: ParameterPath, original: str) -> 
 
 
 def _check_no_double_assignment(table: ParameterTable) -> None:
-    """Reject a slot written by both a free parameter and a constraint.
+    """Reject slots written by both a free parameter and a constraint.
 
-    Overwhelmingly the same mistake every time: a structural parameter is
-    declared ``per: state`` with no ``in:``, which scopes it to *every* group
+    Overwhelmingly the same mistake every time: structural parameters are
+    declared ``per: state`` with no ``in:``, which scopes them to *every* group
     including the series, and the series is also covered by a constraint.
 
-    The fix is almost never to delete either declaration -- it is to scope the
-    parameter to the steady states, so the constraint owns the series. The
+    **Every** collision is collected before raising. The mistake is made once,
+    in one habit, and applies to every structural parameter in the spec -- on a
+    real five-layer model that was eight of them. Reporting the first and
+    stopping turns one edit into eight validate-fix cycles.
+
+    The fix is almost never to delete either declaration; it is to scope the
+    parameters to the steady states so the constraint owns the series. The
     message says so specifically, because the generic advice ("remove one")
-    sends the reader to the two wrong answers.
+    names the two wrong answers.
     """
     seen: dict[tuple[str, str], str] = {}
+    collisions: dict[str, Slot] = {}
     for slot in table.slots:
         identity = (slot.measurement.key, slot.path.render())
         previous = seen.get(identity)
         if previous is not None and previous != slot.ref:
-            raise SpecError(
-                f"{slot.path.render()} is assigned twice for {slot.measurement.key}: "
-                f"once as {previous!r} and once as {slot.ref!r}.\n"
-                + _double_assignment_fix(table, slot)
-            )
+            collisions.setdefault(slot.path.render(), slot)
         seen[identity] = slot.ref
 
+    if collisions:
+        raise SpecError(_double_assignment_message(table, collisions))
 
-def _double_assignment_fix(table: ParameterTable, slot: Slot) -> str:
-    """Name the fix that is actually right for this collision."""
+
+def _double_assignment_message(
+    table: ParameterTable, collisions: dict[str, Slot]
+) -> str:
+    """Describe every collision at once, and the one fix that resolves them."""
     spec = table.spec
-    group = slot.measurement.group
-    rendered = slot.path.render()
-
     series_names = {series.name for series in spec.series}
     state_names = [state.name for state in spec.states]
 
-    if group in series_names and state_names:
+    in_series = {
+        rendered: slot
+        for rendered, slot in collisions.items()
+        if slot.measurement.group in series_names
+    }
+    plural = "s" if len(collisions) != 1 else ""
+    listed = "\n".join(
+        f"    {rendered}  (in series {slot.measurement.group!r})"
+        if slot.measurement.group in series_names
+        else f"    {rendered}  (in {slot.measurement.group!r})"
+        for rendered, slot in sorted(collisions.items())
+    )
+    head = (
+        f"{len(collisions)} path{plural} assigned twice -- once as a free "
+        f"parameter and once by a constraint:\n\n{listed}\n"
+    )
+
+    if in_series and state_names:
         scoped = ", ".join(state_names)
+        example = sorted(in_series)[0]
         return (
-            f"`{rendered}` is declared `per: state` with no `in:`, which scopes "
-            f"it to every group -- including the series {group!r} that the "
-            "constraint already owns.\n\n"
-            "Scope it to the steady states:\n\n"
-            f"    - {{path: {rendered}, ..., per: state, in: [{scoped}]}}\n\n"
+            head + "\nEach is declared `per: state` with no `in:`, which scopes it to "
+            "every group -- including the series the constraint already owns.\n\n"
+            f"Add `in: [{scoped}]` to {'each' if len(in_series) > 1 else 'it'}:\n\n"
+            f"    - {{path: {example}, ..., per: state, in: [{scoped}]}}\n\n"
             "The constraint then supplies the series' values. Deleting the "
-            "declaration instead would lose the range -- which the constraint "
-            "borrows for a `free` endpoint -- and deleting it from the "
-            "constraint's `paths` would leave the series unconstrained."
+            "declarations instead would lose their ranges -- which the "
+            "constraint borrows for a `free` endpoint -- and removing them from "
+            "the constraint's `paths` would leave the series unconstrained."
         )
 
     return (
-        "A path cannot be both freely fitted and constrained for the same "
-        "measurement. Scope the `parameters` entry with `in:` so the two do not "
-        "overlap, or remove the path from the constraint's `paths`."
+        head + "\nA path cannot be both freely fitted and constrained for the same "
+        "measurement. Scope the `parameters` entries with `in:` so the two do "
+        "not overlap, or remove the paths from the constraint's `paths`."
     )
 
 

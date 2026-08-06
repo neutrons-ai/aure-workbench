@@ -924,3 +924,8 @@ The real cause is nearly always a structural parameter declared `per: state`
 with no `in:`, which scopes it to *every* group including the series. The fix
 is to scope it to the steady states, and the message now says exactly that,
 with the state names filled in.
+
+It also reports **every** collision rather than the first. The mistake is made
+once, in one habit, and applies to every structural parameter in the spec -- on
+the real five-layer model that was eight of them, so raising on the first
+turned one edit into eight validate-fix cycles.

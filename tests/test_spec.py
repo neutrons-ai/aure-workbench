@@ -583,3 +583,71 @@ def test_sample_broadening_is_accepted_on_a_per_angle_state(tmp_path) -> None:
     report = validate_spec(load_spec(spec_path), tmp_path)
 
     assert report.ok, report.errors
+
+
+def test_every_double_assignment_is_reported_at_once(tmp_path) -> None:
+    """The mistake is made once, in one habit, and hits every parameter.
+
+    Declaring structural parameters `per: state` with no `in:` scopes them to
+    every group including the series. On a real five-layer model that was eight
+    collisions -- and reporting the first and stopping turns one edit into
+    eight validate-fix cycles.
+    """
+    import numpy as np
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.validate import validate_spec
+
+    steady = tmp_path / "samples" / "S1" / "data" / "steady"
+    steady.mkdir(parents=True)
+    tnr = tmp_path / "samples" / "S1" / "data" / "tnr" / "100003"
+    tnr.mkdir(parents=True)
+
+    q = np.linspace(0.01, 0.2, 20)
+    r = 1e-3 * (0.01 / q) ** 4
+    body = "\n".join(
+        f"{a:.6e} {b:.6e} {c:.6e} {d:.6e}"
+        for a, b, c, d in zip(q, r, 0.05 * r, 0.02 * q, strict=True)
+    )
+    for run in (100001, 100002):
+        (steady / f"REFL_{run}_1_{run}_partial.txt").write_text(body)
+    for seconds in (0, 240):
+        (tnr / f"r100003_t{seconds:06d}.txt").write_text(body)
+
+    spec_path = tmp_path / "spec.yaml"
+    spec_path.write_text(
+        "schema: nrw-model/1\nname: m\nsample: S1\n"
+        "materials: {D2O: {rho: 6.36}, Cu: {rho: 6.55}, Si: {rho: 2.07}}\n"
+        "stack:\n"
+        "  - {name: D2O, material: D2O, thickness: 0, roughness: 5}\n"
+        "  - {name: Cu, material: Cu, thickness: 500, roughness: 5}\n"
+        "  - {name: Si, material: Si}\n"
+        "probe: {resolution: angular_only}\n"
+        "states:\n"
+        "  - {name: ocv1, run: 100001, segments: auto, thetas: [0.45],\n"
+        "     data_dir: samples/S1/data/steady}\n"
+        "  - {name: ocv2, run: 100002, segments: auto, thetas: [0.45],\n"
+        "     data_dir: samples/S1/data/steady}\n"
+        "series:\n"
+        "  - {name: tnr, run: 100003, reduced_dir: samples/S1/data/tnr/100003,\n"
+        "     theta: 0.6, time_from: filename}\n"
+        "parameters:\n"
+        # three declarations, none scoped -- the real mistake
+        "  - {path: Cu.thickness, range: [400, 600], per: state}\n"
+        "  - {path: Cu.roughness, range: [1, 20], per: state}\n"
+        "  - {path: D2O.roughness, range: [1, 20], per: state}\n"
+        "constraints:\n"
+        "  - series: tnr\n    form: linear_in_time\n    from: ocv1\n    to: ocv2\n"
+        "    paths: [Cu.thickness, Cu.roughness, D2O.roughness]\n",
+        encoding="utf-8",
+    )
+
+    report = validate_spec(load_spec(spec_path), tmp_path)
+
+    assert not report.ok
+    message = "\n".join(report.errors)
+    assert "3 paths assigned twice" in message
+    for path in ("Cu.thickness", "Cu.roughness", "D2O.roughness"):
+        assert path in message, f"{path} was not reported"
+    # and it names the fix that is actually right
+    assert "in: [ocv1, ocv2]" in message
