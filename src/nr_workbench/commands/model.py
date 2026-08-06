@@ -971,6 +971,7 @@ def _author_from_notes(
         build_prompt,
         find_skills,
         merge_proposal,
+        missing_relevant,
         parse_proposal,
         relevant_skills,
     )
@@ -990,11 +991,26 @@ def _author_from_notes(
 
     skills = find_skills(layout.root)
     chosen = relevant_skills(notes, skills)
+
+    # The skills a sample most needs are exactly the ones `nrw init` does not
+    # seed, so asking without them is the common case and it costs answer
+    # quality -- a project missing `solvent-contrast-matching` produced a THF
+    # SLD of 4.3, which is neither the protiated 0.18 nor the deuterated 6.35.
+    absent = missing_relevant(notes, skills)
+    if absent:
+        click.echo(
+            "  ! These bundled skills match your notes but are not installed, so\n"
+            "    the model is answering without them. Install and re-run:\n"
+            "        nrw skills sync\n"
+            + "".join(f"        - {name}\n" for name in absent),
+            err=True,
+        )
+
     system, user = build_prompt(
         skeleton=document,
         notes=notes,
         skills=skills,
-        facts=_measured_facts(layout, document),
+        facts=_measured_facts(layout, document, notes),
     )
 
     click.echo(
@@ -1013,6 +1029,15 @@ def _author_from_notes(
             f"  discarded {len(proposal.rejected)} key(s) the model is not allowed "
             f"to set: {', '.join(sorted(proposal.rejected))}"
         )
+    if proposal.dropped_paths:
+        click.echo(
+            "  ! dropped from the constraint for having no declared range: "
+            + ", ".join(sorted(set(proposal.dropped_paths)))
+            + "\n    A `free` endpoint borrows the path's range, and inventing "
+            "one would be a guess.\n    Declare it in `parameters` and re-run "
+            "`nrw model generate`.",
+            err=True,
+        )
     if proposal.notes:
         click.echo(f"  model notes: {proposal.notes}")
 
@@ -1026,7 +1051,9 @@ def _author_from_notes(
     return merged, comment
 
 
-def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
+def _measured_facts(
+    layout: ProjectLayout, document: dict[str, Any], notes: str = ""
+) -> str:
     """Summarise what the data itself says, for the prompt.
 
     Two things the notes cannot supply and the data can:
@@ -1039,6 +1066,8 @@ def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
       and it was going unused.
     """
     from nr_workbench.aure_adapter import AureUnavailableError, extract_features
+
+    substrate = _back_reflection_substrate(document, notes)
 
     lines: list[str] = []
     for state in document.get("states", []):
@@ -1054,11 +1083,28 @@ def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
             except (AureUnavailableError, OSError, ValueError, IndexError):
                 continue
             for edge in features.critical_edges[:1]:
+                estimate = float(edge.get("estimated_SLD", 0.0))
                 lines.append(
-                    f"  {state['name']}: critical edge Qc={edge.get('Qc', 0):.5f} "
-                    f"implies a topmost SLD near {edge.get('estimated_SLD', 0):.2f} "
+                    f"  {state['name']}: critical edge Qc={edge.get('Qc', 0):.5f}, "
+                    f"implying an SLD of {estimate:.2f} against vacuum "
                     f"(confidence {edge.get('confidence', '?')})"
+                    + (
+                        f" -- in back reflection the beam enters through the "
+                        f"substrate, so the medium above it is at "
+                        f"{estimate + substrate:.2f}"
+                        if substrate is not None
+                        else ""
+                    )
                 )
+
+    if lines and substrate is not None:
+        lines.append(
+            "  The back-reflection correction above is worth trusting: on this "
+            "sample it turns 4.28 into 6.35, which is d8-THF to two decimal "
+            "places -- and the notes said only 'THF'. Where the corrected edge "
+            "and the notes disagree about deuteration, the edge is the "
+            "measurement."
+        )
 
     lines.extend(_assessment_facts(layout, document))
     return "\n".join(lines)
@@ -1110,3 +1156,52 @@ def _assessment_facts(layout: ProjectLayout, document: dict[str, Any]) -> list[s
         if details:
             lines.append("    " + "; ".join(details))
     return lines
+
+
+#: Phrases in the notes that mean the beam enters through the substrate.
+_BACK_REFLECTION_HINTS = (
+    "back reflection",
+    "back-reflection",
+    "through the substrate",
+    "back of sample",
+    "back of the sample",
+)
+
+
+def _back_reflection_substrate(document: dict[str, Any], notes: str) -> float | None:
+    """Return the substrate SLD when the geometry is back reflection.
+
+    AuRE reports a critical edge as the SLD it would imply for a beam arriving
+    from vacuum. In back reflection the beam arrives through the substrate
+    instead, so the contrast is ``rho_medium - rho_substrate`` and the medium
+    above it sits at ``estimate + rho_substrate``.
+
+    That is not a detail. On this sample the raw estimate is 4.28, which is not
+    any solvent; corrected against silicon it is 6.35, which is d8-THF exactly
+    -- and it caught a `sample.md` that said only "THF".
+
+    The geometry is read from the notes rather than the spec because this runs
+    while building the prompt, before the model has proposed anything.
+    """
+    lowered = (notes or "").lower()
+    probe = document.get("probe") or {}
+    if not (
+        probe.get("back_reflection")
+        or any(h in lowered for h in _BACK_REFLECTION_HINTS)
+    ):
+        return None
+
+    stack = document.get("stack") or []
+    if not stack:
+        return None
+    substrate = stack[-1]
+    material = (document.get("materials") or {}).get(substrate.get("material"))
+    if isinstance(material, dict) and material.get("rho") is not None:
+        return float(material["rho"])
+
+    from nr_workbench.aure_adapter import sld
+
+    try:
+        return float(sld(str(substrate.get("material"))))
+    except Exception:
+        return None

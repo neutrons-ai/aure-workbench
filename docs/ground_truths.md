@@ -929,3 +929,50 @@ It also reports **every** collision rather than the first. The mistake is made
 once, in one habit, and applies to every structural parameter in the spec -- on
 the real five-layer model that was eight of them, so raising on the first
 turned one edit into eight validate-fix cycles.
+
+### 2026-08-06: the critical edge in back reflection needs the substrate added
+
+AuRE reports a critical edge as the SLD it would imply for a beam arriving from
+vacuum. In back reflection the beam arrives through the substrate, so the
+contrast is `rho_medium - rho_substrate` and the medium above it sits at
+`estimate + rho_substrate`.
+
+On expt11 that is the difference between a nonsense answer and the right one:
+
+    raw estimate      4.28      not any solvent
+    + rho_Si (2.074)  6.354     d8-THF, tabulated 6.35
+
+`sample.md` said only "THF", which would be 0.18. The corrected edge said
+deuterated, and it was right -- the notes were wrong. Where the two disagree
+about deuteration, the edge is the measurement.
+
+Uncorrected, this was actively harmful: the prompt reported "implies a topmost
+SLD near 4.28" and a proposal duly set the solvent range to [4.0, 4.7], which
+is neither isotope. `_back_reflection_substrate` reads the geometry from the
+notes -- it runs while building the prompt, before anything has been proposed
+-- and reports both numbers.
+
+### 2026-08-06: repairs the model will not reliably do itself
+
+`nrw model new --from-notes` scored 8/11 on a real, detailed `sample.md`, and
+the three misses were all instructions the prompt had just gained. Two turned
+out to be a silently failed edit: the `probe` and `series_select` output keys
+never reached the prompt, so the model was told to use them in the rules and
+never told they were valid output. **String-replacement edits to a prompt need
+an assertion**; a prompt that quietly loses an instruction looks exactly like a
+model that ignored one.
+
+Three more repairs moved into `merge_proposal`, because each is a correctness
+property rather than a request:
+
+* `per: state` with no `in:` covers the series and collides with the
+  constraint. Asked for in the prompt, omitted about half the time.
+* `per: model` on a path that is also constrained is a contradiction --
+  "pinned everywhere" against "has a trajectory". The declaration wins.
+* A constrained path with a `free` endpoint and no declared range cannot be
+  bounded. Dropped and named, because inventing a range for an SLD is the kind
+  of plausible guess this package exists to avoid.
+
+With those, the same notes produce a spec that validates and builds first try.
+The remaining prompt-only instructions are the ones where a wrong answer is
+visible in the spec rather than fatal to it.

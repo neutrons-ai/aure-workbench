@@ -113,6 +113,74 @@ def test_a_proposal_replacing_the_stack_repairs_the_leftover_constraint() -> Non
     assert "constraints" not in merged, "a constraint with no valid path is dropped"
 
 
+def test_a_per_model_path_is_removed_from_the_constraint() -> None:
+    """`per: model` says a quantity does not change; a constraint says it does.
+
+    The two contradict and the spec will not validate. The declaration wins --
+    it is the more specific statement of intent, and it is usually what the
+    notes say in so many words ("use the steady states to pin down the copper
+    SLD").
+    """
+    skeleton = dict(SKELETON)
+    skeleton["constraints"] = [
+        {
+            "series": "tnr",
+            "form": "linear_in_time",
+            "from": "a",
+            "to": "b",
+            "paths": ["Cu.rho", "Cu.thickness"],
+        }
+    ]
+    proposal = dict(PROPOSED)
+    proposal["parameters"] = [
+        {"path": "Cu.rho", "range": [5, 7], "per": "model"},
+        {
+            "path": "Cu.thickness",
+            "range": [400, 600],
+            "per": "state",
+            "in": ["ocv1", "ocv2"],
+        },
+    ]
+
+    parsed = parse_proposal(json.dumps(proposal))
+    merged = merge_proposal(skeleton, parsed)
+
+    assert merged["constraints"][0]["paths"] == ["Cu.thickness"]
+    assert "Cu.rho" in parsed.dropped_paths, "and it is reported, not silent"
+
+
+def test_a_constrained_parameter_is_scoped_away_from_the_series() -> None:
+    """`per: state` with no `in:` covers the series and collides.
+
+    The prompt asks for the `in:` and it is omitted about half the time, which
+    is the signal that it belongs in code: producing a spec that validates is a
+    correctness property, not a request.
+    """
+    skeleton = dict(SKELETON)
+    skeleton["states"] = [{"name": "ocv1"}, {"name": "ocv2"}]
+    skeleton["constraints"] = [
+        {
+            "series": "tnr",
+            "form": "linear_in_time",
+            "from": "ocv1",
+            "to": "ocv2",
+            "paths": ["Cu.thickness"],
+        }
+    ]
+    proposal = dict(PROPOSED)
+    proposal["parameters"] = [
+        {"path": "Cu.thickness", "range": [400, 600], "per": "state"}
+    ]
+
+    merged = merge_proposal(skeleton, parse_proposal(json.dumps(proposal)))
+
+    assert merged["parameters"][0]["in"] == ["ocv1", "ocv2"]
+    # and a deliberate scoping is never overridden
+    proposal["parameters"][0]["in"] = ["ocv1"]
+    again = merge_proposal(skeleton, parse_proposal(json.dumps(proposal)))
+    assert again["parameters"][0]["in"] == ["ocv1"]
+
+
 def test_a_constraint_keeps_the_paths_that_still_exist() -> None:
     """Only the dead paths go, not the whole constraint."""
     skeleton = dict(SKELETON)
@@ -125,8 +193,17 @@ def test_a_constraint_keeps_the_paths_that_still_exist() -> None:
             "paths": ["Film.thickness", "Cu.thickness", "probe.intensity"],
         }
     ]
+    proposal = dict(PROPOSED)
+    proposal["parameters"] = [
+        {
+            "path": "Cu.thickness",
+            "range": [400, 600],
+            "per": "state",
+            "in": ["ocv1", "ocv2"],
+        }
+    ]
 
-    merged = merge_proposal(skeleton, parse_proposal(json.dumps(PROPOSED)))
+    merged = merge_proposal(skeleton, parse_proposal(json.dumps(proposal)))
 
     assert merged["constraints"][0]["paths"] == ["Cu.thickness", "probe.intensity"]
 

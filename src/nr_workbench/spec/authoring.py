@@ -31,7 +31,23 @@ from pathlib import Path
 from typing import Any
 
 #: Keys a proposal may set. Anything else it returns is discarded.
-PROPOSABLE = ("description", "materials", "stack", "parameters", "constraints")
+PROPOSABLE = (
+    "description",
+    "materials",
+    "stack",
+    "parameters",
+    "constraints",
+    # Choices, not facts. `series_select` says which slices to model and
+    # `probe.back_reflection` says which side the beam enters -- both are in
+    # the scientist's notes and neither is derivable from the file listing.
+    "series_select",
+    "probe",
+)
+
+#: The only probe keys a proposal may set. `resolution` is fixed by the
+#: schema and `dq_is_fwhm` is a property of the reduction, not something to
+#: infer from prose.
+PROPOSABLE_PROBE = ("back_reflection",)
 
 #: Skills always sent: the schema, the physics, and the beamline conventions.
 CORE_SKILLS = (
@@ -90,12 +106,14 @@ class Proposal:
     Attributes:
         document: The accepted keys, ready to merge.
         rejected: Keys the model returned that it is not allowed to set.
+        dropped_paths: Constrained paths removed for having no range.
         notes: Any commentary it offered, for the human to read.
         raw: The reply as received, for debugging.
     """
 
     document: dict[str, Any] = field(default_factory=dict)
     rejected: list[str] = field(default_factory=list)
+    dropped_paths: list[str] = field(default_factory=list)
     notes: str = ""
     raw: str = ""
 
@@ -207,7 +225,14 @@ def build_prompt(
         '  "stack"       : [ {name, material, thickness, roughness}, ... ]\n'
         "                  ordered AMBIENT FIRST, SUBSTRATE LAST; the substrate\n"
         "                  entry has no thickness or roughness\n"
-        '  "parameters"  : [ {path, range|value, per, ...}, ... ]\n'
+        '  "parameters"  : [ {path, range|value, per, in, ...}, ... ]\n'
+        '  "constraints" : [ {series, form, from, to, paths} ] -- REQUIRED\n'
+        "                  whenever the skeleton has a series\n"
+        '  "series_select": {"<series name>": {"labels": ["*eis*"]}} --\n'
+        "                  when the notes restrict which slices to model\n"
+        '  "probe"       : {"back_reflection": true} -- ONLY if the notes\n'
+        "                  say the beam enters through the substrate or\n"
+        "the back of the sample\n"
         '  "notes"       : anything you are unsure about, for the human\n\n'
         "Rules:\n"
         "- Do NOT return `states`, `series`, `thetas`, `data_dir`, `run`, "
@@ -241,13 +266,39 @@ def build_prompt(
         "either endpoint to fit it instead -- one extra parameter per path. "
         "Do that when the series has no bracketing state, or when the notes "
         "say something happened between the steady measurement and the run.\n"
-        "  Put in `paths` only the quantities the change is in. If the "
-        "assessment says the template is oscillatory in Q, that is a THICKNESS "
-        "change; if it is one-sign, it is an SLD contrast change.\n"
+        "  `paths` decides what is allowed to change across the series. The "
+        "NOTES are authoritative here -- if they say which parameters change, "
+        'list exactly those, and "the other parameters, even the Ti layer, '
+        'will change" means include them all. Only when the notes are silent, '
+        "fall back to the assessment: an oscillatory template in Q means a "
+        "THICKNESS change, one-sign means an SLD contrast change.\n"
         "- Give every free parameter a physically sensible range, not a wide "
         "one.\n"
         "- If the notes do not say what a layer is made of, say so in `notes` "
         "rather than inventing a material.\n"
+        "- SCOPE every parameter from the words the notes use. This mapping "
+        "is the most common source of a wrong model, and the notes are usually "
+        "explicit about it:\n"
+        '    "each partial data file", "per segment", "each angle"\n'
+        "      -> per: measurement\n"
+        '    "common for all time slices", "one for the series"\n'
+        "      -> per: state, in: [<the series>]\n"
+        '    "common to all data", "the same everywhere", "shared"\n'
+        "      -> per: model\n"
+        '    "per state", "may differ between the two states"\n'
+        "      -> per: state, in: [<the steady states>]\n"
+        "  A structural parameter declared `per: state` with NO `in:` covers "
+        "the series too and will collide with the constraint. Always scope "
+        "structural parameters with `in:` when a series is present.\n"
+        "- If the notes say the series should NOT be tied to the states either "
+        'side -- "not tied", "there was a lag", "do not anchor", "the '
+        'endpoints should be fitted" -- use `from: free` and `to: free` on the '
+        "constraint instead of naming the states. Each free endpoint adds one "
+        "parameter per path and is the right answer when the states do not "
+        "continue smoothly into the run.\n"
+        '- If the notes restrict which slices to model -- "only the eis '
+        'data", "never the hold intervals", "the string to look for is X" -- '
+        'set `series_select`, e.g. {"tnr218389": {"labels": ["*eis*"]}}.\n'
         "- Read the notes for *instrument* problems as well as sample "
         "composition, and add the matching nuisance parameter when one is "
         "described. These are easy to miss and each one, left out, pushes its "
@@ -336,11 +387,177 @@ def merge_proposal(skeleton: dict[str, Any], proposal: Proposal) -> dict[str, An
     """
     merged = dict(skeleton)
     for key in PROPOSABLE:
+        if key in ("series_select", "probe"):
+            continue
         value = proposal.document.get(key)
         if value:
             merged[key] = value
+
+    _apply_series_select(merged, proposal.document.get("series_select"))
+    _apply_probe(merged, proposal.document.get("probe"))
+    pinned = _drop_model_scoped_from_constraints(merged)
+    _scope_constrained_parameters(merged)
     _repair_constraints(merged)
+    proposal.dropped_paths = pinned + _drop_unrangeable_paths(merged)
     return merged
+
+
+def _drop_unrangeable_paths(document: dict[str, Any]) -> list[str]:
+    """Remove constrained paths that a free endpoint could not be bounded from.
+
+    A `free` endpoint borrows its range from the path's `parameters`
+    declaration. A path listed in `paths` with no declaration and no
+    `endpoint_range` therefore has nothing to bound it, and resolution refuses
+    -- correctly, since an unbounded endpoint drags the whole trajectory.
+
+    Inventing a range would be the wrong repair: a plausible-looking interval
+    on an SLD is exactly the kind of guess this package exists to avoid. So the
+    path is dropped and named, and the human can declare it and regenerate.
+
+    Args:
+        document: The merged spec.
+
+    Returns:
+        The paths removed, for the caller to report.
+    """
+    from nr_workbench.spec.constraints import FREE_ENDPOINT
+
+    declared = {
+        str(parameter.get("path"))
+        for parameter in document.get("parameters") or []
+        if isinstance(parameter, dict) and parameter.get("range") is not None
+    }
+
+    dropped: list[str] = []
+    kept_constraints = []
+    for constraint in document.get("constraints") or []:
+        if not isinstance(constraint, dict):
+            continue
+        free_ends = FREE_ENDPOINT in (constraint.get("from"), constraint.get("to"))
+        if not free_ends or constraint.get("endpoint_range"):
+            kept_constraints.append(constraint)
+            continue
+        paths = []
+        for path in constraint.get("paths") or []:
+            if str(path) in declared:
+                paths.append(path)
+            else:
+                dropped.append(str(path))
+        if paths:
+            kept_constraints.append({**constraint, "paths": paths})
+
+    if kept_constraints:
+        document["constraints"] = kept_constraints
+    elif "constraints" in document:
+        document.pop("constraints")
+    return dropped
+
+
+def _scope_constrained_parameters(document: dict[str, Any]) -> None:
+    """Scope `per: state` structural parameters away from the constrained series.
+
+    `per: state` with no `in:` covers *every* group, series included, so a path
+    that is also in a constraint's `paths` is assigned twice and the spec does
+    not validate. The prompt asks for the `in:` and it is still omitted about
+    half the time -- which is the signal that this belongs in code. A prompt is
+    a request; producing a spec that validates is a correctness property.
+
+    Only paths the constraint already owns are touched, and only when no `in:`
+    was given, so a deliberate scoping is never overridden.
+    """
+    states = [
+        str(state.get("name"))
+        for state in document.get("states") or []
+        if isinstance(state, dict) and state.get("name")
+    ]
+    if not states:
+        return
+
+    constrained: set[str] = set()
+    for constraint in document.get("constraints") or []:
+        if isinstance(constraint, dict):
+            constrained.update(str(path) for path in constraint.get("paths") or [])
+    if not constrained:
+        return
+
+    for parameter in document.get("parameters") or []:
+        if not isinstance(parameter, dict):
+            continue
+        if parameter.get("per") != "state" or parameter.get("in"):
+            continue
+        if str(parameter.get("path")) in constrained:
+            parameter["in"] = list(states)
+
+
+def _drop_model_scoped_from_constraints(document: dict[str, Any]) -> list[str]:
+    """Remove `per: model` paths from constraint paths.
+
+    `per: model` is an explicit statement that a quantity is the same
+    everywhere -- "use the steady states to pin down the copper SLD" -- and a
+    constraint gives it a per-slice trajectory. The two contradict, and the
+    spec does not validate.
+
+    The declaration wins: it is the more specific statement of intent, and it
+    is what the notes usually say in so many words.
+
+    Returns:
+        The paths removed, for the caller to report.
+    """
+    pinned = {
+        str(parameter.get("path"))
+        for parameter in document.get("parameters") or []
+        if isinstance(parameter, dict) and parameter.get("per") == "model"
+    }
+    if not pinned:
+        return []
+
+    removed: list[str] = []
+    kept = []
+    for constraint in document.get("constraints") or []:
+        if not isinstance(constraint, dict):
+            continue
+        paths = []
+        for path in constraint.get("paths") or []:
+            if str(path) in pinned:
+                removed.append(str(path))
+            else:
+                paths.append(path)
+        if paths:
+            kept.append({**constraint, "paths": paths})
+
+    if kept:
+        document["constraints"] = kept
+    elif "constraints" in document:
+        document.pop("constraints")
+    return removed
+
+
+def _apply_series_select(document: dict[str, Any], selection: Any) -> None:
+    """Set `select` on the named series, leaving every other field alone.
+
+    Which slices to model is a choice -- "only the eis intervals, never the
+    holds" -- while the run number, directory and angle are facts read off the
+    disk. So the selection is merged in rather than the series being replaced.
+    """
+    if not isinstance(selection, dict):
+        return
+    for series in document.get("series") or []:
+        if not isinstance(series, dict):
+            continue
+        chosen = selection.get(str(series.get("name")))
+        if isinstance(chosen, dict) and chosen:
+            series["select"] = chosen
+
+
+def _apply_probe(document: dict[str, Any], probe: Any) -> None:
+    """Merge the probe keys a proposal is allowed to set."""
+    if not isinstance(probe, dict):
+        return
+    existing = dict(document.get("probe") or {})
+    for key in PROPOSABLE_PROBE:
+        if key in probe:
+            existing[key] = probe[key]
+    document["probe"] = existing
 
 
 def _repair_constraints(document: dict[str, Any]) -> None:
