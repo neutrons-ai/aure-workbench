@@ -1041,3 +1041,19 @@ and independent propagation widens it there instead.
 Values come from `-slabs.dat` rather than the same evaluation -- that is the
 layer table the fit actually used for each slice, so it needs no recomputation
 and works for an optimiser run with no posterior at all.
+
+### 2026-08-06: an old fit does not need re-running to describe itself
+
+The trajectory view needs the spec, and fits made before `spec.yaml` was frozen
+into the record do not carry one. Re-running is not the answer: the generated
+script records the digest of the spec it came from, so a spec still on disk
+that hashes to it is provably the same file and using it is exact.
+
+If the spec has since been edited, it describes a *different* model, and
+plotting its trajectory against this fit's numbers would be worse than plotting
+nothing. That case reports the reason and stops -- and `nrw check` is already
+calling the fit stale independently.
+
+Both branches are visible in the UI. The failure that prompted this was not a
+wrong plot, it was **no plot and no explanation**: an empty page is
+indistinguishable from a broken one.

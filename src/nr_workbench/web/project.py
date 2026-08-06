@@ -19,7 +19,9 @@ render until everything is present is a UI nobody can use during an experiment.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -530,9 +532,29 @@ class ProjectData:
         manifest = self._read_json(directory / "manifest.json")
         names = _model_names((manifest.get("info") or {}).get("models") or [])
 
-        spec_path = directory / "spec.yaml"
-        if not spec_path.is_file() or not names:
-            return {"fit_id": resolved, "traces": [], "series": None}
+        if not names:
+            return {
+                "fit_id": resolved,
+                "traces": [],
+                "series": None,
+                "problems": [
+                    Problem(
+                        "trajectory",
+                        "This fit recorded no model names, so its slices cannot "
+                        "be matched to times. Fits run before that was recorded "
+                        "need re-running to show a trajectory.",
+                    ).as_dict()
+                ],
+            }
+
+        spec_path, note = self._spec_for(directory)
+        if spec_path is None:
+            return {
+                "fit_id": resolved,
+                "traces": [],
+                "series": None,
+                "problems": [Problem("trajectory", note).as_dict()],
+            }
 
         try:
             table = self._resolve_frozen_spec(spec_path)
@@ -575,6 +597,64 @@ class ProjectData:
             "n_slices": len(measurements),
             "traces": [trace.as_dict() for trace in traces],
         }
+
+    def _spec_for(self, directory: Path) -> tuple[Path | None, str]:
+        """Find the spec that produced a fit, or explain why there is none.
+
+        Fits made before the record froze `spec.yaml` can still be described,
+        because the generated script records the digest of the spec it came
+        from. If the spec still on disk hashes to that, it is provably the same
+        file and using it is exact rather than a guess.
+
+        If it has since been edited, it describes a *different* model, and
+        showing that model's trajectory against this fit's numbers would be
+        worse than showing nothing.
+
+        Args:
+            directory: The fit's result directory.
+
+        Returns:
+            ``(path, note)``. Path is ``None`` when no spec can be trusted.
+        """
+        frozen = directory / "spec.yaml"
+        if frozen.is_file():
+            return (frozen, "")
+
+        script = directory / "model.py"
+        if not script.is_file():
+            return (None, "This fit has no frozen script.")
+
+        source = script.read_text(encoding="utf-8", errors="replace")
+        recorded = re.search(r"spec sha256: ([0-9a-f]{64})", source)
+        declared = re.search(r"#\s+spec:\s+(\S+)", source)
+        if not recorded or not declared:
+            return (
+                None,
+                "This fit ran a hand-written script, so there is no spec "
+                "describing which parameters vary with time.",
+            )
+
+        live = self.root / declared.group(1)
+        if not live.is_file():
+            return (
+                None,
+                f"The spec this fit came from ({declared.group(1)}) is no longer "
+                "on disk, and it predates spec.yaml being frozen into the "
+                "record. Re-run the fit to get a trajectory.",
+            )
+
+        actual = hashlib.sha256(live.read_bytes()).hexdigest()
+        if actual != recorded.group(1):
+            return (
+                None,
+                f"{declared.group(1)} has been edited since this fit ran, so it "
+                "describes a different model. This fit predates spec.yaml being "
+                "frozen into the record, so there is no copy of the original. "
+                "Re-run the fit to get a trajectory -- `nrw check` will be "
+                "reporting it as stale anyway.",
+            )
+
+        return (live, "")
 
     def _resolve_frozen_spec(self, spec_path: Path):
         """Resolve the spec frozen inside a fit directory.

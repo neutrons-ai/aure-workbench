@@ -54,6 +54,15 @@
       <div id="plot-sld" class="plot plot-sld"></div>
     </div>
 
+    {% if trajectory and trajectory.problems and not trajectory.traces %}
+    <div class="panel">
+      <div class="panel-head"><span>Layer parameters through time</span></div>
+      <div class="p-3 small text-secondary">
+        {% for problem in trajectory.problems %}<p class="mb-0">{{ problem.message }}</p>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
     {% if trajectory and trajectory.traces %}
     <div class="panel">
       <div class="panel-head">

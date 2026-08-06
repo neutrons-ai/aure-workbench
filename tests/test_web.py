@@ -967,3 +967,137 @@ def test_a_trajectory_band_brackets_the_fitted_values(
                 f"its band [{lo}, {hi}] -- the posterior column is probably "
                 "matched to the wrong parameter"
             )
+
+
+def test_a_fit_without_a_frozen_spec_uses_the_live_one_when_it_matches(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fits made before spec.yaml was frozen should not need re-running.
+
+    The generated script records the digest of the spec it came from, so a
+    spec still on disk that hashes to it is provably the same file. Using it is
+    exact, not a guess.
+    """
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    assert (
+        runner.invoke(
+            main, ["model", "generate", "samples/Sample1/models/m.yaml"]
+        ).exit_code
+        == 0
+    )
+    fitted = runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+    assert fitted.exit_code == 0, fitted.output
+
+    data = ProjectData(root)
+    fit_id = data.fits("Sample1")[0]["fit_id"]
+    frozen = root / "samples" / "Sample1" / "results" / fit_id / "spec.yaml"
+    assert frozen.is_file(), "new fits freeze it"
+    frozen.unlink()  # simulate a fit made before that
+
+    result = data.trajectory(fit_id)
+
+    assert result["traces"], result.get("problems")
+    assert not result.get("problems")
+
+
+def test_an_edited_spec_is_refused_rather_than_used(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An edited spec describes a different model than the one that ran.
+
+    Showing its trajectory against this fit's numbers would be worse than
+    showing nothing, so the reason is reported instead.
+    """
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+
+    data = ProjectData(root)
+    fit_id = data.fits("Sample1")[0]["fit_id"]
+    (root / "samples" / "Sample1" / "results" / fit_id / "spec.yaml").unlink()
+    spec = root / "samples" / "Sample1" / "models" / "m.yaml"
+    spec.write_text(spec.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+
+    result = data.trajectory(fit_id)
+
+    assert not result["traces"]
+    assert any("edited since this fit ran" in p["message"] for p in result["problems"])
+
+
+def test_the_fit_page_says_why_there_is_no_trajectory(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty panel with no explanation is the thing to avoid."""
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+    from nr_workbench.web.app import create_app
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+    fit_id = ProjectData(root).fits("Sample1")[0]["fit_id"]
+    (root / "samples" / "Sample1" / "results" / fit_id / "spec.yaml").unlink()
+    spec = root / "samples" / "Sample1" / "models" / "m.yaml"
+    spec.write_text(spec.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
+
+    page = create_app(root).test_client().get(f"/f/{fit_id}").get_data(as_text=True)
+
+    assert "Layer parameters through time" in page
+    assert "edited since this fit ran" in page
