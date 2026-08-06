@@ -407,6 +407,9 @@ class Constraint(_Base):
         from_: State supplying the starting value, for interpolating forms.
         to: State supplying the final value.
         knots: Number of free knots, for ``piecewise_linear``.
+        endpoint_range: Bounds for an endpoint written as ``free``. Needed
+            only when the path has no other declaration to borrow from -- a
+            series with no bracketing steady states.
         tau: Bounds for the time constant, for ``exponential``.
         t_half: Bounds for the midpoint, for ``logistic``.
         width: Bounds for the transition width, for ``logistic``.
@@ -418,6 +421,7 @@ class Constraint(_Base):
     from_: str | None = Field(default=None, alias="from")
     to: str | None = None
     knots: int = 3
+    endpoint_range: tuple[float, float] | None = None
     tau: tuple[float, float] | None = None
     t_half: tuple[float, float] | None = None
     width: tuple[float, float] | None = None

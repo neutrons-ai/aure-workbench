@@ -843,3 +843,29 @@ It also quantifies time-vs-index for the actual data rather than asserting they
 differ. On run 218389's full 130 slices the worst disagreement is slice 17 at
 0.120 against 0.132 -- 1.2% along the trajectory. Small here, and the reader
 can see it is small instead of taking it on trust.
+
+### 2026-08-06: constraint endpoints can be fitted, not only anchored
+
+`from`/`to` normally name the steady states either side of a series, and that
+is why the interpolating forms cost nothing -- they borrow parameters the
+steady-state data already constrains. Writing `free` for either fits that
+endpoint instead: one extra parameter per path per free endpoint.
+
+    from: ocv1  to: ocv2     21 free   both anchored
+    from: ocv1  to: free     27 free   +6, one per path
+    from: free  to: free     33 free   +12
+
+Three situations call for it, all real: a series with no bracketing
+measurement; a series where something happened between the steady measurement
+and the run, so anchoring asserts a continuity that is not there; and a series
+where where the sample finished *is* the result rather than an assumption.
+
+The range is borrowed from the path's existing `parameters` declaration -- a Cu
+thickness plausible for the steady states is plausible during the series, and
+repeating it would be a second place for it to be wrong. `endpoint_range`
+supplies one where no declaration exists. Missing both is an error, not a
+default: an unbounded endpoint drags the whole trajectory with it.
+
+The explanation had to learn about this. Left alone it rendered `p[free]` in
+the formula and claimed "No new free parameters" while six had just been
+created -- the plausible-looking wrong document that is worse than none.

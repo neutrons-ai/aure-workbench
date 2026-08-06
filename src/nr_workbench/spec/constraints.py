@@ -26,6 +26,18 @@ class ConstraintError(ValueError):
     """Raised when a constraint is misconfigured for its form."""
 
 
+#: Written in `from:` or `to:` to fit that endpoint instead of anchoring it to
+#: a steady state. Two situations call for it: a series with no bracketing
+#: measurements to anchor to, and a series whose endpoints are themselves the
+#: quantity of interest -- where the sample started and finished *during* the
+#: run, rather than where the OCV measurements either side say it was.
+#:
+#: Mixing is allowed and is often what you want: `from: ocv1, to: free` keeps
+#: the anchored start, which the steady-state data constrains well, and fits
+#: the end.
+FREE_ENDPOINT = "free"
+
+
 @dataclass
 class ExtraParameter:
     """A free parameter a form introduces beyond the endpoints.
@@ -99,8 +111,10 @@ class ConstraintForm:
         """
         if cls.needs_endpoints and not (constraint.from_ and constraint.to):
             raise ConstraintError(
-                f"form {cls.name!r} interpolates between two states, so it needs "
-                "both `from` and `to`."
+                f"form {cls.name!r} interpolates between two endpoints, so it "
+                "needs both `from` and `to`. Name a state for each, or write "
+                f"`{FREE_ENDPOINT}` to fit that endpoint instead of anchoring "
+                "it."
             )
 
     @classmethod
@@ -346,6 +360,21 @@ def _interpolate(start_key: str | None, end_key: str | None, fraction: float) ->
     if fraction == 1.0:
         return f"P[{end_key!r}]"
     return f"P[{start_key!r}] + (P[{end_key!r}] - P[{start_key!r}]) * {fraction!r}"
+
+
+#: Shown after the form list, because it applies to every interpolating form.
+ENDPOINT_NOTE = """
+`from` and `to` name the states either side of the series. Write `free` for
+either to fit that endpoint instead of anchoring it -- one extra parameter per
+path per free endpoint.
+
+  from: ocv1   to: ocv2    both anchored; adds no free parameters
+  from: ocv1   to: free    known start, fitted end
+  from: free   to: free    no bracketing states, or both are the measurement
+
+A free endpoint borrows its range from the path's `parameters` declaration;
+add `endpoint_range: [min, max]` when there is none.
+"""
 
 
 def describe_forms() -> list[tuple[str, str]]:

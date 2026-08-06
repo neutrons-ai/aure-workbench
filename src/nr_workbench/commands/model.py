@@ -326,12 +326,13 @@ def run_schema(*, out: str | None = None) -> None:
 
 def run_forms() -> None:
     """List the available constraint forms."""
-    from nr_workbench.spec.constraints import describe_forms
+    from nr_workbench.spec.constraints import ENDPOINT_NOTE, describe_forms
 
     rows = describe_forms()
     width = max(len(name) for name, _ in rows)
     for name, summary in rows:
         click.echo(f"  {name:<{width}}  {summary}")
+    click.echo(ENDPOINT_NOTE)
 
 
 def run_new(

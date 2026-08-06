@@ -507,15 +507,11 @@ def _add_constraints(spec: ModelSpec, table: ParameterTable) -> None:
                 _add_free_per_slice(table, spec, constraint, path, slices)
                 continue
 
-            start_key = (
-                _endpoint_key(table, path, constraint.from_, constraint)
-                if constraint.from_
-                else None
+            start_key = _resolve_endpoint(
+                table, spec, path, constraint, constraint.from_, "start"
             )
-            end_key = (
-                _endpoint_key(table, path, constraint.to, constraint)
-                if constraint.to
-                else None
+            end_key = _resolve_endpoint(
+                table, spec, path, constraint, constraint.to, "end"
             )
 
             extra_keys = _create_extras(table, spec, constraint, path, form, start_key)
@@ -664,6 +660,100 @@ def _create_extras(
         keys[extra.suffix] = key
     del start_key
     return keys
+
+
+def _resolve_endpoint(
+    table: ParameterTable,
+    spec: ModelSpec,
+    path: ParameterPath,
+    constraint: Constraint,
+    endpoint: str | None,
+    role: str,
+) -> str | None:
+    """Resolve one endpoint to a free-parameter key.
+
+    An endpoint is usually a state name, and the constraint then borrows that
+    state's already-fitted parameter -- which is why the interpolating forms
+    add nothing to the parameter count.
+
+    Writing ``free`` instead creates a parameter for the endpoint itself. That
+    is what you want when the series has no bracketing steady state to anchor
+    to, or when where the sample started and finished *during* the run is the
+    measurement rather than an assumption.
+
+    Args:
+        table: The table being built.
+        spec: The spec.
+        path: The parameter path.
+        constraint: The constraint being resolved.
+        endpoint: The ``from``/``to`` value, or None.
+        role: ``start`` or ``end``, used to name the created parameter.
+
+    Returns:
+        The key to read the endpoint from, or None when unset.
+    """
+    from nr_workbench.spec.constraints import FREE_ENDPOINT
+
+    if not endpoint:
+        return None
+    if endpoint != FREE_ENDPOINT:
+        return _endpoint_key(table, path, endpoint, constraint)
+
+    key = f"{path.render()}@{constraint.series}:{role}"
+    if table.free_by_key(key) is None:
+        value, bounds = _free_endpoint_bounds(table, spec, path, constraint)
+        table.free.append(
+            FreeParameter(
+                key=key,
+                display=f"{constraint.series} {path.owner} {path.attr} {role}",
+                value=float(value),
+                bounds=bounds,
+                comment=(
+                    f"{role} of the {constraint.form} trajectory across "
+                    f"{constraint.series}; fitted rather than anchored to a state"
+                ),
+            )
+        )
+    return key
+
+
+def _free_endpoint_bounds(
+    table: ParameterTable, spec: ModelSpec, path: ParameterPath, constraint: Constraint
+) -> tuple[float, tuple[float, float]]:
+    """Find a range for a fitted endpoint.
+
+    Borrowed, in order of preference, from:
+
+    1. the constraint's own ``endpoint_range``;
+    2. any existing declaration of the same path -- if the spec already says a
+       Cu thickness lies in [400, 600] for the steady states, that is the same
+       physical statement and there is no reason to repeat it;
+    3. nothing, which is an error rather than a guess. An unbounded endpoint
+       can wander somewhere unphysical and take the whole trajectory with it.
+
+    Raises:
+        SpecError: If no range can be found.
+    """
+    if constraint.endpoint_range is not None:
+        low, high = constraint.endpoint_range
+        return _stack_default(spec, path), (float(low), float(high))
+
+    rendered = path.render()
+    for parameter in table.free:
+        if parameter.key.split("@", 1)[0] == rendered and parameter.bounds:
+            return parameter.value, parameter.bounds
+
+    for declared in spec.parameters:
+        if declared.path == rendered and declared.range is not None:
+            low, high = declared.range
+            return _stack_default(spec, path), (float(low), float(high))
+
+    raise SpecError(
+        f"constraint on {rendered} across {constraint.series!r} fits a free "
+        "endpoint, but there is no range to give it. Either declare the path "
+        f"in `parameters` (its range is reused), or add `endpoint_range: "
+        f"[min, max]` to the constraint."
+    )
 
 
 def _anchor_bounds(

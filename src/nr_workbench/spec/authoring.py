@@ -237,7 +237,10 @@ def build_prompt(
         "    free              one parameter per slice. Last resort.\n"
         "    fixed             nothing changes across the series.\n"
         "  `from` and `to` are the steady states either side of the series, so "
-        "the interpolating forms add no free parameters.\n"
+        "the interpolating forms add no free parameters. Write `free` for "
+        "either endpoint to fit it instead -- one extra parameter per path. "
+        "Do that when the series has no bracketing state, or when the notes "
+        "say something happened between the steady measurement and the run.\n"
         "  Put in `paths` only the quantities the change is in. If the "
         "assessment says the template is oscillatory in Q, that is a THICKNESS "
         "change; if it is one-sign, it is an SLD contrast change.\n"
@@ -496,6 +499,10 @@ Fill in the model spec at {spec_path} for sample {sample}.
      a(t) is sigmoidal          -> logistic         (fits t_half, width)
      first-order relaxation     -> exponential      (fits tau)
      none of the above fits     -> piecewise_linear (costs K knots)
+
+   `from`/`to` name the states either side. Write `free` for either to fit
+   that endpoint instead -- for a series with no bracketing state, or when
+   where the sample finished is itself the measurement.
 
    `nrw tnr assess` names the right one in its verdict -- read
    `assessments/*/[label]_assessment.json` if it has been run. An oscillatory

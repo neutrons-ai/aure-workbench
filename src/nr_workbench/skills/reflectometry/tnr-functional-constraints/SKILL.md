@@ -139,6 +139,53 @@ that observation into measured numbers.
 nrw model preview spec.yaml
 ```
 
+## Anchored or fitted endpoints
+
+`from` and `to` normally name the steady states either side of the series, and
+that is why the interpolating forms cost nothing: the endpoints are parameters
+the steady-state data already constrains.
+
+Write **`free`** for either to fit that endpoint instead:
+
+```yaml
+constraints:
+  - series: tnr
+    form: linear_in_time
+    from: ocv1          # anchored: the OCV measurement just before the run
+    to: free            # fitted: where the sample actually finished
+    paths: [CuOx.thickness]
+```
+
+| | Cost | Use when |
+|---|---|---|
+| `from: ocv1, to: ocv2` | nothing | the states bracket the series and you trust them |
+| `from: ocv1, to: free` | 1 per path | you know where it started; the end is the measurement |
+| `from: free, to: free` | 2 per path | no bracketing states at all |
+
+Each free endpoint adds one parameter *per path*, so a constraint over six
+paths with both endpoints free costs twelve. Check the count with
+`nrw model preview` before fitting.
+
+**When to anchor.** The steady states are longer counts over a wider Q range
+than any single slice, so they constrain the structure far better. Anchoring
+imports that, and it is the right default.
+
+**When to free an endpoint.** Three situations, all real:
+
+- **No bracketing measurement.** A tNR run with no OCV before or after has
+  nothing to anchor to.
+- **The series did not start where the steady state says.** If something
+  happened between the OCV measurement and the start of the run — a potential
+  step, a solvent exchange — anchoring asserts a continuity that is not there.
+- **The endpoints are the result.** If the question is "how much oxide had
+  grown by the end of the sequence", that number should be fitted from the
+  series, not read off a measurement taken afterwards under other conditions.
+
+A free endpoint needs a range. It borrows the path's existing `parameters`
+declaration, which is usually what you want — a Cu thickness plausible for the
+steady states is plausible here. With no such declaration, add
+`endpoint_range: [min, max]` to the constraint.
+
 ## Rationalizations
 
 | Excuse | Rebuttal |

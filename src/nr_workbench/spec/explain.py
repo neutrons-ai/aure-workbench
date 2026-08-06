@@ -284,7 +284,13 @@ def _constraint_section(table: ParameterTable, constraint: Any) -> list[str]:
     else:
         lines.append(f"{n} slices.")
 
-    lines += ["", "```", *_formula(constraint, start, end), "```", ""]
+    lines += [
+        "",
+        "```",
+        *_formula(constraint, start, end, constraint.series),
+        "```",
+        "",
+    ]
     lines.append(_form_prose(constraint) + ".")
 
     extra = _extra_free(table, constraint)
@@ -304,13 +310,7 @@ def _constraint_section(table: ParameterTable, constraint: Any) -> list[str]:
             for parameter in extra
         ]
     elif start and end:
-        lines += [
-            "",
-            f"**No new free parameters.** The endpoints are `{start}`'s and "
-            f"`{end}`'s own values, which the steady-state data already "
-            "constrains, so the series is described entirely by the states "
-            "either side of it.",
-        ]
+        lines += ["", _endpoint_cost(constraint, start, end)]
 
     schedule = _schedule(constraint, measurements)
     if schedule:
@@ -336,10 +336,28 @@ def _constraint_section(table: ParameterTable, constraint: Any) -> list[str]:
     return lines
 
 
-def _formula(constraint: Any, start: str | None, end: str | None) -> list[str]:
+def _endpoint_label(endpoint: str | None, series: str, role: str) -> str:
+    """How an endpoint reads in a formula.
+
+    A state name reads as that state's own value; ``free`` reads as the
+    parameter the constraint created for it, which is what the fit output will
+    call it.
+    """
+    from nr_workbench.spec.constraints import FREE_ENDPOINT
+
+    if not endpoint:
+        return f"p_{role}"
+    if endpoint == FREE_ENDPOINT:
+        return f"p[{series}:{role}]"
+    return f"p[{endpoint}]"
+
+
+def _formula(
+    constraint: Any, start: str | None, end: str | None, series: str = ""
+) -> list[str]:
     """The expression the generated script evaluates, for slice i."""
-    a = f"p[{start}]" if start else "p_start"
-    b = f"p[{end}]" if end else "p_end"
+    a = _endpoint_label(start, series, "start")
+    b = _endpoint_label(end, series, "end")
     forms = {
         "linear_in_index": [
             f"p_i  =  {a} + ({b} - {a}) * f_i",
@@ -374,26 +392,37 @@ def _formula(constraint: Any, start: str | None, end: str | None) -> list[str]:
     return forms.get(constraint.form, [f"form: {constraint.form}"])
 
 
+def _prose_endpoint(endpoint: str | None, role: str) -> str:
+    """Name an endpoint in prose, distinguishing anchored from fitted."""
+    from nr_workbench.spec.constraints import FREE_ENDPOINT
+
+    if not endpoint:
+        return f"its {role} value"
+    if endpoint == FREE_ENDPOINT:
+        return f"a **fitted** {role} value"
+    return f"its `{endpoint}` value"
+
+
 def _form_prose(constraint: Any) -> str:
     """Say what a constraint form asserts, in words.
 
     The formula says what is computed; this says why that shape was chosen.
     """
-    start = getattr(constraint, "from_", None)
-    end = getattr(constraint, "to", None)
+    start = _prose_endpoint(getattr(constraint, "from_", None), "start")
+    end = _prose_endpoint(getattr(constraint, "to", None), "end")
     forms = {
         "linear_in_index": (
-            f"Each listed quantity moves in equal steps from its `{start}` value "
-            f"to its `{end}` value, one step per slice"
+            f"Each listed quantity moves in equal steps from {start} to "
+            f"{end}, one step per slice"
         ),
         "linear_in_time": (
-            f"Each listed quantity moves linearly **in time** from its `{start}` "
-            f"value to its `{end}` value. Time rather than slice index, because "
-            "the intervals are not equally spaced"
+            f"Each listed quantity moves linearly **in time** from {start} to "
+            f"{end}. Time rather than slice index, because the intervals are "
+            "not equally spaced"
         ),
         "piecewise_linear": (
-            f"Each listed quantity follows a piecewise-linear path from `{start}` "
-            f"to `{end}` through fitted knots -- for a trajectory with structure "
+            f"Each listed quantity follows a piecewise-linear path from {start} "
+            f"to {end} through fitted knots -- for a trajectory with structure "
             "no closed form captures, without going to one parameter per slice"
         ),
         "exponential": (
@@ -417,6 +446,47 @@ def _form_prose(constraint: Any) -> str:
 
 #: How many slices to tabulate before eliding the middle.
 _SCHEDULE_ROWS = 3
+
+
+def _endpoint_cost(constraint: Any, start: str, end: str) -> str:
+    """Say what the endpoints cost, which depends on whether they are fitted."""
+    from nr_workbench.spec.constraints import FREE_ENDPOINT
+
+    fitted = [
+        role
+        for role, endpoint in (("start", start), ("end", end))
+        if endpoint == FREE_ENDPOINT
+    ]
+    if not fitted:
+        return (
+            f"**No new free parameters.** The endpoints are `{start}`'s and "
+            f"`{end}`'s own values, which the steady-state data already "
+            "constrains, so the series is described entirely by the states "
+            "either side of it."
+        )
+
+    n_paths = len(list(constraint.paths))
+    added = len(fitted) * n_paths
+    which = " and ".join(f"the **{role}**" for role in fitted)
+    anchored = [
+        f"`{endpoint}`" for endpoint in (start, end) if endpoint != FREE_ENDPOINT
+    ]
+    text = (
+        f"{which.capitalize()} of the trajectory is **fitted**, not anchored to "
+        f"a state — {added} extra free parameter"
+        f"{'s' if added != 1 else ''} ({len(fitted)} per path x {n_paths} paths)."
+    )
+    if anchored:
+        text += (
+            f" The other endpoint is {anchored[0]}'s own value, which the "
+            "steady-state data constrains."
+        )
+    text += (
+        " Fit an endpoint when the series has no bracketing measurement to "
+        "anchor to, or when where the sample started or finished *during* the "
+        "run is the measurement rather than an assumption."
+    )
+    return text
 
 
 def _schedule(constraint: Any, measurements: list[Any]) -> list[str]:
@@ -484,14 +554,14 @@ def _schedule(constraint: Any, measurements: list[Any]) -> list[str]:
 
 def _extra_free(table: ParameterTable, constraint: Any) -> list[Any]:
     """Free parameters this constraint introduced -- tau, t_half, knots."""
-    marker = f"@{constraint.series}"
-    structural = {"thickness", "roughness", "rho", "irho"}
+    marker = f"@{constraint.series}:"
     found = []
     for parameter in table.free:
-        if marker not in parameter.key:
+        if marker not in parameter.key or parameter.key.startswith("probe."):
             continue
-        attribute = parameter.key.split("@", 1)[0].split(".")[-1]
-        if attribute in structural or parameter.key.startswith("probe."):
+        suffix = parameter.key.split(marker, 1)[1]
+        # start/end are the endpoints, described separately by _endpoint_cost.
+        if suffix in ("start", "end"):
             continue
         found.append(parameter)
     return found
