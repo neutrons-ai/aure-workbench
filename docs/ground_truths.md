@@ -571,3 +571,58 @@ through `nrw fit run` takes minutes and produces the real thing.
 The distinction from "not recognised" is reported separately for the same
 reason: "I know what this is and it should not come" is different information
 from "I do not know what this is".
+
+### 2026-08-06: two planned skills were not written, on purpose
+
+The M6 skill list included `tnr-plotting` and `partial-data-assessment`.
+Neither was written, and the reasons are worth keeping so nobody adds them
+later to tick the box.
+
+**`tnr-plotting`** was to be adapted from `experiments-2025/docs/tNR-plotting.md`
+(422 lines). Read closely, that file is a *development plan* -- Phase 0 through
+Phase 7, a "Files touched" section, a "Decisions taken" section about extending
+`tnr_chi2.py`. Its one durable section, "Numerical pitfalls", lists guards that
+are already implemented in `tnr/metrics/` and pinned by the characterization
+tests: the R <= 0 guard in `fractional_residuals`, the floor on
+`dR_i^2 - dR_ref^2`, the boxcar edge handling, `--variogram-min-pairs 3`. Those
+are tested code, not guidance a reader acts on.
+
+**`partial-data-assessment`** would have covered what you can conclude from
+per-angle `_partial.txt` files: segment consistency and the Q-range limit on
+what is resolvable. Both are already covered -- consistency in
+`refl-bl4b-instrument` (with `nrw data overlap` behind it), resolvability in
+`thin-layer-degeneracy` (the 2*pi/Q_max rule). A third telling would compete
+with those rather than add to them.
+
+Twelve skills ship and are seeded by `nrw init`. Four more exist in the bundle
+for `nrw skills sync`. A skill nobody needed is worse than a missing one: the
+retriever scores against every skill's tags, so filler dilutes the ones that
+matter.
+
+### 2026-08-06: the copper-oxide SLDs in circulation are wrong, and CuO hides in Cu
+
+Three sources disagreed on the copper oxides. Computed from CRC bulk densities
+and coherent scattering lengths (`periodictable`):
+
+    Cu        6.55      CuO   6.46      Cu2O  5.36      Cu(OH)2  2.46
+
+AuRE's skill table gives CuO 5.0 and Cu2O 4.0. The first draft of this repo's
+`metal-oxide-interfaces` skill gave CuO 4.2-4.5 and Cu2O 4.9-5.2 -- both wrong
+*and inverted relative to each other*. The same first-principles calculation
+reproduces AuRE's TiO2 (2.63 vs 2.6) and SiO2 (3.47 vs 3.47) exactly, so the
+method is sound and the copper entries specifically are the bad ones.
+
+The physical consequence is the reason this matters: **stoichiometric CuO at
+6.46 is nearly contrast-matched to copper at 6.55.** A dense fully-oxidised CuO
+layer on a copper electrode is close to invisible to neutrons. Looking for one
+and finding nothing is not evidence it is absent.
+
+Cu2O is the visible one at 5.36, and a real native oxide is porous and hydrated
+rather than bulk-dense -- Cu2O at 80% of bulk density is 4.29 -- so a fitted
+CuOx in **4.2-5.5** is an ordinary cuprous oxide and the width of that range is
+porosity.
+
+Also: `aure_adapter.sld("Cu2O")` raises. AuRE's density table covers elements
+and common compounds but not these oxides, so a density must be passed
+explicitly. The skill's example says so now; the first version claimed it
+worked and did not.

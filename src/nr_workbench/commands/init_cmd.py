@@ -16,14 +16,22 @@ from nr_workbench.project.scaffold import (
 )
 from nr_workbench.skills_install import discover_skills, plan_skill_files
 
-#: Skills installed by default. Kept small on purpose: three that are relevant
-#: to almost every task beat fifteen that dilute the assistant's attention.
+#: Skills installed by default.
+#:
+#: The bar is "applies to almost any task on this beamline", not "is good".
+#: The retriever scores a query against every installed skill's tags, so a
+#: skill that is only sometimes relevant costs attention every time it is not.
+#: The material-specific ones -- metal oxides, polymers, solvents -- and the
+#: strategy one are bundled but left to `nrw skills sync`, because which of
+#: them matters depends on the sample.
 SEED_SKILLS = (
     "nr-workbench-project",
     "analysis-provenance",
     "neutron-reflectometry",
     "refl-bl4b-instrument",
     "refl1d-script-review",
+    "thin-layer-degeneracy",
+    "steady-state-corefinement",
     "tnr-change-assessment",
     "tnr-amplitude",
     "tnr-variogram",
