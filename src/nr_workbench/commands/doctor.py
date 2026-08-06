@@ -120,7 +120,56 @@ def collect_checks() -> list[Check]:
             )
         checks.append(Check(name, _OK, detail))
 
+    checks.extend(_llm_checks())
     checks.extend(_project_checks())
+    return checks
+
+
+def _llm_checks() -> list[Check]:
+    """Report the language-model endpoint, and where its settings came from.
+
+    Only `nrw model new --from-notes` needs one, so an absent endpoint is a
+    normal state rather than a problem -- but a *misconfigured* one is worth
+    seeing, and so is the fact that a setting arrived from a file the user may
+    not have known was being read.
+    """
+    from nr_workbench.aure_adapter import llm_info
+    from nr_workbench.env import describe, load_env
+
+    sources = load_env()
+    checks: list[Check] = []
+
+    if sources.files:
+        checks.append(
+            Check("config", _OK, ", ".join(str(path) for path in sources.files))
+        )
+    else:
+        checks.append(Check("config", _MISSING, "no .env, ~/.nrw or ~/.aure found"))
+
+    info = llm_info()
+    if info.get("available"):
+        endpoint = f"{info.get('provider')}/{info.get('model')}"
+        if info.get("base_url"):
+            endpoint += f" @ {info['base_url']}"
+        checks.append(Check("llm", _OK, endpoint))
+    else:
+        checks.append(
+            Check(
+                "llm",
+                _MISSING,
+                "no endpoint; `nrw model new --print-prompt` works without one",
+            )
+        )
+
+    settings = describe()
+    if settings:
+        checks.append(
+            Check(
+                "llm settings",
+                _OK,
+                ", ".join(f"{k}={v}" for k, v in sorted(settings.items())),
+            )
+        )
     return checks
 
 

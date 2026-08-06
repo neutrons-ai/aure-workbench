@@ -320,7 +320,13 @@ def run_forms() -> None:
 
 
 def run_new(
-    *, sample: str, name: str, out: str | None = None, force: bool = False
+    *,
+    sample: str,
+    name: str,
+    out: str | None = None,
+    force: bool = False,
+    from_notes: bool = False,
+    print_prompt: bool = False,
 ) -> None:
     """Scaffold a spec from what `nrw sample scan` found on disk.
 
@@ -334,6 +340,11 @@ def run_new(
         name: Model name; also the filename.
         out: Explicit output path.
         force: Overwrite an existing spec.
+        from_notes: Ask a configured language model to propose the stack from
+            ``sample.md``. Falls back to the placeholder, with an explanation,
+            when no endpoint is configured.
+        print_prompt: Print the instruction to hand a coding assistant instead
+            of calling an endpoint.
 
     Raises:
         click.ClickException: If the sample has no usable data, or the target
@@ -363,21 +374,39 @@ def run_new(
     document = _scaffold_document(sample, name, found, layout.root)
     assumed = document.pop("_nrw_assumed_angles", [])
     summed = document.pop("_nrw_summed_series", [])
+
+    notes_path = layout.sample(sample) / "sample.md"
+    notes = notes_path.read_text(encoding="utf-8") if notes_path.is_file() else ""
+    provenance = ""
+    if from_notes:
+        document, provenance = _author_from_notes(
+            layout=layout, document=document, notes=notes
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
+    stack_note = (
+        "# The stack below is a PLACEHOLDER -- replace it with the real layers\n"
+        "# and starting values, then:\n"
+        if not provenance
+        else "# Check the proposed stack, then:\n"
+    )
     header = (
         f"# yaml-language-server: $schema="
         f"{_schema_relative(layout, target)}\n"
         "#\n"
-        "# Scaffolded by `nrw model new` from the data on disk. The stack below is a\n"
-        "# PLACEHOLDER -- replace it with the real layers and starting values, then:\n"
+        "# Scaffolded by `nrw model new` from the data on disk.\n"
+        f"{stack_note}"
         "#\n"
         "#   nrw model validate <this file>\n"
         "#   nrw model preview  <this file>\n"
         "#   nrw model generate <this file>\n"
     )
-    target.write_text(header + _emit_spec(document), encoding="utf-8")
+    target.write_text(header + provenance + _emit_spec(document), encoding="utf-8")
 
     click.echo(f"Wrote {target.relative_to(layout.root)}")
+    if print_prompt:
+        click.echo()
+        _print_agent_instructions(layout, sample, notes, target)
+        return
     for run in summed:
         click.echo(
             f"  note  run {run} is in data/steady as a summed dataset and also\n"
@@ -406,7 +435,11 @@ def run_new(
         f"  {len(document.get('states', []))} state(s), "
         f"{len(document.get('series', []))} series"
     )
-    click.echo("\n  The stack is a placeholder. Edit it, then:")
+    click.echo(
+        "\n  Check the proposed stack, then:"
+        if provenance
+        else "\n  The stack is a placeholder. Edit it, then:"
+    )
     click.echo(f"    nrw model validate {target.relative_to(layout.root)}")
 
 
@@ -835,3 +868,148 @@ def _flow(item: Any, yaml: Any) -> str | None:
     if text.startswith("{") and text.endswith("}") and len(text) <= _FLOW_WIDTH:
         return text
     return None
+
+
+# --------------------------------------------------------------------------
+# Filling in the physics
+# --------------------------------------------------------------------------
+
+
+def _print_agent_instructions(
+    layout: ProjectLayout, sample: str, notes: str, target: Path
+) -> None:
+    """Print the instruction to hand a coding assistant."""
+    from nr_workbench.spec.authoring import (
+        agent_instructions,
+        find_skills,
+        missing_relevant,
+        relevant_skills,
+    )
+
+    skills = find_skills(layout.root)
+    chosen = relevant_skills(notes, skills)
+    absent = missing_relevant(notes, skills)
+    if absent:
+        click.echo(
+            "  These bundled skills match your notes but are not installed here.\n"
+            "  Install them first so the assistant has them:\n"
+            "      nrw skills sync\n" + "".join(f"      - {name}\n" for name in absent)
+        )
+    click.echo(
+        agent_instructions(
+            spec_path=str(target.relative_to(layout.root)),
+            notes_path=str(
+                (layout.sample(sample) / "sample.md").relative_to(layout.root)
+            ),
+            skills=chosen or ["nrw-model-spec"],
+            sample=sample,
+        )
+    )
+
+
+def _author_from_notes(
+    *, layout: ProjectLayout, document: dict[str, Any], notes: str
+) -> tuple[dict[str, Any], str]:
+    """Ask a configured endpoint to propose the stack from the notes.
+
+    Returns the document unchanged, with an explanation, when no endpoint is
+    configured -- a missing endpoint is a normal state, not a failure, and the
+    placeholder spec is still useful.
+
+    Args:
+        layout: The project.
+        document: The scaffolded skeleton.
+        notes: The ``sample.md`` text.
+
+    Returns:
+        ``(document, provenance_comment)``.
+    """
+    from nr_workbench.aure_adapter import AureUnavailableError, complete, llm_info
+    from nr_workbench.spec.authoring import (
+        AuthoringError,
+        build_prompt,
+        find_skills,
+        merge_proposal,
+        parse_proposal,
+        relevant_skills,
+    )
+
+    info = llm_info()
+    if not info.get("available"):
+        click.echo(
+            "  ! No language-model endpoint is configured, so the stack is still\n"
+            "    a placeholder. Either set LLM_PROVIDER and LLM_API_KEY (or\n"
+            "    LLM_BASE_URL for a local endpoint), or run:\n"
+            f"      nrw model new {document['sample']} --name {document['name']} "
+            "--print-prompt\n"
+            "    and hand that to the coding assistant already open on this repo.",
+            err=True,
+        )
+        return document, ""
+
+    skills = find_skills(layout.root)
+    chosen = relevant_skills(notes, skills)
+    system, user = build_prompt(
+        skeleton=document,
+        notes=notes,
+        skills=skills,
+        facts=_measured_facts(layout, document),
+    )
+
+    click.echo(
+        f"  asking {info.get('provider')}/{info.get('model')} ({len(chosen)} skill(s))..."
+    )
+    try:
+        reply = complete(system, user)
+        proposal = parse_proposal(reply)
+    except (AureUnavailableError, AuthoringError) as exc:
+        click.echo(f"  ! {exc}\n    Keeping the placeholder stack.", err=True)
+        return document, ""
+
+    merged = merge_proposal(document, proposal)
+    if proposal.rejected:
+        click.echo(
+            f"  discarded {len(proposal.rejected)} key(s) the model is not allowed "
+            f"to set: {', '.join(sorted(proposal.rejected))}"
+        )
+    if proposal.notes:
+        click.echo(f"  model notes: {proposal.notes}")
+
+    comment = (
+        "#\n"
+        f"# The stack below was PROPOSED by {info.get('provider')}/{info.get('model')}\n"
+        "# from sample.md and the project's skills. It is a starting point, not a\n"
+        "# measurement -- check every layer and range before fitting. States,\n"
+        "# series and angles were read from the data files and were not proposed.\n"
+    )
+    return merged, comment
+
+
+def _measured_facts(layout: ProjectLayout, document: dict[str, Any]) -> str:
+    """Summarise what the data itself says, for the prompt.
+
+    The critical edge constrains the topmost SLD independently of anything in
+    the notes, so it is worth putting in front of the model.
+    """
+    from nr_workbench.aure_adapter import AureUnavailableError, extract_features
+
+    lines: list[str] = []
+    for state in document.get("states", []):
+        data_dir = layout.root / str(state.get("data_dir", ""))
+        run = state.get("run")
+        candidates = sorted(data_dir.glob(f"REFL_{run}_*_partial.txt"))[:1]
+        for path in candidates:
+            try:
+                import numpy as np
+
+                data = np.loadtxt(path, ndmin=2)
+                features = extract_features(data[:, 0], data[:, 1], data[:, 2])
+            except (AureUnavailableError, OSError, ValueError, IndexError):
+                continue
+            for edge in features.critical_edges[:1]:
+                lines.append(
+                    f"  {state['name']}: critical edge Qc={edge.get('Qc', 0):.5f} "
+                    f"implies a topmost SLD near {edge.get('estimated_SLD', 0):.2f} "
+                    f"(confidence {edge.get('confidence', '?')})"
+                )
+    return "\n".join(lines)

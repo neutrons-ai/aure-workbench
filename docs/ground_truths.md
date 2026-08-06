@@ -678,3 +678,69 @@ Two consequences beyond the angle:
 * `sequence_number: 4` in the header matches `scan_index: 4` in
   `reduction_options.json`, so the two records agree on which angle setting the
   tNR run used.
+
+### 2026-08-06: filling the spec from notes, and the boundary that makes it safe
+
+`nrw model new` fills in facts -- runs, files, measured angles. It cannot fill
+in the stack, which is in the scientist's head and, if written down, in
+`sample.md`. Two paths close that:
+
+* `--from-notes` calls a configured endpoint.
+* `--print-prompt` writes the skeleton and prints the same request for the
+  coding assistant already open on the repository.
+
+Both build the same prompt, in `spec/authoring.py`, so they cannot drift.
+
+**A model may propose only `description`, `materials`, `stack`, `parameters`
+and `constraints`.** Anything it returns for `states`, `series`, `thetas`,
+`data_dir` or `run` is dropped in `merge_proposal`. The filter is structural,
+not a request in the prompt, because those are exact measurements and a
+plausible wrong angle is unrecoverable -- it broadens every fringe and the fit
+absorbs it into roughness without raising.
+
+Two things that only showed up on a real run:
+
+* A proposal that replaces the stack leaves the scaffold's constraint pointing
+  at `Film.thickness`, a layer that no longer exists, and the spec then fails
+  its own `nrw model validate`. `_repair_constraints` keeps the paths that
+  survive and drops the constraint when none do.
+* The critical edge from `nrw data features` is worth putting in the prompt.
+  A real run came back reasoning that "the measured topmost SLD near 4.3 [is]
+  consistent with a porous/native cuprous oxide" -- which is the 4.2-5.5 range
+  derived from first principles in `metal-oxide-interfaces`.
+
+### 2026-08-06: a reduced-data scaffold that builds to infinity
+
+`nrw model new` scaffolds a series with no `select:`, so it takes every slice.
+14 of run 218389's 130 slices contain points with `dR = 0`, chi-squared divides
+by `dR`, and the whole problem returns `inf`. refl1d does not warn.
+
+The guard belongs in the generated `create_probe`, not in the scaffold: it
+fixes every spec rather than only scaffolded ones, and it matches what the rest
+of the package already does -- `fractional_residuals` has had the same check
+since M2. Points with non-positive or non-finite `dR` are dropped at load.
+
+Verified not to change anything it should not: the M3 numerical gate still
+passes, and the guide's model builds to the same chi-squared 101.632 over the
+same 5380 points, because its `select: {labels: ["*_eis_*"]}` never included a
+bad slice.
+
+### 2026-08-06: .env, and why the scaffold must gitignore it
+
+Settings load shell > project `.env` > `~/.nrw` > `~/.aure`, mirroring AuRE.
+The `~/.aure` fallback is deliberate -- a machine already configured for AuRE
+works here unchanged -- and is reported by `nrw doctor` rather than being
+silent, because configuration arriving from a file you did not know was read is
+hard to debug.
+
+AuRE's `load_env()` is called by AuRE's own CLI, so importing `aure.llm.config`
+from here sees only the shell. Without loading it ourselves, a user with a
+working `.env` would find `nrw` says "no endpoint" while `aure` works.
+
+The scaffolded `.gitignore` did **not** cover `.env`. A beamtime directory gets
+shared with collaborators, archived by the facility, and sometimes published
+alongside a paper, so an API key in one is a real exposure. It is ignored now,
+a `.env.example` ships, and a test asserts both.
+
+Loading is lazy: `python-dotenv` costs ~40 ms and `nrw --help` is run
+constantly. A test asserts `dotenv` is not in `sys.modules` after `--help`.

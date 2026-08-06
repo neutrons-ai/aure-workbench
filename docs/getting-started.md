@@ -30,7 +30,7 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   58 file(s)
+  create   59 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
@@ -277,6 +277,121 @@ would assume.
 That summed dataset is deliberately left out of the fit. It is the sum of the
 very slices the series contributes, so including both would put the same
 neutrons in twice. `nrw model new` says so when it skips it.
+
+### Filling in the stack
+
+What `nrw model new` writes is *facts*: which runs exist, which files belong to
+them, each segment's measured angle. What it cannot know is the **stack** —
+what the sample is made of, in what order, roughly how thick. That is in your
+head and, if you wrote it down, in `sample.md`.
+
+Three ways to close that gap. All three produce the same file; pick whichever
+matches what you have to hand.
+
+**1. An LLM endpoint, if you have one configured.**
+
+```bash
+nrw model new Sample6 --name cu-thf-218389 --from-notes
+```
+
+It reads `sample.md`, picks the skills your notes call for, sends the
+skeleton and the measured critical edge, and merges back a proposed stack:
+
+```
+  asking openai/gpt-4o-mini (5 skill(s))...
+  model notes: Oxide thickness is a guess; sample.md gives no value.
+Wrote samples/Sample6/models/cu-thf-218389.yaml
+```
+
+The written file says who proposed it:
+
+```yaml
+# The stack below was PROPOSED by openai/gpt-4o-mini
+# from sample.md and the project's skills. It is a starting point, not a
+# measurement -- check every layer and range before fitting. States,
+# series and angles were read from the data files and were not proposed.
+```
+
+**A model may only propose `description`, `materials`, `stack`, `parameters`
+and `constraints`.** Anything it returns for `states`, `series`, `thetas`,
+`data_dir` or `run` is discarded — those were read from the files and are
+already exact. That filter is in the code, not just in the prompt: a wrong
+angle would broaden every fringe and the fit would quietly absorb it into
+roughness.
+
+Configure it in `.env` — `nrw init` ships a `.env.example` listing every
+variable, and `.env` itself is gitignored, which matters because a beamtime
+directory gets shared, archived and sometimes published.
+
+```bash
+cp .env.example .env      # then fill in one of the provider blocks
+```
+
+Settings are read from the shell first, then `.env`, then `~/.nrw`, then
+`~/.aure` — so a machine already set up for AuRE works here with no extra
+configuration. `nrw doctor` reports which of those it actually read, and shows
+the key as a shape rather than a value:
+
+```
+  ✓ config        ~/.aure
+  ✓ llm           local/gpt-5.4 @ https://.../openai/v1
+  ✓ llm settings  LLM_API_KEY=set (32 chars, ...fa0b), LLM_MODEL=gpt-5.4, ...
+```
+
+**2. The coding assistant already open on the project.**
+
+This is the common case in VS Code — Claude Code or Copilot can read every file
+in the repo, so it needs an instruction rather than an endpoint:
+
+```bash
+nrw model new Sample6 --name cu-thf-218389 --print-prompt
+```
+
+That writes the skeleton and prints something you can paste straight in:
+
+```
+Fill in the model spec at samples/Sample6/models/cu-thf-218389.yaml for sample Sample6.
+
+1. Read these skills first and follow them:
+   - skills/reflectometry/nrw-model-spec/SKILL.md
+   - skills/reflectometry/neutron-reflectometry/SKILL.md
+   - skills/reflectometry/refl-bl4b-instrument/SKILL.md
+   - skills/reflectometry/thin-layer-degeneracy/SKILL.md
+
+2. Read samples/Sample6/sample.md for what the sample is and what was done to it.
+
+3. Edit ONLY these parts of the spec:
+     description, materials, stack, parameters
+
+   Leave `states`, `series`, `thetas`, `data_dir`, `run` and `reduced_dir`
+   exactly as they are. ...
+```
+
+It names the skills your notes actually call for, and tells you when a relevant
+one is bundled but not installed:
+
+```
+  These bundled skills match your notes but are not installed here.
+  Install them first so the assistant has them:
+      nrw skills sync
+      - metal-oxide-interfaces
+      - solvent-contrast-matching
+```
+
+**3. By hand**, which is what the rest of this section shows. Worth doing once
+even if you plan to use the other two, because reviewing a proposed stack is
+much easier when you know what a good one looks like.
+
+Whichever you use, the check is the same — and it is the reason none of this
+is risky:
+
+```bash
+nrw model validate <spec>
+nrw model preview  <spec> --build
+```
+
+A proposed stack that does not validate, or builds to a nonsense χ², is caught
+in a second. Nothing is trusted because of where it came from.
 
 The finished `samples/Sample6/models/cu-thf-218389.yaml`, in full:
 

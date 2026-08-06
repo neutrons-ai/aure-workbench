@@ -174,6 +174,16 @@ def model_generate_command(**kwargs: object) -> None:
 @click.option("--name", required=True, help="Model name; also the filename.")
 @click.option("--out", default=None, help="Explicit output path.")
 @click.option("--force", is_flag=True, help="Overwrite an existing spec.")
+@click.option(
+    "--from-notes",
+    is_flag=True,
+    help="Ask a configured LLM endpoint to propose the stack from sample.md.",
+)
+@click.option(
+    "--print-prompt",
+    is_flag=True,
+    help="Print the instruction to hand a coding assistant, and write nothing.",
+)
 def model_new_command(**kwargs: object) -> None:
     """Scaffold a spec for SAMPLE from the data found on disk.
 

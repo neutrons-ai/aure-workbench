@@ -72,9 +72,20 @@ it, and whether the change looks like a thickness or a contrast.
 
 **Modelling**
 
+`nrw model new` fills in the facts — runs, files, and each segment's incident
+angle read from its `# Meta:` header. It cannot fill in the stack. Run it with
+`--print-prompt` to get the exact instruction for that, including which skills
+to read; `--from-notes` does the same thing against a configured LLM endpoint.
+
+Whichever route: **never edit `states`, `series`, `thetas`, `data_dir` or
+`run`.** Those are measured values, not defaults. In particular do not "tidy"
+a theta of 1.201 to 1.2 — it came from the file.
+
 | Task | Command |
 |---|---|
 | Start a spec from what the scan found | `nrw model new <ID> --name <name>` |
+| ...and let an LLM propose the stack | `nrw model new ... --from-notes` |
+| ...or get the instruction to do it yourself | `nrw model new ... --print-prompt` |
 | Check a spec without fitting | `nrw model validate <spec.yaml>` |
 | Build it in-process and report the parameter table | `nrw model preview <spec.yaml>` |
 | Write the refl1d script | `nrw model generate <spec.yaml>` |

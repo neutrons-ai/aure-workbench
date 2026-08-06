@@ -169,8 +169,16 @@ def _instrument_helpers(table: ParameterTable) -> str:
         "",
         f"    The 4th column is {'FWHM' if fwhm else 'sigma'}; make_probe wants FWHM",
         "    for both dT and dL.",
+        "",
+        "    Points with a non-positive uncertainty are dropped. Reduced REF_L",
+        "    files do contain them -- 14 of run 218389's 130 slices have dR = 0",
+        "    somewhere -- and chi-squared divides by dR, so a single one makes",
+        "    the whole problem non-finite. refl1d does not warn; it returns inf.",
         '    """',
         "    q, data, errors, dq = np.loadtxt(data_file).T",
+        "    usable = np.isfinite(errors) & (errors > 0) & np.isfinite(data) & (q > 0)",
+        "    if not usable.all():",
+        "        q, data, errors, dq = q[usable], data[usable], errors[usable], dq[usable]",
     ]
     if not fwhm:
         lines.append("    dq = dq * 2.355  # file holds sigma; make_probe wants FWHM")

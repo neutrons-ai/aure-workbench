@@ -32,6 +32,11 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Credentials. An LLM API key in a beamtime repository is a real problem:
+# these directories get shared, archived and published.
+.env
+.envrc
 .pytest_cache/
 .ipynb_checkpoints/
 

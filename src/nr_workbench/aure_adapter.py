@@ -450,3 +450,113 @@ def contrast_match_ratio(
             deuterated_solvent=deuterated,
         )
     )
+
+
+# --------------------------------------------------------------------------
+# Language models
+# --------------------------------------------------------------------------
+#
+# AuRE already resolves a provider from the environment -- openai, gemini,
+# alcf, or a local OpenAI-compatible endpoint -- so there is nothing to
+# configure here beyond routing through it. Everything stays function-local for
+# the same reason as the rest of this module: `nrw --help` must not import
+# langchain.
+
+
+def llm_available() -> bool:
+    """Report whether a usable language-model endpoint is configured.
+
+    Reads only environment variables; makes no network call, so this is cheap
+    enough to branch on.
+
+    Returns:
+        Whether ``LLM_PROVIDER``/``LLM_API_KEY``/``LLM_BASE_URL`` (or the
+        provider-specific equivalents) describe a usable endpoint.
+    """
+    if not is_available():
+        return False
+    from nr_workbench.env import load_env
+
+    load_env()
+    try:
+        from aure.llm.config import llm_available as _available
+
+        return bool(_available())
+    except Exception:
+        return False
+
+
+def llm_info() -> dict[str, Any]:
+    """Describe the configured endpoint, without its credentials.
+
+    Returns:
+        Provider, model and base URL where set, plus ``available``. Never
+        includes the API key.
+    """
+    info: dict[str, Any] = {"available": False}
+    if not is_available():
+        return info
+    from nr_workbench.env import load_env
+
+    load_env()
+    try:
+        from aure.llm.config import get_llm_config
+        from aure.llm.config import llm_available as _available
+
+        config = get_llm_config()
+    except Exception:
+        return info
+
+    info.update(
+        {
+            "available": bool(_available()),
+            "provider": config.get("provider"),
+            "model": config.get("model"),
+            "base_url": config.get("base_url"),
+            "temperature": config.get("temperature"),
+        }
+    )
+    return info
+
+
+def complete(system: str, user: str, *, temperature: float = 0.0) -> str:
+    """Send one prompt to the configured endpoint and return the reply text.
+
+    Args:
+        system: System instruction.
+        user: The request.
+        temperature: Sampling temperature; 0 by default because the task here
+            is extraction, not invention.
+
+    Returns:
+        The reply as text.
+
+    Raises:
+        AureUnavailableError: If no endpoint is configured or the call fails.
+    """
+    if not llm_available():
+        raise AureUnavailableError(
+            "No language-model endpoint is configured. Set LLM_PROVIDER and "
+            "LLM_API_KEY (or LLM_BASE_URL for a local endpoint). "
+            "`nrw doctor` reports what it sees."
+        )
+
+    try:
+        from aure.llm.providers import get_llm
+
+        model = get_llm(temperature=temperature)
+        reply = model.invoke([("system", system), ("human", user)])
+    except Exception as exc:
+        raise AureUnavailableError(
+            f"The language-model call failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    content = getattr(reply, "content", reply)
+    if isinstance(content, list):
+        # Some providers return a list of content blocks.
+        parts = [
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in content
+        ]
+        return "".join(parts)
+    return str(content)

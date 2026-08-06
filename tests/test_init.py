@@ -23,6 +23,7 @@ from nr_workbench.project.render import RenderContext
 #: The skill files are derived below rather than listed: which skills ship is
 #: data that changes as the library grows, whereas this shape should not.
 EXPECTED_SCAFFOLD_FILES = {
+    ".env.example",
     ".github/copilot-instructions.md",
     ".gitignore",
     ".vscode/extensions.json",
