@@ -276,6 +276,7 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
     target.write_text(source, encoding="utf-8")
 
     click.echo(f"Wrote {target.relative_to(layout.root)}")
+
     click.echo(
         f"  {table.n_experiments} experiment(s), {table.n_free} free parameter(s), "
         f"{len(table.expressions)} constrained"
@@ -338,7 +339,6 @@ def run_new(
         click.ClickException: If the sample has no usable data, or the target
             exists and ``force`` was not given.
     """
-    import yaml
 
     from nr_workbench.project.scan import scan_sample
 
@@ -360,7 +360,9 @@ def run_new(
             f"{target} already exists. Use --force to overwrite."
         )
 
-    document = _scaffold_document(sample, name, found)
+    document = _scaffold_document(sample, name, found, layout.root)
+    assumed = document.pop("_nrw_assumed_angles", [])
+    summed = document.pop("_nrw_summed_series", [])
     target.parent.mkdir(parents=True, exist_ok=True)
     header = (
         f"# yaml-language-server: $schema="
@@ -373,12 +375,33 @@ def run_new(
         "#   nrw model preview  <this file>\n"
         "#   nrw model generate <this file>\n"
     )
-    target.write_text(
-        header + yaml.safe_dump(document, sort_keys=False, default_flow_style=False),
-        encoding="utf-8",
-    )
+    target.write_text(header + _emit_spec(document), encoding="utf-8")
 
     click.echo(f"Wrote {target.relative_to(layout.root)}")
+    for run in summed:
+        click.echo(
+            f"  note  run {run} is in data/steady as a summed dataset and also\n"
+            "        as a time-resolved series. Only the series is in the spec --\n"
+            "        fitting both would count the same neutrons twice. The summed\n"
+            "        file is where the series' incident angle was read from."
+        )
+    if assumed:
+        click.echo(
+            f"  ! {len(assumed)} file(s) record no incident angle, so a default\n"
+            "    was written. Check `thetas:` against the logbook before fitting --\n"
+            "    theta sets the resolution and a wrong one is absorbed silently:\n"
+            + "".join(f"      {n}\n" for n in assumed[:6])
+            + ("      ...\n" if len(assumed) > 6 else "")
+        )
+    if assumed:
+        click.echo(
+            f"  ! {len(assumed)} file(s) record no incident angle, so a default\n"
+            "    was written. Check `thetas:` against the logbook before fitting --\n"
+            "    theta sets the resolution and a wrong one is absorbed silently:\n"
+            + "".join(f"      {n}\n" for n in assumed[:6])
+            + ("      ...\n" if len(assumed) > 6 else "")
+        )
+
     click.echo(
         f"  {len(document.get('states', []))} state(s), "
         f"{len(document.get('series', []))} series"
@@ -387,31 +410,123 @@ def run_new(
     click.echo(f"    nrw model validate {target.relative_to(layout.root)}")
 
 
-def _scaffold_document(sample: str, name: str, found) -> dict[str, Any]:
-    """Build the scaffolded spec mapping."""
+#: Fallback angles, used only where a file records none. These are this
+#: group's usual REF_L settings, not a measurement -- anything scaffolded from
+#: them is flagged so it gets checked rather than trusted.
+FALLBACK_THETAS = (0.45, 1.2, 3.5)
+
+#: Fallback for a time-resolved series. Slices carry no header at all, and the
+#: angle appears in neither the reduction JSON nor the tNR template, so there
+#: is nothing on disk to read. This is the usual setting and must be checked.
+TNR_FALLBACK_THETA = 0.6
+
+
+def _thetas_from_headers(paths: list[Path]) -> tuple[list[float], list[str]]:
+    """Read each segment's incident angle from its own file.
+
+    The angle is recorded exactly, in radians, in the ``# Meta:`` JSON block
+    REF_L writes at the top of a reduced file. It was previously assumed from a
+    hardcoded ``[0.45, 1.2, 3.5]`` truncated to the segment count, which is
+    right only for a three-segment measurement at this group's usual settings
+    and silently wrong for anything else. theta sets the resolution through
+    ``dT = dq/q * tan(theta)``, so a wrong one is absorbed into roughness
+    rather than raising.
+
+    Args:
+        paths: Segment files, in order.
+
+    Returns:
+        ``(thetas, unreadable)`` -- angles in degrees, and the names of any
+        files that recorded none and therefore got a fallback.
+    """
+    from nr_workbench.instrument.header import read_header
+
+    thetas: list[float] = []
+    unreadable: list[str] = []
+    for index, path in enumerate(paths):
+        angle: float | None = None
+        try:
+            angle = read_header(path).theta
+        except Exception:
+            angle = None
+        if angle is None:
+            unreadable.append(path.name)
+            angle = FALLBACK_THETAS[min(index, len(FALLBACK_THETAS) - 1)]
+        thetas.append(round(float(angle), 4))
+    return thetas or [FALLBACK_THETAS[0]], unreadable
+
+
+def _series_theta(root: Path, found_series, unknown: list[str]) -> float:
+    """Resolve a time-resolved series' incident angle.
+
+    The slices carry no header, but the same run is also reduced as a summed
+    dataset into ``data/steady``, and that file does. So the angle is on disk,
+    one directory across -- which beats the group's usual setting, because
+    "usual" is 0.6 and the measured value for run 218389 is 0.5997.
+    """
+    from nr_workbench.instrument.header import theta_for_run
+
+    if found_series.run is not None:
+        steady = root / Path(found_series.directory).parent.parent / "steady"
+        theta, source = theta_for_run(steady, found_series.run)
+        if theta is not None:
+            return round(float(theta), 4)
+    unknown.append(f"{Path(found_series.directory).name} (series; no summed dataset)")
+    return TNR_FALLBACK_THETA
+
+
+def _scaffold_document(
+    sample: str, name: str, found, root: Path | None = None
+) -> dict[str, Any]:
+    """Build the scaffolded spec mapping.
+
+    Args:
+        sample: Sample identifier.
+        name: Model name.
+        found: The scan result for this sample.
+        root: Project root, needed to read the data-file headers.
+    """
+    root = Path(root) if root is not None else Path.cwd()
     states = []
+    unknown_angles: list[str] = []
+
+    # A time-resolved run is *also* reduced as a summed dataset into
+    # data/steady, under the same run number. That file is the sum of the very
+    # slices the series contributes, so including both would put the same
+    # neutrons into the fit twice -- once whole, once in pieces -- and weight
+    # that run roughly double. The series wins; the summed file stays on disk
+    # and is still what `_series_theta` reads the angle from.
+    series_runs = {s.run for s in found.series if s.run is not None}
+    summed_series: list[int] = []
+
     for run in sorted(found.steady):
+        if run in series_runs:
+            summed_series.append(run)
+            continue
         entry = found.steady[run]
         if entry.partials:
+            paths = [root / entry.partials[k] for k in sorted(entry.partials)]
+            thetas, missing = _thetas_from_headers(paths)
+            unknown_angles.extend(missing)
             states.append(
                 {
                     "name": f"run{run}",
-                    "condition": "",
                     "run": run,
                     "segments": "auto",
-                    "thetas": [0.45, 1.2, 3.5][: len(entry.partials)] or [0.45],
+                    "thetas": thetas,
                     "data_dir": str(Path(next(iter(entry.partials.values()))).parent),
                 }
             )
         elif entry.combined:
+            thetas, missing = _thetas_from_headers([root / entry.combined])
+            unknown_angles.extend(missing)
             states.append(
                 {
                     "name": f"run{run}",
-                    "condition": "",
                     "run": run,
                     "kind": "combined",
                     "segments": "auto",
-                    "thetas": [0.45],
+                    "thetas": thetas,
                     "data_dir": str(Path(entry.combined).parent),
                 }
             )
@@ -422,10 +537,9 @@ def _scaffold_document(sample: str, name: str, found) -> dict[str, Any]:
             # A series with no resolvable run number is just "tnr"; the inner
             # fallback already covers that, so there is no outer default.
             "name": f"tnr{found_series.run or ''}",
-            "condition": "",
             "run": found_series.run,
             "reduced_dir": found_series.directory,
-            "theta": 0.6,
+            "theta": _series_theta(root, found_series, unknown_angles),
             "time_from": "filename"
             if found_series.kind == "time_binned"
             else "reduction_json",
@@ -482,6 +596,9 @@ def _scaffold_document(sample: str, name: str, found) -> dict[str, Any]:
         {"path": "Film.rho", "range": [2, 6], "per": "model"},
         {"path": "probe.intensity", "value": 1.0, "pm": 0.1, "per": "state"},
     ]
+
+    document["_nrw_assumed_angles"] = unknown_angles
+    document["_nrw_summed_series"] = summed_series
 
     if constrained:
         document["constraints"] = [
@@ -584,3 +701,137 @@ def run_fork(*, spec: str, name: str | None = None, out: str | None = None) -> N
     click.echo(f"Forked to {target.relative_to(layout.root)}")
     click.echo("  edit it freely; `nrw model generate` will leave it alone")
     click.echo(f"\n  nrw fit run {target.relative_to(layout.root)}")
+
+
+# --------------------------------------------------------------------------
+# Emitting a spec someone will want to edit
+# --------------------------------------------------------------------------
+
+#: Section order and the comment introducing each. `yaml.safe_dump` writes
+#: every mapping in block style, which turns a five-line stack into twenty and
+#: loses the grouping that makes a spec readable. A spec is a file a scientist
+#: edits by hand, so it is worth emitting deliberately.
+_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("schema", ""),
+    ("name", ""),
+    ("sample", ""),
+    ("description", ""),
+    (
+        "materials",
+        "# SLD in 1e-6/A2. `nrw data features <file>` reports the\n"
+        "# critical edge and the SLD it implies -- check the top layer.",
+    ),
+    ("stack", "# ambient -> substrate"),
+    ("probe", ""),
+    ("states", "# Angles were read from each file's `# Meta:` header."),
+    ("series", ""),
+    (
+        "parameters",
+        "# `per:` is the whole parameter-identity system:\n"
+        "#   model       one value for the entire problem\n"
+        "#   state       one per steady state\n"
+        "#   measurement one per angle segment or slice\n"
+        "# Angle segments within a state alias automatically.",
+    ),
+    (
+        "constraints",
+        "# The endpoints are the steady-state parameters, so a\n"
+        "# constraint adds no new free parameters.",
+    ),
+    ("fit", ""),
+)
+
+#: Keys whose list items fit on one line and read better that way.
+_FLOW_LISTS = frozenset({"stack", "parameters", "constraints", "states", "series"})
+
+
+def _emit_spec(document: dict[str, Any]) -> str:
+    """Render a spec as YAML a person would be happy to edit.
+
+    Flow style for anything that fits on a line, block style for anything that
+    does not, and a comment above each section. The result round-trips through
+    ``yaml.safe_load`` unchanged -- there is a test.
+    """
+    import yaml
+
+    lines: list[str] = []
+    for key, comment in _SECTIONS:
+        if key not in document:
+            continue
+        value = document[key]
+        if value in ({}, [], None, ""):
+            continue
+        if lines:
+            lines.append("")
+        if comment:
+            lines.extend(comment.splitlines())
+
+        if isinstance(value, str) and "\n" in value:
+            lines.append(f"{key}: >")
+            lines.extend(f"  {line}" for line in value.strip().splitlines())
+        elif isinstance(value, list):
+            lines.append(f"{key}:")
+            lines.extend(_emit_list_items(value, key, yaml))
+        elif isinstance(value, dict):
+            lines.append(f"{key}:")
+            lines.extend(_emit_mapping(value, yaml))
+        else:
+            lines.append(yaml.safe_dump({key: value}, sort_keys=False).rstrip())
+
+    remaining = [k for k in document if k not in dict(_SECTIONS)]
+    for key in remaining:
+        lines.append("")
+        lines.append(yaml.safe_dump({key: document[key]}, sort_keys=False).rstrip())
+
+    return "\n".join(lines) + "\n"
+
+
+def _emit_list_items(value: list[Any], key: str, yaml: Any) -> list[str]:
+    """Render a list, using flow style for short mappings."""
+    lines: list[str] = []
+    for item in value:
+        rendered = _flow(item, yaml) if key in _FLOW_LISTS else None
+        if rendered is not None:
+            lines.append(f"  - {rendered}")
+        else:
+            block = yaml.safe_dump([item], sort_keys=False, default_flow_style=False)
+            lines.extend(f"  {line}" for line in block.rstrip().splitlines())
+    return lines
+
+
+def _emit_mapping(value: dict[str, Any], yaml: Any) -> list[str]:
+    """Render a mapping, using flow style for short nested mappings."""
+    lines: list[str] = []
+    for name, entry in value.items():
+        rendered = _flow(entry, yaml) if isinstance(entry, dict) else None
+        if rendered is not None:
+            lines.append(f"  {name}: {rendered}")
+        else:
+            block = yaml.safe_dump({name: entry}, sort_keys=False)
+            lines.extend(f"  {line}" for line in block.rstrip().splitlines())
+    return lines
+
+
+#: Longest a flow-style mapping may be before it goes back to block style.
+_FLOW_WIDTH = 84
+
+
+def _flow(item: Any, yaml: Any) -> str | None:
+    """Render one mapping in flow style, or ``None`` if it is too long."""
+    if not isinstance(item, dict):
+        return None
+    # A short list of scalars reads fine inline (`range: [50, 200]`); a nested
+    # mapping or a list of mappings does not.
+    for value in item.values():
+        if isinstance(value, dict) and value:
+            return None
+        if isinstance(value, list) and any(
+            isinstance(element, dict | list) for element in value
+        ):
+            return None
+    text = yaml.safe_dump(
+        item, sort_keys=False, default_flow_style=True, width=10_000
+    ).strip()
+    if text.startswith("{") and text.endswith("}") and len(text) <= _FLOW_WIDTH:
+        return text
+    return None

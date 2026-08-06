@@ -626,3 +626,55 @@ Also: `aure_adapter.sld("Cu2O")` raises. AuRE's density table covers elements
 and common compounds but not these oxides, so a density must be passed
 explicitly. The skill's example says so now; the first version claimed it
 worked and did not.
+
+### 2026-08-06: the incident angle is in the file header, in radians
+
+Every reduced steady-state REF_L file carries a `# Meta:` line holding one JSON
+object with `theta` (radians), `norm_run`, `dq_over_q`, `sequence_number`,
+`scaling_factors` and the timestamps. `nrw model new` was instead writing
+`[0.45, 1.2, 3.5][:n]` -- the group's usual settings, truncated to the segment
+count.
+
+For a three-segment measurement at the usual settings that is right to 0.08%,
+which is why it went unnoticed. It is badly wrong otherwise:
+
+* Run 218389 has **one** segment in `data/steady` -- the summed tNR dataset --
+  so it got `[0.45]`. The header says **0.5997**. That is 25% off, and theta
+  enters both `wl = 4*pi*sin(theta)/q` and `dT = dq/q*tan(theta)`, so the
+  wavelength axis and the resolution were both wrong by 25%.
+* Any two-segment measurement got `[0.45, 1.2]` regardless of its real angles.
+
+A wrong theta does not raise. It broadens or sharpens every fringe and the fit
+absorbs it into roughness.
+
+Measured values, for the record: 218386 is 0.4500 / 1.2010 / 3.5003 and 218393
+is 0.4499 / 1.2009 / 3.5002. The fixed-width `TwoTheta(deg)` column agrees with
+the JSON `theta` to seven digits, which is a free check on the radians
+conversion.
+
+**This is a parsing problem, not an inference problem.** An LLM call was
+considered and rejected: the value is a field in a JSON object, so a parser is
+exact, offline, deterministic and testable, while a model can return a
+plausible number that silently corrupts the resolution. Where a model helps is
+reading an *unfamiliar* header once and writing a parser for it -- a
+code-generation task with a test, not a per-file inference.
+
+### 2026-08-06: a tNR run is also reduced whole into data/steady
+
+Time-resolved slices carry no header at all, and the angle appears in neither
+the `*_eis_reduction.json` sidecar nor the tNR template XML. It looked like the
+angle simply was not recorded.
+
+It is: the same run is *also* reduced as a summed dataset into `data/steady`
+under the same run number -- `REFL_218389_4_218389_partial.txt` -- and that file
+has the full `# Meta:` block. `theta_for_run` reads it.
+
+Two consequences beyond the angle:
+
+* That summed file must **not** be co-refined alongside the series. It is the
+  sum of the very slices the series contributes, so including both puts the
+  same neutrons into the fit twice and roughly doubles that run's weight.
+  `nrw model new` now drops the state and says why.
+* `sequence_number: 4` in the header matches `scan_index: 4` in
+  `reduction_options.json`, so the two records agree on which angle setting the
+  tNR run used.

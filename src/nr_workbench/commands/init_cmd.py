@@ -29,6 +29,7 @@ SEED_SKILLS = (
     "analysis-provenance",
     "neutron-reflectometry",
     "refl-bl4b-instrument",
+    "refl-reduced-headers",
     "refl1d-script-review",
     "thin-layer-degeneracy",
     "steady-state-corefinement",
