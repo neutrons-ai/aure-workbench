@@ -305,6 +305,7 @@ def run_fit(
     seed: int | None = None,
     alpha: float | None = None,
     parallel: int = 0,
+    plots: bool = False,
     quiet: bool = False,
 ) -> FitOutcome:
     """Run a fit and write bumps' full export into ``output_dir``.
@@ -323,6 +324,7 @@ def run_fit(
         pop: Population size.
         seed: Random seed, for a reproducible run.
         alpha: Bumps convergence parameter.
+        plots: Let bumps render its PNGs. Off by default; see :func:`_export`.
         parallel: CPUs to use. ``0`` means all of them, ``1`` forces serial.
             Population fitters -- dream, de -- evaluate their whole population
             each generation and scale well; amoeba is sequential and gains
@@ -382,8 +384,77 @@ def run_fit(
     outcome.n_free, outcome.n_points = describe_problem(problem)
     outcome.models = describe_models(problem)
 
-    _export(problem, result, Path(output_dir), outcome)
+    _export(problem, result, Path(output_dir), outcome, plots=plots)
     return outcome
+
+
+def _stats_without_plots(
+    state: Any, portion: float | None = None, figfile: str | None = None
+) -> None:
+    """Write DREAM's parameter statistics without rendering its figures.
+
+    ``bumps.dream.views.plot_all`` computes the variable statistics and writes
+    ``-err.json`` *before* importing matplotlib, then draws five figures. Only
+    the first half is wanted: ``-err.json`` is the parameter uncertainty table
+    that the fit page and the trajectory band both read, while the figures are
+    the part that is slow and that fails on a many-model problem.
+    """
+    from bumps.dream.stats import save_vars, var_stats
+
+    draw = state.draw(portion=portion)
+    stats = var_stats(draw)
+    if figfile is not None:
+        save_vars(stats, str(figfile) + "-err.json")
+
+
+@contextmanager
+def _plots_disabled(problem: Any, *, enabled: bool) -> Iterator[None]:
+    """Stop bumps rendering PNGs during an export.
+
+    Patched rather than configured because ``export_fit`` takes no flag for it.
+    Both hooks are restored on the way out, including on failure.
+    """
+    if enabled:
+        yield
+        return
+
+    from bumps import errplot
+    from bumps.dream.state import MCMCDraw
+
+    def skip(*_args: Any, **_kwargs: Any) -> None:
+        """Stand in for a plotting call."""
+        return None
+
+    def skip_errors(*_args: Any, **_kwargs: Any) -> None:
+        """Stand in for calc_errors.
+
+        Returning None short-circuits the ``if res is not None`` guard around
+        ``show_errors``, so the expensive per-sample profile recomputation is
+        skipped too rather than being done and thrown away.
+        """
+        return None
+
+    original_show = errplot.show_errors
+    original_calc = errplot.calc_errors
+    original_state_show = MCMCDraw.show
+    try:
+        problem.plot = skip
+        errplot.show_errors = skip
+        errplot.calc_errors = skip_errors
+        # `fit_state.show()` runs before `fit_state.save()` too, so the same
+        # failure mode applies one level down: the DREAM correlation, trace and
+        # variable plots can take the chain with them. It cannot simply be
+        # skipped, though -- `plot_all` writes `-err.json`, the parameter
+        # statistics table, before it touches matplotlib. So it is replaced by
+        # exactly that half.
+        MCMCDraw.show = _stats_without_plots
+        yield
+    finally:
+        errplot.show_errors = original_show
+        errplot.calc_errors = original_calc
+        MCMCDraw.show = original_state_show
+        with suppress(AttributeError):
+            del problem.plot
 
 
 #: Exceptions that mean "the worker pool could not start", rather than "the
@@ -412,8 +483,28 @@ def _is_multiprocessing_failure(exc: BaseException) -> bool:
     return any(marker.lower() in haystack for marker in _MP_FAILURE_MARKERS)
 
 
-def _export(problem: Any, result: Any, output_dir: Path, outcome: FitOutcome) -> None:
+def _export(
+    problem: Any,
+    result: Any,
+    output_dir: Path,
+    outcome: FitOutcome,
+    *,
+    plots: bool = False,
+) -> None:
     """Write bumps' export files, recording failure rather than raising.
+
+    **Plotting is off by default, and that is a data-safety decision.**
+    ``export_fit`` calls ``problem.plot()`` *before* ``fit_state.save()``, so a
+    failure while rendering takes the chain, ``-err.json`` and every
+    uncertainty output down with it -- the whole point of having run DREAM for
+    an hour. A 21-model co-refinement renders 21 model PNGs plus the
+    correlation and trace plots, which is where it falls over.
+
+    The images are also the least useful thing in the directory: `nrw serve`
+    draws the same curves from the data files, interactively and against the
+    right axes. So they are skipped, `problem.plot` and ``errplot.show_errors``
+    replaced with no-ops for the duration, and everything else is written
+    exactly as before. Pass ``plots=True`` to restore them.
 
     **Do not pass ``export=`` to ``bumps.fitters.fit``.** In bumps 1.0.x that
     path calls ``export_fit(export, problem, result.state, ...)``, forwarding a
@@ -434,7 +525,8 @@ def _export(problem: Any, result: Any, output_dir: Path, outcome: FitOutcome) ->
     try:
         from bumps.webview.server.api import export_fit
 
-        export_fit(str(output_dir), problem, result, basename=problem.name)
+        with _plots_disabled(problem, enabled=plots):
+            export_fit(str(output_dir), problem, result, basename=problem.name)
     except Exception as exc:
         outcome.export_ok = False
         outcome.export_error = f"{type(exc).__name__}: {exc}"

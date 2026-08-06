@@ -631,6 +631,17 @@ force serial, and `--parallel N` for a specific count when sharing a machine.
 If the worker pool cannot start, the fit falls back to a single CPU and says
 so, rather than losing the run.
 
+bumps' own diagnostic PNGs are **off** by default. It draws them *before* it
+saves the chain, one figure per model, so on a 21-model co-refinement the
+rendering falls over and takes an hour of DREAM sampling with it. Nothing is
+lost by skipping them: the uncertainties still land in `err.json`, the chain in
+`point.mc.gz`, and `nrw serve` draws everything from the numbers. Pass
+`--plots` if you want them anyway.
+
+Instead, the fit writes `trajectory.json` — every layer parameter through time
+with its credible interval, computed once while the inputs are still open
+rather than on every page load.
+
 ## 7. Look at it
 
 ```bash

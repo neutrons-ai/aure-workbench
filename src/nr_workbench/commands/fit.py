@@ -9,6 +9,7 @@ the same record shape.
 
 from __future__ import annotations
 
+import json
 import shlex
 import sys
 from dataclasses import dataclass
@@ -205,6 +206,7 @@ def run_fit_command(
     pop: int | None = None,
     seed: int | None = None,
     parallel: int = 0,
+    plots: bool = False,
     note: str | None = None,
     model_name: str | None = None,
     force: bool = False,
@@ -355,6 +357,7 @@ def run_fit_command(
             pop=pop,
             seed=seed,
             parallel=parallel,
+            plots=plots,
         )
     except FitError as exc:
         # A failed fit is still recorded. Knowing that a model was tried and
@@ -379,6 +382,10 @@ def run_fit_command(
 
     directory.write_manifest(record)
     index.append(record.index_entry())
+
+    # After the index entry: the summary resolves the fit by id, and the id is
+    # only findable once it is recorded.
+    _write_trajectory(layout, fit_dir, record)
 
     _report_success(record, fit_dir, layout.root, outcome)
 
@@ -426,3 +433,30 @@ def _report_success(record: FitRecord, fit_dir: Path, root: Path, outcome: Any) 
     click.echo()
     click.echo(f"  nrw whence {record.fit_id}      show the full provenance")
     click.echo(f"  nrw promote {record.fit_id} --as final --reason '...'")
+
+
+def _write_trajectory(layout: ProjectLayout, fit_dir: Path, record: Any) -> None:
+    """Precompute the time evolution and store it beside the fit.
+
+    Assembling it means resolving the spec, reading 21 slab tables and
+    evaluating the constraint across the posterior -- a second or two, paid
+    every time the fit page is opened if it is done on demand. The inputs are
+    all immutable once the fit is written, so the answer can never change:
+    compute it once, here, and let the page load a file.
+
+    Never fatal. A fit that ran is worth recording even if the summary of it
+    cannot be built.
+    """
+    from nr_workbench.web.project import ProjectData
+
+    try:
+        payload = ProjectData(layout.root).trajectory(record.fit_id)
+    except Exception as exc:  # noqa: BLE001 - a summary must not fail a fit
+        click.echo(f"  ! could not summarise the time evolution: {exc}", err=True)
+        return
+
+    if not payload.get("traces"):
+        return
+    (fit_dir / "trajectory.json").write_text(
+        json.dumps(payload, indent=2, default=str), encoding="utf-8"
+    )

@@ -51,7 +51,6 @@
         <span>SLD profiles</span>
         <span class="hint">
           z = 0 at the substrate surface
-          {%- if sld_bands %}; shaded band on the first and last measurement{% endif %}
         </span>
         <div class="form-check form-switch ms-auto mb-0">
           <input class="form-check-input" type="checkbox" id="sld-raw">
@@ -247,12 +246,11 @@
     }
   }
   const profiles = {{ fit.profiles|nrwjson|safe }};
-  const sldBands = {{ (sld_bands or {})|nrwjson|safe }};
-  NRW.sldPanel("plot-sld", profiles, { bands: sldBands });
+  NRW.sldPanel("plot-sld", profiles);
   const rawToggle = document.getElementById("sld-raw");
   if (rawToggle) {
     rawToggle.addEventListener("change", function (e) {
-      NRW.sldPanel("plot-sld", profiles, { bands: sldBands, raw: e.target.checked });
+      NRW.sldPanel("plot-sld", profiles, { raw: e.target.checked });
     });
   }
 

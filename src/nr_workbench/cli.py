@@ -260,6 +260,12 @@ def fit_group() -> None:
     show_default=True,
     help="CPUs to use; 0 means all of them, 1 forces serial.",
 )
+@click.option(
+    "--plots",
+    is_flag=True,
+    help="Let bumps render its PNGs (off by default; it runs before the chain "
+    "is saved, so a failure costs the uncertainty output).",
+)
 @click.option("--note", default=None, help="Free-text note stored in the record.")
 @click.option(
     "--name", "model_name", default=None, help="Model name [default: the script stem]."

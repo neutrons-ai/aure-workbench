@@ -507,47 +507,30 @@ const NRW = (function () {
    * the one interface that cannot move puts every profile on a common footing,
    * and only the layer that actually changed moves.
    *
-   * The credible band is drawn for at most a couple of profiles. Twenty-one
-   * filled regions is unreadable, and the question a band answers -- how well
-   * is this structure determined -- is asked of one curve at a time. */
+   * No uncertainty band here: computing one means rebuilding the profile for
+   * every posterior draw, which cost hundreds of milliseconds per curve and
+   * told the reader little that the parameter table does not. The trajectory
+   * panel carries the bands that matter. */
   function sldPanel(divId, profiles, options) {
     if (!HAVE_PLOTLY) return;
     const opts = options || {};
     const aligned = opts.raw !== true;
-    const bands = opts.bands || {};
 
     function shifted(profile) {
       const d = aligned ? profile.substrate_offset || 0 : 0;
       return profile.z.map(function (z) { return z - d; });
     }
 
-    const traces = [];
-    profiles.forEach(function (profile, i) {
-      const colour = colourFor(i);
-      const band = bands[profile.label];
-      if (band) {
-        const zs = shifted(profile);
-        traces.push({
-          x: zs.concat(zs.slice().reverse()),
-          y: band.hi.concat(band.lo.slice().reverse()),
-          fill: "toself",
-          fillcolor: colour + "26",
-          line: { width: 0 },
-          type: "scatter",
-          mode: "lines",
-          hoverinfo: "skip",
-          showlegend: false,
-        });
-      }
-      traces.push({
+    const traces = profiles.map(function (profile, i) {
+      return {
         x: shifted(profile),
         y: profile.rho,
         mode: "lines",
         type: "scattergl",
         name: profile.label,
-        line: { color: colour, width: band ? 1.8 : 1.2 },
+        line: { color: colourFor(i), width: 1.4 },
         hovertemplate: profile.label + "<br>z=%{x:.1f} Å<br>ρ=%{y:.4g}<extra></extra>",
-      });
+      };
     });
     Plotly.newPlot(
       divId,

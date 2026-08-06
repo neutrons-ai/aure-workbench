@@ -1102,3 +1102,57 @@ someone clears disk space, and the append-only log is deliberate. So the row
 stays, marked `deleted`, and does not link. Silence was the bug in both this
 and the missing trajectory panel: an empty page is indistinguishable from a
 broken one.
+
+### 2026-08-06: bumps draws its figures *before* it saves the chain
+
+`export_fit` calls `problem.plot()` and `fit_state.show()` and only then
+`fit_state.save()`. A rendering failure -- which a 21-model co-refinement
+provokes reliably, because bumps opens one figure per model -- therefore
+destroys the MCMC chain and every uncertainty output of an hour-long DREAM
+run. Exactly the shape of the `export=` trap recorded above: the expensive
+result is lost to a cosmetic step.
+
+`nrw fit run` now defaults to `--no-plots`, patching `problem.plot`,
+`errplot.show_errors` and `errplot.calc_errors` to no-ops for the duration.
+`MCMCDraw.show` needs more care than the others: `bumps.dream.views.plot_all`
+computes the variable statistics and writes `-err.json` *before* it imports
+matplotlib, so blanket-patching it silently discards the uncertainties. The
+replacement (`_stats_without_plots`) keeps the `var_stats` + `save_vars` half
+and drops the drawing. The statistics live in `bumps.dream.stats`, not
+`bumps.dream.varplot`.
+
+Verified on a real DREAM run: zero PNGs, and `err.json`, `point.mc.gz` and all
+21 `slabs.dat` present. Wall time 19.4 s.
+
+### 2026-08-06: a fit_id is second-resolution, so ties need the index order
+
+Turning the plots off made fits fast enough to finish inside the same second,
+and two lifecycle tests started failing. The cause was not the collision --
+`create_unique` already suffixes a clashing directory -- but the ordering:
+`FitIndex.fits()` sorted on `started_at`, which has second precision, and
+`sorted(..., reverse=True)` is *stable*, so tied entries came back oldest
+first. `nrw ls` then reported the wrong "latest fit" and `nrw diff` compared
+the wrong pair. Ties now break on position in the append-only index, which is
+the true chronology.
+
+The general trap: a stable sort with `reverse=True` does not reverse ties, so
+any "newest first" built on a low-resolution timestamp is wrong the moment two
+events share a tick.
+
+### 2026-08-06: compute the derived view at write time, not at read time
+
+`ProjectData.trajectory` re-read every slice's `slabs.dat` and the DREAM
+posterior on each page load: 1149 ms. The inputs are frozen the moment the fit
+finishes, so the answer can only be computed once. `nrw fit run` now writes
+`trajectory.json` into the result directory and the web layer loads it --
+1.7 ms, 666x faster, same 20 traces. The fallback recomputation stays for fits
+made before this, and for a result directory whose cache was deleted.
+
+Two ordering constraints, both learned the hard way: the summary must be
+written *after* `index.append`, because it looks the fit up by id; and it must
+never be able to fail the fit, so it is wrapped and merely warns.
+
+The SLD credible bands went the other way -- deleted rather than cached. They
+cost a posterior resample per profile and, as the user put it, were "too time
+consuming and not informative": the interesting uncertainty is in the layer
+parameters, which the trajectory panel already shows against time.

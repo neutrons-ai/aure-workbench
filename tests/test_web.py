@@ -1057,7 +1057,10 @@ def test_an_edited_spec_is_refused_rather_than_used(
 
     data = ProjectData(root)
     fit_id = data.fits("Sample1")[0]["fit_id"]
-    (root / "samples" / "Sample1" / "results" / fit_id / "spec.yaml").unlink()
+    results = root / "samples" / "Sample1" / "results" / fit_id
+    (results / "spec.yaml").unlink()
+    # and the precomputed answer, so the fallback is what is exercised
+    (results / "trajectory.json").unlink(missing_ok=True)
     spec = root / "samples" / "Sample1" / "models" / "m.yaml"
     spec.write_text(spec.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
 
@@ -1096,7 +1099,9 @@ def test_the_fit_page_says_why_there_is_no_trajectory(
         ],
     )
     fit_id = ProjectData(root).fits("Sample1")[0]["fit_id"]
-    (root / "samples" / "Sample1" / "results" / fit_id / "spec.yaml").unlink()
+    results = root / "samples" / "Sample1" / "results" / fit_id
+    (results / "spec.yaml").unlink()
+    (results / "trajectory.json").unlink(missing_ok=True)
     spec = root / "samples" / "Sample1" / "models" / "m.yaml"
     spec.write_text(spec.read_text(encoding="utf-8") + "\n# edited\n", encoding="utf-8")
 
@@ -1147,27 +1152,6 @@ def test_two_profiles_of_different_total_thickness_share_a_zero() -> None:
     # The substrate sits at the offset in each, so both land on zero.
     assert 510.0 - substrate_offset(thin) == pytest.approx(0.0)
     assert 550.0 - substrate_offset(thick) == pytest.approx(0.0)
-
-
-def test_a_profile_is_built_with_error_function_interfaces() -> None:
-    """The band is generated from slab tables, so the generator must be right."""
-    import numpy as np
-
-    from nr_workbench.web.trajectory import profile_from_slabs
-
-    z = np.linspace(-50, 150, 401)
-    rho = profile_from_slabs(
-        z,
-        thickness=np.array([0.0, 100.0, 0.0]),
-        roughness=np.array([0.0, 5.0, 5.0]),
-        rho=np.array([0.0, 4.0, 2.0]),
-    )
-
-    assert rho[0] == pytest.approx(0.0, abs=1e-6), "ambient at the top"
-    assert rho[-1] == pytest.approx(2.0, abs=1e-6), "substrate at the bottom"
-    assert rho[np.argmin(abs(z - 50))] == pytest.approx(4.0, abs=1e-3), "the layer"
-    # The interface is centred on the boundary, not offset from it.
-    assert rho[np.argmin(abs(z - 0.0))] == pytest.approx(2.0, abs=0.05)
 
 
 def test_a_deleted_result_directory_is_marked_not_hidden(
@@ -1232,3 +1216,94 @@ def test_reflectivity_is_plotted_log_log() -> None:
 
     # Every reflectivity x-axis declares a log type.
     assert source.count('title: { text: "Q (Å⁻¹)" },\n          type: "log"') >= 2
+
+
+def test_the_trajectory_is_precomputed_at_fit_time(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assembling it costs about a second; the inputs never change.
+
+    Resolving the spec, reading 21 slab tables and evaluating the constraint
+    across the posterior is a second of work paid on every page load if it is
+    done on demand -- and a fit directory is immutable once written, so the
+    answer cannot go stale.
+    """
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    fitted = runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+    assert fitted.exit_code == 0, fitted.output
+
+    data = ProjectData(root)
+    fit_id = data.fits("Sample1")[0]["fit_id"]
+    cached = root / "samples" / "Sample1" / "results" / fit_id / "trajectory.json"
+
+    assert cached.is_file(), "the fit should have written it"
+    from_disk = data.trajectory(fit_id)
+    assert from_disk["traces"]
+
+    # and the cached answer is the one that would have been computed
+    cached.unlink()
+    computed = data.trajectory(fit_id)
+    assert len(computed["traces"]) == len(from_disk["traces"])
+    assert computed["series"] == from_disk["series"]
+
+
+def test_a_summary_failure_does_not_fail_the_fit(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fit that ran is worth recording even if it cannot be summarised."""
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+
+    import nr_workbench.web.project as project_module
+
+    def explode(self, fit_id):
+        raise RuntimeError("summary is broken")
+
+    monkeypatch.setattr(project_module.ProjectData, "trajectory", explode)
+
+    result = runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "could not summarise" in result.output
+    assert ProjectData(root).fits("Sample1"), "the fit is still recorded"

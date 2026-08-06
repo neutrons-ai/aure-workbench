@@ -544,6 +544,16 @@ class ProjectData:
         record = self._resolve_fit(fit_id)
         resolved = str(record["fit_id"])
         directory = self._fit_dir(resolved, record.get("sample"))
+
+        # `nrw fit run` precomputes this. The inputs are immutable once a fit
+        # is written, so a cached answer can never be out of date -- and
+        # rebuilding it costs a second or two of spec resolution, slab reading
+        # and posterior arithmetic on every page load.
+        cached = directory / "trajectory.json"
+        if cached.is_file():
+            stored = self._read_json(cached)
+            if stored.get("traces"):
+                return stored
         manifest = self._read_json(directory / "manifest.json")
         names = _model_names((manifest.get("info") or {}).get("models") or [])
 
@@ -670,70 +680,6 @@ class ProjectData:
             )
 
         return (live, "")
-
-    def sld_bands(self, fit_id: str, labels: list[str] | None = None) -> dict[str, Any]:
-        """Credible bands for a few SLD profiles.
-
-        Deliberately a few. Twenty-one filled regions is unreadable, and the
-        question a band answers -- how well is this structure determined -- is
-        asked of one curve at a time. The default is the first and last
-        measurement, which is where a series has moved furthest.
-
-        Args:
-            fit_id: The fit identifier.
-            labels: Measurement labels to band. Defaults to first and last.
-
-        Returns:
-            ``{label: {"lo": [...], "hi": [...]}}``, empty when the fit has no
-            posterior.
-        """
-        import numpy as np
-
-        from nr_workbench.web import trajectory as traj
-
-        record = self._resolve_fit(fit_id)
-        directory = self._fit_dir(str(record["fit_id"]), record.get("sample"))
-        manifest = self._read_json(directory / "manifest.json")
-        names = _model_names((manifest.get("info") or {}).get("models") or [])
-        if not names:
-            return {}
-
-        spec_path, _ = self._spec_for(directory)
-        if spec_path is None:
-            return {}
-        try:
-            table = self._resolve_frozen_spec(spec_path)
-        except Exception:
-            return {}
-
-        samples, columns = traj.load_posterior(directory / "fit")
-        if samples is None or not columns:
-            return {}
-
-        available = [names[i] for i in sorted(names)]
-        chosen = labels or ([available[0], available[-1]] if available else [])
-
-        profiles = dict(_numbered(directory / "fit", "-profile.dat"))
-        position_of = {name: index for index, name in names.items()}
-
-        bands: dict[str, Any] = {}
-        for label in chosen:
-            position = position_of.get(label)
-            path = profiles.get(position) if position is not None else None
-            if path is None:
-                continue
-            try:
-                z = np.loadtxt(path, ndmin=2)[:, 0]
-            except (OSError, ValueError):
-                continue
-            edges = traj.sld_band(table, label, z, samples, columns)
-            if edges is None:
-                continue
-            bands[label] = {
-                "lo": [float(v) for v in edges[0]],
-                "hi": [float(v) for v in edges[1]],
-            }
-        return bands
 
     def _resolve_frozen_spec(self, spec_path: Path):
         """Resolve the spec frozen inside a fit directory.

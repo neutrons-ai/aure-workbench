@@ -290,6 +290,20 @@ def test_index_returns_fits_newest_first(tmp_path: Path) -> None:
     assert [e["fit_id"] for e in index.fits()] == ["new", "old"]
 
 
+def test_index_orders_same_second_fits_by_append_order(tmp_path: Path) -> None:
+    """Two fits can land inside one second, and `started_at` cannot tell them
+    apart. The append-only index knows the real order; `nrw ls` and every
+    "latest fit" caller depend on it, so a tie must not fall back to *oldest*
+    first -- which is what a stable sort with reverse=True quietly does."""
+    index = FitIndex(tmp_path / "index.jsonl")
+    same_second = "2026-01-01T00:00:00Z"
+    index.append({"fit_id": "first", "started_at": same_second})
+    index.append({"fit_id": "second", "started_at": same_second})
+    index.append({"fit_id": "third", "started_at": same_second})
+
+    assert [e["fit_id"] for e in index.fits()] == ["third", "second", "first"]
+
+
 def test_index_filters_by_sample(tmp_path: Path) -> None:
     index = FitIndex(tmp_path / "index.jsonl")
     index.append({"fit_id": "a", "sample": "S1"})

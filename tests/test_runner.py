@@ -287,3 +287,57 @@ def test_a_model_failure_is_not_retried(monkeypatch) -> None:
         runner.run_fit(Problem(), Path("/tmp/nowhere"), method="dream", parallel=0)
 
     assert calls == [0], "no pointless retry"
+
+
+def test_plots_are_off_by_default_and_the_data_survives() -> None:
+    """bumps renders its PNGs *before* saving the chain.
+
+    `export_fit` calls `problem.plot()` and `fit_state.show()` ahead of
+    `fit_state.save()`, so a rendering failure -- which a 21-model
+    co-refinement provokes -- destroys the chain and every uncertainty output
+    of an hour-long DREAM run. Same shape as the `export=` trap.
+    """
+    import inspect
+
+    from nr_workbench.fitting.runner import _plots_disabled, run_fit
+
+    assert inspect.signature(run_fit).parameters["plots"].default is False
+
+    class Problem:
+        def plot(self, **kwargs):
+            raise RuntimeError("too many figures")
+
+    problem = Problem()
+    with _plots_disabled(problem, enabled=False):
+        assert problem.plot() is None, "plotting is a no-op inside the block"
+    with pytest.raises(RuntimeError):
+        problem.plot()  # and the real method is back on the way out
+
+
+def test_the_parameter_statistics_are_kept_when_plots_are_off() -> None:
+    """`-err.json` is written by the same call that draws the figures.
+
+    `bumps.dream.views.plot_all` computes the variable statistics and writes
+    `-err.json` before it imports matplotlib. Skipping the whole call would
+    silently drop the parameter uncertainty table that the fit page and the
+    trajectory band both read -- which is exactly what a first attempt did.
+    """
+    import bumps.dream.stats as stats
+
+    from nr_workbench.fitting.runner import _stats_without_plots
+
+    class State:
+        def draw(self, portion=None):
+            return "the-draw"
+
+    written: dict[str, object] = {}
+    original_save, original_stats = stats.save_vars, stats.var_stats
+    try:
+        stats.var_stats = lambda draw: {"drawn": draw}
+        stats.save_vars = lambda s, path: written.update({"path": path, "stats": s})
+        _stats_without_plots(State(), figfile="/tmp/base")
+    finally:
+        stats.save_vars, stats.var_stats = original_save, original_stats
+
+    assert written["path"] == "/tmp/base-err.json"
+    assert written["stats"] == {"drawn": "the-draw"}, "the real statistics, not a stub"

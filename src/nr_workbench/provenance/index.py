@@ -120,7 +120,17 @@ class FitIndex:
         rows = [e for e in self.entries() if e.get("event", EVENT_FIT) == EVENT_FIT]
         if sample is not None:
             rows = [e for e in rows if e.get("sample") == sample]
-        return sorted(rows, key=lambda e: str(e.get("started_at") or ""), reverse=True)
+        # `started_at` is only second-resolution, and two quick fits land inside
+        # the same second. The index is append-only, so its own line order is
+        # the true chronology; use it to break the tie. Sorting on the timestamp
+        # alone is stable, which for reverse=True leaves ties *oldest* first --
+        # the exact opposite of what "newest first" promises.
+        ordered = sorted(
+            enumerate(rows),
+            key=lambda pair: (str(pair[1].get("started_at") or ""), pair[0]),
+            reverse=True,
+        )
+        return [row for _, row in ordered]
 
     def find(self, fit_id: str) -> dict[str, Any] | None:
         """Look up one fit entry by identifier.
