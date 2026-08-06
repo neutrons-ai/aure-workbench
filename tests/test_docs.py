@@ -111,3 +111,34 @@ def test_docs_carry_no_absolute_user_paths() -> None:
                     continue
                 offenders.append(f"{path.name}:{number} {match.group(0)}")
     assert not offenders, f"absolute home paths in docs: {offenders}"
+
+
+def test_the_guide_quotes_the_real_scaffold_size(
+    tmp_path: Path, context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The file and skill counts in the guide must be the actual ones.
+
+    A walkthrough that says "43 files" when init writes 49 teaches the reader
+    to distrust the rest of it. Cheap to check, and the numbers are exactly the
+    kind that rot silently when a skill is added.
+    """
+    from nr_workbench.commands.init_cmd import SEED_SKILLS, plan_project_files
+    from nr_workbench.project.scaffold import apply_scaffold
+
+    planned = plan_project_files(context)
+    apply_scaffold(tmp_path, planned)
+    actual_files = len(planned)
+
+    guide = (DOCS / "getting-started.md").read_text(encoding="utf-8")
+
+    match = re.search(r"create\s+(\d+) file\(s\)", guide)
+    assert match, "the guide no longer shows the scaffold file count"
+    assert int(match.group(1)) == actual_files, (
+        f"the guide says {match.group(1)} files; init writes {actual_files}"
+    )
+
+    skills = re.search(r"(\d+) reflectometry skills", guide)
+    assert skills, "the guide no longer states how many skills are installed"
+    assert int(skills.group(1)) == len(SEED_SKILLS), (
+        f"the guide says {skills.group(1)} skills; init seeds {len(SEED_SKILLS)}"
+    )

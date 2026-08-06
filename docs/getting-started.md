@@ -30,14 +30,14 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   43 file(s)
+  create   49 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
-to run twice — it never overwrites a file you have edited. Those 43 files are
-the layout, the editor config, and ten reflectometry skills with dispatcher
-agents for both Claude Code and Copilot, so an assistant opened in this folder
-already knows REF_L conventions.
+to run twice — it never overwrites a file you have edited. Those files are the
+layout, the editor config, and 12 reflectometry skills with dispatcher agents
+for both Claude Code and Copilot, so an assistant opened in this folder already
+knows REF_L conventions.
 
 Check the environment:
 
@@ -51,7 +51,7 @@ nrw doctor
   ✓ aure          0.1.0 @ 3021fee37294
   ✓ instrument    SNS REF_L
   ! samples       none yet; run `nrw sample new <ID>`
-  ✓ skills        10 installed: analysis-provenance, neutron-reflectometry, ...
+  ✓ skills        12 installed: analysis-provenance, neutron-reflectometry, ...
 ```
 
 ## 2. Make the sample and bring the data in
@@ -81,6 +81,23 @@ reference block, and 17 coadded holds are a much better baseline than 3 eis
 slices: median `dR/R` drops from 0.050 to 0.035, and the peak significance of
 the change rises from 26.5σ to 35.1σ. Leaving them out costs you resolution
 you already paid beam time for.
+
+> **Already have a beamtime directory?** `nrw import` reads the four layouts
+> that exist in `experiments-2025` and maps them into this one. It **symlinks**
+> data rather than copying it, so there is one copy of every byte and the
+> original tree keeps working, and it writes nothing until you say `--write`:
+>
+> ```bash
+> nrw import ~/git/experiments-2025/jen-oct2025            # plan only
+> nrw import ~/git/experiments-2025/jen-oct2025 --write    # do it
+> ```
+>
+> Outputs of previous fits are deliberately left behind — 310 files in
+> apr2025, 527 in june2026. A `results/` directory here carries a manifest with
+> input hashes, the environment and the exact command; a `.dat` from a 2025
+> bumps run has none of that, and putting it where `nrw whence` promises an
+> answer would fake provenance nobody recorded. Re-run the script through
+> `nrw fit run` and you get the real thing in minutes.
 
 Now register what actually arrived:
 
@@ -155,6 +172,36 @@ hand-written script this analysis replaces has, buried at line 243:
 Someone found this by eye and worked around it. `nrw data overlap` turns it
 into a number with an error bar, before a model is written rather than after
 one misbehaves. Section 5 shows how the spec says so explicitly.
+
+If the reduction template is beside the data, the check also prints which
+direct beam normalised each segment:
+
+```
+      direct beams: 218386<-218274  218387<-218275  218388<-218338
+```
+
+Segments 1 and 2 were divided by adjacent direct-beam runs; segment 3 by one
+measured much later. Different angles legitimately use different direct beams,
+so that is where to look first rather than a diagnosis on its own — but it is
+the obvious suspect.
+
+One more check worth knowing, on a single curve:
+
+```bash
+nrw data features samples/Sample6/data/steady/REFL_218386_3_218388_partial.txt
+```
+
+```
+    fringes counted: 12
+      total thickness  406 +/- 577.5   (medium)   <- uncertainty exceeds the value; not a constraint
+      roughness        10.43   (low)
+      layer count      3   (low)
+```
+
+Note what it says about the thickness. The number alone looks like something
+you could seed a model with; the uncertainty says it constrains nothing. Over a
+single angle segment there is not enough Q range to do better, which is itself
+worth knowing before you trust a fringe-counting estimate.
 
 ## 4. Ask what the time-resolved run actually did
 
@@ -465,6 +512,13 @@ generated script in place is the one thing that breaks the chain, and `nrw
 check` will tell you off for it. Running an ordinary hand-written script through
 `nrw fit run` is supported and always will be — provenance does not require the
 generator.
+
+Once you own a script, the `refl1d-script-review` skill is worth reading. Its
+headline is the aliasing pitfall: co-refinement works by making Experiments
+share one `Parameter` *object*, and reassigning one of them afterwards silently
+unties it. The fit still converges, χ² even improves, and the answer is wrong.
+Generated scripts end with identity assertions that make this impossible; a
+fork keeps them, and a hand-written script should gain them.
 
 **Ask the assistant.** With this project open in Claude Code or Copilot, the
 skills installed by `nrw init` are already loaded. `docs/ground_truths.md` is
