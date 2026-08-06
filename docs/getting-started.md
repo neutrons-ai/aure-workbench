@@ -493,6 +493,32 @@ listed path from its ocv1 value to its ocv2 value using the real timestamps,
 so the 15 tNR slices are described entirely by the two steady states. Time,
 not index: the intervals are unequally spaced, so the two genuinely differ.
 
+**Anchored endpoints, or fitted ones.** `from: ocv1, to: ocv2` is why the
+constraint is free: it borrows parameters the steady-state data already
+constrains. Write `free` for either endpoint to fit it instead:
+
+```yaml
+    from: ocv1        # anchored: the OCV measurement just before the run
+    to: free          # fitted: where the sample actually finished
+```
+
+| | Cost | Use when |
+|---|---|---|
+| `ocv1` → `ocv2` | nothing | the states bracket the series and you trust them |
+| `ocv1` → `free` | 1 per path | you know where it started; the end is the result |
+| `free` → `free` | 2 per path | there is no bracketing state at all |
+
+On this model that is 21 free parameters anchored, 27 with a fitted end, 33
+with both. The steady states are longer counts over a wider Q range than any
+single slice, so anchoring imports a much better constraint and is the right
+default. Free an endpoint when there is no bracketing measurement, when
+something happened between the steady measurement and the run, or when where
+the sample finished is the number you are after rather than an assumption.
+
+A free endpoint borrows its range from the path's `parameters` declaration — a
+Cu thickness plausible for the steady states is plausible here too. Add
+`endpoint_range: [min, max]` when there is no such declaration.
+
 Check it before generating anything:
 
 ```bash
