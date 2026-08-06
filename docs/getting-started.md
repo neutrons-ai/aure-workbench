@@ -621,6 +621,16 @@ For a production run use `--method dream --samples 100000 --burn 10000`, which
 also gives you parameter uncertainties. Amoeba finds a minimum; it does not
 tell you how wide it is.
 
+Fits run on **all cores by default** (`--parallel 0`). bumps itself defaults to
+one, which is worth knowing if you have ever wondered why a DREAM run took the
+afternoon: on a 20-core laptop the same run drops from 169 s to 30 s. Population
+fitters — `dream`, `de` — evaluate their whole population each generation and
+scale well; `amoeba` is sequential and gains nothing. Use `--parallel 1` to
+force serial, and `--parallel N` for a specific count when sharing a machine.
+
+If the worker pool cannot start, the fit falls back to a single CPU and says
+so, rather than losing the run.
+
 ## 7. Look at it
 
 ```bash

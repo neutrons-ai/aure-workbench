@@ -215,3 +215,75 @@ def test_collect_artifacts_names_the_interesting_files(tmp_path: Path) -> None:
 
 def test_collect_artifacts_tolerates_a_missing_directory(tmp_path: Path) -> None:
     assert collect_artifacts(tmp_path / "nope") == {}
+
+
+def test_parallel_defaults_to_all_cores() -> None:
+    """bumps defaults to one CPU; a fit that could use twenty should."""
+    import inspect
+
+    from nr_workbench.fitting.runner import run_fit
+
+    assert inspect.signature(run_fit).parameters["parallel"].default == 0
+
+
+def test_parallel_is_part_of_the_recorded_settings() -> None:
+    """It changes how the fit ran, so it belongs in the record."""
+    from nr_workbench.fitting.runner import FIT_SETTING_KEYS
+
+    assert "parallel" in FIT_SETTING_KEYS
+
+
+def test_a_worker_pool_failure_falls_back_to_serial(monkeypatch) -> None:
+    """Losing an hour of fitting to multiprocessing is worse than running slow.
+
+    bumps starts a Manager and spawns workers that re-import `__main__`, which
+    some environments cannot do. The model is fine; only the pool failed.
+    """
+    from nr_workbench.fitting import runner
+
+    calls: list[int] = []
+
+    def fake_fit(problem, **kwargs):
+        calls.append(kwargs["parallel"])
+        if kwargs["parallel"] != 1:
+            raise EOFError("multiprocessing manager died")
+        return object()
+
+    monkeypatch.setattr("bumps.fitters.fit", fake_fit)
+    monkeypatch.setattr(runner, "_export", lambda *a, **k: None)
+
+    class Problem:
+        name = "p"
+
+        def chisq(self):
+            return 1.0
+
+        models = []
+
+        def getp(self):
+            return []
+
+    runner.run_fit(Problem(), Path("/tmp/nowhere"), method="dream", parallel=0)
+
+    assert calls == [0, 1], "it retried on a single CPU"
+
+
+def test_a_model_failure_is_not_retried(monkeypatch) -> None:
+    """Only pool failures fall back. A broken model should fail once, fast."""
+    from nr_workbench.fitting import runner
+
+    calls: list[int] = []
+
+    def fake_fit(problem, **kwargs):
+        calls.append(kwargs["parallel"])
+        raise ValueError("the model is nonsense")
+
+    monkeypatch.setattr("bumps.fitters.fit", fake_fit)
+
+    class Problem:
+        name = "p"
+
+    with pytest.raises(runner.FitError, match="nonsense"):
+        runner.run_fit(Problem(), Path("/tmp/nowhere"), method="dream", parallel=0)
+
+    assert calls == [0], "no pointless retry"

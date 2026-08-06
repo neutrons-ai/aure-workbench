@@ -23,9 +23,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.tnr.notify import notify
+
 #: Settings that identify a fit run. Anything absent falls back to the fitter's
 #: own default, which is recorded as ``None`` rather than guessed at.
-FIT_SETTING_KEYS = ("method", "steps", "samples", "burn", "pop", "seed", "alpha")
+FIT_SETTING_KEYS = (
+    "method",
+    "steps",
+    "samples",
+    "burn",
+    "pop",
+    "seed",
+    "alpha",
+    "parallel",
+)
 
 
 class FitError(Exception):
@@ -293,6 +304,7 @@ def run_fit(
     pop: int | None = None,
     seed: int | None = None,
     alpha: float | None = None,
+    parallel: int = 0,
     quiet: bool = False,
 ) -> FitOutcome:
     """Run a fit and write bumps' full export into ``output_dir``.
@@ -311,6 +323,10 @@ def run_fit(
         pop: Population size.
         seed: Random seed, for a reproducible run.
         alpha: Bumps convergence parameter.
+        parallel: CPUs to use. ``0`` means all of them, ``1`` forces serial.
+            Population fitters -- dream, de -- evaluate their whole population
+            each generation and scale well; amoeba is sequential and gains
+            nothing.
         quiet: Suppress the fitter's own progress output.
 
     Returns:
@@ -326,7 +342,11 @@ def run_fit(
     if not getattr(problem, "name", None):
         problem.name = "problem"
 
-    kwargs: dict[str, Any] = {"method": method, "verbose": 0 if quiet else 1}
+    kwargs: dict[str, Any] = {
+        "method": method,
+        "verbose": 0 if quiet else 1,
+        "parallel": parallel,
+    }
     for key, value in (
         ("steps", steps),
         ("samples", samples),
@@ -341,7 +361,20 @@ def run_fit(
     try:
         result = bumps_fit(problem, **kwargs)
     except Exception as exc:
-        raise FitError(f"Fit failed: {exc}") from exc
+        if parallel == 1 or not _is_multiprocessing_failure(exc):
+            raise FitError(f"Fit failed: {exc}") from exc
+        # Losing an hour of fitting to a multiprocessing problem is far worse
+        # than running it slowly. bumps starts a Manager and spawns workers
+        # that re-import __main__, which some environments cannot do.
+        notify(
+            f"Parallel fitting failed ({type(exc).__name__}: {exc}); "
+            "falling back to a single CPU."
+        )
+        kwargs["parallel"] = 1
+        try:
+            result = bumps_fit(problem, **kwargs)
+        except Exception as serial_exc:
+            raise FitError(f"Fit failed: {serial_exc}") from serial_exc
 
     outcome = FitOutcome()
     with suppress(Exception):
@@ -351,6 +384,32 @@ def run_fit(
 
     _export(problem, result, Path(output_dir), outcome)
     return outcome
+
+
+#: Exceptions that mean "the worker pool could not start", rather than "the
+#: fit itself failed". Kept broad on purpose: the failure modes vary by
+#: platform and start method, and the fallback is always safe.
+_MP_FAILURE_MARKERS = (
+    "multiprocessing",
+    "spawn",
+    "EOFError",
+    "BrokenPipe",
+    "Manager",
+    "pickle",
+    "daemonic",
+)
+
+
+def _is_multiprocessing_failure(exc: BaseException) -> bool:
+    """Whether a failure looks like the worker pool rather than the model."""
+    text = f"{type(exc).__name__}: {exc}"
+    trace = ""
+    with suppress(Exception):
+        import traceback
+
+        trace = "".join(traceback.format_exception(exc))
+    haystack = (text + trace).lower()
+    return any(marker.lower() in haystack for marker in _MP_FAILURE_MARKERS)
 
 
 def _export(problem: Any, result: Any, output_dir: Path, outcome: FitOutcome) -> None:

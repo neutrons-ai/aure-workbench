@@ -253,6 +253,13 @@ def fit_group() -> None:
 @click.option(
     "--seed", type=int, default=None, help="Random seed, for a reproducible run."
 )
+@click.option(
+    "--parallel",
+    type=int,
+    default=0,
+    show_default=True,
+    help="CPUs to use; 0 means all of them, 1 forces serial.",
+)
 @click.option("--note", default=None, help="Free-text note stored in the record.")
 @click.option(
     "--name", "model_name", default=None, help="Model name [default: the script stem]."

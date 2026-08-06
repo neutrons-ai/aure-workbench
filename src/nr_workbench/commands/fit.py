@@ -204,6 +204,7 @@ def run_fit_command(
     burn: int | None = None,
     pop: int | None = None,
     seed: int | None = None,
+    parallel: int = 0,
     note: str | None = None,
     model_name: str | None = None,
     force: bool = False,
@@ -249,6 +250,7 @@ def run_fit_command(
         "burn": burn,
         "pop": pop,
         "seed": seed,
+        "parallel": parallel,
     }
 
     # Load the script once, under observation, so the recorded inputs are the
@@ -352,6 +354,7 @@ def run_fit_command(
             burn=burn,
             pop=pop,
             seed=seed,
+            parallel=parallel,
         )
     except FitError as exc:
         # A failed fit is still recorded. Knowing that a model was tried and

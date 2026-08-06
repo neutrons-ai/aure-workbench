@@ -976,3 +976,28 @@ property rather than a request:
 With those, the same notes produce a spec that validates and builds first try.
 The remaining prompt-only instructions are the ones where a wrong answer is
 visible in the spec rather than fatal to it.
+
+### 2026-08-06: bumps runs on one CPU unless told otherwise
+
+`bumps.fitters.fit` takes `parallel: int = 1`, and nothing here was passing it,
+so every fit ran on a single core regardless of the machine. `parallel=0` means
+all cores; `nrw fit run` now defaults to that and exposes `--parallel N`.
+
+Measured on the 21-experiment Cu/THF co-refinement, dream with 8000 samples on
+a 20-core laptop: **169 s serial, 30 s parallel** at 879% CPU. Population
+fitters evaluate their whole population per generation and scale; amoeba is
+sequential and gains nothing.
+
+`parallel` is in `FIT_SETTING_KEYS`, so it is part of the settings digest and
+appears in the record -- it changes how the fit ran.
+
+Two things to know about the pool:
+
+* bumps starts a `multiprocessing.Manager` and spawns workers that re-import
+  `__main__`. A benchmark run from a heredoc died on exactly this
+  (`FileNotFoundError: .../<stdin>`); the real CLI is fine. Since the failure
+  is environmental and the model is not at fault, a pool failure falls back to
+  serial with a warning rather than losing the fit.
+* The fallback is deliberately narrow: it triggers on multiprocessing-shaped
+  errors only, so a genuinely broken model still fails once and fast instead of
+  being retried pointlessly.
