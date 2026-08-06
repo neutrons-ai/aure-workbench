@@ -1057,3 +1057,48 @@ calling the fit stale independently.
 Both branches are visible in the UI. The failure that prompted this was not a
 wrong plot, it was **no plot and no explanation**: an empty page is
 indistinguishable from a broken one.
+
+### 2026-08-06: SLD profiles belong on the substrate, not the surface
+
+refl1d writes the profile with z = 0 at the *top* of the stack, so two models
+whose total thickness differs are drawn offset from each other -- a 3 A change
+in copper shifts the titanium and the substrate with it, and across 15 tNR
+slices the buried layers smear. Referencing z to the substrate surface anchors
+the one interface that cannot move, so only the layer that actually changed
+moves.
+
+The offset is the sum of every thickness except the substrate's, which is
+refl1d's own `align=-1` (`uncertainty._find_offset`). Computed here from the
+`-slabs.dat` table rather than by importing refl1d's plotting stack.
+
+### 2026-08-06: best fit or posterior median -- report the best, show both
+
+They differ. On a real DREAM fit here the worst gap is **1.2 sigma**
+(`ocv1 probe intensity`, best 1.089 against median 1.029), and every varying
+trajectory sits 0.15 to 0.54 of a band width away from its median.
+
+**Report the best.** It is a single self-consistent parameter vector -- one
+point the model was actually evaluated at, and the one the plotted curves,
+`-slabs.dat` and the quoted chi-squared all come from. The marginal median is
+not a parameter vector at all: each parameter's median taken independently can
+describe a stack no posterior sample contains, and which fits worse than
+either. For correlated parameters -- the endpoints of an interpolating
+constraint, intensity against thickness -- that is not hypothetical.
+
+**Show the median too**, faintly. The gap between them is diagnostic: a
+best-fit sitting a sigma from the median means the posterior is skewed or
+something is railing against a bound, and that is invisible if only one is
+drawn.
+
+The same reasoning explains why a fitted value can sit outside its own 68%
+band: the maximum-likelihood point is under no obligation to lie inside a
+*central* interval.
+
+### 2026-08-06: the index is append-only, so deleted results must be marked
+
+Removing a result directory left the fit in `nrw serve`'s table, linking to a
+404. Pruning the index would be wrong -- that a fit ran stays true after
+someone clears disk space, and the append-only log is deliberate. So the row
+stays, marked `deleted`, and does not link. Silence was the bug in both this
+and the missing trajectory panel: an empty page is indistinguishable from a
+broken one.

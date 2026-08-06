@@ -111,7 +111,15 @@ const NRW = (function () {
       return {
         margin: { l: MARGIN_L, r: MARGIN_R, t: 8, b: 44 },
         font: FONT,
-        xaxis: { title: { text: "Q (Å⁻¹)" }, zeroline: false },
+        /* log R against log Q. The Fresnel decay is a power law, so log-log
+         * straightens it -- the fringes stay legible across four decades of Q
+         * instead of piling up at the left. */
+        xaxis: {
+          title: { text: "Q (Å⁻¹)" },
+          type: "log",
+          exponentformat: "power",
+          zeroline: false,
+        },
         yaxis: {
           title: { text: mode === "rq4" ? "R · Q⁴" : "R" },
           type: "log",
@@ -460,7 +468,7 @@ const NRW = (function () {
       {
         margin: { l: MARGIN_L, r: MARGIN_R, t: 8, b: 8 },
         font: FONT,
-        xaxis: { showticklabels: false, zeroline: false },
+        xaxis: { type: "log", showticklabels: false, zeroline: false },
         yaxis: { title: { text: "R" }, type: "log", exponentformat: "power" },
         legend: { font: { size: 10 }, x: 1.005, y: 1 },
         hovermode: "closest",
@@ -475,7 +483,13 @@ const NRW = (function () {
       {
         margin: { l: MARGIN_L, r: MARGIN_R, t: 8, b: 44 },
         font: FONT,
-        xaxis: { title: { text: "Q (Å⁻¹)" }, zeroline: false },
+        /* Matches the panel above so the two line up point for point. */
+        xaxis: {
+          title: { text: "Q (Å⁻¹)" },
+          type: "log",
+          exponentformat: "power",
+          zeroline: false,
+        },
         yaxis: { title: { text: "(R−fit)/σ" }, zeroline: true },
         showlegend: false,
         uirevision: "fit",
@@ -484,18 +498,56 @@ const NRW = (function () {
     );
   }
 
-  function sldPanel(divId, profiles) {
+  /* Draw SLD profiles.
+   *
+   * z is referenced to the SUBSTRATE SURFACE by default. refl1d puts z = 0 at
+   * the top of the stack, so two models whose total thickness differs are
+   * drawn offset from each other and the buried layers never line up -- a 3 A
+   * change in copper shifts the titanium and the substrate with it. Anchoring
+   * the one interface that cannot move puts every profile on a common footing,
+   * and only the layer that actually changed moves.
+   *
+   * The credible band is drawn for at most a couple of profiles. Twenty-one
+   * filled regions is unreadable, and the question a band answers -- how well
+   * is this structure determined -- is asked of one curve at a time. */
+  function sldPanel(divId, profiles, options) {
     if (!HAVE_PLOTLY) return;
-    const traces = profiles.map(function (profile, i) {
-      return {
-        x: profile.z,
+    const opts = options || {};
+    const aligned = opts.raw !== true;
+    const bands = opts.bands || {};
+
+    function shifted(profile) {
+      const d = aligned ? profile.substrate_offset || 0 : 0;
+      return profile.z.map(function (z) { return z - d; });
+    }
+
+    const traces = [];
+    profiles.forEach(function (profile, i) {
+      const colour = colourFor(i);
+      const band = bands[profile.label];
+      if (band) {
+        const zs = shifted(profile);
+        traces.push({
+          x: zs.concat(zs.slice().reverse()),
+          y: band.hi.concat(band.lo.slice().reverse()),
+          fill: "toself",
+          fillcolor: colour + "26",
+          line: { width: 0 },
+          type: "scatter",
+          mode: "lines",
+          hoverinfo: "skip",
+          showlegend: false,
+        });
+      }
+      traces.push({
+        x: shifted(profile),
         y: profile.rho,
         mode: "lines",
         type: "scattergl",
         name: profile.label,
-        line: { color: colourFor(i), width: 1.4 },
+        line: { color: colour, width: band ? 1.8 : 1.2 },
         hovertemplate: profile.label + "<br>z=%{x:.1f} Å<br>ρ=%{y:.4g}<extra></extra>",
-      };
+      });
     });
     Plotly.newPlot(
       divId,
@@ -503,7 +555,11 @@ const NRW = (function () {
       {
         margin: { l: MARGIN_L, r: MARGIN_R, t: 8, b: 44 },
         font: FONT,
-        xaxis: { title: { text: "z (Å)" } },
+        xaxis: {
+          title: {
+            text: aligned ? "z from the substrate surface (Å)" : "z (Å)",
+          },
+        },
         yaxis: { title: { text: "SLD (10⁻⁶ Å⁻²)" } },
         legend: { font: { size: 10 }, x: 1.005, y: 1 },
         uirevision: "sld",
@@ -564,6 +620,31 @@ NRW.trajectoryPanel = function (divId, traces, options) {
         yaxis: "y" + axis,
       });
     }
+    /* The posterior median, drawn faintly under the reported value.
+     *
+     * The reported value is the maximum-likelihood point: one parameter vector
+     * the model was actually evaluated at, and the one the plotted curves and
+     * the quoted chi-squared come from. The marginal median is not a parameter
+     * vector at all -- each parameter's median taken independently can be a
+     * stack no sample contains and that fits worse than either.
+     *
+     * So the best fit is what is reported. The median is shown because the gap
+     * between them is diagnostic: 1.2 sigma on a real fit here, which says the
+     * posterior is skewed or something is railing against a bound. */
+    if (t.median) {
+      data.push({
+        x: t.times,
+        y: t.median,
+        mode: "lines",
+        type: "scatter",
+        name: t.path + " (median)",
+        line: { color: colour, width: 3, dash: "solid" },
+        opacity: 0.28,
+        hovertemplate: "posterior median %{y:.4g}<extra></extra>",
+        xaxis: "x" + axis,
+        yaxis: "y" + axis,
+      });
+    }
     data.push({
       x: t.times,
       y: t.values,
@@ -572,7 +653,7 @@ NRW.trajectoryPanel = function (divId, traces, options) {
       name: t.path,
       line: { color: colour, width: 1.6 },
       marker: { color: colour, size: 4 },
-      hovertemplate: t.path + " = %{y:.4g}<extra></extra>",
+      hovertemplate: t.path + " = %{y:.4g} (best fit)<extra></extra>",
       xaxis: "x" + axis,
       yaxis: "y" + axis,
     });

@@ -54,6 +54,7 @@ class Trace:
         values: The value the fit used at each slice.
         lo: Lower edge of the credible band, when a posterior exists.
         hi: Upper edge.
+        median: Posterior median at each slice, when a posterior exists.
         constrained: Whether a constraint governs this path, as opposed to the
             value simply being the same in every slice.
     """
@@ -64,6 +65,7 @@ class Trace:
     values: list[float] = field(default_factory=list)
     lo: list[float] = field(default_factory=list)
     hi: list[float] = field(default_factory=list)
+    median: list[float] = field(default_factory=list)
     constrained: bool = False
 
     @property
@@ -94,6 +96,8 @@ class Trace:
         if self.lo and self.hi:
             payload["lo"] = self.lo
             payload["hi"] = self.hi
+        if self.median:
+            payload["median"] = self.median
         return payload
 
 
@@ -275,7 +279,7 @@ def band_for(
     key_to_display: dict[str, str],
     samples: np.ndarray,
     columns: dict[str, int],
-) -> dict[str, tuple[float, float]]:
+) -> dict[str, tuple[float, float, float]]:
     """Evaluate constrained slice values across the posterior.
 
     A trajectory is a deterministic function of the fitted endpoints, so this
@@ -290,8 +294,13 @@ def band_for(
         columns: Display name to column index.
 
     Returns:
-        Slice key to ``(lo, hi)``. Keys whose expression cannot be evaluated
-        are omitted rather than given a made-up band.
+        Slice key to ``(lo, median, hi)``. Keys whose expression cannot be
+        evaluated are omitted rather than given a made-up band.
+
+        The median is returned alongside because the *difference* between it
+        and the reported best-fit value is diagnostic: on a real fit here the
+        two sit up to 1.2 sigma apart, which says the posterior is skewed or a
+        parameter is railing against a bound. Plotting only one hides that.
     """
     from bumps.parameter import pmath
 
@@ -307,7 +316,7 @@ def band_for(
     namespace["pmath"] = pmath
     namespace["np"] = np
 
-    band: dict[str, tuple[float, float]] = {}
+    band: dict[str, tuple[float, float, float]] = {}
     for key, source in expressions.items():
         if not _references_only(source, bound):
             continue
@@ -319,7 +328,7 @@ def band_for(
         if array.ndim != 1 or array.size < 2 or not np.isfinite(array).all():
             continue
         low, high = np.percentile(array, BAND_PERCENTILES)
-        band[key] = (float(low), float(high))
+        band[key] = (float(low), float(np.median(array)), float(high))
     return band
 
 
@@ -330,3 +339,175 @@ def _references_only(source: str, bound: dict[str, np.ndarray]) -> bool:
     """Whether every ``P[...]`` in the source has a posterior column."""
     keys = [match.group(2) for match in _P_REFERENCE.finditer(source)]
     return bool(keys) and all(key in bound for key in keys)
+
+
+# --------------------------------------------------------------------------
+# SLD profiles: alignment, and a credible band
+# --------------------------------------------------------------------------
+
+#: refl1d writes the profile with z = 0 at the *top* of the stack, so two
+#: models whose total thickness differs are drawn offset from each other -- a
+#: 3 A change in a copper layer shifts the substrate and everything below it.
+#: Referencing z to the substrate surface instead puts the one interface that
+#: cannot move at a fixed place, so the buried layers line up and only the
+#: layer that actually changed moves. This is refl1d's own ``align=-1``.
+SUBSTRATE_ALIGNED = "substrate"
+
+
+def substrate_offset(slabs: list[dict[str, float]]) -> float:
+    """Distance from refl1d's z = 0 to the substrate surface.
+
+    Args:
+        slabs: The layer table, ambient first.
+
+    Returns:
+        The offset to subtract from ``z``. Zero for a table too short to have
+        a substrate.
+    """
+    if len(slabs) < 2:
+        return 0.0
+    return float(sum(layer.get("thickness", 0.0) for layer in slabs[:-1]))
+
+
+def profile_from_slabs(
+    z: np.ndarray, thickness: np.ndarray, roughness: np.ndarray, rho: np.ndarray
+) -> np.ndarray:
+    """Build an SLD profile from a slab table, the way refl1d does.
+
+    Each interface is an error function of width equal to its roughness, and
+    the profile is the sum of the steps across them. Written out here rather
+    than called through refl1d because this runs once per posterior draw and
+    must stay pure arithmetic -- no Experiment, no reflectivity.
+
+    Args:
+        z: Depth grid, with 0 at the top of the stack.
+        thickness: Layer thicknesses, ambient first.
+        roughness: Interface widths; ``roughness[i]`` bounds layer ``i``.
+        rho: Layer SLDs.
+
+    Returns:
+        SLD at each depth.
+    """
+    from scipy.special import erf
+
+    # Interface positions: cumulative thickness, excluding the ambient's zero.
+    edges = np.cumsum(thickness[:-1])
+    profile = np.full_like(z, rho[0], dtype=float)
+    for index, edge in enumerate(edges):
+        width = max(float(roughness[index + 1]), 1e-6)
+        step = 0.5 * (1.0 + erf((z - edge) / (width * np.sqrt(2.0))))
+        profile = profile + (rho[index + 1] - rho[index]) * step
+    return profile
+
+
+def sld_band(
+    table: Any,
+    measurement_key: str,
+    z: np.ndarray,
+    samples: np.ndarray,
+    columns: dict[str, int],
+    *,
+    draws: int = 200,
+    percentiles: tuple[float, float] = BAND_PERCENTILES,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Credible band for one measurement's SLD profile.
+
+    Every layer value for a measurement is either a free parameter or an
+    expression over free parameters, so a posterior draw determines the whole
+    slab table and therefore the whole profile. Drawing the band this way keeps
+    the correlations: a thicker copper layer moves every interface below it
+    together, which per-parameter error bars cannot express.
+
+    Args:
+        table: The resolved parameter table.
+        measurement_key: e.g. ``tnr#3``.
+        z: Depth grid to evaluate on, with 0 at the top of the stack.
+        samples: The posterior.
+        columns: Display name to chain column.
+        draws: How many posterior draws to use. 200 is visually converged and
+            costs milliseconds; the profile itself is the cheap part.
+        percentiles: Band edges.
+
+    Returns:
+        ``(lo, hi)`` on the ``z`` grid, or ``None`` when the layer values
+        cannot all be resolved from the posterior.
+    """
+    layers = [layer.name for layer in table.spec.stack]
+    wanted = {"thickness", "roughness", "rho"}
+
+    refs: dict[tuple[str, str], tuple[str, str]] = {}
+    for slot in table.slots:
+        if slot.measurement.key != measurement_key or slot.path.is_probe:
+            continue
+        if slot.path.attr in wanted:
+            refs[(slot.path.owner, slot.path.attr)] = (slot.ref, slot.kind)
+
+    key_to_display = {p.key: p.display for p in table.free}
+    expressions = {e.key: e.source for e in table.expressions}
+    bound: dict[str, np.ndarray] = {}
+    for key, display in key_to_display.items():
+        column = columns.get(display)
+        if column is not None and column < samples.shape[1]:
+            bound[key] = samples[:, column]
+
+    count = min(draws, samples.shape[0])
+    step = max(samples.shape[0] // count, 1)
+    picked = {key: values[::step][:count] for key, values in bound.items()}
+    if not picked:
+        return None
+    n = len(next(iter(picked.values())))
+
+    def resolve(layer: str, attribute: str, fallback: float) -> np.ndarray:
+        """Value of one layer attribute across the draws."""
+        entry = refs.get((layer, attribute))
+        if entry is None:
+            return np.full(n, fallback)
+        ref, kind = entry
+        if kind == "P":
+            drawn = picked.get(ref)
+            return np.asarray(drawn) if drawn is not None else np.full(n, fallback)
+        source = expressions.get(ref)
+        if source is None or not _references_only(source, picked):
+            return np.full(n, fallback)
+        try:
+            value = eval(source, {"__builtins__": {}}, {"P": picked})  # noqa: S307
+        except Exception:
+            return np.full(n, fallback)
+        array = np.asarray(value, dtype=float)
+        return array if array.shape == (n,) else np.full(n, float(array))
+
+    stack = table.spec.stack
+    thickness = np.stack(
+        [
+            resolve(layer.name, "thickness", float(layer.thickness or 0.0))
+            for layer in stack
+        ]
+    )
+    roughness = np.stack(
+        [
+            resolve(layer.name, "roughness", float(layer.roughness or 0.0))
+            for layer in stack
+        ]
+    )
+    rho = np.stack(
+        [
+            resolve(
+                layer.name,
+                "rho",
+                float(
+                    getattr(table.spec.materials.get(layer.material), "rho", 0.0) or 0.0
+                ),
+            )
+            for layer in stack
+        ]
+    )
+    if not layers:
+        return None
+
+    curves = np.empty((n, z.size), dtype=float)
+    for draw in range(n):
+        curves[draw] = profile_from_slabs(
+            z, thickness[:, draw], roughness[:, draw], rho[:, draw]
+        )
+    lo, hi = np.percentile(curves, percentiles, axis=0)
+    return (lo, hi)

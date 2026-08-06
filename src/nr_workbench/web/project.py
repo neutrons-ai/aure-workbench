@@ -462,9 +462,24 @@ class ProjectData:
         rows = []
         for row in self.index.fits(sample=sample_id):
             entry = dict(row)
-            entry["labels"] = promoted.get(str(row.get("fit_id")), [])
+            fit_id = str(row.get("fit_id"))
+            entry["labels"] = promoted.get(fit_id, [])
+            # The index is append-only on purpose -- that a fit happened stays
+            # true even after someone clears out disk space. But its artifacts
+            # may be gone, and a row that links to a 404 is worse than one that
+            # says so.
+            entry["present"] = (
+                self._fit_dir_or_none(fit_id, row.get("sample")) is not None
+            )
             rows.append(entry)
         return rows
+
+    def _fit_dir_or_none(self, fit_id: str, sample: Any) -> Path | None:
+        """Locate a fit directory without raising when it is gone."""
+        try:
+            return self._fit_dir(fit_id, sample)
+        except FileNotFoundError:
+            return None
 
     def fit(self, fit_id: str) -> dict[str, Any]:
         """Load one fit in full: curves, profiles, parameters, provenance.
@@ -656,6 +671,70 @@ class ProjectData:
 
         return (live, "")
 
+    def sld_bands(self, fit_id: str, labels: list[str] | None = None) -> dict[str, Any]:
+        """Credible bands for a few SLD profiles.
+
+        Deliberately a few. Twenty-one filled regions is unreadable, and the
+        question a band answers -- how well is this structure determined -- is
+        asked of one curve at a time. The default is the first and last
+        measurement, which is where a series has moved furthest.
+
+        Args:
+            fit_id: The fit identifier.
+            labels: Measurement labels to band. Defaults to first and last.
+
+        Returns:
+            ``{label: {"lo": [...], "hi": [...]}}``, empty when the fit has no
+            posterior.
+        """
+        import numpy as np
+
+        from nr_workbench.web import trajectory as traj
+
+        record = self._resolve_fit(fit_id)
+        directory = self._fit_dir(str(record["fit_id"]), record.get("sample"))
+        manifest = self._read_json(directory / "manifest.json")
+        names = _model_names((manifest.get("info") or {}).get("models") or [])
+        if not names:
+            return {}
+
+        spec_path, _ = self._spec_for(directory)
+        if spec_path is None:
+            return {}
+        try:
+            table = self._resolve_frozen_spec(spec_path)
+        except Exception:
+            return {}
+
+        samples, columns = traj.load_posterior(directory / "fit")
+        if samples is None or not columns:
+            return {}
+
+        available = [names[i] for i in sorted(names)]
+        chosen = labels or ([available[0], available[-1]] if available else [])
+
+        profiles = dict(_numbered(directory / "fit", "-profile.dat"))
+        position_of = {name: index for index, name in names.items()}
+
+        bands: dict[str, Any] = {}
+        for label in chosen:
+            position = position_of.get(label)
+            path = profiles.get(position) if position is not None else None
+            if path is None:
+                continue
+            try:
+                z = np.loadtxt(path, ndmin=2)[:, 0]
+            except (OSError, ValueError):
+                continue
+            edges = traj.sld_band(table, label, z, samples, columns)
+            if edges is None:
+                continue
+            bands[label] = {
+                "lo": [float(v) for v in edges[0]],
+                "hi": [float(v) for v in edges[1]],
+            }
+        return bands
+
     def _resolve_frozen_spec(self, spec_path: Path):
         """Resolve the spec frozen inside a fit directory.
 
@@ -691,16 +770,18 @@ class ProjectData:
 
         for trace in traces:
             lo: list[float] = []
+            mid: list[float] = []
             hi: list[float] = []
             for index in range(len(trace.values)):
                 edges = band.get(f"{trace.path}@{series}#{index}")
                 if edges is None:
-                    lo, hi = [], []
+                    lo, mid, hi = [], [], []
                     break
                 lo.append(edges[0])
-                hi.append(edges[1])
+                mid.append(edges[1])
+                hi.append(edges[2])
             if lo and hi:
-                trace.lo, trace.hi = lo, hi
+                trace.lo, trace.median, trace.hi = lo, mid, hi
 
     def _fit_arrays(
         self, fit_dir: Path, names: dict[int, str]
@@ -728,6 +809,9 @@ class ProjectData:
             payload["named"] = index in names
             curves.append(payload)
 
+        from nr_workbench.web.trajectory import read_slabs, substrate_offset
+
+        slabs = dict(_numbered(fit_dir, "-slabs.dat"))
         for index, profile_path in _numbered(fit_dir, "-profile.dat"):
             label = names.get(index) or f"model {index}"
             try:
@@ -738,6 +822,19 @@ class ProjectData:
             payload = profile.as_dict()
             payload["index"] = index
             payload["named"] = index in names
+
+            # refl1d puts z = 0 at the top of the stack, so profiles whose
+            # total thickness differs are drawn offset from one another.
+            # Referencing the substrate surface -- the one interface that
+            # cannot move -- makes the buried layers line up.
+            offset = 0.0
+            slab_path = slabs.get(index)
+            if slab_path is not None:
+                try:
+                    offset = substrate_offset(read_slabs(slab_path))
+                except (OSError, ValueError):
+                    offset = 0.0
+            payload["substrate_offset"] = offset
             profiles.append(payload)
 
         if curves and not names:
@@ -838,7 +935,11 @@ class ProjectData:
             candidate = self.layout.sample(sample_id) / "results" / fit_id
             if candidate.is_dir():
                 return candidate
-        raise FileNotFoundError(f"Fit {fit_id} is in the index but not on disk")
+        raise FileNotFoundError(
+            f"Fit {fit_id} is recorded in the index but its result directory "
+            "is gone. The index is append-only, so the record of the run "
+            "survives even when the artifacts are deleted."
+        )
 
     def _labels_for(self, fit_id: str) -> list[str]:
         """Return promotion labels currently held by a fit."""

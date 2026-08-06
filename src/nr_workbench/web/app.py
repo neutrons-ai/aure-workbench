@@ -141,7 +141,13 @@ def _register_views(app: Flask) -> None:
         except ValueError as exc:
             abort(400, str(exc))
         trajectory = data().trajectory(fit_id)
-        return render_template("fit.html", fit=detail, trajectory=trajectory)
+        try:
+            bands = data().sld_bands(fit_id)
+        except Exception:  # a band is a nicety; never lose the page over one
+            bands = {}
+        return render_template(
+            "fit.html", fit=detail, trajectory=trajectory, sld_bands=bands
+        )
 
     @app.get("/fits")
     def fits() -> str:

@@ -855,6 +855,9 @@ def test_the_band_is_evaluated_from_paired_samples() -> None:
     parameter's `std` independently would widen the band in the middle of the
     series; using paired posterior samples narrows it there, which is the
     physically right answer.
+
+    The tuple is ``(lo, median, hi)``: the median rides along because the gap
+    between it and the reported best fit is diagnostic.
     """
     import numpy as np
 
@@ -878,7 +881,7 @@ def test_the_band_is_evaluated_from_paired_samples() -> None:
         columns,
     )
 
-    width = {k: hi - lo for k, (lo, hi) in band.items()}
+    width = {k: hi - lo for k, (lo, _median, hi) in band.items()}
     assert width["L.t@s#1"] < width["L.t@s#0"] / 10, (
         "the midpoint band must collapse; it did not, so the samples were not paired"
     )
@@ -1101,3 +1104,131 @@ def test_the_fit_page_says_why_there_is_no_trajectory(
 
     assert "Layer parameters through time" in page
     assert "edited since this fit ran" in page
+
+
+def test_profiles_are_aligned_to_the_substrate_surface() -> None:
+    """refl1d puts z = 0 at the top, so profiles drift as thickness changes.
+
+    The substrate is the one interface that cannot move, so anchoring it puts
+    every profile on a common footing and only the layer that actually changed
+    moves. This is refl1d's own `align=-1`.
+    """
+    from nr_workbench.web.trajectory import substrate_offset
+
+    slabs = [
+        {"thickness": 0.0},  # ambient
+        {"thickness": 27.4},
+        {"thickness": 481.3},
+        {"thickness": 33.6},
+        {"thickness": 0.0},  # substrate
+    ]
+
+    assert substrate_offset(slabs) == pytest.approx(542.3)
+    assert substrate_offset([{"thickness": 5.0}]) == 0.0, "no substrate, no offset"
+
+
+def test_two_profiles_of_different_total_thickness_share_a_zero() -> None:
+    """The property the alignment exists for."""
+    from nr_workbench.web.trajectory import substrate_offset
+
+    thin = [
+        {"thickness": 0.0},
+        {"thickness": 480.0},
+        {"thickness": 30.0},
+        {"thickness": 0.0},
+    ]
+    thick = [
+        {"thickness": 0.0},
+        {"thickness": 520.0},
+        {"thickness": 30.0},
+        {"thickness": 0.0},
+    ]
+
+    # The substrate sits at the offset in each, so both land on zero.
+    assert 510.0 - substrate_offset(thin) == pytest.approx(0.0)
+    assert 550.0 - substrate_offset(thick) == pytest.approx(0.0)
+
+
+def test_a_profile_is_built_with_error_function_interfaces() -> None:
+    """The band is generated from slab tables, so the generator must be right."""
+    import numpy as np
+
+    from nr_workbench.web.trajectory import profile_from_slabs
+
+    z = np.linspace(-50, 150, 401)
+    rho = profile_from_slabs(
+        z,
+        thickness=np.array([0.0, 100.0, 0.0]),
+        roughness=np.array([0.0, 5.0, 5.0]),
+        rho=np.array([0.0, 4.0, 2.0]),
+    )
+
+    assert rho[0] == pytest.approx(0.0, abs=1e-6), "ambient at the top"
+    assert rho[-1] == pytest.approx(2.0, abs=1e-6), "substrate at the bottom"
+    assert rho[np.argmin(abs(z - 50))] == pytest.approx(4.0, abs=1e-3), "the layer"
+    # The interface is centred on the boundary, not offset from it.
+    assert rho[np.argmin(abs(z - 0.0))] == pytest.approx(2.0, abs=0.05)
+
+
+def test_a_deleted_result_directory_is_marked_not_hidden(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index is append-only: that a fit ran stays true after a cleanup.
+
+    But its artifacts may be gone, and a row linking to a 404 is worse than one
+    that says so.
+    """
+    pytest.importorskip("refl1d")
+    import shutil
+
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    runner.invoke(
+        main,
+        [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            "6",
+            "--parallel",
+            "1",
+        ],
+    )
+
+    data = ProjectData(root)
+    fit_id = data.fits("Sample1")[0]["fit_id"]
+    assert data.fits("Sample1")[0]["present"] is True
+
+    shutil.rmtree(root / "samples" / "Sample1" / "results" / fit_id)
+
+    rows = data.fits("Sample1")
+    assert len(rows) == 1, "the record survives the directory"
+    assert rows[0]["present"] is False
+
+    from nr_workbench.web.app import create_app
+
+    page = create_app(root).test_client().get("/fits").get_data(as_text=True)
+    assert "deleted" in page
+    assert f'href="/f/{fit_id}"' not in page, "it must not link to a 404"
+
+
+def test_reflectivity_is_plotted_log_log() -> None:
+    """Fresnel decay is a power law, so log-log straightens it.
+
+    On a linear Q axis four decades of fringes pile up at the left.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent / "src/nr_workbench/web/static/nrw.js"
+    ).read_text(encoding="utf-8")
+
+    # Every reflectivity x-axis declares a log type.
+    assert source.count('title: { text: "Q (Å⁻¹)" },\n          type: "log"') >= 2
