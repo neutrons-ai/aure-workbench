@@ -510,6 +510,51 @@ def promote_command(fit_id: str, label: str, reason: str, force: bool) -> None:
     run_promote(fit_id=fit_id, label=label, reason=reason, force=force)
 
 
+@main.command("pack")
+@click.argument("fit_id")
+@click.option(
+    "--out",
+    "-o",
+    default=None,
+    help="Where to write it [default: ./<fit_id>.zip].",
+)
+@click.option(
+    "--dir",
+    "as_dir",
+    is_flag=True,
+    help="Leave a directory instead of archiving it.",
+)
+@click.option(
+    "--with-chain",
+    is_flag=True,
+    help="Include the MCMC chain, usually the largest file in the result.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Pack even though an input no longer matches its recorded hash.",
+)
+def pack_command(
+    fit_id: str, out: str | None, as_dir: bool, with_chain: bool, force: bool
+) -> None:
+    """Package FIT_ID so a collaborator can reproduce it with only refl1d.
+
+    A result directory records the hashes of its data, not the data. A bundle
+    carries the measurements themselves, at the paths the frozen script
+    expects, plus a `verify.py` that recomputes chi-squared and checks it
+    against the recorded value.
+    """
+    from nr_workbench.commands.pack import run_pack
+
+    run_pack(
+        fit_id=fit_id,
+        out=out,
+        archive=not as_dir,
+        with_chain=with_chain,
+        force=force,
+    )
+
+
 @main.command("diff")
 @click.argument("fit_a")
 @click.argument("fit_b")

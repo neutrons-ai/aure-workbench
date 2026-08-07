@@ -15,6 +15,11 @@ import click
 
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import EVENT_PROMOTE, FitIndex
+from nr_workbench.provenance.lookup import (
+    FitNotFoundError,
+    resolve_fit,
+)
+from nr_workbench.provenance.lookup import fit_dir as find_fit_dir
 from nr_workbench.provenance.record import FitDirectory, format_timestamp, utc_now
 from nr_workbench.provenance.summary import annotate
 from nr_workbench.provenance.whence import (
@@ -59,7 +64,7 @@ def run_whence(*, path: str, as_json: bool = False) -> None:
         # Accept a bare fit id, which is what a user reads off `nrw ls`.
         matches = index.resolve(path)
         if len(matches) == 1:
-            resolved = _fit_dir(layout, matches[0])
+            resolved = find_fit_dir(layout, matches[0])
             if resolved is not None:
                 target = resolved
         elif len(matches) > 1:
@@ -306,7 +311,7 @@ def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) ->
             f"{resolved_id} has status '{entry.get('status')}'. Only a successful fit can be promoted."
         )
 
-    fit_dir = _fit_dir(layout, entry)
+    fit_dir = find_fit_dir(layout, entry)
     if fit_dir is None:
         raise click.ClickException(f"Fit directory for {resolved_id} is missing.")
 
@@ -373,7 +378,7 @@ def run_check(*, as_json: bool = False) -> None:
 
     for entry in index.fits():
         fit_id = str(entry.get("fit_id", ""))
-        fit_dir = _fit_dir(layout, entry)
+        fit_dir = find_fit_dir(layout, entry)
         if fit_dir is None:
             problems.append(
                 {
@@ -455,26 +460,12 @@ def run_check(*, as_json: bool = False) -> None:
         raise SystemExit(1)
 
 
-def _fit_dir(layout: ProjectLayout, entry: dict[str, Any]) -> Path | None:
-    """Locate the directory for an index entry."""
-    fit_id = str(entry.get("fit_id", ""))
-    sample = entry.get("sample")
-    candidates = []
-    if sample:
-        candidates.append(layout.sample(str(sample)) / "results" / fit_id)
-    candidates.append(layout.root / "results" / fit_id)
-    for candidate in candidates:
-        if (candidate / "manifest.json").is_file():
-            return candidate
-    return None
-
-
 def _freshness_of(layout: ProjectLayout, index: FitIndex, fit_id: str) -> Freshness:
     """Return a fit's freshness for the listing."""
     entry = index.find(fit_id)
     if entry is None:
         return Freshness.UNKNOWN
-    fit_dir = _fit_dir(layout, entry)
+    fit_dir = find_fit_dir(layout, entry)
     if fit_dir is None:
         return Freshness.BROKEN
     _, freshness = check_inputs(fit_dir, layout.root)
@@ -627,20 +618,11 @@ def run_diff(
 
 
 def _resolve_fit(layout: ProjectLayout, index: FitIndex, reference: str):
-    """Resolve a fit id or prefix to its entry and directory."""
-    matches = index.resolve(reference)
-    if not matches:
-        raise click.ClickException(f"No fit matching {reference!r}. See `nrw ls`.")
-    if len(matches) > 1:
-        raise click.ClickException(
-            f"{reference!r} matches {len(matches)} fits: "
-            + ", ".join(str(m["fit_id"]) for m in matches[:5])
-        )
-    entry = matches[0]
-    directory = _fit_dir(layout, entry)
-    if directory is None:
-        raise click.ClickException(f"Fit directory for {entry['fit_id']} is missing.")
-    return entry, directory
+    """Resolve a fit id or prefix, reporting failure as a CLI error."""
+    try:
+        return resolve_fit(layout, index, reference)
+    except FitNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _diff_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, tuple[Any, Any]]:

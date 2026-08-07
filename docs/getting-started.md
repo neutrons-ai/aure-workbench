@@ -715,6 +715,72 @@ generated script has been hand-edited, that none is stale against its spec, and
 that every promoted pointer resolves. Run it before you call anything final, and
 in CI.
 
+## 9. Send it to a collaborator
+
+A result directory is complete but not portable: it records the *hashes* of the
+data, not the data, and its script reaches out to the project around it. Email
+someone the directory and they get a perfect description of a fit they cannot
+run.
+
+```bash
+nrw pack 20260805-191540Z-732f4286
+```
+
+```
+  bundle    ./20260805-191540Z-732f4286.zip
+  fit       20260805-191540Z-732f4286
+  script    samples/Sample6/models/cu-thf-218389.py
+  data      22 file(s)
+  chisq     1.83  (verify.py checks this)
+  size      2.4 MB
+  omitted   3 chain file(s); pass --with-chain to include them
+
+  The recipient needs refl1d, bumps and numpy. Nothing else.
+```
+
+The bundle carries the frozen script, the measurement files at the paths the
+script expects, the recorded settings and outputs, and a README stating what
+result to expect. The first thing the recipient runs is:
+
+```bash
+pip install -r requirements.txt
+python verify.py
+```
+
+```
+Loading samples/Sample6/models/cu-thf-218389.py ...
+  free parameters  21
+  chisq            1.83
+  recorded         1.83
+
+REPRODUCED: this environment gives the recorded result.
+```
+
+That check is the point. It loads the model, applies the best-fit parameters
+from the `.par` file, recomputes χ² and compares — so before anyone changes
+anything, they know whether their refl1d gives your answer. A mismatch is
+information, not a failure: it means a version difference that *changes the
+result*, which is exactly what you want surfaced early.
+
+Two refusals worth knowing about. `nrw pack` will not package a fit whose data
+has changed on disk since the run — a bundle asserts that its data produced its
+result, and shipping drifted files would make that quietly false. (`--force`
+does it anyway and records the drift in `MANIFEST.json` and the README, so the
+recipient can see it.) And nothing is left half-written: if any recorded input
+is missing, you get an error and no bundle, because a partial bundle looks
+complete.
+
+The directory structure is preserved rather than flattened. The script finds
+its data by walking up to `nrw.toml`, so rebuilding that shape means the script
+is copied byte-for-byte — the same bytes whose sha256 is in the manifest. A
+script rewritten to suit the bundle could not be checked against the record it
+claims to reproduce.
+
+Use `--dir` to get a directory instead of a zip (for `rsync`), and
+`--with-chain` to include the MCMC posterior, which is otherwise the largest
+thing in the result and is evidence about the original fit rather than an input
+to reproducing it.
+
 ---
 
 ## What to do next

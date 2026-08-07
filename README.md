@@ -78,6 +78,7 @@ nrw ls                        # every fit, newest first, with freshness
 nrw whence figures/fig3.svg   # what produced this?
 nrw promote <fit_id> --as final --reason "converged; SLD band excludes null"
 nrw check                     # CI-able: fails if a result went stale
+nrw pack <fit_id>             # a zip a collaborator runs with only refl1d
 ```
 
 Each fit writes an immutable directory holding the frozen script, every input
@@ -88,6 +89,13 @@ are stamped at write time.
 
 Re-running an identical fit is refused by default, and a result whose data has
 changed underneath it is reported as `STALE` everywhere it appears.
+
+`nrw pack` closes the last gap. A result directory records the *hashes* of its
+data, not the data, so it describes a fit nobody else can run. A bundle carries
+the measurements themselves at the paths the frozen script expects, plus a
+`verify.py` that applies the recorded best-fit parameters and checks
+chi-squared against the value it should get. The recipient needs refl1d, bumps
+and numpy.
 
 ## Status
 

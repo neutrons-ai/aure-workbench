@@ -105,6 +105,18 @@ what was once considered final is provenance too.
 nrw check
 ```
 
+### 7. Package it before you send it
+
+```bash
+nrw pack <fit_id>
+```
+
+Sending a result directory sends a description of a fit, not a fit: it records
+the hashes of its data rather than the data. A bundle carries the measurements
+at the paths the frozen script expects, and a `verify.py` that applies the
+recorded parameters and checks chi-squared. Refused when an input has drifted
+— a bundle asserts that its data produced its result.
+
 ## Rationalizations
 
 | Excuse | Rebuttal |

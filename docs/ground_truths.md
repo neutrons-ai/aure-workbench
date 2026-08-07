@@ -1208,3 +1208,49 @@ stronger false one.
 
 The general lesson: a digest is only as honest as the set it covers, and "the
 inputs" quietly means two different sets depending on who is asking.
+
+### 2026-08-07: a model script is built at its starting values, not its answer
+
+`nrw pack` writes a bundle a collaborator can run with only refl1d. The first
+one built cleanly, unpacked cleanly, and reported a 60% chi-squared mismatch
+against its own recorded result.
+
+Nothing was wrong with the bundle. A model script *constructs* a problem --- it
+sets each parameter to its initial value from the spec --- so `problem.chisq()`
+straight after loading measures the starting guess. The fitted values live only
+in bumps' `.par` file, which the fit wrote separately. `verify.py` now reads it
+and calls `problem.setp` before comparing.
+
+Two details of that file: parameter names contain spaces (`run218386 probe
+intensity 1.0999...`), so it splits on the *last* field; and comparing the
+parameter *sets* before the numbers matters, because two models with different
+parameters can produce a chi-squared that agrees by accident.
+
+This was only ever going to be caught by running the artifact. Every structural
+check --- files present, hashes match, script byte-identical --- passed on the
+broken bundle.
+
+### 2026-08-07: preserve the project shape in a bundle rather than flattening it
+
+Generated scripts locate data by walking up to `nrw.toml` and reading
+`PROJECT_ROOT / "samples/<id>/data/..."`. The obvious bundle layout --- script
+at the top, data in `data/` beside it --- would need the script rewritten, and
+a rewritten script is no longer the one whose sha256 the manifest records. It
+could not be checked against the record it claims to reproduce.
+
+So the bundle rebuilds `samples/<id>/{models,data}/` and ships a copy of
+`nrw.toml` as a root marker. The script is copied byte-for-byte, the marker
+makes its root-finding deterministic rather than dependent on where the
+recipient unzipped, and the bundle happens to also work as a workbench project
+for anyone who has one.
+
+### 2026-08-07: escaping a code generator that emits code has two layers
+
+`_verify_script` builds `verify.py` with an f-string. A `\n` inside that
+template is consumed when *pack.py* is parsed, so it emitted a real line break
+inside a `print("` and the generated file did not parse. The generated script
+runs on someone else's machine, days later, which is the worst place to
+discover a syntax error.
+
+The guard is cheap and belongs on anything that emits code:
+`compile(source, "verify.py", "exec")` in a test.
