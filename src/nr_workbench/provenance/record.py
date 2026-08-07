@@ -179,6 +179,14 @@ class FitRecord:
     note: str | None = None
     error: str | None = None
 
+    def data_digest(self) -> str:
+        """Digest the measurements, excluding the script that read them.
+
+        Returns:
+            A digest that changes only when the data does.
+        """
+        return inputs_digest(d for d in self.inputs if d.role != "script")
+
     def provenance_block(self) -> dict[str, Any]:
         """Return the ``nrw-provenance/1`` block nested inside the manifest."""
         return {
@@ -213,8 +221,18 @@ class FitRecord:
             "chisq": self.chisq,
             "n_free": self.n_free,
             "method": self.settings.get("method"),
+            # The whole settings dict, not just the method: it is a handful of
+            # scalars, and without it a listing can say that a run differs but
+            # not that it differs by `steps 2000 -> 20000`, which is the only
+            # form of that answer anyone can use.
+            "settings": {k: v for k, v in self.settings.items() if v is not None},
             "run_key": self.identity.run_key,
             "inputs_digest": self.identity.inputs_digest,
+            # The measurements alone. `inputs_digest` covers the script too, so
+            # it cannot answer "did the data change?" -- editing the model moves
+            # it, and calling that a data change is the one confusion `nrw diff`
+            # exists to prevent.
+            "data_digest": self.data_digest(),
             "script_sha256": self.identity.script_sha256,
             "started_at": self.started_at,
             "finished_at": self.finished_at,

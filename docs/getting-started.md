@@ -719,6 +719,26 @@ in CI.
 
 ## What to do next
 
+**Keep track of what you tried.** By the tenth run the listing is a wall of
+hashes, so `nrw ls` says what each fit was and what you changed to get it:
+
+```
+  FIT_ID                     MODEL             STATUS      CHISQ  FRESH
+  20260807-150822Z-b2cef12a  cu-thf-218389     ok          1.83   fresh
+      model changed; method amoeba -> dream; chisq 2.14 -> 1.83
+      “posterior after freeing the oxide layer”
+  20260807-150819Z-b82662ed  cu-thf-218389     ok          2.14   STALE
+      steps 2000 -> 20000; chisq 2.31 -> 2.14
+  20260807-150817Z-e40ceabd  cu-thf-218389     ok          2.31   STALE
+      first run of this model
+```
+
+Each fit is compared with the previous run of **the same model**, which is the
+edit you actually made; comparing against the row above would usually cross
+models. The quoted line is your own `--note`, which is reason enough to pass
+one. The same two lines appear in `nrw serve`, on the fit table and on the fit
+itself.
+
 **Try a different model.** Copy the spec, change it, fit it, and compare:
 
 ```bash
@@ -727,6 +747,8 @@ nrw diff <fit_a> <fit_b>
 
 It tells you whether a χ² difference came from the model, the data, or just the
 optimizer settings — three things that look identical in a table of numbers.
+Note that "data" there means the measurements only: your script is a recorded
+input too, but editing it is a *model* change and is reported as one.
 
 **If you need to hand-edit the script**, do it properly:
 

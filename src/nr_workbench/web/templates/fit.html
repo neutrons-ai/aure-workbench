@@ -25,6 +25,21 @@
   </span>
 </div>
 
+{% if fit.description or fit.change %}
+<p class="small mb-3">
+  {% if fit.description %}<span class="fst-italic">{{ fit.description }}</span>{% endif %}
+  {% if fit.change %}
+  <span class="text-secondary">
+    {% if fit.description %}<br>{% endif %}
+    {{ fit.change }}
+    {%- if fit.compared_to %}, versus
+    <a class="mono" href="{{ url_for('fit', fit_id=fit.compared_to) }}">{{ fit.compared_to }}</a>
+    {%- endif %}
+  </span>
+  {% endif %}
+</p>
+{% endif %}
+
 {% if fit.problems %}
 <div class="alert alert-warning py-2 problem">
   <ul class="mb-0">

@@ -465,6 +465,79 @@ def test_diff_attributes_a_settings_change(two_fits, monkeypatch) -> None:
     assert "fit settings only" in payload["verdict"]
 
 
+def test_diff_does_not_call_a_model_edit_a_data_change(two_fits, monkeypatch) -> None:
+    """The script is one of the recorded inputs, so `inputs_digest` moves when
+    the model is edited. Reading that as "the data changed" inverts the one
+    distinction this command exists to draw -- it would tell you a comparison
+    is invalid at exactly the moment it is most valid.
+    """
+    root, a, _ = two_fits
+    script = root / "samples" / "S1" / "models" / "m.py"
+    script.write_text(
+        script.read_text(encoding="utf-8") + "\n# a comment\n", encoding="utf-8"
+    )
+    later = run(
+        root,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/m.py",
+        "--method",
+        "amoeba",
+        "--steps",
+        "8",
+        "--seed",
+        "1",
+    )
+    assert later.exit_code == 0, later.output
+    b = json.loads(run(root, monkeypatch, "ls", "--json").stdout)[0]["fit_id"]
+
+    payload = json.loads(run(root, monkeypatch, "diff", a, b, "--json").stdout)
+
+    assert payload["changed"]["script"] is True
+    assert payload["changed"]["data"] is False
+    assert "DATA changed" not in payload["verdict"]
+    assert "attributable to the model" in payload["verdict"]
+
+
+def test_ls_says_what_each_fit_was_and_what_changed(two_fits, monkeypatch) -> None:
+    """A fit id identifies a run but does not describe it, and by the tenth
+    row the listing is a wall of hashes."""
+    root, _, _ = two_fits
+
+    rows = json.loads(run(root, monkeypatch, "ls", "--json").stdout)
+
+    assert [r["change"] for r in rows][-1] == "first run of this model"
+    assert "steps 8 -> 14" in rows[0]["change"], rows[0]["change"]
+    assert rows[0]["compared_to"] == rows[1]["fit_id"]
+
+    text = run(root, monkeypatch, "ls").output
+    assert "steps 8 -> 14" in text, text
+
+
+def test_ls_shows_the_note_a_fit_was_run_with(project: Path, monkeypatch) -> None:
+    """The scientist's own words beat anything generated."""
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    run(project, monkeypatch, "model", "generate", "samples/S1/models/m.yaml")
+    run(
+        project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/m.py",
+        "--method",
+        "amoeba",
+        "--steps",
+        "6",
+        "--note",
+        "oxide freed",
+    )
+
+    text = run(project, monkeypatch, "ls").output
+
+    assert "oxide freed" in text
+
+
 def test_diff_calls_out_a_data_change_above_everything_else(
     two_fits, monkeypatch
 ) -> None:

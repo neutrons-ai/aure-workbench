@@ -149,3 +149,28 @@ body {
   color: var(--bs-secondary-color);
   margin-left: auto;
 }
+
+/* The continuation row under each fit: what the run was, and what changed
+   since the previous run of the same model. A fit id is content-identifying
+   but not memorable, and by the tenth run the table is a wall of hashes. */
+tr.fit-story > td {
+  border-top: 0;
+  padding-top: 0;
+  padding-left: 1.4rem;
+  font-size: 0.8125rem;
+  color: var(--bs-secondary-color);
+}
+
+tr.fit-story .change {
+  color: var(--bs-info-text-emphasis);
+}
+
+tr.fit-story .note {
+  font-style: italic;
+}
+
+/* Bootstrap's table-hover highlights rows one at a time, which would split a
+   fit from its own story line. */
+.table-hover > tbody > tr.fit-story:hover > * {
+  background-color: transparent;
+}

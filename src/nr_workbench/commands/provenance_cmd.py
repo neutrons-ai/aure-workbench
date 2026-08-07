@@ -16,6 +16,7 @@ import click
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import EVENT_PROMOTE, FitIndex
 from nr_workbench.provenance.record import FitDirectory, format_timestamp, utc_now
+from nr_workbench.provenance.summary import annotate
 from nr_workbench.provenance.whence import (
     Freshness,
     Resolution,
@@ -218,7 +219,9 @@ def run_ls(
     """
     layout = _layout()
     index = FitIndex(layout.index_file)
-    rows = index.fits(sample=sample)[:limit]
+    # Annotate the whole history, then trim: the change line for the oldest
+    # row shown is relative to a fit that may be below the limit.
+    rows = annotate(index.fits(sample=sample))[:limit]
 
     if as_json:
         click.echo(json.dumps(rows, indent=2, default=str))
@@ -249,6 +252,12 @@ def run_ls(
             f"{str(row.get('status', '')):<8} {chisq_text:>9}  "
             f"{_FRESHNESS_MARK[freshness]:<7}{star}"
         )
+        # Dimmed and indented, so the table still scans as a table while every
+        # row carries the two things an id cannot say: what this run was, and
+        # what you changed to get it.
+        click.secho(f"      {row['change']}", fg="cyan", dim=True)
+        if row.get("note"):
+            click.secho(f"      “{row['description']}”", dim=True)
 
     if promoted:
         click.echo()
@@ -534,8 +543,14 @@ def run_diff(
     id_a = prov_a.get("identity", {})
     id_b = prov_b.get("identity", {})
 
+    inputs = _diff_inputs(dir_a, dir_b)
     changed = {
         "inputs": id_a.get("inputs_digest") != id_b.get("inputs_digest"),
+        # `inputs_digest` counts the script among the inputs, so on its own it
+        # cannot tell "I edited the model" from "the reduction was redone" --
+        # the one distinction this command exists to make. Ask the input lists,
+        # which carry a role per file.
+        "data": bool(inputs["changed"] or inputs["only_a"] or inputs["only_b"]),
         "script": id_a.get("script_sha256") != id_b.get("script_sha256"),
         "settings": id_a.get("settings_digest") != id_b.get("settings_digest"),
         "environment": id_a.get("env_digest") != id_b.get("env_digest"),
@@ -551,7 +566,7 @@ def run_diff(
         "results": _diff_mapping(
             manifest_a.get("info", {}), manifest_b.get("info", {})
         ),
-        "inputs": _diff_inputs(dir_a, dir_b),
+        "inputs": inputs,
         "verdict": _diff_verdict(
             changed, manifest_a.get("info", {}), manifest_b.get("info", {})
         ),
@@ -564,7 +579,10 @@ def run_diff(
     click.echo(f"  a  {payload['a']}")
     click.echo(f"  b  {payload['b']}")
     click.echo()
-    for field_name, differs in changed.items():
+    # `inputs` stays in the JSON for anything already reading it, but the human
+    # table shows `data` -- the same question asked without the script in it.
+    for field_name in ("data", "script", "settings", "environment"):
+        differs = changed[field_name]
         click.echo(f"  {field_name:<12} {'CHANGED' if differs else 'same'}")
 
     if payload["settings"]:
@@ -635,13 +653,27 @@ def _diff_mapping(a: dict[str, Any], b: dict[str, Any]) -> dict[str, tuple[Any, 
 
 
 def _diff_inputs(dir_a: Path, dir_b: Path) -> dict[str, list[str]]:
-    """Compare the recorded inputs of two fits by content, not by name."""
-    a = {e["path"]: e["sha256"] for e in FitDirectory(dir_a).read_inputs()}
-    b = {e["path"]: e["sha256"] for e in FitDirectory(dir_b).read_inputs()}
+    """Compare the measurements two fits consumed, by content rather than name.
+
+    The script is an input too, but it has its own line, its own hash and
+    ``--script`` to diff it. Leaving it in here would make every model edit
+    also read as a data change.
+    """
+    a = _data_inputs(dir_a)
+    b = _data_inputs(dir_b)
     return {
         "changed": sorted(p for p in set(a) & set(b) if a[p] != b[p]),
         "only_a": sorted(set(a) - set(b)),
         "only_b": sorted(set(b) - set(a)),
+    }
+
+
+def _data_inputs(directory: Path) -> dict[str, str]:
+    """The recorded measurements of one fit, path to hash."""
+    return {
+        e["path"]: e["sha256"]
+        for e in FitDirectory(directory).read_inputs()
+        if e.get("role") != "script"
     }
 
 
@@ -657,7 +689,7 @@ def _diff_verdict(changed: dict[str, bool], info_a: dict, info_b: dict) -> str:
         else:
             direction = "chi-squared unchanged"
 
-    if changed["inputs"]:
+    if changed.get("data"):
         return (
             f"the DATA changed{'; ' + direction if direction else ''}. Any comparison "
             "between these two is about different measurements, not different models."

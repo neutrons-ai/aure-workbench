@@ -29,6 +29,7 @@ from typing import Any
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.scan import scan_sample
 from nr_workbench.provenance.index import FitIndex
+from nr_workbench.provenance.summary import annotate, annotation_for
 from nr_workbench.web.readers import (
     Curve,
     DataFormatError,
@@ -447,7 +448,9 @@ class ProjectData:
             sample_id: Restrict to one sample.
 
         Returns:
-            One row per fit, with the promoted label attached where it has one.
+            One row per fit, with the promoted label attached where it has
+            one, plus the ``description`` and ``change`` lines that tell a
+            long list of hashes apart.
         """
         promoted: dict[str, list[str]] = {}
         for event in self.index.promotions():
@@ -460,7 +463,7 @@ class ProjectData:
                 promoted[fit_id].append(label)
 
         rows = []
-        for row in self.index.fits(sample=sample_id):
+        for row in annotate(self.index.fits(sample=sample_id)):
             entry = dict(row)
             fit_id = str(row.get("fit_id"))
             entry["labels"] = promoted.get(fit_id, [])
@@ -505,10 +508,17 @@ class ProjectData:
 
         curves, profiles, problems = self._fit_arrays(directory / "fit", names)
 
+        # The same two lines the listing shows, so arriving at a fit from a
+        # bookmark tells you as much as arriving at it from the table.
+        annotated = annotation_for(self.index.fits(), resolved) or {}
+
         return {
             "fit_id": resolved,
             "sample": sample,
             "model": record.get("model"),
+            "description": annotated.get("description", ""),
+            "change": annotated.get("change", ""),
+            "compared_to": annotated.get("compared_to"),
             "record": record,
             "manifest": manifest,
             "labels": self._labels_for(resolved),

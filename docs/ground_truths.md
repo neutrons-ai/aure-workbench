@@ -1156,3 +1156,55 @@ The SLD credible bands went the other way -- deleted rather than cached. They
 cost a posterior resample per profile and, as the user put it, were "too time
 consuming and not informative": the interesting uncertainty is in the layer
 parameters, which the trajectory panel already shows against time.
+
+### 2026-08-07: a fit id identifies a run but does not describe it
+
+`fit_id` is a timestamp plus a content hash --- perfect for pointing at a
+result, useless for recognising one. After a dozen runs the listing is a wall
+of hashes and the only question anyone has ("which one freed the oxide?")
+needs a manifest opened per row to answer.
+
+`nrw ls` and the web tables now carry two extra lines per fit: what the run
+was (the `--note`, or a phrase built from the settings) and what changed since
+**the previous run of the same model**. The scoping is the whole point ---
+comparing against the row above would usually compare across models, which
+describes the listing rather than the work.
+
+`provenance/summary.py` works from index entries alone, deliberately. The
+index is scanned by every `ls` and every page of the UI; a description that
+opened a manifest per row would make the listing slow in proportion to the
+thing it exists to make usable. That constraint is why the settings dict now
+lives in the index entry: without it the line can say a run differs but not
+that it differs by `steps 2000 -> 20000`, which is the only form of that
+answer anyone can act on.
+
+Two details worth keeping:
+
+- **A missing field is absence of evidence, not evidence of change.** Fits
+  recorded before a field existed must not read as "changed" against fits that
+  have it, or adding a field makes the whole history look churned.
+- **A method change brings its own vocabulary.** amoeba counts `steps`, dream
+  counts `samples` and `burn`. Reporting the knobs that merely stopped applying
+  (`steps 2000 -> None`) buries the one fact that matters.
+
+### 2026-08-07: `inputs_digest` is not the data --- the script is an input too
+
+Found while writing the change line, and it was wrong in `nrw diff` as well.
+`inputs_digest` covers every recorded input, and the script is recorded as one
+(role `script`). So editing a model moved it, `changed["inputs"]` went true,
+and `_diff_verdict` announced *"the DATA changed. Any comparison between these
+two is about different measurements, not different models."*
+
+That is the exact inversion of the distinction the command exists to draw: it
+declared the comparison invalid at the moment it was most valid. It had been
+true since M1 and no test caught it, because every diff test changed either
+the data or the settings, never the script alone.
+
+The fix is a `data_digest` --- the same digest over the inputs with the script
+excluded --- recorded in the index, and `_diff_inputs` filtering the script
+out so `nrw diff` reports `data` rather than `inputs`. Entries too old to have
+`data_digest` say the weaker true thing ("inputs changed") instead of the
+stronger false one.
+
+The general lesson: a digest is only as honest as the set it covers, and "the
+inputs" quietly means two different sets depending on who is asking.

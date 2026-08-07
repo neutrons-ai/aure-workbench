@@ -31,6 +31,14 @@
       <td class="small text-secondary">{{ row.started_at }}</td>
       <td>{% if row.status != 'ok' %}<span class="badge text-bg-danger">{{ row.status }}</span>{% endif %}</td>
     </tr>
+    {% if row.change or row.note %}
+    <tr class="fit-story">
+      <td colspan="8">
+        {% if row.change %}<span class="change">{{ row.change }}</span>{% endif %}
+        {% if row.note %} <span class="note">— “{{ row.description }}”</span>{% endif %}
+      </td>
+    </tr>
+    {% endif %}
   {% endfor %}
   </tbody>
 </table>

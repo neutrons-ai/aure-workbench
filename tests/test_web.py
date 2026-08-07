@@ -1205,6 +1205,55 @@ def test_a_deleted_result_directory_is_marked_not_hidden(
     assert f'href="/f/{fit_id}"' not in page, "it must not link to a 404"
 
 
+def test_the_fit_table_says_what_each_row_was_and_what_changed(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fit id identifies a run but does not describe it. Three of them in a
+    table are indistinguishable without opening each one."""
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+    from nr_workbench.web.app import create_app
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    for steps, note in ((6, "first look"), (14, None)):
+        command = [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            str(steps),
+            "--parallel",
+            "1",
+        ]
+        if note:
+            command += ["--note", note]
+        assert runner.invoke(main, command).exit_code == 0
+
+    rows = ProjectData(root).fits("Sample1")
+    assert "steps 6 -> 14" in rows[0]["change"], rows[0]["change"]
+    assert rows[1]["change"] == "first run of this model"
+    assert rows[1]["description"] == "first look"
+
+    client = create_app(root).test_client()
+    for url in ("/fits", "/s/Sample1"):
+        page = client.get(url).get_data(as_text=True)
+        assert "steps 6 -&gt; 14" in page, url
+        assert "first look" in page, url
+
+    # And the same two lines on the fit itself, so a bookmark says as much as
+    # the table it was reached from.
+    detail = client.get(f"/f/{rows[0]['fit_id']}").get_data(as_text=True)
+    assert "steps 6 -&gt; 14" in detail
+    assert f'href="/f/{rows[1]["fit_id"]}"' in detail, "links to what it changed from"
+
+
 def test_reflectivity_is_plotted_log_log() -> None:
     """Fresnel decay is a power law, so log-log straightens it.
 
