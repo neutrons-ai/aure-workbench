@@ -450,7 +450,11 @@ done to it.
 - Fit with `--method amoeba` while the beam is running, so results keep pace \
 with the data. Use DREAM only once a fit is good and you want uncertainties.
 - One fit at a time.
-- After each fit, `nrw assess <fit-id>` and act on what it says.
+- After each fit, `nrw assess <fit-id>`. It reports what is measurable --- \
+parameters on bounds, unconstrained posteriors, correlated pairs. Whether the \
+values are *physically sensible* is yours to decide, and it will say so: no \
+second model is consulted while you are driving, because you are the better \
+one and a weaker verdict handed back would read as evidence.
 - Record your reasoning as you go with `nrw note <fit-id>` --- for a fit you \
 abandon as much as one you keep. Why a model was rejected is the part nobody \
 can reconstruct later.

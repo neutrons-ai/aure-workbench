@@ -25,6 +25,14 @@ Three things. Nothing else is required.
 You also need the `claude` CLI on your `PATH`. That is the whole list. If you
 want to know whether you have it, `nrw doctor` says so.
 
+**You do not need an LLM endpoint.** `nrw doctor` reports one if you have it
+configured, and `nrw assess`, `nrw model new --from-notes` and `nrw isaac
+export` will use it when you are working by hand. While an agent is driving
+they do not: the harness is already a language model and the better one, so
+sending the same question to a second, weaker one would replace the judgement
+you wanted rather than double-check it. A blank `llm` line in `nrw doctor`
+costs the agent nothing.
+
 Everything after this point is the same three steps, slowly, with the checks
 worth doing in between.
 

@@ -318,6 +318,36 @@ costs the thing that matters, which is a transcript you can follow.
 
 ---
 
+## The agent does not need an LLM endpoint
+
+nr-workbench can be pointed at a language-model endpoint (`LLM_PROVIDER`,
+`LLM_API_KEY`; `nrw doctor` reports what it sees). Three commands use it: `nrw
+assess` asks whether fitted values look physically sensible, `nrw model new
+--from-notes` proposes a stack, and `nrw isaac export` writes condition
+sentences.
+
+**None of them consults it while an agent is driving.** Under `NRW_AGENT=1`
+each hands the work to the harness instead:
+
+| Command | Endpoint configured, no agent | Agent driving |
+|---|---|---|
+| `nrw assess` | the endpoint judges | reports the measurable findings and says the judgement is yours |
+| `nrw model new --from-notes` | the endpoint proposes a stack | scaffolds the spec and prints the instruction, as `--print-prompt` does |
+| `nrw isaac export` | the endpoint writes condition sentences | uses the measurement table; write the conditions there |
+
+This is not caution about the endpoint. It is that **the harness is already a
+language model, and the better one.** Sending the same question to a second,
+weaker model and handing its answer back does not add a check — it replaces
+the judgement you wanted with a worse one, and then presents it as evidence
+inside the harness's own context.
+
+The consequence worth stating plainly: **you do not need an endpoint
+configured to run the agent.** The three commands above work; they simply
+route the judgement to the thing already doing the judging. An endpoint is
+still useful when nobody has a harness open.
+
+---
+
 ## Compute, during a beamtime
 
 The session is told to fit with `--method amoeba` while the beam is running and

@@ -144,7 +144,15 @@ def _from_llm(
     cannot be used --- the table and spec answers already in hand are better
     than a failure.
     """
+    from nr_workbench.agent.guard import agent_is_driving
     from nr_workbench.aure_adapter import AureUnavailableError, complete, llm_available
+
+    if agent_is_driving():
+        # An agent exporting records should write the condition sentences into
+        # sample.md's table, where a person can check them, rather than have a
+        # second model invent them at export time into a record that leaves
+        # the project.
+        return {}
 
     if not llm_available() or not sample_markdown.strip():
         return {}

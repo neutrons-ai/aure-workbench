@@ -295,6 +295,24 @@ def _command_from_stdin() -> str:
     return ""
 
 
+def agent_is_driving() -> bool:
+    """Whether an unattended harness is running this command.
+
+    Used to decide who does the judging. nr-workbench can call a configured
+    LLM endpoint to say whether a fit looks physically sensible --- but when a
+    coding harness is driving, that harness *is* a language model, and a
+    better one than the endpoint is likely to be. Asking a second, weaker
+    model and handing its verdict back is not a fallback; it substitutes for
+    the judgement we actually want and then reads as evidence.
+
+    So: under an agent, nothing here calls out to a model. The material that
+    would have been sent is printed for the harness to read instead.
+    """
+    import os
+
+    return bool(os.environ.get(AGENT_ENV))
+
+
 def refuse_if_agent(action: str) -> None:
     """Refuse an action when running unattended.
 

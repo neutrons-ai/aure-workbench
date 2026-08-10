@@ -525,3 +525,88 @@ def test_doctor_reports_a_project_with_no_limits(tmp_path: Path, monkeypatch) ->
 
     assert limits and limits[0].status == "warn"
     assert "nrw init" in limits[0].detail
+
+
+# --------------------------------------------------------------------------
+# Who does the judging
+# --------------------------------------------------------------------------
+
+
+def test_no_endpoint_is_consulted_while_an_agent_is_driving(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The harness is a language model, and a better one than the endpoint is
+    likely to be. Asking a second, weaker model and handing its verdict back
+    is not a fallback -- it substitutes for the judgement we want and then
+    reads as evidence.
+    """
+    monkeypatch.setenv(guard.AGENT_ENV, "1")
+
+    assert guard.agent_is_driving()
+
+
+def test_a_person_at_a_prompt_still_gets_the_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A configured endpoint is useful to somebody with no harness open. The
+    rule is about who is better placed to judge, not about distrusting it."""
+    monkeypatch.delenv(guard.AGENT_ENV, raising=False)
+
+    assert not guard.agent_is_driving()
+
+
+def test_assess_asks_the_agent_rather_than_an_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`nrw assess` under an agent must neither call out nor tell the agent to
+    configure an endpoint -- the second is worse, because it is advice that
+    sends the harness to fix something that is not broken.
+    """
+    from nr_workbench.commands.assess import _add_judgement
+    from nr_workbench.fitting.assess import Assessment
+
+    monkeypatch.setenv(guard.AGENT_ENV, "1")
+
+    def explode(*args: object, **kwargs: object) -> bool:
+        raise AssertionError("consulted an endpoint while an agent was driving")
+
+    monkeypatch.setattr("nr_workbench.aure_adapter.llm_available", explode)
+    monkeypatch.setattr("nr_workbench.aure_adapter.judge_fit", explode)
+
+    assessment = Assessment(fit_id="x", chisq=1.2)
+    _add_judgement(assessment, None, {}, Path("."), {})
+
+    assert assessment.judgement is None
+    said = " ".join(assessment.problems)
+    assert "yourself" in said
+    assert "LLM_API_KEY" not in said, "do not send the harness to configure one"
+
+
+def test_every_endpoint_call_site_checks_who_is_driving() -> None:
+    """Three places reach for a model's opinion. A fourth added later without
+    this check would quietly reintroduce the weaker verdict, so this is a
+    grep rather than three separate behaviour tests.
+    """
+    root = Path(__file__).resolve().parents[1] / "src" / "nr_workbench"
+    callers = [
+        root / "commands" / "assess.py",
+        root / "commands" / "model.py",
+        root / "conditions.py",
+    ]
+
+    for path in callers:
+        source = path.read_text(encoding="utf-8")
+        assert "agent_is_driving" in source, path.name
+
+
+def test_the_deterministic_aure_helpers_are_not_gated() -> None:
+    """`extract_features` and `sld` are numpy and periodictable, not a model.
+    Gating them would be a different mistake: refusing to compute a critical
+    edge because an agent is driving helps nobody, and the rule here is about
+    whose *judgement* to use, not about avoiding the dependency.
+    """
+    root = Path(__file__).resolve().parents[1] / "src" / "nr_workbench"
+    adapter = (root / "aure_adapter.py").read_text(encoding="utf-8")
+
+    assert "LLM-free" in adapter, "the distinction these tests rely on"
+    assert "agent_is_driving" not in adapter

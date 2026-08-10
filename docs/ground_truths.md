@@ -1774,3 +1774,37 @@ Both bugs were invisible in normal use, which puts them with the two worst
 found so far in this repo (data files missing from the wheel, `init` not being
 idempotent). All four share a signature: the code produced a plausible answer
 and no error.
+
+### 2026-08-10: a second, weaker model is not a fallback
+
+nr-workbench can call a configured LLM endpoint in three places: `nrw assess`
+(are these values physically sensible?), `nrw model new --from-notes` (propose
+a stack), and `nrw isaac export` (write condition sentences). All three were
+written when the endpoint was the only model in the picture.
+
+Under a coding harness that assumption inverts. The harness *is* a language
+model, and on this work a better one — that is the measured premise the whole
+`agent/` package rests on. Sending the same question out to the endpoint and
+handing the answer back does not add a check:
+
+- it replaces the judgement we wanted with a worse one, and
+- the harness then reads that verdict inside its own context as *evidence*,
+  which is worse than no verdict at all.
+
+Observed directly: `nrw assess` on a 3-parameter fit returned six generic
+suggestions from the endpoint ("use a better optimizer only after the model is
+physically appropriate"), which under a harness is noise competing with the
+harness's own reading of the same numbers.
+
+So `agent_is_driving()` gates all three, and each hands the work over rather
+than calling out. `nrw model new --from-notes` degrades to exactly what
+`--print-prompt` already did, which is the shape the codebase had already
+found for "a coding assistant is here, give it the instruction instead".
+
+The consequence worth writing down: **an LLM endpoint is not part of the
+agent's setup.** It remains useful to somebody with no harness open.
+
+The generalisable form: when a tool can either do a thing itself or ask its
+caller to, and the caller is better at it, asking is not a degraded mode — it
+is the correct one. The failure to avoid is a *plausible* second opinion, not
+a missing one.

@@ -87,7 +87,20 @@ def _add_judgement(
     manifest: dict[str, Any],
 ) -> None:
     """Attach a language model's reading, or record why there is none."""
+    from nr_workbench.agent.guard import agent_is_driving
     from nr_workbench.aure_adapter import AureUnavailableError, llm_available
+
+    if agent_is_driving():
+        # You are the model. Sending this to a configured endpoint would
+        # substitute a second, weaker model's verdict for yours -- and then
+        # hand it back as though it were evidence.
+        assessment.problems.append(
+            "Judge these values yourself: are they physically sensible for "
+            "this sample, and does anything above change what the fit can be "
+            "said to show? Read the skills for the material. Record the answer "
+            "with `nrw note`, including what you rejected."
+        )
+        return
 
     if not llm_available():
         assessment.problems.append(

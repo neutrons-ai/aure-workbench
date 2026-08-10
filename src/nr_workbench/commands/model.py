@@ -420,9 +420,19 @@ def run_new(
     notes = notes_path.read_text(encoding="utf-8") if notes_path.is_file() else ""
     provenance = ""
     if from_notes:
-        document, provenance = _author_from_notes(
-            layout=layout, document=document, notes=notes
-        )
+        from nr_workbench.agent.guard import agent_is_driving
+
+        if agent_is_driving():
+            # --from-notes asks a configured endpoint to propose the stack.
+            # Under a harness that is a model asking a weaker model to do the
+            # part it is best at, so the scaffold is written plain and the
+            # instruction is printed instead --- which is what --print-prompt
+            # already does for a person working in an editor.
+            print_prompt = True
+        else:
+            document, provenance = _author_from_notes(
+                layout=layout, document=document, notes=notes
+            )
     target.parent.mkdir(parents=True, exist_ok=True)
     stack_note = (
         "# The stack below is a PLACEHOLDER -- replace it with the real layers\n"
