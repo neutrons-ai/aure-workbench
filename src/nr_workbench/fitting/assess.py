@@ -446,7 +446,13 @@ def _correlation_findings(fit_dir: Path) -> list[Finding]:
     return [
         Finding(
             kind="correlated",
-            severity="warn",
+            # Information, not a defect. Every DREAM fit in the real corpus --
+            # all 19 with a chain -- has pairs above this threshold, because
+            # correlation is the honest shape of a reflectometry posterior. A
+            # warning that fires on everything discriminates nothing; what it
+            # changes is what may be *quoted*, which is a judgement no check
+            # can make.
+            severity="info",
             parameter=shown[0][2],
             message=(
                 f"{len(pairs)} parameter pair(s) are correlated above "

@@ -1633,3 +1633,33 @@ been free to leave behind.
 When a parameter is fitted, the fitted value is what the result claims. The
 declaration is a starting point, and testing a result against it asks whether
 the fit moved, not whether the answer is sound.
+
+### 2026-08-10: the checks reproduce the findings; the count does not rank the fits
+
+Running every Stage-1 check over the 25 recorded fits of the real beamtime,
+against the 17 findings the analyst wrote by hand. Nine labelled cases pass in
+`tests/test_benchmark_expt11.py` --- the swallowed oxide at 1.55x its thickness,
+the roughness that caused it named as `dTHF.roughness=20`, the ranges that
+permitted it flagged before any fit, the (rho, t) ridge, the three pinned
+parameters, and the stray partial as a blocker.
+
+Two negative results are worth more than the positives.
+
+**Finding count is not a score.** The promoted tNR fit has the fewest findings
+of all twenty (3); the promoted steady fit has one of the most (17). Both are
+the answer. The count scales with the number of parameters --- a three-state
+co-refinement has forty-one and a reduced tNR has eight --- so ranking on it
+measures model size. The benchmark asserts `tnr < steady` precisely so nobody
+later mistakes the count for a quality signal.
+
+**Correlation does not discriminate.** All 19 fits with a chain carry pairs
+above 0.8, because correlation is the honest shape of a reflectometry
+posterior, not a defect. A warning that fires on everything sorts nothing, so
+it is `info`. What a strong pair changes is what may be *quoted* --- and
+whether both parameters were reported independently is a judgement about the
+write-up, which no check on the fit can see.
+
+Together those say what the checks are for: they re-derive the *specific*
+observations a human made from the same files, and they do not rank. Ranking
+was the part that needed judgement, and the evidence that chi-squared ranks
+this corpus backwards is the reason not to automate it.
