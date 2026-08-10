@@ -482,6 +482,92 @@ you would do next.
 """
 
 
+#: How much of a tool's target to show on a progress line. Enough to tell one
+#: fit from another; not enough to turn the terminal into a transcript.
+PROGRESS_TARGET_CHARS = 68
+
+#: Tool inputs worth naming, in the order we prefer them. A tool we do not
+#: know still gets its name printed --- silence about an unfamiliar tool is
+#: the thing being fixed here.
+_TARGET_KEYS = ("command", "file_path", "pattern", "path", "prompt", "description")
+
+
+def describe_event(line: str, root: Path | None = None) -> str | None:
+    """One short status line for a harness event, or None to stay quiet.
+
+    Status, not content. What the session is *doing* --- the tool and roughly
+    what it is pointed at --- and nothing it said or read. A terminal that
+    replays the model's prose is a transcript nobody watches; a terminal that
+    shows nothing for forty minutes is indistinguishable from a hang, which is
+    the actual complaint.
+
+    Args:
+        line: One line of ``--output-format stream-json``.
+        root: Project root, so paths show relative to it. An absolute path is
+            mostly its own prefix, and truncating one leaves the part every
+            line has in common.
+
+    Returns:
+        The line to print, or ``None``.
+    """
+    import json
+
+    try:
+        event = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(event, dict):
+        return None
+
+    kind = event.get("type")
+
+    if kind == "system" and event.get("subtype") == "init":
+        return "  · session started"
+
+    if kind == "assistant":
+        for block in (event.get("message") or {}).get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                return _describe_tool(block, root)
+        return None
+
+    if kind == "result":
+        seconds = (event.get("duration_ms") or 0) / 1000
+        turns = event.get("num_turns")
+        if str(event.get("subtype") or "").endswith("max_turns"):
+            # Distinct from a failure, and actionable in a way a bare "failed"
+            # is not: the work stopped because it ran out of room, so raising
+            # --turns is the answer rather than debugging anything.
+            return f"  · stopped at the {turns}-turn cap after {seconds:.0f}s"
+        state = "failed" if event.get("is_error") else "done"
+        return f"  · {state} in {seconds:.0f}s, {turns} turns"
+
+    return None
+
+
+def _describe_tool(block: dict[str, Any], root: Path | None = None) -> str:
+    """A tool call as one line: what it is and what it points at."""
+    name = str(block.get("name") or "tool")
+    payload = block.get("input")
+    target = ""
+    if isinstance(payload, dict):
+        for key in _TARGET_KEYS:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                target = " ".join(_shorten(value, root).split())
+                break
+    if len(target) > PROGRESS_TARGET_CHARS:
+        target = target[: PROGRESS_TARGET_CHARS - 1] + "\u2026"
+    return f"  · {name:<9} {target}".rstrip()
+
+
+def _shorten(text: str, root: Path | None) -> str:
+    """Drop the project-root prefix so what is left is the informative part."""
+    if root is None:
+        return text
+    prefix = str(Path(root).resolve())
+    return text.replace(prefix + "/", "").replace(prefix, ".")
+
+
 def harness_command(
     prompt_file: Path, *, turns: int = DEFAULT_TURNS, model: str | None = None
 ) -> list[str]:
@@ -514,6 +600,21 @@ def harness_command(
         "--output-format",
         "stream-json",
         "--verbose",
+        # Headless has nobody to approve a prompt, so without this every Bash
+        # call comes back "This command requires approval" and the session
+        # accomplishes nothing -- measured, not assumed: a 45-turn run spent
+        # all of it being refused and then tried to write itself a
+        # settings.local.json to get out.
+        #
+        # This turns off Claude Code's permission layer, including the `deny`
+        # list in .claude/settings.json. It does NOT turn off the two
+        # mechanisms this package relies on: a PreToolUse hook still fires
+        # (verified against `nrw promote` under this exact flag), and
+        # NRW_AGENT=1 still refuses from inside nrw. The deny list was always
+        # the weakest of the three and the only one that needed a human at a
+        # keyboard to mean anything.
+        "--permission-mode",
+        "bypassPermissions",
     ]
     if model:
         argv += ["--model", model]
@@ -527,6 +628,7 @@ def run(
     turns: int = DEFAULT_TURNS,
     model: str | None = None,
     timeout: int | None = None,
+    on_progress: Any = None,
 ) -> Session:
     """Compose and run one unattended session.
 
@@ -536,6 +638,8 @@ def run(
         turns: Cap on harness turns.
         model: Model to run, or ``None`` for the harness default.
         timeout: Seconds before the session is killed, or ``None``.
+        on_progress: Called with each short status line, or ``None`` for a
+            silent run.
 
     Returns:
         The session, with its transcript path and exit status.
@@ -544,11 +648,14 @@ def run(
         SessionError: If the session cannot be composed, the harness is
             missing, or the session outlives ``timeout``.
     """
-    from nr_workbench.provenance.record import format_timestamp, utc_now
+    from nr_workbench.provenance.record import utc_now
 
     session = compose(Path(root), sample)
+    _require_guard(Path(root))
 
-    stamp = format_timestamp(utc_now())
+    # The same compact form fit ids use. `format_timestamp` is ISO-8601 with
+    # colons, which is fine in a record and wrong in a filename.
+    stamp = utc_now().strftime("%Y%m%d-%H%M%SZ")
     directory = Path(root) / ".nrw" / SESSION_DIR
     directory.mkdir(parents=True, exist_ok=True)
     prompt_file = directory / f"{stamp}-{sample}-prompt.md"
@@ -561,47 +668,135 @@ def run(
     environment = dict(os.environ)
     environment[AGENT_ENV] = "1"
 
-    try:
-        with transcript.open("w", encoding="utf-8") as handle:
-            completed = subprocess.run(  # noqa: S603 - argv built here, no shell
-                harness_command(prompt_file, turns=turns, model=model),
-                cwd=str(root),
-                env=environment,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                timeout=timeout,
-                check=False,
-                # Its own process group, so a timeout kills the fits it
-                # started too. Killing only the harness leaves refl1d running
-                # and writing into the project after the session is over.
-                start_new_session=True,
-            )
-    except subprocess.TimeoutExpired as exc:
-        _kill_tree(exc)
+    argv = harness_command(prompt_file, turns=turns, model=model)
+    returncode, timed_out = _stream(
+        argv,
+        root=Path(root),
+        environment=environment,
+        transcript=transcript,
+        timeout=timeout,
+        on_progress=on_progress,
+    )
+    if timed_out:
         raise SessionError(
             f"The session for {sample} passed {timeout}s and was stopped. "
             f"What it managed is in {transcript}."
-        ) from exc
+        )
 
     session.transcript = transcript
-    session.returncode = completed.returncode
+    session.returncode = returncode
     return session
 
 
-def _kill_tree(expired: subprocess.TimeoutExpired) -> None:
-    """Kill everything the timed-out session started.
+def _require_guard(root: Path) -> None:
+    """Refuse to start when the hook that limits the session is missing.
 
-    ``subprocess.run`` kills only its direct child. A harness that had a
-    ``refl1d`` fit running leaves it writing into the project after the
-    session is nominally over, which is how two fits end up interleaved in one
-    directory.
+    Checked per session, not once, because a session can edit
+    ``.claude/settings.json`` and the next one would start without the limit
+    that was verified for the first. Since the harness runs with its
+    permission layer bypassed, the hook is doing real work and its absence is
+    not a warning.
+
+    Raises:
+        SessionError: If no PreToolUse hook runs ``nrw agent guard``.
+    """
+    from nr_workbench.commands.doctor import guard_hook_event
+
+    settings = root / ".claude" / "settings.json"
+    configured: dict[str, Any] = {}
+    if settings.is_file():
+        import json
+
+        try:
+            loaded = json.loads(settings.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            loaded = None
+        configured = loaded if isinstance(loaded, dict) else {}
+
+    if guard_hook_event(configured) != "PreToolUse":
+        raise SessionError(
+            f"No `nrw agent guard` PreToolUse hook in {settings}, so nothing "
+            "would stop this session promoting a fit or publishing it.\n"
+            "Run `nrw init` to restore it. If a previous session removed it, "
+            "that is worth knowing before you trust what it wrote."
+        )
+
+
+def _stream(
+    argv: list[str],
+    *,
+    root: Path,
+    environment: dict[str, str],
+    transcript: Path,
+    timeout: float | None,
+    on_progress: Any,
+) -> tuple[int, bool]:
+    """Run the harness, tee its events to the transcript, report progress.
+
+    Read line by line rather than handed a file to write, for two reasons.
+    The visible one is that a session with nothing on the terminal for forty
+    minutes cannot be told apart from a hung one. The other is that
+    ``subprocess.run``'s own timeout only fires when the call returns --- so a
+    harness that wedges *silently*, which is the case a timeout exists for,
+    would never hit it. A timer kills the process group instead.
+
+    Returns:
+        The exit status, and whether it was stopped for running too long.
+    """
+    import threading
+
+    stopped = threading.Event()
+    process = subprocess.Popen(  # noqa: S603 - argv built here, no shell
+        argv,
+        cwd=str(root),
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        # Its own process group, so stopping it takes the fits it started
+        # with it. Killing only the harness leaves refl1d running and writing
+        # into the project after the session is over.
+        start_new_session=True,
+    )
+
+    def stop() -> None:
+        stopped.set()
+        _kill_group(process.pid)
+
+    timer = threading.Timer(timeout, stop) if timeout else None
+    if timer:
+        timer.daemon = True
+        timer.start()
+
+    try:
+        with transcript.open("w", encoding="utf-8") as handle:
+            for line in process.stdout or ():
+                handle.write(line)
+                # Flushed per line so a killed session still leaves a readable
+                # transcript, which is the only thing left to look at.
+                handle.flush()
+                if on_progress and (status := describe_event(line, root)):
+                    on_progress(status)
+    finally:
+        if timer:
+            timer.cancel()
+        if process.stdout:
+            process.stdout.close()
+
+    return process.wait(), stopped.is_set()
+
+
+def _kill_group(pid: int) -> None:
+    """Kill a session and everything it started.
+
+    Killing only the harness leaves the ``refl1d`` fit it launched running and
+    writing into the project after the session is nominally over, which is how
+    two fits end up interleaved in one directory.
     """
     import contextlib
     import os
     import signal
 
-    pid = getattr(expired, "pid", None)
-    if pid is None:
-        return
     with contextlib.suppress(OSError, ProcessLookupError):
         os.killpg(os.getpgid(pid), signal.SIGKILL)

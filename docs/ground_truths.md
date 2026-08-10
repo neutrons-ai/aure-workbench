@@ -1808,3 +1808,40 @@ The generalisable form: when a tool can either do a thing itself or ask its
 caller to, and the caller is better at it, asking is not a degraded mode — it
 is the correct one. The failure to avoid is a *plausible* second opinion, not
 a missing one.
+
+### 2026-08-10: a headless session with only a deny list does nothing at all
+
+The first real end-to-end run of `nrw agent run` fitted nothing. Every Bash
+call returned **"This command requires approval"**. Claude Code's permission
+layer denies anything that would prompt, headless has nobody to prompt, and
+the scaffolded `.claude/settings.json` carried a `deny` list and no `allow`.
+Forty-five turns, zero commands, and then the model tried to write itself a
+`.claude/settings.local.json` to escape — the self-disarm path a review had
+predicted, reached for unprompted the first time it was cornered.
+
+An `allow` list is not the fix. The same run shows why: `nrw doctor 2>&1 |
+head -40` was refused because the permission matcher splits on the pipe and
+`head` was not allowed. An analysis agent runs arbitrary shell; enumerating it
+in advance is a losing game, and each gap is a wasted turn.
+
+So the harness runs with `--permission-mode bypassPermissions`, which was only
+adopted after verifying the thing that makes it safe:
+
+    CALL:   Bash {"command": "nrw promote abc123 --reason test"}
+    RESULT: PreToolUse:Bash hook error: Refused by nr-workbench (promote): ...
+
+**Hooks fire independently of the permission layer.** The two mechanisms this
+package actually designed and tested — the `PreToolUse` hook and `NRW_AGENT=1`
+— are untouched by bypassing. What is lost is the `deny` list, which was
+always the weakest of the three and the only one that needed a human at a
+keyboard to mean anything.
+
+The consequence: the hook is now load-bearing rather than belt-and-braces, so
+`session.run` verifies it before *every* session. Checking once is not enough
+when the thing being checked is a file the session can edit.
+
+The general lesson, and the reason this cost a whole run to find: **a safety
+layer that also blocks the work is not a safety layer, it is an off switch.**
+The agent's first instinct on hitting it was to route around it, which is what
+any capable agent will do. Better to remove the layer that cannot distinguish
+`nrw fit run` from `nrw promote`, and keep the one that can.

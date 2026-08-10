@@ -348,6 +348,37 @@ still useful when nobody has a harness open.
 
 ---
 
+## Permissions, and why the hook still holds
+
+The harness runs with `--permission-mode bypassPermissions`. That is not a
+shortcut; without it an unattended session accomplishes nothing.
+
+Measured: a 45-turn run with only a `deny` list configured spent every turn
+being told **"This command requires approval"** — headless mode has nobody to
+approve — and then tried to write itself a `.claude/settings.local.json` to
+get out. Not one `nrw` command ran.
+
+Bypassing turns off Claude Code's permission layer, including the `deny` rules
+in `.claude/settings.json`. It does **not** turn off the two mechanisms this
+package relies on, which was verified under that exact flag:
+
+```
+CALL:   Bash {"command": "nrw promote abc123 --reason test"}
+RESULT: PreToolUse:Bash hook error: Refused by nr-workbench (promote): …
+```
+
+Hooks are independent of permissions, and `NRW_AGENT=1` refuses from inside
+`nrw` regardless. The `deny` list was always the weakest of the three layers,
+and the only one that needed a person at a keyboard to mean anything.
+
+Because the hook is now load-bearing, `nrw agent run` **checks it before every
+session** and refuses to start without it. A session can edit
+`.claude/settings.json`; checking once would leave the next session
+unprotected, and a previous session having removed it is worth knowing before
+you trust what it wrote.
+
+---
+
 ## Compute, during a beamtime
 
 The session is told to fit with `--method amoeba` while the beam is running and

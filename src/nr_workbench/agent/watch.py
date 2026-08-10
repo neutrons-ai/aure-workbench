@@ -698,6 +698,7 @@ def _poll(
                     timeout=session_timeout,
                     **({"turns": turns} if turns is not None else {}),
                     model=model,
+                    on_progress=say,
                 )
             except SessionError as exc:
                 say(f"{sample}: cannot start a session -- {exc}")

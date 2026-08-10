@@ -164,15 +164,51 @@ That is the dry run doing its job.
 nrw agent run Cu1
 ```
 
+It prints what it is doing as it goes — the tool and roughly what it is
+pointed at, nothing it said or read:
+
 ```
-Session finished (exit 0); transcript .nrw/agent/20260810-231402Z-Cu1.jsonl
+  · session started
+  · Read      samples/Cu1/sample.md
+  · Read      skills/reflectometry/nrw-model-spec/SKILL.md
+  · Bash      nrw data features samples/Cu1/data/steady/REFL_218386_1_218386_par…
+  · Write     samples/Cu1/models/cu-thf-backrefl.yaml
+  · Bash      nrw model validate samples/Cu1/models/cu-thf-backrefl.yaml
+  · Bash      nrw model generate samples/Cu1/models/cu-thf-backrefl.yaml
+  · Bash      nrw fit run samples/Cu1/models/cu-thf-backrefl.py --method amoeba
+  · Bash      nrw assess 20260810-211523Z-43667719
+  · Bash      nrw note 20260810-211523Z-43667719 -m "What I tested: a minimal 3-…
+  · done in 916s, 49 turns
+Session finished (exit 0); transcript .nrw/agent/20260810-210331Z-Cu1.jsonl
   ! ESCALATIONS.md exists -- read it before promoting anything
 ```
 
-*(This block is illustrative — it is the one thing on this page not captured
-from a run, because a real session costs a real fit.)*
+`--quiet` turns that off; the transcript records everything either way.
 
 One session, one sample, and it exits. It does not wait for anything.
+
+### What it leaves behind
+
+The same places you would have written to yourself. There is no separate path
+— the agent produces a fit by running `nrw fit run`, the command you type, so
+the record is the record:
+
+```
+samples/Cu1/models/cu-thf-backrefl.{yaml,md,py}   spec, model card, script
+samples/Cu1/results/20260810-211523Z-43667719/    the immutable record
+    manifest.json  inputs.json  spec.yaml  model.py  NOTES.md
+    env/{requirements.txt,versions.json}
+    fit/…{-expt.json,-profile.dat,-slabs.dat,.par,.out}
+samples/Cu1/reports/run-218386-ocv-first-back-reflection-fit….md
+ESCALATIONS.md
+```
+
+`nrw ls`, `nrw whence`, `nrw diff`, `nrw check` and `nrw pack` all work on it
+unchanged, and `nrw check` will hold the agent's own spec to the same
+standard as yours. There is no badge marking a fit as an agent's:
+`provenance.command` already records the exact command line, and a flag saying
+`agent: true` would only invite trusting one record more than another. Judge
+the fit by the fit.
 
 | | |
 |---|---|

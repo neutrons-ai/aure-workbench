@@ -450,9 +450,9 @@ def test_a_missing_harness_says_so_rather_than_failing_obscurely(
 
 def settings(payload: object) -> dict:
     """Parse a `.claude/settings.json` shape into doctor's view of it."""
-    from nr_workbench.commands.doctor import _guard_hook_event
+    from nr_workbench.commands.doctor import guard_hook_event
 
-    return {"event": _guard_hook_event(payload)}  # type: ignore[arg-type]
+    return {"event": guard_hook_event(payload)}  # type: ignore[arg-type]
 
 
 def test_a_correctly_wired_hook_is_recognised() -> None:
@@ -610,3 +610,134 @@ def test_the_deterministic_aure_helpers_are_not_gated() -> None:
 
     assert "LLM-free" in adapter, "the distinction these tests rely on"
     assert "agent_is_driving" not in adapter
+
+
+# --------------------------------------------------------------------------
+# Progress on the terminal
+# --------------------------------------------------------------------------
+
+
+def test_progress_shows_what_it_is_doing() -> None:
+    """Status, not content. A session with nothing on the terminal for forty
+    minutes cannot be told from a hung one."""
+    event = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Bash",
+                        "input": {"command": "nrw fit run m.py --method amoeba"},
+                    }
+                ]
+            },
+        }
+    )
+
+    line = session.describe_event(event)
+
+    assert line is not None
+    assert "Bash" in line and "nrw fit run" in line
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "x": 1}]}},
+        {"type": "rate_limit_event"},
+    ],
+)
+def test_progress_stays_quiet_about_content(event: dict) -> None:
+    """The model's prose and every tool result stay off the terminal. A
+    terminal that replays the transcript is one nobody watches."""
+    assert session.describe_event(json.dumps(event)) is None
+
+
+def test_progress_survives_a_line_that_is_not_json() -> None:
+    """stderr is merged into the stream, so non-JSON lines arrive."""
+    assert session.describe_event("Warning: something on stderr") is None
+
+
+def test_a_path_is_shown_relative_to_the_project() -> None:
+    """An absolute path is mostly its own prefix; truncating one leaves the
+    part every line has in common."""
+    event = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Read",
+                        "input": {"file_path": "/tmp/proj/samples/Cu1/sample.md"},
+                    }
+                ]
+            },
+        }
+    )
+
+    line = session.describe_event(event, Path("/tmp/proj"))
+
+    assert line is not None and line.endswith("samples/Cu1/sample.md")
+
+
+def test_the_turn_cap_is_reported_as_itself() -> None:
+    """Distinct from a failure, and actionable differently: the work ran out
+    of room, so --turns is the answer rather than debugging anything."""
+    event = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_max_turns",
+            "duration_ms": 44000,
+            "num_turns": 6,
+            "is_error": True,
+        }
+    )
+
+    line = session.describe_event(event)
+
+    assert line is not None and "6-turn cap" in line
+
+
+# --------------------------------------------------------------------------
+# The headless invocation
+# --------------------------------------------------------------------------
+
+
+def test_the_harness_runs_without_waiting_for_approval(tmp_path: Path) -> None:
+    """Measured, not assumed: without this a 45-turn session spent all of it
+    being told "This command requires approval", then tried to write itself a
+    settings.local.json to escape. Headless has nobody to approve.
+    """
+    argv = session.harness_command(tmp_path / "p.md")
+
+    assert "--permission-mode" in argv
+    assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+
+
+def test_a_session_will_not_start_without_its_hook(tmp_path: Path) -> None:
+    """Since the permission layer is bypassed, the PreToolUse hook is doing
+    real work. A session that edited .claude/settings.json would otherwise
+    disarm the next one, so this is checked per session rather than once.
+    """
+    sample = tmp_path / "samples" / "S1"
+    sample.mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_WITH_TASK, encoding="utf-8")
+
+    with pytest.raises(session.SessionError) as caught:
+        session.run(tmp_path, "S1")
+
+    assert "agent guard" in str(caught.value)
+    assert "nrw init" in str(caught.value)
+
+
+def test_the_transcript_name_is_usable_as_a_filename(tmp_path: Path) -> None:
+    """`format_timestamp` is ISO-8601 with colons -- right in a record, wrong
+    in a path."""
+    from nr_workbench.provenance.record import utc_now
+
+    stamp = utc_now().strftime("%Y%m%d-%H%M%SZ")
+
+    assert ":" not in stamp

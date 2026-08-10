@@ -182,7 +182,7 @@ def _agent_checks() -> list[Check]:
     denied = len(
         (permissions.get("deny") or []) if isinstance(permissions, dict) else []
     )
-    where = _guard_hook_event(configured)
+    where = guard_hook_event(configured)
 
     if where == "PreToolUse":
         detail = f"PreToolUse hook + {denied} deny rule(s)"
@@ -201,7 +201,7 @@ def _agent_checks() -> list[Check]:
     return checks
 
 
-def _guard_hook_event(configured: dict[str, Any]) -> str:
+def guard_hook_event(configured: dict[str, Any]) -> str:
     """Which hook event runs `nrw agent guard`, or an empty string.
 
     Walks the structure rather than searching the serialised text: a hook

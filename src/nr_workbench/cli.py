@@ -623,12 +623,18 @@ def agent_guard_command(command: str | None) -> None:
     type=int,
     help="Seconds before the session is killed [default: none].",
 )
+@click.option(
+    "--quiet",
+    is_flag=True,
+    help="Print no progress; the transcript still records everything.",
+)
 def agent_run_command(
     sample: str,
     dry_run: bool,
     turns: int | None,
     model: str | None,
     timeout: int | None,
+    quiet: bool,
 ) -> None:
     """Run one unattended analysis session over SAMPLE.
 
@@ -656,6 +662,7 @@ def agent_run_command(
             turns=DEFAULT_TURNS if turns is None else turns,
             model=model,
             timeout=timeout,
+            on_progress=None if quiet else click.echo,
         )
     except SessionError as exc:
         raise click.ClickException(str(exc)) from exc
