@@ -29,7 +29,7 @@ from typing import Any
 
 import click
 
-from nr_workbench.isaac import Staged, stage
+from nr_workbench.isaac import Staged, reset, stage
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import FitIndex
 from nr_workbench.provenance.lookup import FitNotFoundError, resolve_fit
@@ -51,6 +51,7 @@ def run_export(
     validate_only: bool = False,
     context: str | None = None,
     yes: bool = False,
+    force: bool = False,
 ) -> None:
     """Export one fit to ISAAC records, and optionally upload them.
 
@@ -62,6 +63,7 @@ def run_export(
             persisting.
         context: Free-text notes carried into the record.
         yes: Skip the upload confirmation.
+        force: Replace an output directory nrw did not write.
 
     Raises:
         click.ClickException: If the project, fit, or a required tool is
@@ -91,8 +93,14 @@ def run_export(
             layout.root,
             ingest,
             sample_description=_sample_description(layout, entry),
+            force=force,
         )
+        # Same reason as the ingest dir: a record left over from a previous
+        # export is indistinguishable from one this run produced.
+        reset(records, force=force)
     except FileNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except FileExistsError as exc:
         raise click.ClickException(str(exc)) from exc
 
     _report_staged(staged, resolved)
@@ -180,10 +188,20 @@ def _find(names: tuple[str, ...], install: str) -> list[str]:
         if found:
             return [found]
     module = names[0].replace("-", "_")
-    return_code = subprocess.run(
-        [sys.executable, "-c", f"import {module}"], capture_output=True, check=False
-    ).returncode
-    if return_code == 0:
+    try:
+        importable = (
+            subprocess.run(
+                [sys.executable, "-c", f"import {module}"],
+                capture_output=True,
+                check=False,
+            ).returncode
+            == 0
+        )
+    except OSError:
+        # No usable interpreter to ask. Not being able to check is the same
+        # answer as "not installed" here, and is not worth a traceback.
+        importable = False
+    if importable:
         return [sys.executable, "-m", module]
     raise ToolMissingError(
         f"{names[0]} is not installed.\n"

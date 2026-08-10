@@ -266,13 +266,28 @@ def test_a_script_with_no_spec_exports_as_one_state(
 # --------------------------------------------------------------------------
 
 
+def without_tools(monkeypatch, tmp_path: Path) -> None:
+    """Make the schema tools unfindable, whether or not they are installed.
+
+    Clearing PATH is not enough: `_find` also looks beside the running
+    interpreter, and this repo's own venv gains both tools the moment anyone
+    installs the extra -- so a PATH-only version of this test passes or fails
+    depending on who ran pip last.
+    """
+    import shutil as shutil_module
+
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setattr(shutil_module, "which", lambda *a, **k: None)
+    monkeypatch.setattr("sys.executable", str(tmp_path / "nowhere" / "python"))
+
+
 def test_export_says_what_is_missing_rather_than_failing_obscurely(
     corefined: tuple[Path, str], monkeypatch, tmp_path: Path
 ) -> None:
     """The schema tools are an optional extra, so their absence is the normal
     case for someone who has not opted in."""
     root, fit_id = corefined
-    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    without_tools(monkeypatch, tmp_path)
 
     result = run(
         root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
@@ -289,7 +304,7 @@ def test_export_reports_the_assembly_before_it_needs_any_tool(
     """Staging is nr-workbench's half of the job and is worth seeing even when
     the rest cannot run."""
     root, fit_id = corefined
-    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    without_tools(monkeypatch, tmp_path)
 
     result = run(
         root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
@@ -342,3 +357,107 @@ def test_the_fits_note_becomes_the_record_context(
 
     assert notes is not None
     assert "oxide required" in notes
+
+
+# --------------------------------------------------------------------------
+# Re-exporting
+# --------------------------------------------------------------------------
+
+
+def test_re_staging_replaces_rather_than_accumulates(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The assembler names its outputs by uuid, so a second run into the same
+    directory writes a whole new set beside the first -- and the converter
+    then sees twice the states and emits twice the records.
+
+    Found in the field, not here: every other test in this file stages into a
+    fresh tmp_path and so could never see it.
+    """
+    root, fit_id = corefined
+    ingest = tmp_path / "ingest"
+
+    stage(fit_dir(root, fit_id), root, ingest)
+    # Stand in for what data-assembler leaves behind: uuid-named output that
+    # a second run would not overwrite.
+    leftover = ingest / "reflectivity" / "facility=SNS"
+    leftover.mkdir(parents=True)
+    (leftover / "0a1b2c3d.parquet").write_bytes(b"stale")
+
+    stage(fit_dir(root, fit_id), root, ingest)
+
+    assert not (leftover / "0a1b2c3d.parquet").exists(), (
+        "a second export must start from an empty directory"
+    )
+    run_info = json.loads((ingest / "run_info.json").read_text())
+    assert len(run_info["states"]) == 2, "still two states, not four"
+
+
+def test_staging_refuses_a_directory_it_did_not_write(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Emptying a directory is only safe when we put everything in it."""
+    root, fit_id = corefined
+    theirs = tmp_path / "mine"
+    theirs.mkdir()
+    (theirs / "thesis.tex").write_text("do not delete me", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="carries no marker"):
+        stage(fit_dir(root, fit_id), root, theirs)
+
+    assert (theirs / "thesis.tex").read_text() == "do not delete me"
+
+
+def test_force_replaces_a_directory_nrw_did_not_write(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The escape hatch, needed once by anyone who exported before the
+    ownership marker existed -- their directory has no sentinel and is
+    otherwise unrecoverable without a manual delete."""
+    root, fit_id = corefined
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    (stale / "leftover.parquet").write_bytes(b"from a previous run")
+
+    staged = stage(fit_dir(root, fit_id), root, stale, force=True)
+
+    assert not (stale / "leftover.parquet").exists()
+    assert staged.n_files == 6
+
+
+def test_an_empty_directory_is_fine_to_stage_into(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Refusing here would make `--out ./somewhere-i-just-made` fail."""
+    root, fit_id = corefined
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    staged = stage(fit_dir(root, fit_id), root, empty)
+
+    assert staged.n_files == 6
+
+
+def test_exporting_twice_leaves_one_record_per_state(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """The symptom as reported: six records for three measurements."""
+    root, fit_id = corefined
+    out = tmp_path / "out"
+    import nr_workbench.commands.isaac_cmd as module
+
+    def fake_convert(ingest: Path, records: Path, notes: str | None) -> None:
+        records.mkdir(parents=True, exist_ok=True)
+        states = json.loads((ingest / "run_info.json").read_text())["states"]
+        for state in states:
+            (records / f"isaac_record_{state['name']}.json").write_text("{}", "utf-8")
+
+    monkeypatch.setattr(module, "_assemble", lambda ingest: None)
+    monkeypatch.setattr(module, "_convert", fake_convert)
+    monkeypatch.setattr(module, "_validate", lambda records: None)
+
+    for _ in range(2):
+        result = run(root, monkeypatch, "isaac", "export", fit_id, "--out", str(out))
+        assert result.exit_code == 0, result.output
+
+    assert len(list((out / "records").glob("*.json"))) == 2

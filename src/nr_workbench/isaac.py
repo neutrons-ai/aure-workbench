@@ -43,6 +43,14 @@ from typing import Any
 #: Filename the assembler expects for the serialised bumps problem.
 PROBLEM_FILENAME = "problem.json"
 
+#: Marks a directory as one this module created, and may therefore replace.
+#: The assembler names its outputs by uuid, so a second run writes a whole new
+#: set beside the first instead of overwriting it -- and the converter then
+#: sees twice as many states and emits twice as many records. Re-exporting has
+#: to start from an empty directory, but "empty it" must never be applied to a
+#: directory somebody else owns.
+SENTINEL = ".nrw-isaac-staging"
+
 
 @dataclass
 class StagedState:
@@ -88,12 +96,46 @@ class Staged:
         return sum(len(s.files) for s in self.states)
 
 
+def reset(destination: Path, *, force: bool = False) -> None:
+    """Empty a staging directory, or refuse if it is not ours to empty.
+
+    Args:
+        destination: The directory to clear and recreate.
+        force: Replace it even without the sentinel.
+
+    Raises:
+        FileExistsError: If it exists, is not empty, carries no sentinel, and
+            ``force`` was not given.
+    """
+    destination = Path(destination)
+    if destination.exists():
+        unowned = any(destination.iterdir()) and not (destination / SENTINEL).exists()
+        if unowned and not force:
+            raise FileExistsError(
+                f"{destination} already has files in it and carries no marker "
+                "saying nrw wrote them.\n"
+                "Re-exporting into a directory that already holds assembler "
+                "output doubles every record, so this stops rather than "
+                "guessing.\n"
+                "  --out <elsewhere>   write somewhere clean\n"
+                "  --force             replace this directory\n"
+                "(A directory written by nrw before this check existed will "
+                "need --force once.)"
+            )
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    (destination / SENTINEL).write_text(
+        "Written by `nrw isaac export`; replaced on each run.\n", encoding="utf-8"
+    )
+
+
 def stage(
     fit_dir: Path,
     root: Path,
     destination: Path,
     *,
     sample_description: str | None = None,
+    force: bool = False,
 ) -> Staged:
     """Write a fit into a directory ``data-assembler ingest-workflow`` can read.
 
@@ -102,6 +144,7 @@ def stage(
         root: Project root, for resolving the recorded relative paths.
         destination: Directory to create and populate.
         sample_description: Prose for the sample record.
+        force: Replace the destination even if nrw did not write it.
 
     Returns:
         What was staged.
@@ -109,9 +152,11 @@ def stage(
     Raises:
         FileNotFoundError: If the fit has no serialised problem, without which
             there is no fitted model to export.
+        FileExistsError: If the destination holds files this module did not
+            write.
     """
     fit_dir, root = Path(fit_dir), Path(root)
-    destination.mkdir(parents=True, exist_ok=True)
+    reset(destination, force=force)
     problems: list[str] = []
 
     problem = _problem_json(fit_dir)
@@ -146,6 +191,8 @@ def stage(
 
     run_info: dict[str, Any] = {
         "run_id": fit_dir.name,
+        # Ignored by the assembler, and the honest answer to "who wrote this".
+        "generator": "nr-workbench",
         "states": [s.as_dict() for s in states],
         # The default, stated explicitly: co-refined states are conditions of
         # one physical sample, so they share a sample id and the records come
@@ -170,9 +217,7 @@ def stage(
             },
         },
     )
-    return Staged(
-        directory=destination, states=states, chisq=chisq, problems=problems
-    )
+    return Staged(directory=destination, states=states, chisq=chisq, problems=problems)
 
 
 def _states(fit_dir: Path, root: Path, problems: list[str]) -> list[StagedState]:

@@ -1394,3 +1394,38 @@ direct_reference`, which is the guard working. Worth keeping straight:
   `export` extra.
 
 The test now separates the two rather than counting them together.
+
+### 2026-08-10: the assembler names its output by uuid, so re-export doubles it
+
+Reported from real use: `nrw isaac export` produced six records for three
+measurements, in pairs suffixed `_2`. The staging directory had 18 reflectivity
+parquets where there should be 9, two samples and six environments.
+
+`stage()` created its directory with `exist_ok=True` and never cleared it.
+`data-assembler` writes uuid-named parquet, so a second run adds a complete new
+set beside the first rather than overwriting it, and `convert-ingest` --- which
+groups by `(sample_id, environment_id)` --- then sees six states and emits six
+records. Nothing errors; the output is simply twice the experiment.
+
+Every test staged into a fresh `tmp_path`, so none could see it. Re-running a
+command into the same output directory is worth testing explicitly whenever the
+step in between writes content-addressed or uuid-named files.
+
+The fix has to empty the directory, and "empty this directory" must never be
+pointed at one somebody else owns. So the staging dir carries a sentinel
+(`.nrw-isaac-staging`) and only a directory holding it is replaced; anything
+else refuses and names `--force`. Note an AuRE run directory also holds
+`run_info.json` + `problem.json`, so the file layout alone is *not* proof of
+ownership --- hence an explicit marker rather than a signature.
+
+### 2026-08-10: a test that greps PATH passes or fails on who ran pip last
+
+`test_export_says_what_is_missing` cleared `PATH` to check the not-installed
+message. It passed until the `isaac` extra was actually installed into this
+repo's venv, because `_find` also looks beside `sys.executable` --- which is
+exactly where pip puts console scripts.
+
+An "X is absent" test has to make X absent through every lookup path the code
+uses, not just the obvious one. Here that means patching `shutil.which` *and*
+`sys.executable`, which in turn exposed that `_find` would raise `OSError`
+rather than degrade when handed an interpreter that does not exist.

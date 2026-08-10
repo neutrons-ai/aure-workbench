@@ -532,6 +532,11 @@ def isaac_group() -> None:
     help="With --upload, ask the API to validate without persisting.",
 )
 @click.option("--yes", is_flag=True, help="Skip the upload confirmation.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Replace an output directory nrw did not write.",
+)
 def isaac_export_command(**kwargs: object) -> None:
     """Export FIT_ID as ISAAC AI-Ready Records.
 
