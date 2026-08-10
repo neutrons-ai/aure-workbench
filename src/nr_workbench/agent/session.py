@@ -132,6 +132,7 @@ def observe(root: Path, sample: str) -> list[str]:
     blocks: list[str] = []
 
     for render in (
+        _observe_arriving,
         _observe_quarantine,
         _observe_data,
         _observe_specs,
@@ -161,6 +162,42 @@ def quoted(value: Any) -> str:
     if len(text) > QUOTED_FIELD_CHARS:
         text = text[: QUOTED_FIELD_CHARS - 1] + "\u2026"
     return text
+
+
+def _observe_arriving(root: Path, sample: str) -> str:
+    """Measurements whose files have not stopped changing.
+
+    `nrw agent watch` will not start a session over these at all. But a person
+    running `nrw agent run` by hand during a beamtime is very often doing it
+    *because* a measurement just finished, and a steady-state measurement is
+    three angle segments written minutes apart --- so the third can still be
+    on its way. Fitting two segments of three gives a perfectly plausible
+    answer from two-thirds of the data.
+
+    This warns rather than refuses. The person asked for the session, and they
+    may well know something the mtimes do not.
+    """
+    from nr_workbench.agent.watch import DEFAULT_SETTLE_SECONDS, WatchState, assess
+
+    unsettled = [
+        v
+        for v in assess(
+            root, sample, WatchState(), settle_seconds=DEFAULT_SETTLE_SECONDS
+        )
+        if v.state in {"arriving", "settling"}
+    ]
+    if not unsettled:
+        return ""
+
+    lines = [f"  run {v.run} ({v.kind}): {v.reason}" for v in unsettled]
+    return (
+        "STILL ARRIVING. These measurements' files changed recently, so what "
+        "is on disk may not be all of it --- a steady-state run is three angle "
+        "segments written minutes apart. Fitting a partial measurement returns "
+        "a plausible number, not an error. Prefer the measurements that are "
+        "complete, and say in ESCALATIONS.md if the task needs one of "
+        "these:\n" + "\n".join(lines)
+    )
 
 
 def _observe_quarantine(root: Path, sample: str) -> str:

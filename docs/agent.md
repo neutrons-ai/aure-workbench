@@ -118,6 +118,21 @@ Session finished (exit 0); transcript .nrw/agent/20260810-231402Z-Sample4.jsonl
   ! ESCALATIONS.md exists -- read it before promoting anything
 ```
 
+This is one session over one sample, and it exits. It does not wait for
+anything — if a measurement's files are still arriving, it says so in the
+prompt and lets the agent work around it rather than refusing, because you
+asked for the session and may know something the timestamps do not.
+
+If you want the waiting *and* a single session — the usual beamtime shape,
+"analyse this one as soon as it is complete, then stop":
+
+```bash
+nrw agent watch Sample4 --max-sessions 1
+```
+
+That polls until the measurement has settled, runs one session, and returns
+immediately afterwards rather than sitting out another poll interval.
+
 The prompt and the full transcript are kept under `.nrw/agent/`. Options:
 
 | | |

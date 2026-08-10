@@ -363,6 +363,48 @@ def test_the_prompt_carries_the_task_and_the_limits(tmp_path: Path) -> None:
     assert session.ESCALATIONS in composed.prompt
 
 
+def test_a_one_shot_session_is_warned_about_data_still_arriving(
+    tmp_path: Path,
+) -> None:
+    """`nrw agent run` is most often typed because a measurement just
+    finished --- and a steady-state measurement is three angle segments
+    written minutes apart, so the third can still be on its way. The watcher
+    would not start here at all; a person may, so they are told.
+    """
+    import os
+    import time
+
+    sample = tmp_path / "samples" / "S1"
+    (sample / "data" / "steady").mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_WITH_TASK, encoding="utf-8")
+    fresh = sample / "data" / "steady" / "REFL_218386_1_218386_partial.txt"
+    fresh.write_text("# Meta:\n#    theta=0.3\n# Q R dR dQ\n0.01 1 0.01 1e-4\n")
+    now = time.time()
+    os.utime(fresh, (now, now))
+
+    composed = session.compose(tmp_path, "S1")
+
+    arriving = [b for b in composed.observations if "STILL ARRIVING" in b]
+    assert arriving, composed.observations
+    assert "218386" in arriving[0]
+
+
+def test_a_settled_measurement_produces_no_arriving_warning(tmp_path: Path) -> None:
+    """A warning that fires on every session is one nobody reads."""
+    import os
+
+    sample = tmp_path / "samples" / "S1"
+    (sample / "data" / "steady").mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_WITH_TASK, encoding="utf-8")
+    old = sample / "data" / "steady" / "REFL_218386_1_218386_partial.txt"
+    old.write_text("# Meta:\n#    theta=0.3\n# Q R dR dQ\n0.01 1 0.01 1e-4\n")
+    os.utime(old, (1000.0, 1000.0))
+
+    composed = session.compose(tmp_path, "S1")
+
+    assert not [b for b in composed.observations if "STILL ARRIVING" in b]
+
+
 def test_a_broken_check_does_not_stop_the_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
