@@ -1593,3 +1593,43 @@ The test fixtures build specs from a YAML template, and YAML flow style is
 and raises `KeyError: 'name'` on. Every fixture failed at once, which at least
 made it obvious. Use `.replace()` with explicit sentinels for anything
 templating a language that uses braces.
+
+### 2026-08-10: "is this SLD reached anywhere in the profile" is nearly vacuous
+
+The check for a layer swallowed by its own interfaces was first written as
+"does the fitted profile come within a slack of this layer's SLD". It never
+fired, and it never could have: a profile is a continuous curve from the
+ambient to the substrate, so it passes through **every** intermediate value on
+the way. Asking whether 4.005 appears somewhere between -1.94 and 6.31 is
+asking whether the curve is continuous.
+
+The criterion the real analysis actually derived is arithmetic on the layer
+table, not the curve: ``sigma_top + sigma_bot`` against ``t``. On the fit whose
+oxide was an artefact that reads 20 + 12.99 = 32.99 against 21.29 --- 1.55x its
+own thickness --- which is the finding, reproduced exactly and in one
+subtraction.
+
+Two traps on the way there, both silent:
+
+- The roughnesses belong to different rows. ``sigma_top`` of a layer is the
+  *previous* row's interface; ``sigma_bot`` is its own.
+- ``read_slabs`` renames bumps' ``interface`` column to ``roughness``. Reading
+  the original name returns the ``0.0`` default, so the sum was always zero and
+  the check was silently inert. A `.get` with a default is how a check quietly
+  stops checking.
+
+Also worth recording: attainment must be judged **per state**. In that
+co-refinement OCV1's oxide was swallowed at 21.3 A while OCV2's, at 48.3 A, was
+fine. A fit-wide test sees one state attain the value and says nothing.
+
+### 2026-08-10: a free parameter's nominal value is only where the fit started
+
+The same check, in an earlier form, compared the profile against the SLD
+declared in the spec's ``materials`` block. That flagged Ti as absent from the
+promoted fit --- declared -1.978, fitted -1.662, profile minimum -1.62. The
+layer was present and correct; the comparison was against a number the fit had
+been free to leave behind.
+
+When a parameter is fitted, the fitted value is what the result claims. The
+declaration is a starting point, and testing a result against it asks whether
+the fit moved, not whether the answer is sound.

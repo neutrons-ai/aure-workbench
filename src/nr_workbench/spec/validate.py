@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from nr_workbench.spec.models import ModelSpec
+from nr_workbench.spec.models import Layer, ModelSpec
 from nr_workbench.spec.resolve import ParameterTable
 
 #: Warn when free parameters outnumber data points by more than this. A fit
@@ -178,14 +178,49 @@ def _check_series_times(table: ParameterTable, report: ValidationReport) -> None
 def _check_unfitted(
     spec: ModelSpec, table: ParameterTable, report: ValidationReport
 ) -> None:
-    """Note layers left entirely at their starting values."""
-    touched = {slot.path.owner for slot in table.slots}
-    # The substrate is conventionally fixed, so silence is expected there.
-    candidates = [layer.name for layer in spec.stack[:-1] if layer.name not in touched]
-    if candidates:
-        report.info.append(
-            f"layer(s) held at their starting values: {', '.join(candidates)}"
+    """Note the attributes left at their starting values.
+
+    Per attribute, not per layer. Testing whole layers is what let the real
+    failure through: `cu-thf-coref-ocv1-ocv2.yaml` declared `dTHF.rho` and not
+    `dTHF.roughness`, so the layer counted as touched and the roughness stayed
+    at the 20 A the scaffold wrote. *"Nobody chose it."* That one unexamined
+    number swallowed the oxide in the state below it, and every fit downstream
+    imported the result as a constant.
+
+    Reported at info, with the value, because fixing an attribute is normal
+    and deliberate --- what is not normal is not knowing you did.
+    """
+    touched = {(slot.path.owner, slot.path.attr) for slot in table.slots}
+
+    held: list[str] = []
+    for index, layer in enumerate(spec.stack):
+        # The substrate is conventionally fixed; the ambient has no thickness.
+        if index == len(spec.stack) - 1:
+            continue
+        attributes = (
+            ["roughness", "rho"] if index == 0 else ["thickness", "roughness", "rho"]
         )
+        for attr in attributes:
+            if (layer.name, attr) in touched:
+                continue
+            value = _starting_value(spec, layer, attr)
+            held.append(
+                f"{layer.name}.{attr}={value:g}"
+                if value is not None
+                else f"{layer.name}.{attr}"
+            )
+
+    if held:
+        report.info.append("held at their starting values: " + ", ".join(held))
+
+
+def _starting_value(spec: ModelSpec, layer: Layer, attr: str) -> float | None:
+    """What an unfitted attribute will actually be during the fit."""
+    if attr in {"thickness", "roughness"}:
+        return float(getattr(layer, attr, 0.0) or 0.0)
+    material = spec.materials.get(layer.material_key)
+    rho = getattr(material, "rho", None) if material else None
+    return float(rho) if rho is not None else None
 
 
 def _note_escape_hatches(spec: ModelSpec, report: ValidationReport) -> None:

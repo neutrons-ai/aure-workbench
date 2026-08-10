@@ -387,3 +387,150 @@ def test_assess_json_carries_every_finding(
     assert payload["schema"] == "nrw-fit-assessment/1"
     assert payload["fit_id"] == fit_id
     assert isinstance(payload["findings"], list)
+
+
+# --------------------------------------------------------------------------
+# Degeneracy and layer coherence
+# --------------------------------------------------------------------------
+
+
+def write_slabs(
+    directory: Path, name: str, rows: list[tuple[float, float, float]]
+) -> None:
+    """Write a bumps `-slabs.dat`: thickness, interface, rho, irho."""
+    fit = directory / "fit"
+    fit.mkdir(parents=True, exist_ok=True)
+    (fit / name).write_text(
+        "# thickness interface rho irho\n"
+        + "".join(f"{t} {i} {r} 0\n" for t, i, r in rows),
+        encoding="utf-8",
+    )
+
+
+SPEC_YAML = """\
+schema: nrw-model/1
+name: m
+sample: S1
+materials: {A: {rho: 6.0}, CuOx: {rho: 4.0}, Cu: {rho: 6.3}, Si: {rho: 2.07}}
+stack:
+  - {name: A, thickness: 0, roughness: 20}
+  - {name: CuOx, thickness: 21, roughness: 13}
+  - {name: Cu, thickness: 486, roughness: 5}
+  - {name: Si}
+probe: {resolution: angular_only, dq_is_fwhm: true}
+states: [{name: s1, run: 100001, segments: auto, thetas: [0.45]}]
+parameters: [{path: CuOx.thickness, range: [10, 80], per: state}]
+"""
+
+
+def test_a_layer_thinner_than_its_own_interfaces_is_flagged(tmp_path: Path) -> None:
+    """The real failure, with its real numbers: an oxide of 21.29 A between
+    interfaces of 20 and 12.99, summing to 1.55x its own thickness. It is two
+    overlapping error functions, not a slab, so its SLD occurs nowhere in the
+    structure -- and chi-squared cannot see that.
+    """
+    write_fit(tmp_path, par={}, bounds={})
+    (tmp_path / "spec.yaml").write_text(SPEC_YAML, encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"info": {"models": [{"index": 1, "name": "run218386#0"}]}}),
+        encoding="utf-8",
+    )
+    write_slabs(
+        tmp_path,
+        "m-1-slabs.dat",
+        [(0, 20, 5.88), (21.2925, 12.989, 4.0047), (486.5, 5.05, 6.30), (0, 0, 2.07)],
+    )
+
+    findings = check(tmp_path, manifest()).findings
+
+    flagged = [f for f in findings if f.kind == "layer-swallowed"]
+    assert [f.parameter for f in flagged] == ["run218386 CuOx"]
+    assert "1.55x" in flagged[0].message
+    assert "32.99" in flagged[0].message
+
+
+def test_a_layer_thicker_than_its_interfaces_is_not_flagged(tmp_path: Path) -> None:
+    """The other state of the same real fit: at 48 A the oxide is fine."""
+    write_fit(tmp_path, par={}, bounds={})
+    (tmp_path / "spec.yaml").write_text(SPEC_YAML, encoding="utf-8")
+    write_slabs(
+        tmp_path,
+        "m-1-slabs.dat",
+        [(0, 8, 5.88), (48.3, 14.1, 4.0), (486.5, 5.05, 6.30), (0, 0, 2.07)],
+    )
+
+    assert [
+        f for f in check(tmp_path, manifest()).findings if f.kind == "layer-swallowed"
+    ] == []
+
+
+def test_correlated_parameters_are_reported_with_the_strongest_first(
+    tmp_path: Path,
+) -> None:
+    """Two parameters at r = 0.94 have one measured combination between them,
+    so quoting both with their own intervals claims two measurements where
+    there was one."""
+    import gzip
+
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    base = rng.normal(size=400)
+    # a and b nearly collinear; c independent
+    draws = np.column_stack(
+        [
+            np.zeros(400),  # column 0 is the log-likelihood
+            base,
+            base * 2 + rng.normal(scale=0.1, size=400),
+            rng.normal(size=400),
+        ]
+    )
+    write_fit(
+        tmp_path,
+        par={},
+        bounds={},
+        err={
+            "a": {"index": 0, "best": 0.0},
+            "b": {"index": 1, "best": 0.0},
+            "c": {"index": 2, "best": 0.0},
+        },
+    )
+    with gzip.open(tmp_path / "fit" / "m-point.mc.gz", "wt") as handle:
+        np.savetxt(handle, draws)
+
+    findings = check(tmp_path, manifest()).findings
+
+    flagged = [f for f in findings if f.kind == "correlated"]
+    assert len(flagged) == 1
+    assert "a <-> b" in flagged[0].message
+    assert "c" not in flagged[0].message.split("Each pair")[0].replace("correlated", "")
+
+
+def test_uncorrelated_parameters_produce_nothing(tmp_path: Path) -> None:
+    import gzip
+
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    draws = np.column_stack([np.zeros(400), rng.normal(size=(400, 2))])
+    write_fit(
+        tmp_path,
+        par={},
+        bounds={},
+        err={"a": {"index": 0, "best": 0.0}, "b": {"index": 1, "best": 0.0}},
+    )
+    with gzip.open(tmp_path / "fit" / "m-point.mc.gz", "wt") as handle:
+        np.savetxt(handle, draws)
+
+    assert [
+        f for f in check(tmp_path, manifest()).findings if f.kind == "correlated"
+    ] == []
+
+
+def test_no_chain_means_no_correlation_opinion(tmp_path: Path) -> None:
+    """An optimiser run has no posterior, which is absence of information."""
+    write_fit(tmp_path, par={"a": 1.0}, bounds={})
+
+    assert [
+        f for f in check(tmp_path, manifest()).findings if f.kind == "correlated"
+    ] == []

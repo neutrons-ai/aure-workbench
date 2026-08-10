@@ -46,6 +46,27 @@ BOUND_TOLERANCE = 0.01
 #: the fit is reporting the range it was given back to you.
 UNCONSTRAINED_FRACTION = 0.75
 
+#: Above this, two parameters are trading against each other rather than each
+#: being measured. `thin-layer-degeneracy` calls the (rho, t) ridge the thing
+#: to look for, and the real analysis turned on exactly these numbers: an
+#: r = -0.93 pair that made a thickness interchangeable with a solvent
+#: interface, and an r = +0.97 pair broken only by fixing one side.
+CORRELATION_THRESHOLD = 0.8
+
+#: How many correlated pairs to name before summarising the rest. Eight free
+#: parameters produced ten pairs on the real fit; listing all of them buries
+#: the strongest.
+MAX_PAIRS_REPORTED = 5
+
+#: Draw a chain down to about this many rows before correlating. A posterior
+#: correlation does not need half a million draws, and the largest chain in
+#: the real corpus is 298 MB.
+CORRELATION_SAMPLE_ROWS = 40_000
+
+#: A layer counts as reaching its nominal SLD if the profile comes within this
+#: much of it, in 1e-6 A^-2.
+ATTAINMENT_SLACK = 0.05
+
 
 @dataclass
 class Finding:
@@ -319,6 +340,9 @@ def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
             )
         )
 
+    result.findings.extend(_correlation_findings(fit_dir))
+    result.findings.extend(_attainment_findings(fit_dir))
+
     spread = per_model_chisq(fit_dir)
     if len(spread) > 1:
         worst = max(spread.items(), key=lambda kv: kv[1])
@@ -336,6 +360,222 @@ def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
                 )
             )
     return result
+
+
+def read_chain(fit_dir: Path) -> tuple[Any, list[str]]:
+    """Read the posterior draws and the parameter names of their columns.
+
+    Column 0 of a bumps ``-point.mc.gz`` is the log-likelihood; the parameter
+    columns follow in the order ``-err.json`` records as ``index``. That
+    ordering is the file's own and must not be re-derived --- reading it wrong
+    silently correlates the wrong quantities.
+
+    Args:
+        fit_dir: The result directory.
+
+    Returns:
+        ``(draws, names)``, or ``(None, [])`` when there is no chain.
+    """
+    import numpy as np
+
+    stats = read_uncertainty(fit_dir)
+    if not stats:
+        return None, []
+    names = sorted(
+        (n for n in stats if isinstance(stats[n].get("index"), int)),
+        key=lambda n: stats[n]["index"],
+    )
+    if not names:
+        return None, []
+
+    chain = next(iter(sorted((fit_dir / "fit").glob("*-point.mc.gz"))), None)
+    if chain is None:
+        return None, []
+    try:
+        draws = np.loadtxt(chain)
+    except (OSError, ValueError):
+        return None, []
+    if draws.ndim != 2 or draws.shape[1] < len(names) + 1:
+        return None, []
+
+    columns = draws[:, 1 : 1 + len(names)]
+    if len(columns) > CORRELATION_SAMPLE_ROWS:
+        # Stride rather than truncate: the head of a chain is not the
+        # posterior, and a correlation from it would be the burn-in's.
+        stride = len(columns) // CORRELATION_SAMPLE_ROWS + 1
+        columns = columns[::stride]
+    return columns, names
+
+
+def _correlation_findings(fit_dir: Path) -> list[Finding]:
+    """Parameter pairs the data cannot separate.
+
+    A strong correlation is not a defect --- it is the honest shape of the
+    posterior --- but it changes what may be quoted. Two parameters at r = 0.94
+    have one measured combination between them, and reporting each with its own
+    interval claims two measurements where there was one.
+    """
+    import numpy as np
+
+    draws, names = read_chain(fit_dir)
+    if draws is None or len(names) < 2 or len(draws) < 3:
+        return []
+
+    with np.errstate(invalid="ignore", divide="ignore"):
+        matrix = np.corrcoef(draws, rowvar=False)
+    if not np.ndim(matrix):
+        return []
+
+    pairs = []
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            r = float(matrix[i][j])
+            if np.isfinite(r) and abs(r) >= CORRELATION_THRESHOLD:
+                pairs.append((abs(r), r, names[i], names[j]))
+    if not pairs:
+        return []
+
+    pairs.sort(reverse=True)
+    shown = pairs[:MAX_PAIRS_REPORTED]
+    listing = "; ".join(f"{a} <-> {b} (r={r:+.2f})" for _, r, a, b in shown)
+    remainder = (
+        f" and {len(pairs) - len(shown)} more pair(s) above {CORRELATION_THRESHOLD}"
+        if len(pairs) > len(shown)
+        else ""
+    )
+    return [
+        Finding(
+            kind="correlated",
+            severity="warn",
+            parameter=shown[0][2],
+            message=(
+                f"{len(pairs)} parameter pair(s) are correlated above "
+                f"{CORRELATION_THRESHOLD}: {listing}{remainder}. Each pair has "
+                "one measured combination between them, so quoting both with "
+                "their own intervals claims more measurements than were made."
+            ),
+        )
+    ]
+
+
+def _attainment_findings(fit_dir: Path) -> list[Finding]:
+    """Layers the fit dissolved into their own interfaces.
+
+    A slab whose two roughnesses sum to more than its thickness is not a slab:
+    it is two overlapping error functions, its nominal SLD occurs nowhere in
+    the structure, and the value reported for it describes a shape that is not
+    there. Chi-squared cannot see it --- the analyst wrote the check as a
+    manual TODO in his own spec header --- but the exported layer table can.
+
+    Tested on the *fitted* table rather than the profile curve, because a
+    profile passes through every intermediate value on its way between layers,
+    so asking "is this SLD reached anywhere" is nearly always yes. The
+    criterion the real analysis derived is arithmetic:
+    ``sigma_top + sigma_bot`` against ``t``.
+
+    Per state, because that is how it presented: OCV1's oxide was swallowed
+    (21.3 A of layer between interfaces summing to 33.0) while OCV2's, at
+    48.3 A, was fine.
+    """
+    from nr_workbench.web.trajectory import read_slabs
+
+    layers = _stack_layers(fit_dir)
+    by_index = _model_names(fit_dir)
+
+    findings: list[Finding] = []
+    seen: set[str] = set()
+    for path in sorted((fit_dir / "fit").glob("*-slabs.dat")):
+        model = by_index.get(_slab_index(path), "")
+        state = model.split("#", 1)[0] if model else ""
+        try:
+            slabs = read_slabs(path)
+        except (OSError, ValueError):
+            continue
+        if len(slabs) < 3:
+            continue
+
+        for row, slab in enumerate(slabs):
+            # Row 0 is the ambient and the last is the substrate; neither has
+            # a thickness to be swallowed.
+            if row in {0, len(slabs) - 1}:
+                continue
+            name = layers[row - 1] if row - 1 < len(layers) else f"layer {row}"
+            key = f"{state} {name}".strip()
+            if key in seen:
+                continue
+
+            # `read_slabs` renames bumps' `interface` column to `roughness`;
+            # reading the original name silently yields zero and the check
+            # never fires.
+            thickness = float(slab.get("thickness", 0.0))
+            top = float(slabs[row - 1].get("roughness", 0.0))
+            bottom = float(slab.get("roughness", 0.0))
+            if thickness <= 0 or top + bottom <= thickness:
+                continue
+
+            seen.add(key)
+            findings.append(
+                Finding(
+                    kind="layer-swallowed",
+                    severity="warn",
+                    parameter=key,
+                    value=thickness,
+                    message=(
+                        f"{name} fitted to {thickness:.4g} A with interfaces of "
+                        f"{top:.4g} and {bottom:.4g} A, which sum to "
+                        f"{top + bottom:.4g} -- {(top + bottom) / thickness:.2f}x "
+                        "its own thickness. It is two overlapping error "
+                        "functions rather than a slab, so its SLD occurs "
+                        "nowhere in the structure and the value reported for "
+                        "it describes a shape that is not there."
+                    ),
+                )
+            )
+    return findings
+
+
+def _stack_layers(fit_dir: Path) -> list[str]:
+    """The named layers between the ambient and the substrate."""
+    stack = _frozen_spec(fit_dir).get("stack") or []
+    return [
+        str(layer.get("name"))
+        for index, layer in enumerate(stack)
+        if isinstance(layer, dict) and index not in {0, len(stack) - 1}
+    ]
+
+
+def _frozen_spec(fit_dir: Path) -> dict[str, Any]:
+    """The spec frozen into the fit directory, or an empty mapping."""
+    path = fit_dir / "spec.yaml"
+    if not path.is_file():
+        return {}
+    try:
+        import yaml
+
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - a spec we cannot read is not a finding
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _model_names(fit_dir: Path) -> dict[int, str]:
+    """Export index to model name, from the fit's manifest."""
+    try:
+        manifest = json.loads((fit_dir / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    models = (manifest.get("info") or {}).get("models") or []
+    return {
+        int(m["index"]): str(m.get("name", ""))
+        for m in models
+        if isinstance(m, dict) and isinstance(m.get("index"), int)
+    }
+
+
+def _slab_index(path: Path) -> int:
+    """The export position in ``<stem>-<i>-slabs.dat``, or -1."""
+    match = re.search(r"-(\d+)-slabs\.dat$", path.name)
+    return int(match.group(1)) if match else -1
 
 
 def _bound_findings(
