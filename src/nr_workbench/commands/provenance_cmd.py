@@ -13,6 +13,7 @@ from typing import Any
 
 import click
 
+from nr_workbench.agent.guard import refuse_if_agent
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import EVENT_PROMOTE, FitIndex
 from nr_workbench.provenance.lookup import (
@@ -352,6 +353,8 @@ def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) ->
     """
     layout = _layout()
     index = FitIndex(layout.index_file)
+
+    refuse_if_agent("promote")
 
     if not reason.strip():
         raise click.ClickException(

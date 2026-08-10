@@ -1663,3 +1663,114 @@ Together those say what the checks are for: they re-derive the *specific*
 observations a human made from the same files, and they do not rank. Ranking
 was the part that needed judgement, and the evidence that chi-squared ranks
 this corpus backwards is the reason not to automate it.
+
+### 2026-08-10: an instruction is not a mechanism, and one mechanism is not two
+
+The unattended-session work (`nrw agent run`, `nrw agent watch`) is built
+around a distinction that is easy to blur in a prompt: telling a model not to
+promote a fit is a *request*, and a `PreToolUse` hook that exits 2 is a
+*limit*. Only the second survives a model that decides the rule does not apply.
+
+Both are implemented, and they are independent on purpose:
+
+- the hook in the scaffolded `.claude/settings.json`, which refuses before the
+  command runs, and
+- `NRW_AGENT=1`, which `nrw agent run` sets on the session itself, and which
+  makes `nrw` refuse from the inside.
+
+A hook can be misconfigured and an environment variable can be unset, but both
+failing silently at once is a different order of accident. Neither is a
+sandbox; they stop the plausible mistake, which is the one that happens.
+
+Three details cost real thought:
+
+**Judge every segment of a command line.** `nrw ls && nrw promote abc` reads as
+allowed if you look only at the first command. The guard splits on
+`&& || ; | &` before judging. A mutation test confirms it: judging only the
+first segment fails three cases.
+
+**Fail *open* on an unreadable hook payload.** The first version returned a
+block when the JSON would not parse. That makes our own bug into a project that
+cannot run any Bash command at all. An unreadable payload is our fault, and the
+second mechanism still holds.
+
+**`--force` is a refusal, not a nuisance flag.** Every forcing flag in this
+codebase exists because a check said no. An agent reaching for one has arrived
+at exactly the situation a person is meant to see, so it is blocked with the
+same weight as promotion.
+
+Every refusal names `ESCALATIONS.md`. An agent told only "no" retries; one told
+where to write the decision stops.
+
+### 2026-08-10: the daemon's three questions, and why readiness is per-run but a session is per-sample
+
+`nrw agent watch` asks only: has this measurement finished arriving, is it
+trustworthy, and has anybody looked at it. Two findings from building it:
+
+**Readiness is per-run, a session is per-sample.** Run 218389 in the reference
+corpus is simultaneously quarantined (its stray whole-run reduction sits in
+`data/steady/`) and ready (the real 130-slice series is complete). The watcher
+correctly reports both --- so `Verdict.kind` is part of the identity, not a
+label. But a session started for `expt11` would then be free to fit the
+poisoned copy, so `session._observe_quarantine` runs the same check and names
+the run in the prompt under "DO NOT FIT". The scheduler and the session have to
+agree, and the only way to guarantee that is to share the function.
+
+**"Already analysed" is read from the index, never from a state file.** A state
+file is a second source of truth that goes stale the first time the scientist
+fits something by hand, after which the daemon repeats work that is already
+done. That is not a safety failure --- it is the fastest route to the failure
+that actually matters, which is output nobody reads.
+
+The output budget (`MAX_REPORT_WORDS`) is asserted in
+`tests/test_agent_watch.py`, not exposed as a setting, for the same reason:
+forty individually defensible records are collectively unreadable, and once the
+scientist stops reading, every other safety property is a formality.
+
+### 2026-08-10: a command-line guard must read the whole line, and a six-digit number is not a run number
+
+Two defects found by reviewing the unattended-agent work, both of the same
+shape: a recogniser that looked at part of its input and was confident about
+the rest.
+
+**The guard split tokens, not text, and looked only at the first three words.**
+`shlex.split` keeps `ls;` as one token and treats a newline as ordinary
+whitespace, so a token-level split never separated the commands at all. Every
+one of these performed a refused action and was *allowed*:
+
+```
+if true; then nrw promote abc --reason x; fi
+for f in *.py; do nrw fit run $f --force; done
+cd samples/S1; ls; nrw fit run m.py --force
+git add -A⏎nrw promote abc
+A=1 nrw promote abc
+python -m nr_workbench.cli promote abc
+```
+
+None is obfuscation. They are what batched shell work looks like when a model
+writes it, and `then`/`do`/`cd`/an env-var prefix each push the real command
+past any fixed window. The fix is to split the **raw string** on `\n;&|()`
+quote-aware, before tokenising, and to scan **every** token for the invocation
+rather than the first few. The positional window bought nothing a whole-segment
+scan does not.
+
+Related: failing open on a `shlex` parse error was too generous. `shlex` is not
+bash — `$'it\'s'` raises there and runs fine in a shell. Now an unparseable
+segment falls back to a raw-text check and is only allowed when it names
+nothing refusable.
+
+**A regex for six digits found the subrun as well as the run.** The watcher
+decided "already fitted" by pulling every `\d{6}` out of each recorded input
+path. `REFL_218386_2_218387_partial.txt` contains two: run 218386 and subrun
+218387. At a beamline that numbers consecutively, 218387 is also a real,
+separate, unfitted measurement — so recording one three-segment fit marked its
+two neighbours as done and the daemon skipped them without saying anything.
+
+The rule: **when a project already owns a filename grammar, never re-derive its
+fields with a looser pattern.** `project/scan.py` has `PARTIAL_RE` with a named
+`run` group, and it was already imported two functions away.
+
+Both bugs were invisible in normal use, which puts them with the two worst
+found so far in this repo (data files missing from the wheel, `init` not being
+idempotent). All four share a signature: the code produced a plausible answer
+and no error.

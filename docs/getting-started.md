@@ -30,7 +30,7 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   59 file(s)
+  create   60 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe

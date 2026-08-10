@@ -318,6 +318,10 @@ def _validate(records: Path) -> None:
 
 def _upload(records: Path, *, validate_only: bool, yes: bool) -> None:
     """Push to the ISAAC Portal, after saying what is about to leave."""
+    from nr_workbench.agent.guard import refuse_if_agent
+
+    refuse_if_agent("upload")
+
     written = sorted(records.glob("*.json"))
     if not written:
         raise click.ClickException("No records to upload.")

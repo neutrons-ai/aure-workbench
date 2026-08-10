@@ -29,6 +29,20 @@ def main() -> None:
     beamtime folder), then `nrw sample new <ID>` and copy your reduced data
     into the sample's data/ folders.
     """
+    # Every forcing flag in this tool exists because a check said no, so an
+    # unattended run may not use any of them. Checked here rather than in each
+    # command: there are eight of them today and the next one would be added
+    # without remembering this, which is precisely how a limit becomes a
+    # limit-shaped comment.
+    import os
+    import sys
+
+    if os.environ.get("NRW_AGENT") and any(
+        arg == "--force" or arg.startswith("--force=") for arg in sys.argv[1:]
+    ):
+        from nr_workbench.agent.guard import refuse_if_agent
+
+        refuse_if_agent("force")
 
 
 @main.command("init")
@@ -265,6 +279,14 @@ def fit_group() -> None:
     is_flag=True,
     help="Let bumps render its PNGs (off by default; it runs before the chain "
     "is saved, so a failure costs the uncertainty output).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the fit record as JSON. The write path had no machine-readable "
+    "output, so a driver could not tell whether a fit succeeded except by "
+    "re-reading the index.",
 )
 @click.option("--note", default=None, help="Free-text note stored in the record.")
 @click.option(
@@ -556,6 +578,196 @@ def isaac_export_command(**kwargs: object) -> None:
     from nr_workbench.commands.isaac_cmd import run_export
 
     run_export(**kwargs)  # type: ignore[arg-type]
+
+
+@main.group("agent")
+def agent_group() -> None:
+    """Run and constrain an unattended analysis harness."""
+
+
+@agent_group.command("guard")
+@click.option(
+    "--command",
+    default=None,
+    help="Judge this command [default: read a PreToolUse payload from stdin].",
+)
+def agent_guard_command(command: str | None) -> None:
+    """Refuse the commands an unattended agent must not run.
+
+    Wired into a project's `.claude/settings.json` as a PreToolUse hook, so
+    the refusal happens before the command executes rather than depending on
+    the model agreeing. Exits 2 to block, 0 to allow.
+    """
+    from nr_workbench.agent.guard import run_guard
+
+    run_guard(command)
+
+
+@agent_group.command("run")
+@click.argument("sample")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Compose the prompt and print it; start no session.",
+)
+@click.option(
+    "--turns",
+    default=None,
+    type=int,
+    help="Cap on harness turns [default: 60].",
+)
+@click.option("--model", default=None, help="Model to run [default: the harness's].")
+@click.option(
+    "--timeout",
+    default=None,
+    type=int,
+    help="Seconds before the session is killed [default: none].",
+)
+def agent_run_command(
+    sample: str,
+    dry_run: bool,
+    turns: int | None,
+    model: str | None,
+    timeout: int | None,
+) -> None:
+    """Run one unattended analysis session over SAMPLE.
+
+    The task comes from `## Fits to perform` in the sample's notes; with
+    nothing written there this refuses to start, because deciding what is
+    worth fitting is the one thing an unattended session must not do.
+    """
+    from nr_workbench.agent.session import DEFAULT_TURNS, SessionError, compose
+    from nr_workbench.agent.session import run as run_session
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        if dry_run:
+            session = compose(root, sample)
+            click.echo(session.prompt)
+            return
+        session = run_session(
+            root,
+            sample,
+            turns=DEFAULT_TURNS if turns is None else turns,
+            model=model,
+            timeout=timeout,
+        )
+    except SessionError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    where = session.transcript.relative_to(root) if session.transcript else "?"
+    click.echo(f"Session finished (exit {session.returncode}); transcript {where}")
+    escalations = root / "ESCALATIONS.md"
+    if escalations.is_file():
+        click.echo(
+            f"  ! {escalations.name} exists -- read it before promoting anything"
+        )
+
+
+@agent_group.command("watch")
+@click.argument("samples", nargs=-1)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report what each measurement is waiting for; start nothing.",
+)
+@click.option(
+    "--settle",
+    default=None,
+    type=int,
+    help="Seconds a measurement's files must be unchanged [default: 300].",
+)
+@click.option(
+    "--poll", default=None, type=int, help="Seconds between polls [default: 60]."
+)
+@click.option(
+    "--max-sessions",
+    default=None,
+    type=int,
+    help="Stop after this many sessions [default: run until interrupted].",
+)
+@click.option(
+    "--session-timeout",
+    default=None,
+    type=int,
+    help="Seconds before one session is killed [default: 7200].",
+)
+@click.option("--turns", default=None, type=int, help="Cap on turns per session.")
+@click.option("--model", default=None, help="Model to run [default: the harness's].")
+def agent_watch_command(
+    samples: tuple[str, ...],
+    dry_run: bool,
+    settle: int | None,
+    poll: int | None,
+    max_sessions: int | None,
+    session_timeout: int | None,
+    turns: int | None,
+    model: str | None,
+) -> None:
+    """Watch SAMPLES for settled measurements and analyse each once.
+
+    A scheduler, not a second decision-maker: it decides *when* a session
+    starts and over what, and `nrw agent run` does the rest. A measurement is
+    started only when its files have stopped changing, its segments are
+    coherent, and nothing has fitted it yet.
+
+    With no SAMPLES, every sample in the project is watched.
+    """
+    from nr_workbench.agent import watch as watcher
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    try:
+        layout = ProjectLayout.discover()
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    chosen = list(samples) or layout.list_samples()
+    if not chosen:
+        raise click.ClickException("No samples yet; run `nrw sample new <ID>`.")
+
+    settle_seconds = watcher.DEFAULT_SETTLE_SECONDS if settle is None else settle
+
+    if dry_run:
+        found = watcher.once(
+            layout.root, chosen, watcher.WatchState(), settle_seconds=settle_seconds
+        )
+        for sample, verdicts in found.items():
+            click.echo(sample)
+            for verdict in verdicts:
+                mark = "\u2192" if verdict.ready else " "
+                click.echo(
+                    f"  {mark} run {verdict.run} ({verdict.kind})  "
+                    f"{verdict.state:<12} {verdict.reason}"
+                )
+        return
+
+    try:
+        started = watcher.watch(
+            layout.root,
+            chosen,
+            settle_seconds=settle_seconds,
+            poll_seconds=watcher.DEFAULT_POLL_SECONDS if poll is None else poll,
+            max_sessions=max_sessions,
+            session_timeout=(
+                watcher.DEFAULT_SESSION_TIMEOUT
+                if session_timeout is None
+                else session_timeout
+            ),
+            turns=turns,
+            model=model,
+            on_event=click.echo,
+        )
+    except KeyboardInterrupt:
+        # Ctrl-C is how this is meant to be stopped, so it reports rather than
+        # printing a traceback over whatever the last session said.
+        click.echo("\nStopped.")
+        return
+    click.echo(f"{started} session(s) run.")
 
 
 @main.command("assess")

@@ -97,11 +97,40 @@ the measurements themselves at the paths the frozen script expects, plus a
 chi-squared against the value it should get. The recipient needs refl1d, bumps
 and numpy.
 
+## Running unattended
+
+During a beamtime, data keeps arriving and nobody is watching. nr-workbench can
+hand each settled measurement to a coding harness and let it work:
+
+```bash
+nrw agent watch --dry-run     # what each measurement is waiting for
+nrw agent watch               # analyse each one as it settles
+nrw agent run Sample4         # or one session, by hand
+```
+
+It contains no decision policy, deliberately. We measured against a week of
+expert analysis with the findings written down as they happened: of 17
+findings, 1 was reachable by arithmetic and 11 needed judgement, and
+chi-squared ranks that corpus *backwards* — both promoted fits are worse in
+chi-squared than the best in their arm. So the harness decides, and this
+package supplies what has to exist around it: the offline checks it reads
+first, limits it cannot talk past (`promote`, `--upload` and `--force` are
+refused by a `PreToolUse` hook *and* by `nrw` itself under `NRW_AGENT=1`), a
+bounded session, and a transcript.
+
+A session refuses to start unless `## Fits to perform` in the sample's notes
+says what you want. Deciding that is the one thing it must not do for itself.
+
+**[docs/agent.md](docs/agent.md) is the setup guide**, including what is
+enforced and what is only asked for.
+
 ## Status
 
-Early. Milestone 0 (scaffold and skills) and Milestone 1 (the provenance spine)
-are implemented. The model spec and generator, the tNR assessment tools, and
-the web UI are next. See [docs/project.md](docs/project.md).
+Working. The scaffold and skills, the provenance spine, the tNR assessment
+tools, the model spec and generator, the web UI, and the data tools are all
+implemented, along with `nrw pack`, `nrw note`, `nrw assess`, `nrw isaac
+export` and the unattended agent above. See
+[docs/project.md](docs/project.md) for the original requirement.
 
 ## Development
 

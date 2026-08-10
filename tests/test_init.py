@@ -28,6 +28,10 @@ EXPECTED_SCAFFOLD_FILES = {
     ".gitignore",
     ".vscode/extensions.json",
     ".vscode/settings.json",
+    # The limits an assistant works under. Two independent mechanisms: this
+    # deny list plus a PreToolUse hook, because an instruction to a model is
+    # a request and only a hook is a limit.
+    ".claude/settings.json",
     "CLAUDE.md",
     "README.md",
     "docs/ground_truths.md",

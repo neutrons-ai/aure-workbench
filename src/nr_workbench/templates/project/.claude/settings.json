@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "Limits for an assistant working in this project. The deny list and the",
+    "hook are two independent mechanisms, and `nrw` refuses the same three",
+    "actions from the inside when NRW_AGENT=1 -- because an instruction to a",
+    "model is a request, and only a hook is a limit.",
+    "",
+    "promote: marking a fit as the answer is a person's decision, and the",
+    "reason recorded with it is what a reader needs in a year.",
+    "--upload: a record on a shared portal is not straightforwardly",
+    "retractable.",
+    "--force: every forcing flag here exists because a check said no.",
+    "",
+    "Edit this file if you want an assistant to have more room. It is yours."
+  ],
+  "permissions": {
+    "deny": [
+      "Bash(nrw promote:*)",
+      "Bash(nr-workbench promote:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nrw agent guard"
+          }
+        ]
+      }
+    ]
+  }
+}

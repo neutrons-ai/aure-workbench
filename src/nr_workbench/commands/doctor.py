@@ -122,7 +122,120 @@ def collect_checks() -> list[Check]:
 
     checks.extend(_llm_checks())
     checks.extend(_project_checks())
+    checks.extend(_agent_checks())
     return checks
+
+
+def _agent_checks() -> list[Check]:
+    """Report whether an unattended session could run here, and be limited.
+
+    Both halves matter and they fail independently. A project can have the
+    harness installed and no limits configured, which is worse than having
+    neither -- it is the state where `nrw agent run` works and nothing stops a
+    promotion. A project scaffolded before `.claude/settings.json` existed is
+    exactly that state, so this says so rather than staying quiet.
+    """
+    import shutil
+
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    binary = shutil.which("claude")
+    if binary:
+        version = _harness_version(binary)
+        detail = f"{version} at {binary}" if version else binary
+        checks = [Check("harness", _OK, detail)]
+    else:
+        checks = [
+            Check("harness", _MISSING, "`claude` not on PATH; `nrw agent run` needs it")
+        ]
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError:
+        return checks
+
+    settings = root / ".claude" / "settings.json"
+    if not settings.is_file():
+        checks.append(
+            Check(
+                "agent limits",
+                "warn",
+                "no .claude/settings.json; run `nrw init` to add the hook that "
+                "refuses promote, --upload and --force",
+            )
+        )
+        return checks
+
+    try:
+        configured = json.loads(settings.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        checks.append(Check("agent limits", "error", f"{settings.name}: {exc}"))
+        return checks
+
+    if not isinstance(configured, dict):
+        checks.append(
+            Check("agent limits", "error", f"{settings.name} is not a JSON object")
+        )
+        return checks
+
+    permissions = configured.get("permissions")
+    denied = len(
+        (permissions.get("deny") or []) if isinstance(permissions, dict) else []
+    )
+    where = _guard_hook_event(configured)
+
+    if where == "PreToolUse":
+        detail = f"PreToolUse hook + {denied} deny rule(s)"
+        status = _OK
+    elif where:
+        # The misconfiguration most worth naming: the hook is there, so a
+        # substring test would call this fine, but PostToolUse runs *after*
+        # the command and refuses nothing.
+        detail = f"`nrw agent guard` is on {where}, not PreToolUse -- it cannot refuse"
+        status = "warn"
+    else:
+        detail = f"{denied} deny rule(s), but no `nrw agent guard` hook"
+        status = "warn"
+
+    checks.append(Check("agent limits", status, detail))
+    return checks
+
+
+def _guard_hook_event(configured: dict[str, Any]) -> str:
+    """Which hook event runs `nrw agent guard`, or an empty string.
+
+    Walks the structure rather than searching the serialised text: a hook
+    registered under the wrong event, or matched against the wrong tool, is
+    present in the JSON and does nothing.
+    """
+    hooks = configured.get("hooks")
+    if not isinstance(hooks, dict):
+        return ""
+    for event, entries in hooks.items():
+        for entry in entries if isinstance(entries, list) else []:
+            if not isinstance(entry, dict):
+                continue
+            matcher = str(entry.get("matcher", ""))
+            if event == "PreToolUse" and "Bash" not in matcher:
+                continue
+            for hook in entry.get("hooks") or []:
+                command = str(hook.get("command", "")) if isinstance(hook, dict) else ""
+                if "agent guard" in command:
+                    return str(event)
+    return ""
+
+
+def _harness_version(binary: str) -> str | None:
+    """The installed harness version, or None if it will not say."""
+    import subprocess
+
+    try:
+        result = subprocess.run(  # noqa: S603 - argv from shutil.which
+            [binary, "--version"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip().split()[0] if result.stdout.strip() else None
 
 
 def _llm_checks() -> list[Check]:

@@ -1,0 +1,383 @@
+# Running the harness unattended
+
+Overnight during a beamtime, data keeps arriving and nobody is watching. This
+is how to set nr-workbench up so a coding harness works the queue by itself,
+and how to decide whether you want that.
+
+Read the first section even if you skip the rest. It is the part that explains
+why this looks the way it does.
+
+---
+
+## What is and is not automated
+
+nr-workbench does not contain a decision policy, and that is deliberate. We
+measured. The reference experiment — `jen-apr2025/cu-thf-expt11`, one week of
+expert analysis, 25 fits, 17 findings written down as they happened — was
+replayed against every automatic check in this package. Of the 17 findings:
+
+| | Count | Meaning |
+|---|---|---|
+| Reachable by arithmetic | 1 | A program can find it and say what it means |
+| Signal detectable, conclusion not | 5 | A program can point at it; a person says what it is |
+| Needs judgement | 11 | No artifact on disk distinguishes the right answer |
+
+Two results from that corpus say the same thing from the other side:
+
+- **χ² ranks it backwards.** Both promoted fits are *worse* in χ² than the best
+  fit in their arm (1.285 against 1.193; 1.698 against 1.411). A loop that
+  optimises χ² gets both of the decisions that produced the paper wrong. There
+  is a test asserting this so nobody builds a ranking on it later:
+  `tests/test_benchmark_expt11.py::test_the_promoted_fits_are_not_the_lowest_chi_squared`.
+- **A pinned parameter implies three different correct actions.** In one fit,
+  three parameters sat on their bounds. `Ti.rho` at −2.0 is bulk titanium and
+  widening it would have destroyed the result — it *was* the result.
+  `CuOx.rho` on its floor meant the material assignment was wrong.
+  `Cu.roughness` carried no information at all. Nothing in the artifacts tells
+  them apart.
+
+So the checks report; the harness decides; you promote. What this package adds
+around the harness is four things: **observations** it reads before it starts,
+**limits** it cannot talk past, a **bounded session**, and a **transcript**.
+
+---
+
+## Setting it up
+
+### 1. Scaffold or upgrade the project
+
+```bash
+nrw init            # in an existing project, this is safe and idempotent
+```
+
+That writes `.claude/settings.json`, which is where the limits live. A project
+scaffolded before this existed will not have it; `nrw init` adds it without
+touching anything you have edited. Check with:
+
+```bash
+nrw doctor
+```
+
+```
+  ✓ harness       2.1.156 at ~/.local/bin/claude
+  ✓ agent limits  PreToolUse hook + 2 deny rule(s)
+```
+
+Those two lines fail independently, and the combination worth noticing is a
+harness with no limits — `nrw agent run` works and nothing stops a promotion:
+
+```
+  ✓ harness       2.1.156 at ~/.local/bin/claude
+  ! agent limits  no .claude/settings.json; run `nrw init` to add the hook
+                  that refuses promote, --upload and --force
+```
+
+### 2. Say what you want fitted
+
+An unattended session reads `## Fits to perform` in the sample's `sample.md`
+and does that and nothing else. **With that section empty, `nrw agent run`
+refuses to start.** This is the most important line in the design: an agent
+that chooses for itself what is interesting is the failure everything else is
+arranged against, and the only reliable place to stop it is before it begins.
+
+Write it in words, not in spec syntax:
+
+```markdown
+## Fits to perform
+
+Co-refine the two OCV states with the tNR run measured between them. The Cu
+layer should thicken monotonically — a linear-in-time constraint on
+Cu.thickness. I do not know whether the oxide is real; try it both ways and
+tell me which the data supports.
+```
+
+Everything in `sample.md` matters here, not just this section — the
+measurement table is what the header checks are compared against, and the
+alignment notes are what decide whether `probe.theta_offset` is `per: model` or
+`per: state`.
+
+### 3. Look at the prompt before you trust it
+
+```bash
+nrw agent run Sample4 --dry-run
+```
+
+This composes the session and prints it without running anything. You get the
+declared task, the offline observations, the skills it will read, and the
+limits — the whole of what the harness will see. Reading it once is worth more
+than any amount of configuration.
+
+### 4. Run one session
+
+```bash
+nrw agent run Sample4
+```
+
+```
+Session finished (exit 0); transcript .nrw/agent/20260810-231402Z-Sample4.jsonl
+  ! ESCALATIONS.md exists -- read it before promoting anything
+```
+
+The prompt and the full transcript are kept under `.nrw/agent/`. Options:
+
+| | |
+|---|---|
+| `--dry-run` | Compose and print; start nothing |
+| `--turns N` | Cap on harness turns (default 60) |
+| `--model NAME` | Model to run (default: the harness's own) |
+| `--timeout SECONDS` | Kill the session after this long |
+
+---
+
+## The limits, and why there are two of them
+
+Three actions are refused: `nrw promote`, `nrw isaac export --upload`, and any
+`--force`.
+
+The first two are obvious. The third is the one worth explaining: **every
+forcing flag in nr-workbench exists because a check said no** — drifted inputs,
+a hand-edited script, an identical run already recorded, a directory somebody
+else wrote. An agent reaching for `--force` has arrived at exactly the
+situation a person is meant to see.
+
+Two independent mechanisms enforce them:
+
+1. **A `PreToolUse` hook** in `.claude/settings.json` running `nrw agent
+   guard`. It exits 2, which blocks the call before it runs and shows the model
+   why. It splits on `&&`, `;` and `|` first, so `nrw ls && nrw promote abc`
+   does not slip past.
+2. **`NRW_AGENT=1`**, which `nrw agent run` sets on the session itself. Under
+   it, all three refuse from the inside — `--force` is checked once at the top
+   of the CLI rather than in each command, so a subcommand added next year is
+   covered without anyone remembering to.
+
+Both, because a hook can be misconfigured and an environment variable can be
+unset, but both failing silently at the same time is a different order of
+accident. Neither is a sandbox — a determined process can do anything the user
+can. They stop the plausible mistake, which is the one that actually happens.
+
+The guard reads the whole command line, not its first few words. These are all
+refused, and every one of them was allowed by the first version:
+
+```bash
+if true; then nrw promote abc --reason x; fi
+for f in *.py; do nrw fit run $f --force; done
+cd samples/S1; ls; nrw fit run m.py --force
+A=1 nrw promote abc
+python -m nr_workbench.cli promote abc
+bash -c 'nrw promote abc'
+```
+
+None of those is obfuscation — they are how batched shell work looks when an
+agent writes it. Things that only *mention* a refused word still run:
+`grep promote src/`, `echo 'do not promote this'`, `nrw ls --sample
+promotion-study`.
+
+Every refusal names `ESCALATIONS.md`, at the project root. An agent that is
+only told "no" retries; one that is told where to write the decision has
+somewhere to put it. Read that file first in the morning.
+
+To check any command without running it:
+
+```bash
+nrw agent guard --command "nrw promote abc123 --reason 'best chisq'"
+```
+
+### Giving it more room
+
+`.claude/settings.json` is yours to edit. Removing the hook entry removes the
+first mechanism; unsetting `NRW_AGENT` would remove the second, but `nrw agent
+run` sets it deliberately, so the honest way to allow promotion is to promote
+by hand after reading what the session did. That is the workflow this is built
+for.
+
+---
+
+## What the session reads before it starts
+
+Every check below is deterministic, offline, and needs no model. They run
+during `nrw agent run` and their output goes into the prompt. You can run each
+one yourself:
+
+| Check | Command | Catches |
+|---|---|---|
+| Headers against `sample.md` | `nrw data reconcile <sample>` | A run mislabelled in the notes; a different direct beam; a time-resolved reduction filed as a steady state |
+| Spec self-consistency | `nrw check --contradictions` | A constraint whose `form` contradicts the measured trajectory; roughness ranges that permit σ > t/4; parameters silently held at scaffold defaults |
+| Fit assessment | `nrw assess <fit-id>` | Parameters on bounds, unconstrained posteriors, ρ–t correlations above 0.8, a layer swallowed by its own interfaces |
+
+This is where automation earns the most. In the reference experiment, the
+errors that cost the most time were visible in the file headers **before the
+first fit ran** — a run written up as OCV that was not, which sent five fits
+down the wrong path, and a 27.6% segment normalisation difference. Nothing was
+looking at them. These checks help whoever is driving, agent or not.
+
+---
+
+## Running all night: `nrw agent watch`
+
+`nrw agent run` is one session. The watcher decides *when* to start one and
+over what, and nothing else — it is a scheduler, not a second decision-maker.
+
+```bash
+nrw agent watch                     # every sample
+nrw agent watch Sample4 Sample7     # or a few
+nrw agent watch --dry-run           # what each measurement is waiting for
+```
+
+The dry run is the one to look at first. On the reference experiment:
+
+```
+expt11
+    run 218386 (steady)  done         already fitted
+    run 218389 (steady)  quarantined  run 218389 appears as both a steady-state
+                                      measurement and a time-resolved series.
+                                      One of the two is a filing accident, and
+                                      which one is a question for a person.
+    run 218393 (steady)  done         already fitted
+    run 218397 (steady)  done         already fitted
+    run 218389 (series)  done         already fitted
+```
+
+That is a finished experiment: nothing to do, and one run held back. Note run
+218389 appearing twice — the real 130-slice series *and* a stray whole-run
+reduction of it that was filed under `data/steady/`. The watcher reports both,
+because the pair is itself the fingerprint.
+
+Quiet time is read from the files' own modification times, so a single poll
+tells the truth. A `--dry-run` that had to watch for changes across polls would
+report everything as "arriving" no matter how old it was.
+
+### Three questions, and only three
+
+**Has it finished arriving?** A steady-state measurement is three angle
+segments written minutes apart. A daemon reacting to file *creation* fits the
+first segment alone and gets a perfectly plausible answer out of a third of the
+data. So a run is started only once its files have been unchanged for
+`--settle` seconds (default 300). Polling, not `watchdog`: these land on NFS,
+and reduction takes minutes anyway.
+
+For a time-resolved series, counting slices says nothing — they arrive one at a
+time across the whole electrochemistry. The reduction sidecar is the only thing
+that knows how many to expect, so the series is complete when every interval it
+names has a file.
+
+**Is it trustworthy?** Any one of three fingerprints quarantines a run:
+
+- it appears as both a steady-state measurement and a time-resolved series;
+- its angle segments are not contiguous from 1;
+- a segment's subrun is not `run + segment - 1`.
+
+The asymmetry is deliberate. A run wrongly held back costs one question in the
+morning; a run wrongly fitted costs a night. The third fingerprint is why the
+watcher parses filenames rather than counting files —
+`REFL_218386_2_218387_partial.txt` is the second angle segment of run 218386,
+and a program that never reads that string cannot notice when it is wrong.
+
+A quarantined run is also named in the session prompt, since a session is
+per-sample while the quarantine is per-run: the watcher can hold one
+measurement back and still start a session over the sample containing it.
+
+**Has anybody looked at it yet?** Read off the recorded fits, not a state file.
+A state file is a second source of truth that goes stale the moment you fit
+something by hand, and then the daemon repeats work you already did.
+
+### Options
+
+| | |
+|---|---|
+| `--dry-run` | Report what each measurement is waiting for; start nothing |
+| `--settle N` | Seconds files must be unchanged (default 300) |
+| `--poll N` | Seconds between polls (default 60) |
+| `--max-sessions N` | Stop after N sessions (default: until interrupted) |
+| `--session-timeout N` | Kill one session after N seconds (default 7200) |
+| `--turns N`, `--model NAME` | Passed through to each session |
+
+One session at a time, and never a second for a sample whose first is still
+running. Concurrency buys nothing here — the beam is slower than the fits — and
+costs the thing that matters, which is a transcript you can follow.
+
+---
+
+## Compute, during a beamtime
+
+The session is told to fit with `--method amoeba` while the beam is running and
+to use DREAM only once a fit is good and uncertainties are wanted. That matches
+how this is done by hand and by AuRE, and the reason is throughput: amoeba
+keeps pace with arriving data, DREAM does not. One fit at a time.
+
+Nothing enforces this — it is guidance in the prompt, not a limit, because a
+harness that decides a long DREAM run is the right call at 2am is probably
+right.
+
+---
+
+## When it goes wrong at 3am
+
+The watcher is the only part designed to run for eight hours with nobody
+watching, so its failure handling is deliberate rather than incidental:
+
+- A **poll that raises** — a sample directory removed mid-run, an NFS `stat`
+  that failed — is reported and retried. It does not end the night.
+- A **measurement that cannot be assessed** is quarantined with the exception
+  in its reason, not skipped silently and not fatal to the other samples.
+- A **session that hangs** is killed at `--session-timeout`, and killed as a
+  process group, so the `refl1d` fit it started dies with it rather than
+  carrying on writing into the project.
+- A **session that fails** for any other reason is reported and the loop moves
+  to the next sample.
+
+What is *not* handled that way: a run whose files look incoherent. That stops
+being fitted entirely and waits for you. A false quarantine costs one question
+in the morning; a false pass costs the night.
+
+---
+
+## Reading it in the morning
+
+The output rule is one page per sample under `samples/<id>/reports/`, rewritten
+rather than appended, plus `ESCALATIONS.md` at the root. This is a property of
+the design, not a preference. Forty individually defensible records are
+collectively unreadable, and once you stop reading them, every other safety
+property here is a formality.
+
+The order to read in:
+
+1. `ESCALATIONS.md` — what it could not decide.
+2. `nrw ls --sample <id>` — every fit, newest first, with what changed between
+   each and the one before.
+3. `samples/<id>/reports/` — what it concluded.
+4. `nrw whence`, `nrw diff`, `nrw assess` — anything you want to check.
+
+Then promote by hand, with a reason:
+
+```bash
+nrw promote 20260810-231402Z-4f2a8c1e --as final \
+    --reason "oxide layer is real; excluding it costs 0.4 in chisq and leaves a residual at 0.08"
+```
+
+The reason is the part that matters in a year, which is most of why this step
+is still yours.
+
+---
+
+## Attribution
+
+There is no agent badge on a fit record, on purpose. `provenance.command`
+already records the exact command line that produced every fit, so the record
+answers "what produced this" without a new field — and a flag saying
+`agent: true` would invite exactly the wrong habit of trusting a record more
+because a person's name is on it. Judge the fit by the fit.
+
+---
+
+## What this deliberately does not do
+
+- **Decide anything.** No Python scoring loop. The evidence above says a
+  harness is better at this, and a worse copy of it inside nr-workbench would
+  be used instead of the good one.
+- **Promote or upload.** Both refused, twice.
+- **Rewrite `sample.yaml`.** `nrw sample scan` stays a human gesture — it is
+  the one that removes a mis-filed run from the register, which is a curation
+  decision.
+- **Offer an MCP surface.** The CLI is the tool surface and the harness already
+  drives it; a second surface is drift with no new capability.

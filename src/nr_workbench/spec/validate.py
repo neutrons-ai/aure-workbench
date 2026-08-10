@@ -17,6 +17,13 @@ from nr_workbench.spec.resolve import ParameterTable
 #: with more freedom than information will converge and mean nothing.
 DOF_WARN_RATIO = 0.1
 
+#: Prefix of the "nobody chose this value" line. A constant because the agent
+#: session filters `report.info` for exactly this finding, and matching it on
+#: punctuation (an `=` in the text) silently drops the case where a held
+#: attribute has no resolvable value --- which is the case that swallowed the
+#: oxide in the reference experiment.
+HELD_AT_DEFAULTS = "held at their starting values: "
+
 
 @dataclass
 class ValidationReport:
@@ -211,7 +218,7 @@ def _check_unfitted(
             )
 
     if held:
-        report.info.append("held at their starting values: " + ", ".join(held))
+        report.info.append(HELD_AT_DEFAULTS + ", ".join(held))
 
 
 def _starting_value(spec: ModelSpec, layer: Layer, attr: str) -> float | None:

@@ -1,0 +1,322 @@
+"""Refuse the commands an unattended agent must not run.
+
+Two things an agent may not do without a person: publish a result as the answer
+(``nrw promote``), and send it outside the project (``nrw isaac export
+--upload``). A third is subtler and matters more --- ``--force``. Every forcing
+flag in this codebase exists because some check said no, and each one either
+records that it was forced or backs up what it displaced. An agent reaching for
+one has hit exactly the situation a human is supposed to see.
+
+This runs as a Claude Code ``PreToolUse`` hook, so the refusal happens before
+the command executes and does not depend on the model agreeing. ``nrw`` itself
+refuses the same three under ``NRW_AGENT=1``, which is a second mechanism
+rather than a belt-and-braces flourish: a hook can be misconfigured and an
+environment variable can be unset, but both failing silently at once is a
+different order of accident.
+
+The refusal always names what to do instead. An agent that is only told "no"
+retries; one that is told "write it in ESCALATIONS.md and stop" has somewhere
+to put the decision.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import shlex
+import sys
+from dataclasses import dataclass
+
+#: Exit code a PreToolUse hook uses to block a call and show the model why.
+BLOCK = 2
+
+#: The environment variable that tells nrw it is being driven unattended.
+AGENT_ENV = "NRW_AGENT"
+
+
+#: Why each action is refused, and what to do instead. One source, because
+#: the parser reaches these from two directions --- tokenised and raw --- and
+#: two copies of a refusal drift into two different pieces of advice.
+_REASONS = {
+    "promote": (
+        "Marking a fit as the answer is a person's decision, and the reason "
+        "recorded with it is the part that matters in a year. Write what you "
+        "would have said in ESCALATIONS.md, with the fit id and the evidence, "
+        "and stop."
+    ),
+    "upload": (
+        "Publishing to the ISAAC Portal shares the data and the fitted model "
+        "outside this project, and a pushed record is not straightforwardly "
+        "retractable. Export without --upload if you want the records on "
+        "disk, and say in ESCALATIONS.md that they are ready to send."
+    ),
+    "force": (
+        "Every --force in nr-workbench exists because a check said no: "
+        "drifted inputs, a hand-edited script, an identical run, a directory "
+        "somebody else wrote. Reaching for one is exactly the situation a "
+        "person is meant to see. Record what was refused and why you think it "
+        "should be overridden in ESCALATIONS.md."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """Whether a command may run, and why not.
+
+    Attributes:
+        allowed: Whether to let it through.
+        rule: Which rule refused, for the record.
+        reason: What to tell the caller, including what to do instead.
+    """
+
+    allowed: bool
+    rule: str = ""
+    reason: str = ""
+
+
+def judge(command: str) -> Verdict:
+    """Decide whether an unattended agent may run this command.
+
+    Args:
+        command: The shell command about to be executed.
+
+    Returns:
+        The verdict. Anything that is not a recognised ``nrw`` risk is
+        allowed --- this is a targeted refusal, not a sandbox, and pretending
+        otherwise would give false confidence.
+    """
+    for piece in _segments(command):
+        try:
+            tokens = shlex.split(piece)
+        except ValueError:
+            # `shlex` is not bash: unbalanced quotes here may still be a
+            # command bash runs happily. Fall back to reading the raw text
+            # rather than waving it through -- failing open on a parse error
+            # is only defensible when nothing refusable is in the text.
+            verdict = _judge_text(piece)
+        else:
+            verdict = _judge_one(tokens)
+        if not verdict.allowed:
+            return verdict
+    return Verdict(allowed=True)
+
+
+#: Characters that end one command and begin another. Split on these *in the
+#: raw string*, before tokenising: `shlex` keeps `ls;` as a single token and
+#: treats a newline as ordinary whitespace, so a token-level split silently
+#: merges `git add -A\nnrw promote abc` into one command and judges only its
+#: head. Parentheses and backticks are here because `$(nrw promote x)` runs
+#: too.
+SEPARATORS = "\n;&|()`"
+
+
+def _segments(command: str) -> list[str]:
+    """Split a command line into the commands it will actually run.
+
+    Quote-aware, because `echo 'a;b'` is one command and splitting inside the
+    quotes would invent a second. Comments are dropped: bash will not run
+    them, so judging them produces refusals nobody can act on.
+
+    Args:
+        command: The raw shell text.
+
+    Returns:
+        The pieces, in order, with empties removed.
+    """
+    pieces: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escaped = False
+
+    for index, char in enumerate(command):
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\" and quote != "'":
+            current.append(char)
+            escaped = True
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+            continue
+        if char == "#" and (index == 0 or command[index - 1].isspace()):
+            break  # a comment runs to end of line, and we split on newlines
+        if char in SEPARATORS:
+            pieces.append("".join(current))
+            current = []
+            continue
+        current.append(char)
+
+    pieces.append("".join(current))
+    return [p for p in pieces if p.strip()]
+
+
+def _judge_text(piece: str) -> Verdict:
+    """Judge raw text that could not be tokenised.
+
+    The floor under the parser. It cannot tell a flag from a filename, so it
+    only fires when the text names this tool *and* one of the three refused
+    things --- which is enough to stop a quoting accident from being a hole.
+    """
+    if not re.search(r"(?<![\w./-])(nrw|nr-workbench)(?![\w-])", piece):
+        return Verdict(allowed=True)
+    for pattern, rule in (
+        (r"(?<![\w-])promote(?![\w-])", "promote"),
+        (r"--upload(?![\w-])", "upload"),
+        (r"--force(?![\w-])", "force"),
+    ):
+        if re.search(pattern, piece):
+            return Verdict(allowed=False, rule=rule, reason=_REASONS[rule])
+    return Verdict(allowed=True)
+
+
+def _judge_one(tokens: list[str]) -> Verdict:
+    """Judge a single command."""
+    words = [t for t in tokens if not t.startswith("-")]
+    if not words:
+        return Verdict(allowed=True)
+
+    # `bash -c '...'` and `eval '...'` hide a whole command line inside one
+    # token. Judging the wrapper alone sees nothing, so judge the inside too.
+    if wrapped := _wrapped_command(tokens):
+        inner = judge(wrapped)
+        if not inner.allowed:
+            return inner
+
+    # Reached through `nrw`, `nr-workbench`, or `python -m nr_workbench.cli`.
+    # Every token, not the first few: an env-var prefix (`NRW_AGENT= nrw
+    # promote x`), a `cd` first, or a `then`/`do` keyword all push the real
+    # command past any fixed window, and each of those is something an agent
+    # writes without meaning to evade anything.
+    if not any(_is_nrw(word) for word in words):
+        return Verdict(allowed=True)
+
+    flags = {t.split("=", 1)[0] for t in tokens if t.startswith("-")}
+    subcommands = [w for w in words if _is_subcommand(w)]
+
+    if "promote" in subcommands:
+        return Verdict(allowed=False, rule="promote", reason=_REASONS["promote"])
+
+    if "isaac" in subcommands and "--upload" in flags:
+        return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
+
+    if "--force" in flags:
+        return Verdict(allowed=False, rule="force", reason=_REASONS["force"])
+
+    return Verdict(allowed=True)
+
+
+def _wrapped_command(tokens: list[str]) -> str:
+    """A command line carried inside this one, or an empty string.
+
+    Only one level, and only the shapes that turn up by accident. Chasing
+    every indirection is a losing game --- this is a targeted refusal, not a
+    sandbox --- but `bash -c` is common enough to be worth the ten lines.
+    """
+    head = tokens[0].rsplit("/", 1)[-1] if tokens else ""
+    if head in {"bash", "sh", "zsh", "dash"} and "-c" in tokens:
+        index = tokens.index("-c")
+        return tokens[index + 1] if index + 1 < len(tokens) else ""
+    if head == "eval":
+        return " ".join(tokens[1:])
+    return ""
+
+
+def _is_nrw(word: str) -> bool:
+    """Whether a token invokes this package.
+
+    ``python -m nr_workbench.cli`` is a working entry point --- ``cli.py`` has
+    a ``__main__`` guard --- and it is the natural fallback when ``nrw`` is not
+    on PATH, so it has to count.
+    """
+    stem = word.rsplit("/", 1)[-1]
+    return stem in {"nrw", "nr-workbench", "nr_workbench"} or stem.startswith(
+        ("nr_workbench.", "nr-workbench.")
+    )
+
+
+def _is_subcommand(word: str) -> bool:
+    """Whether a token looks like a subcommand rather than a path or value."""
+    return bool(re.fullmatch(r"[a-z][a-z-]*", word))
+
+
+def run_guard(command: str | None = None) -> None:
+    """Entry point for the hook and for `nrw agent guard`.
+
+    Reads a Claude Code ``PreToolUse`` payload from stdin when no command is
+    given, so it can be wired straight into ``.claude/settings.json``.
+
+    Args:
+        command: The command to judge. Read from stdin when omitted.
+
+    Raises:
+        SystemExit: ``BLOCK`` when the command is refused, ``0`` otherwise.
+    """
+    if command is None:
+        command = _command_from_stdin()
+
+    verdict = judge(command or "")
+    if verdict.allowed:
+        raise SystemExit(0)
+
+    print(
+        f"Refused by nr-workbench ({verdict.rule}): {verdict.reason}",
+        file=sys.stderr,
+    )
+    raise SystemExit(BLOCK)
+
+
+def _command_from_stdin() -> str:
+    """The command out of a PreToolUse payload, or an empty string.
+
+    A payload we cannot read must not block everything --- an unreadable hook
+    input is our bug, and failing closed on it would make the project
+    unusable rather than safe.
+    """
+    if sys.stdin.isatty():
+        return ""
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except (json.JSONDecodeError, OSError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict):
+        return str(tool_input.get("command") or "")
+    return ""
+
+
+def refuse_if_agent(action: str) -> None:
+    """Refuse an action when running unattended.
+
+    The second of two independent mechanisms. The hook stops the command
+    before it runs; this stops it from inside, so a project with no hook
+    configured is still protected and a hook that was bypassed still is.
+
+    Args:
+        action: ``promote``, ``upload`` or ``force``.
+
+    Raises:
+        click.ClickException: When ``NRW_AGENT`` is set.
+        KeyError: If asked about an action with no recorded reason, which is a
+            programming error rather than a refusal.
+    """
+    import os
+
+    if not os.environ.get(AGENT_ENV):
+        return
+
+    import click
+
+    raise click.ClickException(
+        f"{AGENT_ENV} is set, so this is running unattended. {_REASONS[action]}"
+    )

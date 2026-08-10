@@ -211,7 +211,8 @@ def run_fit_command(
     model_name: str | None = None,
     force: bool = False,
     dry_run: bool = False,
-) -> None:
+    as_json: bool = False,
+) -> FitRecord | None:
     """Run a fit script and write an immutable record of the run.
 
     Args:
@@ -227,6 +228,12 @@ def run_fit_command(
         model_name: Model name. Defaults to the script stem.
         force: Run even if an identical run already exists.
         dry_run: Report what would run, write nothing.
+        as_json: Emit the record as JSON instead of prose.
+
+    Returns:
+        The completed record, so a Python caller gets the fit id and chi-squared
+        without re-reading the index. ``None`` for ``--dry-run``, which writes
+        nothing and so has nothing to return.
 
     Raises:
         click.ClickException: If there is no project, the script is missing, or
@@ -304,7 +311,7 @@ def run_fit_command(
         _report_dry_run(
             fit_id, target.results_dir / fit_id, settings, inputs, environment
         )
-        return
+        return None
 
     if not data_inputs:
         click.echo(
@@ -353,7 +360,8 @@ def run_fit_command(
     record.status = "running"
     directory.write_manifest(record)
 
-    click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
+    if not as_json:
+        click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
 
     from nr_workbench.fitting.runner import FitError, run_fit
 
@@ -370,6 +378,9 @@ def run_fit_command(
             seed=seed,
             parallel=parallel,
             plots=plots,
+            # bumps prints its progress to stdout, which would sit in front of
+            # the JSON and make it unparseable for the driver that asked for it.
+            quiet=as_json,
         )
     except FitError as exc:
         # A failed fit is still recorded. Knowing that a model was tried and
@@ -401,7 +412,12 @@ def run_fit_command(
     # only findable once it is recorded.
     _write_trajectory(layout, fit_dir, record)
 
-    _report_success(record, fit_dir, layout.root, outcome)
+    if as_json:
+        click.echo(json.dumps(record.index_entry(), indent=2, default=str))
+    else:
+        _report_success(record, fit_dir, layout.root, outcome)
+
+    return record
 
 
 def _command_line() -> str:

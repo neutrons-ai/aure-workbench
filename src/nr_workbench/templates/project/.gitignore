@@ -23,6 +23,12 @@ samples/*/results/*/output/
 .nrw/backups/
 .nrw/lock
 
+# Unattended-session prompts and transcripts. A transcript is the whole tool
+# stream of a session -- every file it read and every command output it saw --
+# so it can contain anything that was on screen, including a key printed by
+# something it ran. These directories get shared and archived; keep it out.
+.nrw/agent/
+
 # Refused-overwrite copies written by `nrw init` when a file has been edited.
 # Review them, then merge or delete; never commit them.
 *.nrw-new
