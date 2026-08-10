@@ -508,6 +508,7 @@ def run_check(*, as_json: bool = False) -> None:
             )
 
     problems.extend(check_orphan_results(layout, index))
+    problems.extend(check_contradictions(layout))
     problems.extend(check_generated_scripts(layout))
     if as_json:
         click.echo(json.dumps({"checked": checked, "problems": problems}, indent=2))
@@ -756,6 +757,57 @@ def _diff_verdict(changed: dict[str, bool], info_a: dict, info_b: dict) -> str:
     if changed["environment"]:
         return f"only the environment differs{'; ' + direction if direction else ''}"
     return "nothing recorded differs; these are replicates"
+
+
+def check_contradictions(layout: ProjectLayout) -> list[dict[str, str]]:
+    """Compare every spec against the assessment its sample already has.
+
+    The most-repeated Red Flag in the skill set --- a constraint form or a
+    freed parameter contradicting what `nrw tnr assess` read off the data ---
+    with both sides machine-readable and nothing, until now, comparing them.
+
+    Args:
+        layout: The project layout.
+
+    Returns:
+        One problem per contradiction.
+    """
+    from nr_workbench.contradictions import check
+    from nr_workbench.spec.models import SpecError, load_spec
+
+    problems: list[dict[str, str]] = []
+    for sample in layout.list_samples():
+        directory = layout.sample(sample)
+        assessment = _latest_assessment(directory)
+        for spec_path in sorted((directory / "models").glob("*.yaml")):
+            try:
+                spec = load_spec(spec_path)
+            except (SpecError, OSError):
+                continue  # `nrw model validate` is where a broken spec is reported
+            report = check(spec, name=spec_path.stem, tnr=assessment, fitted=None)
+            for found in report.contradictions:
+                problems.append(
+                    {
+                        "fit_id": spec_path.stem,
+                        "kind": found.kind,
+                        "detail": found.message
+                        + (f"  [{found.evidence}]" if found.evidence else ""),
+                    }
+                )
+    return problems
+
+
+def _latest_assessment(sample_dir: Path) -> dict[str, Any] | None:
+    """The most recent tNR assessment for a sample, or None."""
+    found = sorted((sample_dir / "assessments").glob("*/*assessment.json"))
+    for path in reversed(found):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def check_orphan_results(

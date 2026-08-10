@@ -1562,3 +1562,34 @@ After both changes the real project reports exactly one finding, and it is
 correct. A checker that cries wolf is worse than no checker: it costs attention
 every run and it teaches the reader that the output is noise --- at which point
 the one true finding is missed too.
+
+### 2026-08-10: the checker's first false positive was the published fit
+
+`contradictions.check` compares a spec's constraints against what
+`nrw tnr assess` read off the data --- the Red Flag four skills state and
+nothing implemented. Written per constraint, it immediately flagged
+`cu-thf-tnr-reduced`: the **promoted** fit, the one in the paper.
+
+That fit carries two constraints, `linear_in_time` on `Cu.thickness` and
+another on `CuOx.rho`. Checked one at a time, the rho constraint looks like it
+ignores a template implying thickness --- while the thickness constraint
+sitting beside it honours the template exactly. One constraint per varying
+quantity is the normal shape of a spec, so the per-constraint form of this
+check flags a large fraction of correct work.
+
+Judged over the whole spec instead: is the implied change varied *anywhere*.
+Both promoted specs now read clean.
+
+Second time in two days that the first version of a check was too eager, and
+the pattern is the same both times: **a rule stated for a human reading one
+thing at a time does not transfer directly to a program reading everything at
+once.** The skills say "a freed parameter contradicting `implied_change`"
+because a person weighs the spec as a whole without noticing they are doing it.
+
+### 2026-08-10: `str.format` cannot template YAML
+
+The test fixtures build specs from a YAML template, and YAML flow style is
+`{name: dTHF, rho: 6.35}` --- which `str.format` reads as a replacement field
+and raises `KeyError: 'name'` on. Every fixture failed at once, which at least
+made it obvious. Use `.replace()` with explicit sentinels for anything
+templating a language that uses braces.
