@@ -510,6 +510,71 @@ def promote_command(fit_id: str, label: str, reason: str, force: bool) -> None:
     run_promote(fit_id=fit_id, label=label, reason=reason, force=force)
 
 
+@main.command("assess")
+@click.argument("fit_id")
+@click.option(
+    "--no-write",
+    "write",
+    flag_value=False,
+    default=True,
+    help="Print only; do not append to the fit's NOTES.md.",
+)
+@click.option(
+    "--no-llm",
+    "use_llm",
+    flag_value=False,
+    default=True,
+    help="Skip the language-model reading even if an endpoint is configured.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def assess_command(fit_id: str, write: bool, use_llm: bool, as_json: bool) -> None:
+    """Check FIT_ID and record what the checks found.
+
+    Always runs the arithmetic: parameters on their bounds, posteriors that
+    span most of their prior, a best fit outside its own credible interval,
+    BIC. With an LLM endpoint configured it also asks whether the values are
+    physically sensible, given sample.md and the installed skills.
+
+    The result is appended to the fit's NOTES.md, so it travels in a bundle
+    and shows on the fit page.
+    """
+    from nr_workbench.commands.assess import run_assess
+
+    run_assess(fit_id=fit_id, write=write, use_llm=use_llm, as_json=as_json)
+
+
+@main.command("note")
+@click.argument("target", required=False)
+@click.option("-m", "--message", default=None, help="Text to append.")
+@click.option(
+    "--sample",
+    default=None,
+    help="Write a report about a SAMPLE instead of one fit.",
+)
+@click.option("--title", default=None, help="Title for a new sample report.")
+@click.option("--edit", is_flag=True, help="Open it in $EDITOR afterwards.")
+def note_command(
+    target: str | None,
+    message: str | None,
+    sample: str | None,
+    title: str | None,
+    edit: bool,
+) -> None:
+    """Write or read the notes attached to a fit or a sample.
+
+    With no -m, shows every note that mentions TARGET -- the fit's own
+    NOTES.md and any sample report that cites it.
+
+    \b
+    nrw note 0103d9c7 -m "oxide sits on its floor; conditional, not measured"
+    nrw note 0103d9c7
+    nrw note --sample expt11 --title "why the tNR is fitted alone" -m "..."
+    """
+    from nr_workbench.commands.note import run_note
+
+    run_note(target=target, message=message, title=title, sample=sample, edit=edit)
+
+
 @main.command("pack")
 @click.argument("fit_id")
 @click.option(

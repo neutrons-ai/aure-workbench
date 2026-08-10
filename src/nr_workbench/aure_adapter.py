@@ -51,6 +51,13 @@ REQUIRED: dict[str, tuple[str, ...]] = {
         "get_contrast_match_ratio",
         "lookup_material",
     ),
+    # The only `aure.nodes` entry. That module's header pulls langchain, the
+    # AuRE skill registry and the whole node graph, so it is imported inside
+    # `judge_fit` alone and never for the arithmetic next to it -- AuRE's
+    # boundary-hit and BIC helpers live in the same file and are five and
+    # twenty lines of pure maths, reimplemented in `fitting/assess.py` rather
+    # than paid for with that import.
+    "aure.nodes.evaluation": ("analyze_fit_quality_with_llm",),
 }
 
 
@@ -560,3 +567,84 @@ def complete(system: str, user: str, *, temperature: float = 0.0) -> str:
         ]
         return "".join(parts)
     return str(content)
+
+
+def judge_fit(
+    *,
+    chisq: float,
+    method: str,
+    parameters: dict[str, float],
+    sample_description: str,
+    skill_context: str = "",
+    hypothesis: str | None = None,
+    boundary_hits: list[dict[str, Any]] | None = None,
+    per_file_results: list[dict[str, Any]] | None = None,
+    bic: float | None = None,
+    n_params: int = 0,
+    n_layers: int = 0,
+    chi2_max: float = 5.0,
+) -> dict[str, Any]:
+    """Ask a language model whether a fit is physically sensible.
+
+    Wraps AuRE's fit evaluator. What it adds over the numbers is the only
+    thing arithmetic cannot supply: a reading of the parameter values against
+    the sample's own description and the installed domain skills.
+
+    Args:
+        chisq: Reduced chi-squared. Must be a real number -- AuRE formats it
+            with ``:.3f`` and raises on ``None``.
+        method: The fitter used.
+        parameters: Best-fit values by name.
+        sample_description: The prose from ``sample.md``.
+        skill_context: Concatenated SKILL.md bodies, the physics grounding.
+        hypothesis: What the fit was testing, if recorded.
+        boundary_hits: Parameters on their bounds, in AuRE's shape.
+        per_file_results: ``[{"label": str, "chi_squared": float}, ...]``.
+        bic: Bayesian information criterion.
+        n_params: Free parameter count.
+        n_layers: Layers in the stack.
+        chi2_max: The acceptance threshold shown to the model.
+
+    Returns:
+        AuRE's verdict: ``acceptable``, ``quality_assessment``, ``issues``,
+        ``suggestions``, ``physical_concerns`` and more. ``next_action`` and
+        ``proposed_hypothesis_id`` are absent when AuRE fell back, so read
+        every key with ``.get``.
+
+    Raises:
+        AureUnavailableError: If no endpoint is configured, or the call fails.
+    """
+    if not llm_available():
+        raise AureUnavailableError(
+            "No language-model endpoint is configured. Set LLM_PROVIDER and "
+            "LLM_API_KEY (or LLM_BASE_URL for a local endpoint). "
+            "`nrw doctor` reports what it sees."
+        )
+
+    try:
+        from aure.nodes.evaluation import analyze_fit_quality_with_llm
+
+        verdict = analyze_fit_quality_with_llm(
+            {
+                "chi_squared": float(chisq),
+                "method": method,
+                "converged": True,
+                "parameters": {k: float(v) for k, v in parameters.items()},
+            },
+            sample_description,
+            hypothesis,
+            None,
+            chi2_max=chi2_max,
+            boundary_hits=boundary_hits,
+            bic=bic,
+            n_params=n_params,
+            n_layers=n_layers,
+            skill_context=skill_context,
+            per_file_results=per_file_results,
+        )
+    except Exception as exc:
+        raise AureUnavailableError(
+            f"The fit evaluation failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    return dict(verdict) if isinstance(verdict, dict) else {}

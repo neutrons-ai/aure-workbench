@@ -88,6 +88,21 @@ In `sample.md`, before the first fit:
 That is the hypothesis list, it is version-controlled, and `nrw sample scan`
 leaves it alone.
 
+`sample.md` holds the *intent* — what you set out to try. The **outcome** of
+ranking them is a finding about the sample, so it goes in
+`samples/<id>/reports/`, citing the fit id of each candidate:
+
+```bash
+nrw note --sample <id> --title "ranking the oxide hypotheses" -m \
+  "Candidate 2 wins: BIC 1003 against 5602 for candidate 1 (fits
+   20260807-141425Z-0f8ffbf5 and 20260807-142039Z-5bd5314d). Candidate 3
+   was never tried -- no residual at high Q to motivate it."
+```
+
+Keeping the two apart matters: a plan that has been overwritten with its own
+results is no longer a record of what you expected, which is the half that
+tells you whether you were surprised.
+
 ### 3. One spec per candidate
 
 ```bash

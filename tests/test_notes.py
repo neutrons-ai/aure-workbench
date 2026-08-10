@@ -1,0 +1,423 @@
+"""The analysis notebook: linking prose to the fits it is about.
+
+The design question behind these tests is why 25 result directories in a real
+beamtime all held the untouched template. Three answers, each tested here:
+nothing asked, nothing read it back, and nothing carried it anywhere.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from nr_workbench.cli import main
+from nr_workbench.notes import (
+    NOTES_TEMPLATE,
+    fits_mentioned,
+    frontmatter,
+    is_blank,
+    notes_about,
+    read_note,
+    sample_notes,
+)
+
+from .test_lifecycle import write_partials
+
+FIT_A = "20260807-163359Z-0103d9c7"
+FIT_B = "20260806-205951Z-78c5736e"
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    """A project with one sample carrying real steady-state data."""
+    root = tmp_path / "proj"
+    result = CliRunner().invoke(main, ["init", str(root), "--sample", "S1"])
+    assert result.exit_code == 0, result.output
+    write_partials(root / "samples" / "S1" / "data" / "steady", 100001)
+    return root
+
+
+def run(root: Path, monkeypatch, *args: str):
+    """Invoke the CLI inside a project."""
+    monkeypatch.chdir(root)
+    return CliRunner().invoke(main, list(args))
+
+
+@pytest.fixture
+def fitted(project: Path, monkeypatch) -> tuple[Path, str]:
+    """A project with one real fit."""
+    pytest.importorskip("refl1d")
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    run(project, monkeypatch, "model", "generate", "samples/S1/models/m.yaml")
+    result = run(
+        project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/m.py",
+        "--method",
+        "amoeba",
+        "--steps",
+        "20",
+        "--seed",
+        "1",
+        "--parallel",
+        "1",
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(run(project, monkeypatch, "ls", "--json").stdout)
+    return project, rows[0]["fit_id"]
+
+
+# --------------------------------------------------------------------------
+# Linking: the one piece of structure imposed on a note
+# --------------------------------------------------------------------------
+
+
+def test_a_fit_is_linked_by_being_named_in_the_prose() -> None:
+    """People cite fits in sentences. A scheme that only read frontmatter
+    would find nothing in the 609 lines of findings a real beamtime produced.
+    """
+    text = f"Two tNR models, {FIT_A} and {FIT_B}, differ only in the oxide."
+
+    assert fits_mentioned(text) == [FIT_A, FIT_B]
+
+
+def test_frontmatter_links_are_merged_with_prose_ones(tmp_path: Path) -> None:
+    path = tmp_path / "n.md"
+    path.write_text(
+        f"---\nfits: [{FIT_B}]\n---\n\n# t\n\nSee {FIT_A}.\n", encoding="utf-8"
+    )
+
+    note = read_note(path, tmp_path, scope="sample")
+
+    assert set(note.fits) == {FIT_A, FIT_B}
+
+
+def test_a_collision_suffixed_fit_id_still_links() -> None:
+    """`create_unique` appends -2 when two fits share a second."""
+    assert fits_mentioned(f"see {FIT_A}-2 for the replicate") == [f"{FIT_A}-2"]
+
+
+def test_a_run_number_is_not_mistaken_for_a_fit_id() -> None:
+    """Six-digit run numbers are everywhere in this prose."""
+    assert fits_mentioned("runs 218386 and 218393 were co-refined") == []
+
+
+def test_malformed_frontmatter_does_not_lose_the_prose(tmp_path: Path) -> None:
+    """A note is prose first; a YAML slip must not make it unreadable."""
+    path = tmp_path / "n.md"
+    path.write_text("---\nfits: [unclosed\n---\n\nThe oxide is real.\n", "utf-8")
+
+    note = read_note(path, tmp_path, scope="sample")
+
+    assert note is not None
+    assert frontmatter(path.read_text()) == {}
+    assert "oxide is real" in note.text
+
+
+# --------------------------------------------------------------------------
+# An unfilled template is not a note
+# --------------------------------------------------------------------------
+
+
+def test_the_template_reads_as_blank() -> None:
+    """Treating a stub as content is how a UI ends up showing HTML comments
+    to every visitor, which teaches readers the panel is noise."""
+    assert is_blank(NOTES_TEMPLATE.format(fit_id="x", description="amoeba fit"))
+
+
+def test_a_single_sentence_makes_it_no_longer_blank() -> None:
+    filled = (
+        NOTES_TEMPLATE.format(fit_id="x", description="d")
+        + "\nThe oxide is required.\n"
+    )
+
+    assert not is_blank(filled)
+
+
+def test_the_old_two_comment_stub_reads_as_blank() -> None:
+    """Every result directory of the first real beamtime holds this."""
+    assert is_blank(
+        "<!-- The only file in this directory you should edit. -->\n"
+        "<!-- Everything else is a record of what ran. -->\n\n"
+    )
+
+
+def test_a_blank_note_is_not_offered_as_evidence_of_thinking(tmp_path: Path) -> None:
+    path = tmp_path / "NOTES.md"
+    path.write_text(NOTES_TEMPLATE.format(fit_id=FIT_A, description="d"), "utf-8")
+    note = read_note(path, tmp_path, scope="fit", fit_id=FIT_A)
+
+    assert notes_about([note], FIT_A) == []
+
+
+def test_the_template_asks_questions_rather_than_granting_permission() -> None:
+    """Its predecessor said which file you were allowed to edit and was never
+    once written in. A blank page with no question is a file you close."""
+    text = NOTES_TEMPLATE.format(fit_id="x", description="d")
+
+    assert "?" in text
+    assert "## Why this run" in text
+    assert "## Caveats" in text
+
+
+def test_the_run_note_is_quoted_so_it_never_wins_the_summary(tmp_path: Path) -> None:
+    """The template echoes --note back. If that counted as the summary, the
+    listing would show you your own command instead of your conclusion."""
+    path = tmp_path / "NOTES.md"
+    path.write_text(
+        NOTES_TEMPLATE.format(fit_id=FIT_A, description="a dream run")
+        + "\nThe oxide is required.\n",
+        encoding="utf-8",
+    )
+
+    note = read_note(path, tmp_path, scope="fit", fit_id=FIT_A)
+
+    assert note.summary == "The oxide is required."
+
+
+def test_a_persons_words_outrank_the_generated_assessment(tmp_path: Path) -> None:
+    """`nrw assess` usually runs first, so without this the listing would
+    always show a chi-squared back to you rather than what you concluded."""
+    path = tmp_path / "NOTES.md"
+    path.write_text(
+        "# f\n\nThe ceiling was the problem.\n\n"
+        "## Assessment\n\nchi-squared 1.2, 8 free\n",
+        encoding="utf-8",
+    )
+
+    note = read_note(path, tmp_path, scope="fit", fit_id=FIT_A)
+
+    assert note.summary == "The ceiling was the problem."
+
+
+# --------------------------------------------------------------------------
+# The CLI
+# --------------------------------------------------------------------------
+
+
+def test_note_appends_to_a_fit_and_reads_it_back(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    root, fit_id = fitted
+    short = fit_id.rpartition("-")[2]
+
+    written = run(root, monkeypatch, "note", short, "-m", "the oxide is required")
+    assert written.exit_code == 0, written.output
+
+    shown = run(root, monkeypatch, "note", short)
+
+    assert "the oxide is required" in shown.output
+
+
+def test_a_fit_resolves_by_its_hash_not_only_its_timestamp(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    """The half of a fit id that distinguishes two runs from one afternoon is
+    the hash; prefix-only matching would mean typing the other sixteen
+    characters to reach it."""
+    root, fit_id = fitted
+
+    result = run(root, monkeypatch, "note", fit_id.rpartition("-")[2][:5], "-m", "x")
+
+    assert result.exit_code == 0, result.output
+
+
+def test_a_sample_report_lands_in_reports(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    root, _ = fitted
+
+    result = run(
+        root,
+        monkeypatch,
+        "note",
+        "--sample",
+        "S1",
+        "--title",
+        "why the tNR is fitted alone",
+        "-m",
+        "because of the gap",
+    )
+
+    assert result.exit_code == 0, result.output
+    written = root / "samples" / "S1" / "reports" / "why-the-tnr-is-fitted-alone.md"
+    assert written.is_file()
+    assert "because of the gap" in written.read_text(encoding="utf-8")
+
+
+def test_a_report_citing_a_fit_shows_up_on_that_fit(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    """The whole linking mechanism, end to end: name the id in a sentence."""
+    root, fit_id = fitted
+    run(
+        root,
+        monkeypatch,
+        "note",
+        "--sample",
+        "S1",
+        "--title",
+        "the argument",
+        "-m",
+        f"Both {fit_id} and the next one rail the thickness.",
+    )
+
+    shown = run(root, monkeypatch, "note", fit_id.rpartition("-")[2])
+
+    assert "1 report(s) mention this fit" in shown.output
+    assert "the argument" in shown.output
+
+
+def test_naming_both_a_fit_and_a_sample_is_refused(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    root, fit_id = fitted
+
+    result = run(root, monkeypatch, "note", fit_id, "--sample", "S1", "-m", "x")
+
+    assert result.exit_code != 0
+    assert "not both" in result.output
+
+
+def test_note_with_no_target_explains_the_two_kinds(project: Path, monkeypatch) -> None:
+    result = run(project, monkeypatch, "note")
+
+    assert result.exit_code != 0
+    assert "--sample" in result.output
+
+
+def test_ls_marks_which_fits_have_reasoning_recorded(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    """Reading the notebook is what makes writing in it worthwhile."""
+    root, fit_id = fitted
+    before = run(root, monkeypatch, "ls").output
+    assert "nothing written down" in before
+
+    run(
+        root,
+        monkeypatch,
+        "note",
+        fit_id.rpartition("-")[2],
+        "-m",
+        "the ceiling was wrong",
+    )
+    after = run(root, monkeypatch, "ls").output
+
+    assert "the ceiling was wrong" in after
+    assert "nothing written down" not in after
+
+
+# --------------------------------------------------------------------------
+# Notes reach a collaborator
+# --------------------------------------------------------------------------
+
+
+def test_pack_carries_the_fit_note_and_the_reports_that_cite_it(
+    fitted: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """A bundle that carries the numbers and not the argument transmits a
+    result without transmitting what anyone concluded from it."""
+    root, fit_id = fitted
+    run(
+        root,
+        monkeypatch,
+        "note",
+        fit_id.rpartition("-")[2],
+        "-m",
+        "the oxide is required",
+    )
+    run(
+        root,
+        monkeypatch,
+        "note",
+        "--sample",
+        "S1",
+        "--title",
+        "the argument",
+        "-m",
+        f"See {fit_id}: the ceiling was the problem.",
+    )
+    run(
+        root,
+        monkeypatch,
+        "note",
+        "--sample",
+        "S1",
+        "--title",
+        "unrelated",
+        "-m",
+        "This one names no fit at all.",
+    )
+
+    bundle = tmp_path / "b"
+    result = run(root, monkeypatch, "pack", fit_id, "--dir", "--out", str(bundle))
+    assert result.exit_code == 0, result.output
+
+    assert "the oxide is required" in (
+        bundle / "original-results" / "NOTES.md"
+    ).read_text(encoding="utf-8")
+    assert (bundle / "notes" / "the-argument.md").is_file()
+    assert not (bundle / "notes" / "unrelated.md").exists(), (
+        "a bundle is one fit; a report about other results is not about this one"
+    )
+    assert "the-argument.md" in (bundle / "README.md").read_text(encoding="utf-8")
+
+
+def test_a_bundle_with_no_prose_says_so_rather_than_staying_quiet(
+    fitted: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """Silence reads as "there was nothing to say"."""
+    root, fit_id = fitted
+    bundle = tmp_path / "b"
+
+    result = run(root, monkeypatch, "pack", fit_id, "--dir", "--out", str(bundle))
+
+    assert "carries no reasoning" in result.output
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+    assert "Nothing was written down about this fit" in readme
+
+
+def test_the_web_renders_notes_and_hides_unfilled_templates(
+    fitted: tuple[Path, str], monkeypatch
+) -> None:
+    """The stub is truthy, so the old panel rendered its HTML comments to
+    every visitor -- which taught readers the panel was noise."""
+    from nr_workbench.web.app import create_app
+
+    root, fit_id = fitted
+    client = create_app(root).test_client()
+
+    bare = client.get(f"/f/{fit_id}").get_data(as_text=True)
+    assert "The only file in this directory" not in bare
+    assert "nrw note" in bare, "and it says how to fix that"
+
+    run(
+        root,
+        monkeypatch,
+        "note",
+        fit_id.rpartition("-")[2],
+        "-m",
+        "the oxide is required",
+    )
+    filled = create_app(root).test_client().get(f"/f/{fit_id}").get_data(as_text=True)
+
+    assert "the oxide is required" in filled
+
+
+def test_reports_are_no_longer_discarded_on_import() -> None:
+    """`nrw import` listed `reports` as derived, so it skipped exactly the
+    prose the layout tells users to put there -- the one thing in a legacy
+    directory that cannot be regenerated."""
+    from nr_workbench.project.importer import DERIVED_DIRS
+
+    assert "reports" not in DERIVED_DIRS
+
+
+def test_sample_notes_ignores_a_directory_with_no_reports(tmp_path: Path) -> None:
+    assert sample_notes(tmp_path, "nope") == []

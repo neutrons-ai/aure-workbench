@@ -236,6 +236,7 @@ def run_ls(
         click.echo("No fits recorded yet. Run one with `nrw fit run <script.py>`.")
         return
 
+    documented = _documented(layout, rows)
     promoted = {
         entry.get("fit_id")
         for label in {str(e.get("label")) for e in index.promotions()}
@@ -263,10 +264,73 @@ def run_ls(
         click.secho(f"      {row['change']}", fg="cyan", dim=True)
         if row.get("note"):
             click.secho(f"      “{row['description']}”", dim=True)
+        written = documented.get(fit_id)
+        if written:
+            click.secho(f"      ✎ {written}", fg="green", dim=True)
 
     if promoted:
         click.echo()
         click.echo("  * promoted")
+    undocumented = [r for r in rows if not documented.get(str(r.get("fit_id")))]
+    if undocumented:
+        click.echo()
+        click.secho(
+            f"  {len(undocumented)} of {len(rows)} fits have nothing written down.",
+            dim=True,
+        )
+        # The hash, not the first 8 characters: every fit from the same day
+        # shares its date, so a leading slice is the one part that cannot
+        # identify anything.
+        first = str(undocumented[0].get("fit_id", ""))
+        click.secho(
+            f"    nrw note {first.rpartition('-')[2] or first} "
+            '-m "what this run showed"',
+            dim=True,
+        )
+
+
+def _documented(layout: ProjectLayout, rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Say, per fit, what has been written down about it.
+
+    Reading the notebook is what makes writing in it worthwhile. A listing
+    that cannot tell a reasoned-about fit from an unexamined one gives no
+    reason to reason in public.
+
+    Args:
+        layout: The project layout.
+        rows: The fit entries being listed.
+
+    Returns:
+        Fit id to a short phrase, for fits that have prose.
+    """
+    from nr_workbench.notes import fit_note, notes_about, sample_notes
+
+    by_sample: dict[str, list[Any]] = {}
+    summary: dict[str, str] = {}
+    for row in rows:
+        fit_id = str(row.get("fit_id", ""))
+        sample = row.get("sample")
+        directory = find_fit_dir(layout, row)
+
+        parts = []
+        if directory is not None:
+            own = fit_note(
+                layout.root, directory, fit_id, str(sample) if sample else None
+            )
+            if own is not None and not own.blank:
+                parts.append(own.summary or "a note on this fit")
+
+        if sample:
+            name = str(sample)
+            if name not in by_sample:
+                by_sample[name] = sample_notes(layout.root, name)
+            related = notes_about(by_sample[name], fit_id)
+            if related:
+                parts.append(f"in {len(related)} report(s)")
+
+        if parts:
+            summary[fit_id] = " · ".join(parts)[:96]
+    return summary
 
 
 def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) -> None:

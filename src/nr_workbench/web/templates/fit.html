@@ -228,10 +228,33 @@
       </div>
     </div>
 
-    {% if fit.notes %}
+    {% if fit.notes.own %}
     <div class="panel">
-      <div class="panel-head"><span>NOTES.md</span></div>
-      <div class="p-3"><pre class="small mb-0">{{ fit.notes }}</pre></div>
+      <div class="panel-head"><span>NOTES.md</span><span class="hint">this run</span></div>
+      <div class="p-3 markdown small">{{ fit.notes.own|markdown }}</div>
+    </div>
+    {% endif %}
+
+    {% for report in fit.notes.reports %}
+    <div class="panel">
+      <div class="panel-head">
+        <span>{{ report.title }}</span>
+        <span class="hint">cites this fit</span>
+      </div>
+      <div class="p-3 markdown small">{{ report.text|markdown }}</div>
+      <div class="px-3 pb-2 small text-secondary mono">{{ report.path }}</div>
+    </div>
+    {% endfor %}
+
+    {% if not fit.notes.own and not fit.notes.reports %}
+    <div class="panel">
+      <div class="panel-head"><span>Notes</span></div>
+      <div class="p-3 small text-secondary">
+        Nothing written down about this fit. The numbers are recorded; the
+        reasoning is not.
+        <div class="mono mt-2">nrw note {{ fit.fit_id.rpartition('-')[2] }} -m "..."</div>
+        <div class="mono">nrw assess {{ fit.fit_id.rpartition('-')[2] }}</div>
+      </div>
     </div>
     {% endif %}
 

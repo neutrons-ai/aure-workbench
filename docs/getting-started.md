@@ -715,7 +715,78 @@ generated script has been hand-edited, that none is stale against its spec, and
 that every promoted pointer resolves. Run it before you call anything final, and
 in CI.
 
-## 9. Send it to a collaborator
+## 9. Write down what you found
+
+A fit records what ran. It cannot record why you ran it, what you expected, or
+what you would warn a reader against concluding — and those decay fastest.
+
+Start with the automatic checks:
+
+```bash
+nrw assess 20260805-191540Z-732f4286
+```
+
+```
+  fit       20260807-163359Z-0103d9c7
+  chisq     1.285   BIC 1048.0
+  free      8   points 3915
+
+  warn    tnr218389 CuOx roughness's 95% interval reaches its bound even though
+          the best-fit value does not. The posterior is pressed against the range.
+  info    tnr218389 CuOx roughness's best-fit value 5.1104 lies outside its own
+          68% interval [5.18437, 6.83067] — a skewed or multimodal posterior.
+          Quote the median and the interval, not the point.
+
+  written to samples/Sample6/results/.../NOTES.md
+```
+
+Those checks need no language model: they read the bumps problem for each
+parameter's range, the `.par` file for where it landed, and the DREAM
+`-err.json` for the posterior. A parameter on its bound is the bound you chose,
+not a measurement. A 95% interval spanning most of its prior means the fit
+handed your range back. With an LLM endpoint configured (`.env`), it also asks
+whether the values are physically sensible given `sample.md` and the installed
+skills — labelled as a model's opinion, because it has not seen the data.
+
+Then add the sentence no check can write:
+
+```bash
+nrw note 732f4286 -m "Ti.rho is conditional, not measured: the rho/thickness
+degeneracy was broken by fixing t, so the interval reflects that choice."
+```
+
+**Two kinds of note, two homes.** The above attaches to one run. A finding
+about how several fits *relate* belongs to the sample:
+
+```bash
+nrw note --sample Sample6 --title "why the tNR is fitted alone" -m \
+  "The 76-minute gap after the last eis slice means the endpoints cannot be
+   tied to the steady states: see 20260807-163359Z-0103d9c7."
+```
+
+That lands in `samples/Sample6/reports/`. **Naming a fit id in the prose is the
+whole linking mechanism** — no frontmatter required. `nrw ls` marks which fits
+have been reasoned about, the fit page shows every report that cites it, and
+`nrw pack` carries them to your collaborator.
+
+```
+  20260807-163359Z-0103d9c7  cu-thf-tnr-reduced  ok  1.285  fresh
+      settings: samples 100k -> 200k; chisq 1.31 -> 1.285
+      ✎ Ti.rho is conditional, not measured · in 1 report(s)
+```
+
+`docs/ground_truths.md` is still there, narrowed to what is true regardless of
+sample: an instrument quirk, a reduction convention, a package version that
+broke something. **If a finding names a run number or a fit id, it belongs to
+the sample** — where it will be shown beside the fit and travel in a bundle.
+
+> The reason this matters: in the first real beamtime run through this tool,
+> 609 lines of excellent findings went into `docs/ground_truths.md` — and not
+> one of the 25 result directories was ever written in. One entry opened *"Read
+> this before using that fit for anything"* about a named fit, in a file that
+> `nrw promote` and `nrw pack` never opened.
+
+## 10. Send it to a collaborator
 
 A result directory is complete but not portable: it records the *hashes* of the
 data, not the data, and its script reaches out to the project around it. Email

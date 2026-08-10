@@ -527,12 +527,36 @@ class ProjectData:
             "parameters": self._parameters(directory / "fit"),
             "spec": self._read_text(directory / "spec.yaml"),
             "script": self._read_text(directory / "model.py"),
-            "notes": self._read_text(directory / "NOTES.md"),
+            # An unfilled template is not a note. Rendering it put the
+            # stub's HTML comments on every fit page, which taught readers
+            # that the panel was noise.
+            "notes": self._notes_for(resolved, sample, directory),
             "figures": sorted(
                 p.name for p in (directory / "figures").glob("*") if p.is_file()
             ),
             "directory": directory.relative_to(self.root).as_posix(),
             "problems": [p.as_dict() for p in problems],
+        }
+
+    def _notes_for(self, fit_id: str, sample: Any, directory: Path) -> dict[str, Any]:
+        """The prose about one fit: its own note, and the reports citing it.
+
+        Args:
+            fit_id: The resolved fit id.
+            sample: The owning sample.
+            directory: The result directory.
+
+        Returns:
+            ``own`` (markdown or ``None``) and ``reports`` (one entry each).
+        """
+        from nr_workbench.notes import fit_note, notes_about, sample_notes
+
+        name = str(sample) if sample else None
+        own = fit_note(self.root, directory, fit_id, name)
+        reports = notes_about(sample_notes(self.root, name), fit_id) if name else []
+        return {
+            "own": None if own is None or own.blank else own.text,
+            "reports": [{**note.as_dict(), "text": note.text} for note in reports],
         }
 
     def trajectory(self, fit_id: str) -> dict[str, Any]:

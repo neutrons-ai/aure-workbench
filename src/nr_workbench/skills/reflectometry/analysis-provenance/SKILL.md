@@ -33,7 +33,7 @@ results/<fit_id>/
   env/            exact package versions, and a git patch if the tree was dirty
   fit/            the bumps output
   figures/        stamped with the fit_id, so they survive being copied out
-  NOTES.md        the only file here you may edit
+  NOTES.md        yours: what this run was for and what it showed
 ```
 
 `fit_id` is a UTC timestamp plus a hash of the run's identity, so it sorts
@@ -88,7 +88,22 @@ Stale means the number on the plot was computed from bytes that are no longer
 on disk. Re-run before citing it. Do not reason about how much the data
 "probably" changed.
 
-### 5. Mark the answer explicitly
+### 5. Say what the run was for, while you still know
+
+```bash
+nrw assess <fit_id>                # the automatic checks, into its NOTES.md
+nrw note <fit_id> -m "what you were testing and what you now believe"
+```
+
+The record captures what ran. It cannot capture why you ran it, what you
+expected, or what you would warn a reader against concluding — and those are
+the parts that decay fastest. Do it for the fits you abandon too: "the oxide
+went to zero thickness, so this parameterisation is unusable" is a result.
+
+A note is prose, and prose is enough. The only convention is to name fit ids
+when you mean them, which is what links a note to a fit.
+
+### 6. Mark the answer explicitly
 
 ```bash
 nrw promote <fit_id> --as final --reason "converged; SLD band excludes null"
@@ -99,13 +114,13 @@ person decides, and the reason is the part worth keeping. Promotion is refused
 on a stale fit. Superseding an earlier decision records both; the history of
 what was once considered final is provenance too.
 
-### 6. Check before you commit or publish
+### 7. Check before you commit or publish
 
 ```bash
 nrw check
 ```
 
-### 7. Package it before you send it
+### 8. Package it before you send it
 
 ```bash
 nrw pack <fit_id>

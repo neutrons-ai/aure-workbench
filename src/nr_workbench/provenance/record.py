@@ -384,11 +384,24 @@ class FitDirectory:
         _write_json(self.path / "manifest.json", manifest)
         return manifest
 
-    def write_notes_stub(self) -> None:
-        """Create ``NOTES.md``, the only mutable file in the record."""
+    def write_notes_stub(self, fit_id: str = "", description: str = "") -> None:
+        """Create ``NOTES.md``, the only mutable file in the record.
+
+        The template asks questions rather than granting permission. Its
+        predecessor was two HTML comments saying which file you were allowed
+        to edit, and across a real 25-fit beamtime not one copy was ever
+        written in: a blank page with no question is a file you close again.
+
+        Args:
+            fit_id: Used as the heading, so the file identifies itself.
+            description: A one-line reminder of what the run was.
+        """
+        from nr_workbench.notes import NOTES_TEMPLATE
+
         (self.path / NOTES_FILENAME).write_text(
-            "<!-- The only file in this directory you should edit. -->\n"
-            "<!-- Everything else is a record of what ran and must stay as written. -->\n\n",
+            NOTES_TEMPLATE.format(
+                fit_id=fit_id or self.path.name, description=description
+            ),
             encoding="utf-8",
         )
 

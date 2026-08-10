@@ -1254,3 +1254,90 @@ discover a syntax error.
 
 The guard is cheap and belongs on anything that emits code:
 `compile(source, "verify.py", "exec")` in a test.
+
+### 2026-08-10: the only prose that survived was the field that was mandatory
+
+Measured on the first real beamtime run through this tool (`jen-apr2025/
+cu-thf-expt11`, 23 fits, 19 model variants, one sample):
+
+| surface | required? | used |
+|---|---|---|
+| `nrw fit run --note` | optional | **0 of 23** |
+| `results/<fit_id>/NOTES.md` | optional | **0 of 25** |
+| `nrw promote --reason` | **required** | **2 of 2**, both substantial |
+
+The promote reasons are per-fit notes in all but name --- one names its
+dependency on another fit by id, quotes intervals, and flags two caveats. The
+same analyst wrote 609 lines of findings in `docs/ground_truths.md`. Nobody
+was unwilling to write. The optional surfaces asked nothing and nothing read
+them back.
+
+Three separable causes, all fixed:
+
+1. **No instruction targeted a fit.** All four "record what you learn"
+   instructions named the project-level `docs/ground_truths.md`.
+   `NOTES.md` appeared once, inside an ASCII diagram, phrased as *permission*
+   ("the only file here you may edit") rather than as a question to answer.
+2. **Writing there had no consequence.** One reader, `web/project.py`, which
+   rendered the stub's two HTML comments into a `<pre>` on every fit page ---
+   actively teaching readers the panel was noise.
+3. **`reports/` was a documented empty contract.** Created with a `.gitkeep`,
+   referenced by zero lines of code, excluded from `pack`, and listed in
+   `importer.DERIVED_DIRS` so `nrw import` *discarded* it --- the one thing in
+   a legacy directory that cannot be regenerated.
+
+### 2026-08-10: link notes by the ids people already write in sentences
+
+The 609-line findings file cites 11 distinct fit ids, all in prose, none in
+any structured field. A linking scheme that read only frontmatter would have
+found nothing in the entire corpus.
+
+So `fits_mentioned` regexes the body as well as the header. An existing
+findings file becomes a linked notebook by being moved into `reports/`, with
+no edits. The regex requires the full `YYYYMMDD-HHMMSSZ-<8hex>` shape, so the
+six-digit run numbers that saturate this prose (218386, 218393) cannot be
+mistaken for fits.
+
+The corollary: **an unfilled template must not count as a note.** It mentions
+its own fit id, so without `is_blank` every untouched stub would appear as
+evidence of thinking that never happened. Headings, HTML comments and the
+blockquoted echo of `--note` are all scaffolding; only a line of prose counts.
+
+### 2026-08-10: nr-workbench's offline fit checks beat AuRE's, so do not wrap it
+
+`aure.nodes.evaluation._simple_evaluation` is the no-LLM path, and it is three
+chi-squared bands. It reads no parameters, no bounds, no posterior;
+`acceptable` is hard-coded `False`. Wrapping it would have made the offline
+path look supported while saying less than a user could work out unaided.
+
+What nr-workbench computes instead, with no AuRE import at all, from
+`fit/<model>.json` (bounds), `.par` (values) and `-err.json` (posterior):
+railed parameters, posteriors spanning most of their prior, best-fit points
+outside their own 68% interval, per-model chi-squared spread, and BIC.
+
+One of these is strictly better than AuRE's: `_check_boundary_hits` tests the
+*point estimate* against the bound and never reads `uncertainties`. A
+parameter whose **p95 edge** sits on its floor is pinned in a way that test
+cannot see. Run 218389's `CuOx roughness` is exactly that case --- point
+estimate 5.110 against a floor of 5 with span 6 (not a hit at 1%), but
+p95 `[5.028, 8.381]`.
+
+Validated against the analyst's own hand-written record for that fit: the
+check independently produced "the posterior is pressed against the range",
+which is the ground-truth entry *"the oxide slab is at its descriptive limit
+-- roughnesses are lower bounds"*. Computed BIC 1048.0 against the 1047.9 in
+the promote reason, and n_points 3915 exactly.
+
+That last number is a trap worth keeping: `manifest.info.n_points` is bumps'
+`dof`, not N. Summing `info.models[*].n_points` gives 3915; using `dof` (3907)
+makes BIC wrong by `k log n`.
+
+### 2026-08-10: a fit id's distinguishing half is its suffix, but only prefixes resolved
+
+`FitIndex.resolve` matched on prefix alone, so telling two fits from the same
+afternoon apart meant typing all sixteen characters of the timestamp to reach
+the eight that identify the run. Fine for `whence`, fatal for a `nrw note`
+command whose entire value is being lower-friction than opening the file.
+
+Hash matching is now tried only when the prefix matches nothing, so it can
+widen what resolved before but never change it.

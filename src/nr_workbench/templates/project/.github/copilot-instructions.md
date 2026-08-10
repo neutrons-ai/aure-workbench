@@ -11,7 +11,10 @@ REF_L (BL-4B). These instructions are shared by GitHub Copilot and Claude Code
 2. **Give an itemized plan** — numbered steps, each independently checkable.
 3. **Work incrementally** — one step at a time, say which one you are on.
 4. **Verify** — run the check, show the output, fix failures before moving on.
-5. **Record ground truths** — append findings to `docs/ground_truths.md`.
+5. **Write it down where it belongs** — a finding about one fit goes in that
+   fit's `NOTES.md` (`nrw note <fit_id> -m "..."`); a finding about how the
+   fits relate goes in `samples/<id>/reports/` (`nrw note --sample <id>`).
+   Only tooling and instrument facts go in `docs/ground_truths.md`.
 
 ## Standard workflow
 
@@ -19,7 +22,11 @@ REF_L (BL-4B). These instructions are shared by GitHub Copilot and Claude Code
 
 For an analysis task that means: read `sample.md` and the measurement register
 → assess the data (`nrw tnr assess` for a time series) → propose a model → write
-the spec → generate, preview, fit → check the result → write it down.
+the spec → generate, preview, fit → `nrw assess <fit_id>` → write down what
+you were testing and what you now believe, with `nrw note`.
+
+The last step is not optional and not deferrable to the end. A fit whose
+reasoning was never recorded is a number nobody can defend, including you.
 
 ## Read the skills
 

@@ -227,6 +227,11 @@ def _build(
     if figures.is_dir() and any(figures.iterdir()):
         _copy_tree(figures, results / "figures")
 
+    # 6. The thinking. A bundle that carries the numbers and not the argument
+    #    reproduces a result without transmitting what anyone concluded from
+    #    it -- and the argument is the part a collaborator cannot rederive.
+    notes = _copy_notes(staging, layout, fit_dir, entry)
+
     versions = _versions(fit_dir)
     report = {
         "fit_id": str(entry["fit_id"]),
@@ -237,6 +242,7 @@ def _build(
         "skipped_chain": skipped_chain,
         "versions": versions,
         "freshness": str(freshness),
+        "notes": notes,
     }
 
     (staging / "MANIFEST.json").write_text(
@@ -279,6 +285,46 @@ def _copy_fit_outputs(source: Path, target: Path, with_chain: bool) -> list[str]
             continue
         _copy(item, target / item.relative_to(source))
     return skipped
+
+
+def _copy_notes(
+    staging: Path, layout: ProjectLayout, fit_dir: Path, entry: dict[str, Any]
+) -> dict[str, Any]:
+    """Copy the prose about this fit into the bundle.
+
+    Two sources, matching the two kinds of note: the fit's own ``NOTES.md``
+    (already carried under ``original-results/``) and every report about its
+    sample that names it. Reports that do not mention this fit are left out --
+    a bundle is one fit, and shipping a sample's whole notebook would send a
+    collaborator arguments about results they do not have.
+
+    Args:
+        staging: The bundle being assembled.
+        layout: The project layout.
+        fit_dir: The result directory.
+        entry: The fit's index entry.
+
+    Returns:
+        What was copied: the fit note's state and the report paths.
+    """
+    from nr_workbench.notes import fit_note, notes_about, sample_notes
+
+    fit_id = str(entry.get("fit_id", ""))
+    sample = entry.get("sample")
+    own = fit_note(layout.root, fit_dir, fit_id, str(sample) if sample else None)
+
+    reports: list[str] = []
+    if sample:
+        for note in notes_about(sample_notes(layout.root, str(sample)), fit_id):
+            source = layout.root / note.path
+            if source.is_file():
+                _copy(source, staging / "notes" / Path(note.path).name)
+                reports.append(Path(note.path).name)
+
+    return {
+        "fit_note": bool(own and not own.blank),
+        "reports": reports,
+    }
 
 
 def _par_file(fit_outputs: Path, staging: Path) -> str | None:
@@ -538,6 +584,9 @@ def _readme(
         f"| fitted with | {method}{', ' + settings if settings else ''} |",
         f"| ran | {provenance.get('started_at', '—')} |",
         "",
+        "## What was concluded",
+        "",
+        *_notes_section(report),
         "## What is in here",
         "",
         "```",
@@ -548,6 +597,11 @@ def _readme(
         "original-results/",
         "    what the original run produced: fitted curves, SLD profiles,",
         "    parameter values and uncertainties, the full environment",
+        *(
+            ["notes/", "    reports about this fit, written during the analysis"]
+            if report["notes"]["reports"]
+            else []
+        ),
         "MANIFEST.json",
         "    every input with its sha256, the settings, and the provenance",
         "```",
@@ -598,6 +652,29 @@ def _readme(
     return "\n".join(lines)
 
 
+def _notes_section(report: dict[str, Any]) -> list[str]:
+    """README lines pointing at the prose, or saying plainly that there is none."""
+    prose = report["notes"]
+    if not prose["fit_note"] and not prose["reports"]:
+        return [
+            "Nothing was written down about this fit. The numbers below are",
+            "reproducible, but the reasoning behind them was not recorded --",
+            "ask the sender what they concluded.",
+            "",
+        ]
+    lines = []
+    if prose["fit_note"]:
+        lines.append(
+            "- `original-results/NOTES.md` — why this run was made and what it showed"
+        )
+    for name in prose["reports"]:
+        lines.append(
+            f"- `notes/{name}` — a report about this sample that cites this fit"
+        )
+    lines.append("")
+    return lines
+
+
 def _zip(source: Path, destination: Path) -> None:
     """Archive the staging directory, keeping its name as the top-level folder."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -623,6 +700,23 @@ def _report(
     if report["chisq"] is not None:
         click.echo(f"  chisq     {report['chisq']:.6g}  (verify.py checks this)")
     click.echo(f"  size      {size / 1e6:.1f} MB")
+    prose = report["notes"]
+    if prose["fit_note"] or prose["reports"]:
+        parts = []
+        if prose["fit_note"]:
+            parts.append("the fit's own note")
+        if prose["reports"]:
+            parts.append(f"{len(prose['reports'])} report(s)")
+        click.echo(f"  notes     {' + '.join(parts)}")
+    else:
+        click.secho(
+            "  notes     none -- the bundle carries no reasoning, only numbers",
+            fg="yellow",
+        )
+        click.secho(
+            f'            nrw note {report["fit_id"][:8]} -m "what this run showed"',
+            dim=True,
+        )
     if report["skipped_chain"] and not with_chain:
         click.echo(
             f"  omitted   {len(report['skipped_chain'])} chain file(s); "

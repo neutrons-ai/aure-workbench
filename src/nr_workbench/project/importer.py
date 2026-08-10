@@ -75,7 +75,9 @@ DERIVED_SUFFIXES = {
 DERIVED_DIRS = {
     "results",
     "refl1d_output",
-    "reports",
+    # `reports` is deliberately NOT here. It is where the analysis notebook
+    # lives, and prose is the one thing in a legacy directory that cannot be
+    # regenerated -- skipping it discards exactly what the import is for.
     "notebooks",
     ".ipynb_checkpoints",
     "ai-ready-data",

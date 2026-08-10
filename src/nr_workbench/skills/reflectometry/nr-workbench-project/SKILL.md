@@ -65,8 +65,9 @@ resolved relative to it — never write an absolute path into a committed file.
 | Model spec | `samples/<id>/models/<name>.yaml` | You. **Source of truth.** Committed. |
 | Generated fit script | `samples/<id>/models/<name>.py` | Machine. Derived, hash-guarded. Committed. |
 | tNR assessment output | `samples/<id>/assessments/<label>/` | Machine. |
-| Fit results | `samples/<id>/results/<fit_id>/` | Machine. **Immutable.** |
-| Reports, prose | `samples/<id>/reports/` | You. |
+| Fit results | `samples/<id>/results/<fit_id>/` | Machine. **Immutable** except `NOTES.md`. |
+| What one fit was and showed | `samples/<id>/results/<fit_id>/NOTES.md` | **You.** `nrw note <fit>`. |
+| How the fits relate; reports | `samples/<id>/reports/*.md` | **You.** `nrw note --sample <id>`. |
 | Skills | `skills/<domain>/<name>/` | Shared. Read by both Claude Code and Copilot. |
 
 ### 3. Respect the ownership boundary
@@ -81,11 +82,32 @@ If you need a generated script to do something the spec cannot express, use
 record, input hashes, and full provenance. Forking is cheap and supported;
 silently editing a generated file is what we are trying to eliminate.
 
-### 4. Record what you learn
+### 4. Record what you learn, next to what it is about
 
-Append non-obvious findings to `docs/ground_truths.md` — API quirks, why a
-model was rejected, a constraint that turned out to matter. It is the project's
-memory across sessions.
+Findings about **a sample** — what a fit showed, why a model was rejected, how
+two results relate, what a number does and does not mean — go with that sample,
+not in a project-wide file. Two places, by scope:
+
+```bash
+# about one run: what you were testing, what it showed, what to distrust
+nrw assess <fit_id>                      # the automatic checks, written into its NOTES.md
+nrw note <fit_id> -m "the oxide is at its floor; conditional, not measured"
+
+# about the sample: the argument across several fits
+nrw note --sample <id> --title "why the tNR is fitted alone" -m "..."
+```
+
+Name fit ids in the prose. Nothing else is needed to link them — `nrw ls`, the
+fit page and `nrw pack` all find a report by the ids it mentions, so citing
+`20260807-163359Z-0103d9c7` in a sentence is what attaches the note to that fit.
+
+**Do this as you go, not at the end.** The reason a fit was abandoned is worth
+more than the fit, and it is the first thing forgotten. A run you are about to
+discard still deserves one line saying why.
+
+`docs/ground_truths.md` stays, narrowed to what is **not** about any sample:
+tooling quirks, instrument behaviour, a convention the whole project follows.
+If a finding names a run number or a fit id, it belongs to the sample.
 
 ## Rationalizations
 
@@ -112,5 +134,10 @@ Before considering a piece of work done:
 
 - [ ] `nrw check` exits zero — no drifted scripts, no stale results, no orphans.
 - [ ] Any figure you are about to share resolves: `nrw whence <path>` names a fit.
-- [ ] New findings are in `docs/ground_truths.md`.
+- [ ] Every fit you ran has a `NOTES.md` saying what it was for — including
+      the ones that failed or were abandoned.
+- [ ] Findings about the sample are in `samples/<id>/reports/`, citing the
+      fit ids they are about. Only non-sample findings went to
+      `docs/ground_truths.md`.
+- [ ] `nrw ls` shows no fit with nothing written down.
 - [ ] `git status` shows no unexpected files outside the layout table above.

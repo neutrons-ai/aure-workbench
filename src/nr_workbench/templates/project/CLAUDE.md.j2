@@ -42,11 +42,31 @@ them is how you end up unable to say which script produced a figure.
    each with its own hash and its own records.
 5. **Run `nrw check` before calling anything final.**
 
-## Ground truths
+## Write down what you learn, next to what it is about
 
-Append non-obvious findings to [`docs/ground_truths.md`](docs/ground_truths.md)
-— API quirks, why a model was rejected, a constraint that mattered. It is this
-project's memory between sessions.
+The analysis is the thinking, not the fits. Record it as you go, scoped to what
+it is about:
+
+| A finding about… | Goes in | Written with |
+|---|---|---|
+| one run | `samples/<id>/results/<fit_id>/NOTES.md` | `nrw note <fit_id> -m "..."` |
+| how the fits relate | `samples/<id>/reports/*.md` | `nrw note --sample <id> --title "..." -m "..."` |
+| the tooling, the instrument, a project-wide convention | [`docs/ground_truths.md`](docs/ground_truths.md) | an editor |
+
+**If a finding names a run number or a fit id, it belongs to the sample** — not
+to `docs/ground_truths.md`, which is for what is true regardless of which
+sample you are looking at.
+
+Cite fit ids in the prose. That is the whole linking mechanism: `nrw ls`, the
+fit page and `nrw pack` all find a report by the ids it mentions.
+
+After a fit, `nrw assess <fit_id>` writes the automatic checks — parameters on
+their bounds, unconstrained posteriors, BIC — into its `NOTES.md`, and adds a
+language model's reading if an endpoint is configured. Run it, then add the
+sentence it cannot write: what you were testing, and what you now believe.
+
+**A fit you are abandoning still needs a note saying why.** That sentence is
+worth more than the fit and is the first thing forgotten.
 
 ## Commands
 

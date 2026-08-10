@@ -57,6 +57,16 @@ def _locked(path: Path) -> Iterator[None]:
         os.close(handle)
 
 
+def _hash_of(fit_id: str) -> str:
+    """The content-hash half of a fit id, or the whole thing if it has none.
+
+    ``20260807-150822Z-b2cef12a`` -> ``b2cef12a``. A collision suffix
+    (``-2``) is kept, so ``b2cef12a-2`` still resolves.
+    """
+    parts = fit_id.split("-", 2)
+    return parts[2] if len(parts) == 3 else fit_id
+
+
 class FitIndex:
     """Reads and appends to the project's fit index."""
 
@@ -150,18 +160,29 @@ class FitIndex:
         return None
 
     def resolve(self, prefix: str) -> list[dict[str, Any]]:
-        """Find fits whose identifier starts with ``prefix``.
+        """Find fits by identifier prefix, or failing that by content hash.
 
-        Lets a user type the first few characters of a fit_id instead of all
-        of it.
+        A fit id is ``<timestamp>-<hash>``, and the half that distinguishes
+        two fits from the same afternoon is the hash. Prefix-only matching
+        would mean typing all sixteen characters of the timestamp to reach the
+        part that actually identifies the run, so the hash is accepted too.
+
+        Prefixes are tried first and alone when they match, so this can only
+        widen what already resolved, never change it.
 
         Args:
-            prefix: Leading characters of a fit identifier.
+            prefix: Leading characters of a fit identifier, or its hash.
 
         Returns:
             Matching entries, newest first.
         """
-        return [e for e in self.fits() if str(e.get("fit_id", "")).startswith(prefix)]
+        rows = self.fits()
+        matches = [e for e in rows if str(e.get("fit_id", "")).startswith(prefix)]
+        if matches:
+            return matches
+        return [
+            e for e in rows if _hash_of(str(e.get("fit_id", ""))).startswith(prefix)
+        ]
 
     def find_by_run_key(self, run_key: str) -> list[dict[str, Any]]:
         """Find fits with the same run key -- same script, inputs, settings, env.

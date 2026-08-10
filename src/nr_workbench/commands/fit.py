@@ -339,7 +339,10 @@ def run_fit_command(
     directory.freeze_script(script_path)
     directory.write_inputs(inputs)
     directory.write_environment(environment)
-    directory.write_notes_stub()
+    directory.write_notes_stub(
+        fit_id=fit_id,
+        description=note or f"{method} fit of {record.model}.",
+    )
 
     click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
 
