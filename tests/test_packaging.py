@@ -154,16 +154,22 @@ def test_wheel_contains_py_typed(wheel_namelist: list[str]) -> None:
     assert "nr_workbench/py.typed" in wheel_namelist
 
 
-def test_wheel_declares_only_the_one_expected_direct_reference(
+def test_wheel_declares_only_the_expected_direct_references(
     wheel_path: Path, wheel_namelist: list[str]
 ) -> None:
-    """Guard the one deliberate exception.
+    """Guard the deliberate exceptions, and only those.
 
-    `aure @ git+...` is a known, accepted cost: aure is not on PyPI (no publish
-    workflow, and its own `export` extra carries a direct reference that blocks
-    upload), so nr-workbench installs from git too. Any *additional* direct
-    reference would be an accident, and each one is another dependency that
-    cannot be resolved from an index.
+    Every direct reference is a dependency no index can resolve. Two kinds,
+    and the distinction is what this asserts:
+
+    * **Required.** `aure @ git+...` is a known, accepted cost -- aure is not
+      on PyPI, so nr-workbench installs from git too. Exactly one is allowed;
+      an accidental second would be imposed on every install.
+    * **Behind an extra.** The `isaac` tools own the ISAAC schema mapping and
+      are equally unpublished. They cost nothing to anyone who does not ask
+      for them. Note this does *not* buy back PyPI: a direct reference blocks
+      upload whichever extra it sits in (the same trap recorded in aure's own
+      `export` extra). nr-workbench was already git-install-only.
 
     Asserted against the built METADATA rather than pyproject.toml, because
     that is what a consumer's resolver actually reads.
@@ -179,6 +185,14 @@ def test_wheel_declares_only_the_one_expected_direct_reference(
         for line in metadata.splitlines()
         if line.startswith("Requires-Dist:") and "@ " in line
     ]
+    required = [line for line in direct if "extra ==" not in line]
+    optional = [line for line in direct if "extra ==" in line]
 
-    assert len(direct) == 1, f"expected exactly one direct reference, got: {direct}"
-    assert "aure@ git+" in direct[0].replace(" @ ", "@ "), direct[0]
+    assert len(required) == 1, f"expected one unconditional direct ref, got: {required}"
+    assert "aure@ git+" in required[0].replace(" @ ", "@ "), required[0]
+
+    allowed = {"nr-isaac-format", "data-assembler"}
+    for line in optional:
+        name = line.split(":", 1)[1].split("@")[0].strip()
+        assert name in allowed, f"unexpected direct reference behind an extra: {line}"
+        assert 'extra == "isaac"' in line, f"{name} must stay behind the isaac extra"

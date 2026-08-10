@@ -1341,3 +1341,56 @@ command whose entire value is being lower-friction than opening the file.
 
 Hash matching is now tried only when the prefix matches nothing, so it can
 widen what resolved before but never change it.
+
+### 2026-08-10: the ISAAC pipeline is a file contract, not an AuRE internals contract
+
+`data-assembler ingest-workflow <dir>` looks like it needs an AuRE workflow run
+directory. It does not. It reads four things:
+
+    run_info.json     states[] with each state's data_files, or a flat list
+    problem.json      the serialised bumps problem
+    *-err.json        beside it, for per-parameter sigma
+    final_state.json  {"final_chi2": ..., "state": {"states": [...]}}
+
+Every one of those is already in an nr-workbench result directory. So
+`nrw isaac export` rewrites a fit into that shape and drives the canonical
+pipeline rather than mapping to the ISAAC schema itself --- a second mapping
+would drift from a schema neither project owns.
+
+Two properties come free from writing `states[]` rather than a flat file list,
+and both are things a hand-rolled exporter would get wrong:
+
+**Angle segments stay one measurement.** Every file in a state's `data_files`
+becomes a series of one ISAAC record. A REF_L steady state is three angles with
+three run numbers and is one measurement; exporting three records would claim
+three that never happened. This is a bug AuRE has already fixed once, in
+`assembler/workflow/assembler.py` --- the primary partial gets the full
+assemble and the rest become `additional_reflectivities` of the same state.
+
+**Co-refined states are one sample.** `distinct_sample: false` gives every
+state the same sample id, and `convert-ingest` then cross-links the records
+with `links[].same_sample_as`. Verified on the real 3-state Cu/THF
+co-refinement: 9 files in, 1 sample + 3 environments + 1 fit out, then 3 valid
+ISAAC records with 3 series each and 6 link relations.
+
+The grouping is never inferred from filenames. `Measurement.key` from the
+frozen spec (`run218386#0`) is the same string the manifest recorded in
+`info.models[].name`, so resolving the spec reproduces exactly what was fitted.
+A hand-written script with no spec falls back to a single state, which is the
+honest answer: the segments still assemble, and the loss of per-condition
+records is reported rather than guessed at.
+
+### 2026-08-10: a direct reference blocks PyPI from inside an extra too
+
+Adding the `isaac` extra tripped `test_wheel_declares_only_the_one_expected_
+direct_reference`, which is the guard working. Worth keeping straight:
+
+* an extra-scoped direct reference costs nothing to anyone who does not ask
+  for the extra, so several are fine;
+* an unconditional one is imposed on every install, so exactly one is allowed
+  (`aure`);
+* neither buys back PyPI. A PEP 508 direct reference blocks upload regardless
+  of which extra it sits in --- the same trap already recorded in aure's own
+  `export` extra.
+
+The test now separates the two rather than counting them together.

@@ -854,6 +854,71 @@ to reproducing it.
 
 ---
 
+## 11. Publish it to ISAAC
+
+```bash
+nrw isaac export 20260807-155810Z-ec6d0134
+```
+
+```
+  fit       20260807-155810Z-ec6d0134
+  state     run218386: 3 angle segments -> one measurement
+  state     run218393: 3 angle segments -> one measurement
+  state     run218397: 3 angle segments -> one measurement
+  chisq     1.69822
+
+  records   3 written to samples/expt11/results/.../isaac/records
+            isaac_record_218386.json
+            isaac_record_218393.json
+            isaac_record_218397.json
+  linked    3 records share one sample id, so the portal reads them as
+            conditions of one experiment
+
+  Not uploaded. Add --upload to push these to the ISAAC Portal.
+```
+
+Two lines in that output are the whole point.
+
+**"3 angle segments → one measurement."** A REF_L steady state is measured at
+three incident angles and reduced to three files with three different run
+numbers. They are one measurement of one sample. Exporting them as three
+records would claim three measurements that never happened — a bug AuRE has
+already had to fix once.
+
+**"3 records share one sample id."** A co-refinement is several conditions of
+one sample, so each condition becomes its own record and they are cross-linked
+by `same_sample_as`. The portal then reads them as one experiment rather than
+three unrelated measurements. The grouping comes from your spec's `states:`,
+never from filenames — so what is published is what was fitted.
+
+Your fit's `NOTES.md` becomes the record's measurement notes, which is usually
+the only place a downstream reader will ever see why the analysis was done the
+way it was.
+
+To upload:
+
+```bash
+nrw isaac export <fit_id> --upload                  # asks before publishing
+nrw isaac export <fit_id> --upload --validate-only  # ask the API, persist nothing
+```
+
+Uploading is never implied by exporting, and it confirms first: a record on a
+shared portal is not straightforwardly retractable. Credentials come from
+`ISAAC_URL` and `ISAAC_KEY` in `.env`.
+
+nr-workbench does not map anything to the ISAAC schema itself — `data-assembler`
+and `nr-isaac-format` own that, and a second copy would drift from a schema
+neither project controls. They are an optional extra:
+
+```bash
+pip install 'nr-workbench[isaac]'
+```
+
+Without them the export stages the fit, tells you what it assembled, and says
+plainly which tool is missing.
+
+---
+
 ## What to do next
 
 **Keep track of what you tried.** By the tenth run the listing is a wall of

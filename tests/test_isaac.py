@@ -1,0 +1,344 @@
+"""Staging a fit for ISAAC export.
+
+The schema mapping belongs to `nr-isaac-format` and is not retested here. What
+is tested is the contract nr-workbench hands it, where two things have to be
+right or the published record misstates the experiment:
+
+* a state's angle segments are one measurement, not several; and
+* co-refined states are conditions of one sample, not unrelated samples.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from nr_workbench.cli import main
+from nr_workbench.isaac import stage
+
+from .test_lifecycle import write_partials
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    """A project with one sample carrying two 3-segment steady states."""
+    root = tmp_path / "proj"
+    assert (
+        CliRunner().invoke(main, ["init", str(root), "--sample", "S1"]).exit_code == 0
+    )
+    steady = root / "samples" / "S1" / "data" / "steady"
+    write_partials(steady, 100001)
+    write_partials(steady, 100005)
+    return root
+
+
+def run(root: Path, monkeypatch, *args: str):
+    """Invoke the CLI inside a project."""
+    monkeypatch.chdir(root)
+    return CliRunner().invoke(main, list(args))
+
+
+@pytest.fixture
+def corefined(project: Path, monkeypatch) -> tuple[Path, str]:
+    """A fit co-refining two states, each of three angle segments."""
+    pytest.importorskip("refl1d")
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    assert (
+        run(
+            project, monkeypatch, "model", "generate", "samples/S1/models/m.yaml"
+        ).exit_code
+        == 0
+    )
+    result = run(
+        project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/m.py",
+        "--method",
+        "amoeba",
+        "--steps",
+        "20",
+        "--seed",
+        "1",
+        "--parallel",
+        "1",
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(run(project, monkeypatch, "ls", "--json").stdout)
+    return project, rows[0]["fit_id"]
+
+
+def fit_dir(root: Path, fit_id: str) -> Path:
+    """The result directory of one fit."""
+    return root / "samples" / "S1" / "results" / fit_id
+
+
+# --------------------------------------------------------------------------
+# Angle segments are one measurement
+# --------------------------------------------------------------------------
+
+
+def test_a_states_angle_segments_stay_one_measurement(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A REF_L steady state is measured at three angles and reduced to three
+    files with three run numbers. They are one measurement of one sample, and
+    listing them as separate states would claim three that never happened.
+    """
+    root, fit_id = corefined
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    assert [len(s.files) for s in staged.states] == [3, 3]
+    assert staged.n_files == 6
+
+    run_info = json.loads((tmp_path / "ingest" / "run_info.json").read_text())
+    assert len(run_info["states"]) == 2, "two states, not six"
+    for state in run_info["states"]:
+        assert len(state["data_files"]) == 3
+
+
+def test_segments_are_grouped_by_the_spec_not_by_filename(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The grouping is what the fit actually used: the frozen spec's states,
+    whose measurement keys are the same strings the manifest recorded."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+
+    staged = stage(directory, root, tmp_path / "ingest")
+
+    manifest = json.loads((directory / "manifest.json").read_text())
+    recorded = {m["name"].split("#")[0] for m in manifest["info"]["models"]}
+    assert {s.name for s in staged.states} == recorded
+
+
+def test_every_staged_file_is_one_the_fit_recorded(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Exporting a file the fit never read would publish a claim about data
+    that did not produce the result."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+
+    staged = stage(directory, root, tmp_path / "ingest")
+
+    recorded = {
+        (root / e["path"]).resolve()
+        for e in json.loads((directory / "inputs.json").read_text())["inputs"]
+        if e["role"] != "script"
+    }
+    staged_files = {Path(f) for s in staged.states for f in s.files}
+    assert staged_files <= recorded
+
+
+# --------------------------------------------------------------------------
+# Co-refined states are one sample
+# --------------------------------------------------------------------------
+
+
+def test_co_refined_states_share_one_sample(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """`distinct_sample: false` is what makes the records come out
+    cross-linked as conditions of one experiment rather than unrelated
+    measurements. nr-workbench has no way to express the opposite, so it is
+    stated rather than left to a default that could change upstream.
+    """
+    root, fit_id = corefined
+
+    stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    run_info = json.loads((tmp_path / "ingest" / "run_info.json").read_text())
+    assert run_info["distinct_sample"] is False
+
+
+def test_each_state_carries_its_condition(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Without it every state gets the same environment and the record cannot
+    say what distinguished the measurements."""
+    import yaml
+
+    root, fit_id = corefined
+    spec_path = fit_dir(root, fit_id) / "spec.yaml"
+    spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    spec["states"][0]["condition"] = "OCV before the potential step"
+    spec_path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    by_name = {s.name: s for s in staged.states}
+    described = by_name[spec["states"][0]["name"]]
+    assert described.condition == "OCV before the potential step"
+
+    run_info = json.loads((tmp_path / "ingest" / "run_info.json").read_text())
+    entries = {e["name"]: e for e in run_info["states"]}
+    assert entries[described.name]["extra_description"] == described.condition
+    # A state with no condition omits the key rather than sending an empty
+    # string, which the assembler would take for a description.
+    for state in staged.states:
+        if not state.condition:
+            assert "extra_description" not in entries[state.name]
+
+
+# --------------------------------------------------------------------------
+# The rest of the contract
+# --------------------------------------------------------------------------
+
+
+def test_the_serialised_problem_and_its_uncertainties_are_staged(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The assembler finds sigma in an `-err.json` beside `problem.json`."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+    (directory / "fit" / "m-err.json").write_text('{"a": {"std": 1.0}}', "utf-8")
+
+    stage(directory, root, tmp_path / "ingest")
+
+    problem = json.loads((tmp_path / "ingest" / "problem.json").read_text())
+    assert "references" in problem, "the bumps problem, not some other json"
+    assert (tmp_path / "ingest" / "problem-err.json").is_file()
+
+
+def test_a_missing_uncertainty_file_is_reported_not_hidden(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """An optimiser run publishes values with no error bars, and the record
+    should not be the first place anyone notices."""
+    root, fit_id = corefined
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    assert any("no uncertainties" in p for p in staged.problems)
+
+
+def test_chi_squared_reaches_the_assembler(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    root, fit_id = corefined
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    final = json.loads((tmp_path / "ingest" / "final_state.json").read_text())
+    assert final["final_chi2"] == pytest.approx(staged.chisq)
+
+
+def test_a_fit_with_no_serialised_problem_is_refused(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """An ISAAC record carries the fitted model. Exporting without one would
+    publish a measurement claiming to be an analysis."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+    for path in (directory / "fit").glob("*.json"):
+        path.unlink()
+
+    with pytest.raises(FileNotFoundError, match="fitted model"):
+        stage(directory, root, tmp_path / "ingest")
+
+
+def test_a_script_with_no_spec_exports_as_one_state(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A forked or hand-written script has no states to group by. One state is
+    the honest answer -- segments still assemble into one measurement -- and
+    the loss of per-condition records is said out loud rather than guessed at
+    from filenames."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+    (directory / "spec.yaml").unlink()
+
+    staged = stage(directory, root, tmp_path / "ingest")
+
+    assert len(staged.states) == 1
+    assert staged.n_files == 6, "every segment still travels"
+    assert any("one state" in p for p in staged.problems)
+
+
+# --------------------------------------------------------------------------
+# The command
+# --------------------------------------------------------------------------
+
+
+def test_export_says_what_is_missing_rather_than_failing_obscurely(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """The schema tools are an optional extra, so their absence is the normal
+    case for someone who has not opted in."""
+    root, fit_id = corefined
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    result = run(
+        root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
+    )
+
+    assert result.exit_code != 0
+    assert "data-assembler is not installed" in result.output
+    assert "nr-workbench[isaac]" in result.output
+
+
+def test_export_reports_the_assembly_before_it_needs_any_tool(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """Staging is nr-workbench's half of the job and is worth seeing even when
+    the rest cannot run."""
+    root, fit_id = corefined
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+
+    result = run(
+        root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
+    )
+
+    assert "3 angle segments -> one measurement" in result.output
+
+
+def test_upload_is_never_implied_by_export(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """Publishing to a shared portal is not straightforwardly retractable."""
+    root, fit_id = corefined
+    calls: list[list[str]] = []
+
+    import nr_workbench.commands.isaac_cmd as module
+
+    monkeypatch.setattr(module, "_assemble", lambda ingest: None)
+    monkeypatch.setattr(
+        module, "_convert", lambda i, r, n: r.mkdir(parents=True, exist_ok=True)
+    )
+    monkeypatch.setattr(module, "_validate", lambda records: None)
+    monkeypatch.setattr(module, "_upload", lambda *a, **k: calls.append(["upload"]))
+
+    result = run(
+        root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [], "no upload without the flag"
+    assert "Not uploaded" in result.output
+
+
+def test_the_fits_note_becomes_the_record_context(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """The record is read by people who will never see this project, so the
+    reasoning is worth more there than anywhere else it is kept."""
+    root, fit_id = corefined
+    run(root, monkeypatch, "note", fit_id.rpartition("-")[2], "-m", "oxide required")
+
+    from nr_workbench.commands.isaac_cmd import _notes_for
+    from nr_workbench.project.layout import ProjectLayout
+    from nr_workbench.provenance.index import FitIndex
+
+    layout = ProjectLayout(root=root)
+    entry = FitIndex(layout.index_file).find(fit_id)
+
+    notes = _notes_for(layout, fit_dir(root, fit_id), entry)
+
+    assert notes is not None
+    assert "oxide required" in notes

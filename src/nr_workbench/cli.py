@@ -510,6 +510,44 @@ def promote_command(fit_id: str, label: str, reason: str, force: bool) -> None:
     run_promote(fit_id=fit_id, label=label, reason=reason, force=force)
 
 
+@main.group("isaac")
+def isaac_group() -> None:
+    """Publish results as ISAAC AI-Ready Records."""
+
+
+@isaac_group.command("export")
+@click.argument("fit_id")
+@click.option(
+    "--out", "-o", default=None, help="Where to write [default: the fit's isaac/]."
+)
+@click.option(
+    "--context",
+    default=None,
+    help="Notes for the record [default: the fit's NOTES.md].",
+)
+@click.option("--upload", is_flag=True, help="Push the records to the ISAAC Portal.")
+@click.option(
+    "--validate-only",
+    is_flag=True,
+    help="With --upload, ask the API to validate without persisting.",
+)
+@click.option("--yes", is_flag=True, help="Skip the upload confirmation.")
+def isaac_export_command(**kwargs: object) -> None:
+    """Export FIT_ID as ISAAC AI-Ready Records.
+
+    Each state becomes one record, with its angle segments assembled into a
+    single measurement rather than mistaken for separate ones. A co-refinement
+    therefore yields one record per condition, all sharing a sample id so the
+    portal reads them as one experiment.
+
+    Needs `data-assembler` and `nr-isaac-format`, which own the schema
+    mapping: pip install 'nr-workbench[isaac]'.
+    """
+    from nr_workbench.commands.isaac_cmd import run_export
+
+    run_export(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("assess")
 @click.argument("fit_id")
 @click.option(

@@ -58,6 +58,14 @@ dependencies = [
 
 [project.optional-dependencies]
 nexus = ["h5py>=3.9"]
+# The ISAAC schema mapping lives upstream: data-assembler produces neutral
+# typed records, nr-isaac-format maps them and talks to the Portal. Both are
+# git references, so this extra cannot go to PyPI -- which nr-workbench cannot
+# anyway while `aure` is pinned the same way.
+isaac = [
+  "nr-isaac-format @ git+https://github.com/isaac-neutrons/nr-isaac-format.git",
+  "data-assembler @ git+https://github.com/isaac-neutrons/data-assembler.git",
+]
 dev = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
@@ -68,7 +76,7 @@ dev = [
   "types-PyYAML",
 ]
 docs = ["mkdocs-material>=9.5", "sphinx>=7.2", "myst-parser>=2.0"]
-all = ["nr-workbench[nexus,dev,docs]"]
+all = ["nr-workbench[nexus,isaac,dev,docs]"]
 
 [project.urls]
 Homepage = "https://github.com/neutrons-ai/nr-workbench"
