@@ -537,6 +537,11 @@ def isaac_group() -> None:
     is_flag=True,
     help="Replace an output directory nrw did not write.",
 )
+@click.option(
+    "--no-llm",
+    is_flag=True,
+    help="Do not ask a language model to read sample.md for conditions.",
+)
 def isaac_export_command(**kwargs: object) -> None:
     """Export FIT_ID as ISAAC AI-Ready Records.
 

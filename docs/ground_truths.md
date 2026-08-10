@@ -1429,3 +1429,59 @@ An "X is absent" test has to make X absent through every lookup path the code
 uses, not just the obvious one. Here that means patching `shutil.which` *and*
 `sys.executable`, which in turn exposed that `_find` would raise `OSError`
 rather than degrade when handed an interpreter that does not exist.
+
+### 2026-08-10: concatenating angle segments needs the fitted scales, not just a sort
+
+Three REF_L angle segments are one measurement, so an ISAAC record should carry
+one curve. But each segment has its own normalisation: on run 218386 the 3.5 deg
+segment fits `probe intensity` 0.789, i.e. it is 21% low. Appending the raw
+files publishes a curve with a visible step in it.
+
+The correction is `R / intensity`, and the direction is measurable rather than
+a convention. On that run the segment-2/3 overlap goes:
+
+    raw            +30.4%
+    R / intensity   +1.1%     <- correct
+    R * intensity  +68.4%
+
+`dR` scales with `R`; `Q` and `dQ` are geometry and do not. Only nr-workbench
+has these numbers --- they are fitted parameters, so no downstream tool can
+recover them.
+
+Two details the merged file needs: the primary segment's header must be carried
+verbatim (the reader takes the run number, IPTS and reduction version from
+there, not from the filename --- drop it and every record says "Unknown"), and
+the name must follow `REFL_<run>_combined_data_auto.txt`, which is REF_L's own
+convention for a stitched curve.
+
+### 2026-08-10: free prose in a field that is regex-parsed corrupts the parse
+
+`nr-isaac-format` fills a record's electrochemistry from the assembler's
+*structured* fields and, when those are empty, falls back to parsing the
+measurement description. `--context` overrides that description for every
+record at once.
+
+So passing the analysis note as `--context` --- where a promote reason read
+"3-state co-refinement (OCV/potential/OCV)" --- made all three records report
+`open_circuit`, including the galvanostatic one whose structured condition was
+legitimately absent. The fallback is reasonable; combining it with a shared
+free-text override is not.
+
+The rule: never put narrative prose into a field something else parses for
+facts. The per-state condition owns the measurement description, and a
+multi-state export passes no `--context` at all.
+
+### 2026-08-10: the schema has no galvanostatic control
+
+`assembler.parsers.conditions.parse_conditions` recognises open circuit, a
+potential in volts, pH and molar electrolytes. It has no notion of a current
+density, so `-0.5 mA/cm2` yields no structured condition at all --- and
+`_classify_environment` only promotes a measurement to `operando` on an applied
+*potential*, so an electrochemical cell under galvanostatic control is recorded
+as `ex_situ`.
+
+Both are wrong for this beamline's most common operando experiment. The text
+still reaches `series[].notes`, so nothing is lost, but the structured fields
+that make a record queryable are empty. Worth fixing upstream: a
+`current_density` field plus `control_mode: galvanostatic`, and the same
+operando bump a potential gets.

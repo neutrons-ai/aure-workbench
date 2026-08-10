@@ -52,6 +52,7 @@ def run_export(
     context: str | None = None,
     yes: bool = False,
     force: bool = False,
+    no_llm: bool = False,
 ) -> None:
     """Export one fit to ISAAC records, and optionally upload them.
 
@@ -64,6 +65,7 @@ def run_export(
         context: Free-text notes carried into the record.
         yes: Skip the upload confirmation.
         force: Replace an output directory nrw did not write.
+        no_llm: Do not ask a language model to read the sample notes.
 
     Raises:
         click.ClickException: If the project, fit, or a required tool is
@@ -85,6 +87,13 @@ def run_export(
     ingest = destination / "ingest"
     records = destination / "records"
 
+    # Deliberately NOT passed as --context. `_select_measurement_description`
+    # prefers that string over each state's own condition text, and the
+    # record's electrochemistry is re-derived from whatever ends up there --
+    # so a note reading "3-state co-refinement (OCV/potential/OCV)" makes
+    # every record, including the galvanostatic one, report open circuit.
+    # Free prose must not reach a field that is regex-parsed for conditions.
+    # It rides on the sample description instead, which is not.
     notes = context or _notes_for(layout, fit_dir, entry)
 
     try:
@@ -92,7 +101,9 @@ def run_export(
             fit_dir,
             layout.root,
             ingest,
-            sample_description=_sample_description(layout, entry),
+            sample_description=_with_notes(_sample_description(layout, entry), notes),
+            sample_markdown=_sample_markdown(layout, entry),
+            use_llm=not no_llm,
             force=force,
         )
         # Same reason as the ingest dir: a record left over from a previous
@@ -107,7 +118,7 @@ def run_export(
 
     try:
         _assemble(ingest)
-        _convert(ingest, records, notes)
+        _convert(ingest, records, notes if len(staged.states) == 1 else None)
         _validate(records)
     except ToolMissingError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -134,16 +145,25 @@ def _report_staged(staged: Staged, fit_id: str) -> None:
     """Say what was assembled, in the terms that matter."""
     click.echo(f"  fit       {fit_id}")
     for state in staged.states:
-        segments = len(state.files)
+        n = state.segments
         click.echo(
-            f"  state     {state.name}: {segments} "
-            f"{'angle segment' if segments == 1 else 'angle segments'} "
-            "-> one measurement"
+            f"  state     {state.name}: {n} "
+            f"{'angle segment' if n == 1 else 'angle segments'} "
+            f"concatenated -> run {state.run or state.name}"
         )
     if staged.chisq is not None:
         click.echo(f"  chisq     {staged.chisq:.6g}")
     for problem in staged.problems:
         click.secho(f"  ! {problem}", fg="yellow")
+
+
+def _sample_markdown(layout: ProjectLayout, entry: dict[str, Any]) -> str:
+    """The sample's raw prose, where the experimental conditions live."""
+    sample = entry.get("sample")
+    if not sample:
+        return ""
+    path = layout.sample(str(sample)) / "sample.md"
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
 def _sample_description(layout: ProjectLayout, entry: dict[str, Any]) -> str | None:
@@ -167,15 +187,39 @@ def _notes_for(
     The record is read downstream by people who will never see this project,
     so the reasoning is worth more there than anywhere else it is stored.
     """
-    from nr_workbench.notes import fit_note
+    from nr_workbench.notes import fit_note, notes_about, sample_notes
 
+    fit_id = str(entry.get("fit_id"))
     sample = entry.get("sample")
-    note = fit_note(
-        layout.root, fit_dir, str(entry.get("fit_id")), str(sample) if sample else None
-    )
-    if note is None or note.blank:
-        return None
-    return note.text
+    name = str(sample) if sample else None
+
+    parts: list[str] = []
+    note = fit_note(layout.root, fit_dir, fit_id, name)
+    if note is not None and not note.blank:
+        parts.append(note.text)
+
+    # The promotion reason is prose about this exact fit that lives only in the
+    # index, so it reaches no other export. On a promoted fit it is usually the
+    # most considered sentence anyone wrote about it.
+    promotion = _promotion_reason(layout, fit_id)
+    if promotion:
+        parts.append(f"Promoted as the answer: {promotion}")
+
+    if name:
+        for report in notes_about(sample_notes(layout.root, name), fit_id):
+            parts.append(f"From {report.path}:\n\n{report.text}")
+
+    return "\n\n---\n\n".join(parts) if parts else None
+
+
+def _promotion_reason(layout: ProjectLayout, fit_id: str) -> str | None:
+    """The reason recorded when this fit was promoted, if it was."""
+    index = FitIndex(layout.index_file)
+    for event in reversed(index.promotions()):
+        if str(event.get("fit_id")) == fit_id:
+            reason = event.get("reason")
+            return str(reason) if reason else None
+    return None
 
 
 def _find(names: tuple[str, ...], install: str) -> list[str]:
@@ -237,6 +281,21 @@ def _assemble(ingest: Path) -> None:
     )
 
 
+def _with_notes(description: str | None, notes: str | None) -> str | None:
+    """Attach the analysis notes to the sample description.
+
+    Not to the measurement description, which is where they belong and where
+    they cannot go: that field feeds the condition parser, and prose
+    mentioning OCV would relabel a galvanostatic hold as open circuit.
+    """
+    parts = [p for p in (description, notes) if p and p.strip()]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]}\n\n## Analysis notes\n\n{parts[1]}"
+
+
 def _convert(ingest: Path, records: Path, notes: str | None) -> None:
     """``nr-isaac-format convert-ingest`` into one record per state."""
     cmd = _find(("nr-isaac-format",), "nr-workbench[isaac]")
@@ -245,6 +304,7 @@ def _convert(ingest: Path, records: Path, notes: str | None) -> None:
     # rejected, and passing a directory for one state is accepted.
     args = [*cmd, "convert-ingest", str(ingest), "-o", str(records)]
     if notes:
+        # One state, so there is no per-state condition to overwrite.
         args += ["--context", notes]
     _run(args, "nr-isaac-format convert-ingest")
 

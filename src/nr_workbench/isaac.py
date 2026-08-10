@@ -35,6 +35,7 @@ in its manifest -- so what is exported is what was fitted.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +43,11 @@ from typing import Any
 
 #: Filename the assembler expects for the serialised bumps problem.
 PROBLEM_FILENAME = "problem.json"
+
+#: REF_L's own name for a stitched full-Q curve. The assembler reads the run
+#: number out of it, so using the convention rather than inventing one is what
+#: keeps the record pointing at the right measurement.
+COMBINED_TEMPLATE = "REFL_{run}_combined_data_auto.txt"
 
 #: Marks a directory as one this module created, and may therefore replace.
 #: The assembler names its outputs by uuid, so a second run writes a whole new
@@ -65,6 +71,8 @@ class StagedState:
     name: str
     files: list[str]
     condition: str | None = None
+    segments: int = 1
+    run: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Return the ``states[]`` entry the assembler reads."""
@@ -94,6 +102,111 @@ class Staged:
     def n_files(self) -> int:
         """Total reduced files across every state."""
         return sum(len(s.files) for s in self.states)
+
+
+def fitted_scales(fit_dir: Path) -> dict[str, float]:
+    """Per-measurement intensity scales, keyed by ``Measurement.key``.
+
+    A REF_L angle segment carries its own normalisation, and the fit is what
+    determines it: run 218386's 3.5 deg segment fits an intensity of 0.789,
+    which is the 21 % the raw file is low by. Concatenating without applying
+    these publishes a curve with a visible step in it.
+
+    Args:
+        fit_dir: The result directory.
+
+    Returns:
+        ``{"run218386#2": 0.789, ...}``, empty when nothing was fitted.
+    """
+    scales: dict[str, float] = {}
+    pattern = re.compile(r"^(\S+#\d+)\s+probe\s+intensity$")
+    for path in sorted((fit_dir / "fit").glob("*.par")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, _, number = line.strip().rpartition(" ")
+            match = pattern.match(name.strip())
+            if not match:
+                continue
+            try:
+                value = float(number)
+            except ValueError:
+                continue
+            if value > 0:
+                scales[match.group(1)] = value
+        break
+    return scales
+
+
+def concatenate(
+    paths: list[Path],
+    scales: list[float],
+    destination: Path,
+    *,
+    run: str,
+) -> Path:
+    """Merge a state's angle segments into one full-Q curve.
+
+    Each segment is divided by its fitted intensity before merging --- the
+    direction is not a guess: on run 218386 it takes the segment-2/3 overlap
+    from +30 % to +1 %, and multiplying instead takes it to +68 %.
+
+    Args:
+        paths: The segment files, any order.
+        scales: The fitted intensity for each, aligned with ``paths``.
+        destination: Directory to write into.
+        run: Run number for the filename.
+
+    Returns:
+        The written file.
+
+    Raises:
+        ValueError: If no segment could be read.
+    """
+    import numpy as np
+
+    rows = []
+    applied = []
+    for path, scale in zip(paths, scales, strict=True):
+        data = np.loadtxt(path, ndmin=2)
+        if data.size == 0:
+            continue
+        block = np.zeros((len(data), 4))
+        block[:, 0] = data[:, 0]
+        # R and dR carry the scale; Q and dQ are geometry and do not.
+        block[:, 1] = data[:, 1] / scale
+        block[:, 2] = (data[:, 2] if data.shape[1] > 2 else 0.0) / scale
+        block[:, 3] = data[:, 3] if data.shape[1] > 3 else 0.0
+        rows.append(block)
+        applied.append((Path(path).name, scale))
+
+    if not rows:
+        raise ValueError(f"No usable data in {[str(p) for p in paths]}")
+
+    merged = np.vstack(rows)
+    merged = merged[np.argsort(merged[:, 0])]
+
+    target = Path(destination) / COMBINED_TEMPLATE.format(run=run)
+    header = [
+        # The primary segment's own header first. It carries the IPTS, run
+        # number, title and reduction version, and downstream readers take the
+        # run number from there rather than from the filename -- drop it and
+        # the record says "Unknown".
+        *_carried_header(Path(paths[0])),
+        "",
+        "Concatenated from the angle segments below by nr-workbench.",
+        "R and dR are divided by each segment's fitted intensity, which is",
+        "the per-segment normalisation the co-refinement determined.",
+        "",
+        *(f"  {name}  intensity {scale:.6g}" for name, scale in applied),
+        "",
+        "Q (1/A)  R  dR  dQ (FWHM, 1/A)",
+    ]
+    np.savetxt(
+        target,
+        merged,
+        fmt="%.8e",
+        header="\n".join(header),
+    )
+    return target
 
 
 def reset(destination: Path, *, force: bool = False) -> None:
@@ -135,6 +248,8 @@ def stage(
     destination: Path,
     *,
     sample_description: str | None = None,
+    sample_markdown: str = "",
+    use_llm: bool = True,
     force: bool = False,
 ) -> Staged:
     """Write a fit into a directory ``data-assembler ingest-workflow`` can read.
@@ -144,6 +259,9 @@ def stage(
         root: Project root, for resolving the recorded relative paths.
         destination: Directory to create and populate.
         sample_description: Prose for the sample record.
+        sample_markdown: The sample's prose, which is where the experimental
+            conditions actually live.
+        use_llm: Let a language model read that prose when one is configured.
         force: Replace the destination even if nrw did not write it.
 
     Returns:
@@ -179,10 +297,37 @@ def stage(
             "will carry fitted values with no uncertainties."
         )
 
-    states = _states(fit_dir, root, problems)
+    data = destination / "data"
+    data.mkdir(exist_ok=True)
+    states = _states(fit_dir, root, problems, data)
     if not states:
         raise FileNotFoundError(
             f"No reduced data files could be resolved for {fit_dir.name}."
+        )
+
+    # The conditions. A fit knows nothing about applied potential; the
+    # scientist wrote it in sample.md before any of this ran, and it has to be
+    # carried over or the record says only "ex_situ".
+    from nr_workbench.conditions import describe
+
+    described = describe(
+        states=[(s.name, s.run or "", s.condition) for s in states],
+        sample_markdown=sample_markdown,
+        use_llm=use_llm,
+    )
+    for state in states:
+        found = described.get(state.name)
+        if found and found.text:
+            state.condition = found.text
+            problems.extend(
+                []
+                if found.source != "none"
+                else [f"No condition found for {state.name}."]
+            )
+    if not any(s.condition for s in states):
+        problems.append(
+            "No experimental conditions found in sample.md or the spec, so the "
+            "records will not say what each measurement was measured under."
         )
 
     manifest = _read_json(fit_dir / "manifest.json")
@@ -220,18 +365,26 @@ def stage(
     return Staged(directory=destination, states=states, chisq=chisq, problems=problems)
 
 
-def _states(fit_dir: Path, root: Path, problems: list[str]) -> list[StagedState]:
+def _states(
+    fit_dir: Path, root: Path, problems: list[str], workspace: Path
+) -> list[StagedState]:
     """Group the fit's data into states, preferring the frozen spec."""
     spec_path = fit_dir / "spec.yaml"
     if spec_path.is_file():
-        grouped = _states_from_spec(spec_path, root, problems)
+        grouped = _states_from_spec(
+            spec_path, root, problems, fitted_scales(fit_dir), workspace
+        )
         if grouped:
             return grouped
     return _states_from_inputs(fit_dir, root, problems)
 
 
 def _states_from_spec(
-    spec_path: Path, root: Path, problems: list[str]
+    spec_path: Path,
+    root: Path,
+    problems: list[str],
+    intensities: dict[str, float],
+    workspace: Path,
 ) -> list[StagedState]:
     """Group by the spec's states, which is how the fit itself was built.
 
@@ -255,20 +408,72 @@ def _states_from_spec(
     for series in getattr(spec, "series", None) or []:
         conditions.setdefault(series.name, getattr(series, "condition", None))
 
+    runs = {s.name: str(getattr(s, "run", "") or "") for s in spec.states}
+
     states = []
     for group, measurements in found.items():
-        files = []
+        paths, scales = [], []
         for measurement in measurements:
             path = (root / measurement.file).resolve()
             if path.is_file():
-                files.append(str(path))
+                paths.append(path)
+                scales.append(intensities.get(measurement.key, 1.0))
             else:
                 problems.append(f"Recorded data file is missing: {measurement.file}")
-        if files:
-            states.append(
-                StagedState(name=group, files=files, condition=conditions.get(group))
+        if not paths:
+            continue
+
+        run = runs.get(group) or _run_from(paths[0]) or group
+        if len(paths) > 1 and not any(k.startswith(f"{group}#") for k in intensities):
+            problems.append(
+                f"{group} has {len(paths)} angle segments but the fit varied no "
+                "per-segment intensity, so they are merged unscaled. Any "
+                "normalisation difference between them will show as a step."
             )
+        try:
+            combined = concatenate(paths, scales, workspace, run=run)
+        except (ValueError, OSError) as exc:
+            problems.append(f"Could not concatenate {group}: {exc}")
+            continue
+
+        states.append(
+            StagedState(
+                name=group,
+                files=[str(combined)],
+                condition=conditions.get(group),
+                segments=len(paths),
+                run=run,
+            )
+        )
     return states
+
+
+def _carried_header(path: Path) -> list[str]:
+    """The comment lines of a reduced file, without its column header.
+
+    Kept verbatim: the reader takes the run number, IPTS and reduction
+    version from here, and re-deriving them would be a second source of
+    truth for facts the instrument already recorded.
+    """
+    lines = []
+    try:
+        for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not raw.startswith("#"):
+                break
+            text = raw.lstrip("#").strip()
+            # Our own column header replaces theirs.
+            if text.startswith("Q ") or text.startswith("Q["):
+                continue
+            lines.append(text)
+    except OSError:
+        return []
+    return lines
+
+
+def _run_from(path: Path) -> str | None:
+    """The run number in a REF_L filename, or None."""
+    match = re.search(r"REFL?_?L?_(\d{4,})", path.name)
+    return match.group(1) if match else None
 
 
 def _states_from_inputs(

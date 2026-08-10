@@ -879,11 +879,16 @@ nrw isaac export 20260807-155810Z-ec6d0134
 
 Two lines in that output are the whole point.
 
-**"3 angle segments → one measurement."** A REF_L steady state is measured at
-three incident angles and reduced to three files with three different run
-numbers. They are one measurement of one sample. Exporting them as three
-records would claim three measurements that never happened — a bug AuRE has
-already had to fix once.
+**"3 angle segments concatenated."** A REF_L steady state is measured at three
+incident angles and reduced to three files with three run numbers. They are one
+measurement, and the record carries one curve.
+
+The concatenation is not just a merge. Each segment has its own normalisation —
+on run 218386 the 3.5° segment fits an intensity of **0.789**, so it is 21% low
+— and the co-refinement is what determined those numbers. Each segment's R and
+dR are divided by its fitted intensity before merging, which takes the
+segment-2/3 overlap from +30% to +1%. Appending the raw files instead would
+publish a curve with a visible step in it.
 
 **"3 records share one sample id."** A co-refinement is several conditions of
 one sample, so each condition becomes its own record and they are cross-linked
@@ -891,9 +896,26 @@ by `same_sample_as`. The portal then reads them as one experiment rather than
 three unrelated measurements. The grouping comes from your spec's `states:`,
 never from filenames — so what is published is what was fitted.
 
-Your fit's `NOTES.md` becomes the record's measurement notes, which is usually
-the only place a downstream reader will ever see why the analysis was done the
-way it was.
+**Conditions come from `sample.md`.** A fit knows nothing about applied
+potential; you wrote it in the measurement table before any of this ran. The
+export reads the row for each run, and with an LLM endpoint configured also
+reads the prose around it:
+
+```
+notes: Under a galvanostatic hold of -0.5 mA/cm2 in dTHF electrolyte.
+```
+
+That sentence was assembled from a table cell reading `-0.5 mA/cm2` and a spec
+condition reading `under applied potential (chronoamperometry)`. Use `--no-llm`
+for the table-only version.
+
+One caveat worth knowing: the downstream schema recognises open circuit and a
+potential in volts, but **not a current density**, so a galvanostatic run
+carries its conditions as text with the structured `electrochemistry` field
+left empty rather than filled with something wrong.
+
+Nothing is invented. If neither the table nor the spec says anything, the
+record says nothing about conditions.
 
 To upload:
 

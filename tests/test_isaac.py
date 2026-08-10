@@ -93,13 +93,13 @@ def test_a_states_angle_segments_stay_one_measurement(
 
     staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
 
-    assert [len(s.files) for s in staged.states] == [3, 3]
-    assert staged.n_files == 6
+    assert [s.segments for s in staged.states] == [3, 3], "three angles each"
+    assert [len(s.files) for s in staged.states] == [1, 1], "concatenated to one"
 
     run_info = json.loads((tmp_path / "ingest" / "run_info.json").read_text())
     assert len(run_info["states"]) == 2, "two states, not six"
     for state in run_info["states"]:
-        assert len(state["data_files"]) == 3
+        assert len(state["data_files"]) == 1
 
 
 def test_segments_are_grouped_by_the_spec_not_by_filename(
@@ -117,23 +117,107 @@ def test_segments_are_grouped_by_the_spec_not_by_filename(
     assert {s.name for s in staged.states} == recorded
 
 
-def test_every_staged_file_is_one_the_fit_recorded(
+def test_the_combined_curve_holds_every_recorded_point(
     corefined: tuple[Path, str], tmp_path: Path
 ) -> None:
-    """Exporting a file the fit never read would publish a claim about data
-    that did not produce the result."""
+    """Concatenation must lose nothing. The exported curve is derived rather
+    than recorded, so the check is that its length is the sum of its sources.
+    """
+    import numpy as np
+
     root, fit_id = corefined
     directory = fit_dir(root, fit_id)
 
     staged = stage(directory, root, tmp_path / "ingest")
 
-    recorded = {
+    recorded = [
         (root / e["path"]).resolve()
         for e in json.loads((directory / "inputs.json").read_text())["inputs"]
         if e["role"] != "script"
-    }
-    staged_files = {Path(f) for s in staged.states for f in s.files}
-    assert staged_files <= recorded
+    ]
+    expected = sum(len(np.loadtxt(p, ndmin=2)) for p in recorded)
+    written = sum(len(np.loadtxt(f, ndmin=2)) for s in staged.states for f in s.files)
+    assert written == expected
+
+
+def test_the_combined_curve_is_sorted_in_q(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Three angle segments cover three Q ranges; appended in file order they
+    would zigzag."""
+    import numpy as np
+
+    root, fit_id = corefined
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    q = np.loadtxt(staged.states[0].files[0], ndmin=2)[:, 0]
+    assert np.all(np.diff(q) >= 0)
+
+
+def test_each_segment_is_divided_by_its_fitted_intensity(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The direction is not a convention, it is measurable: on the real
+    Cu/THF run this takes the segment-2/3 overlap from +30% to +1%, and
+    multiplying instead takes it to +68%. Getting it backwards publishes a
+    curve with a visible step in it.
+    """
+    import numpy as np
+
+    from nr_workbench.isaac import concatenate
+
+    source = tmp_path / "seg.txt"
+    np.savetxt(source, np.array([[0.01, 1.0, 0.1, 0.001], [0.02, 0.5, 0.05, 0.002]]))
+
+    written = concatenate([source], [0.5], tmp_path, run="100001")
+
+    out = np.loadtxt(written, ndmin=2)
+    assert out[0, 1] == pytest.approx(2.0), "R / intensity, not R * intensity"
+    assert out[0, 2] == pytest.approx(0.2), "dR scales with R"
+    assert out[0, 0] == pytest.approx(0.01), "Q is geometry and does not scale"
+    assert out[0, 3] == pytest.approx(0.001), "nor does dQ"
+
+
+def test_the_combined_file_keeps_the_instrument_header(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The reader takes the run number, IPTS and reduction version from the
+    header, not the filename -- drop it and the record says "Unknown"."""
+    root, fit_id = corefined
+    # The synthetic fixtures carry no header; give the primary segment the one
+    # a real reduced file has, which is the thing that must survive.
+    steady = root / "samples" / "S1" / "data" / "steady"
+    primary = sorted(steady.glob("REFL_100001_*_partial.txt"))[0]
+    primary.write_text(
+        "# Experiment IPTS-34347 Run 100001\n"
+        "# Reduction 2.2.0\n" + primary.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    staged = stage(fit_dir(root, fit_id), root, tmp_path / "ingest")
+
+    combined = next(f for s in staged.states for f in s.files if "100001" in f)
+    text = Path(combined).read_text(encoding="utf-8")
+    assert "Experiment IPTS-34347 Run 100001" in text
+    assert "Reduction 2.2.0" in text
+    assert "Concatenated from the angle segments" in text, "and says it is derived"
+
+
+def test_an_unscaled_merge_is_reported(
+    corefined: tuple[Path, str], tmp_path: Path
+) -> None:
+    """Without per-segment intensities the segments are merged as they are,
+    and any normalisation difference shows as a step. Silence would let that
+    reach a published curve unremarked."""
+    root, fit_id = corefined
+    directory = fit_dir(root, fit_id)
+    for path in (directory / "fit").glob("*.par"):
+        path.write_text("Film thickness 100.0\n", encoding="utf-8")
+
+    staged = stage(directory, root, tmp_path / "ingest")
+
+    assert any("merged unscaled" in p for p in staged.problems)
 
 
 # --------------------------------------------------------------------------
@@ -257,7 +341,7 @@ def test_a_script_with_no_spec_exports_as_one_state(
     staged = stage(directory, root, tmp_path / "ingest")
 
     assert len(staged.states) == 1
-    assert staged.n_files == 6, "every segment still travels"
+    assert staged.n_files == 6, "every segment still travels, unconcatenated"
     assert any("one state" in p for p in staged.problems)
 
 
@@ -310,7 +394,7 @@ def test_export_reports_the_assembly_before_it_needs_any_tool(
         root, monkeypatch, "isaac", "export", fit_id, "--out", str(tmp_path / "o")
     )
 
-    assert "3 angle segments -> one measurement" in result.output
+    assert "3 angle segments concatenated" in result.output
 
 
 def test_upload_is_never_implied_by_export(
@@ -422,7 +506,7 @@ def test_force_replaces_a_directory_nrw_did_not_write(
     staged = stage(fit_dir(root, fit_id), root, stale, force=True)
 
     assert not (stale / "leftover.parquet").exists()
-    assert staged.n_files == 6
+    assert staged.n_files == 2
 
 
 def test_an_empty_directory_is_fine_to_stage_into(
@@ -435,7 +519,7 @@ def test_an_empty_directory_is_fine_to_stage_into(
 
     staged = stage(fit_dir(root, fit_id), root, empty)
 
-    assert staged.n_files == 6
+    assert staged.n_files == 2
 
 
 def test_exporting_twice_leaves_one_record_per_state(
@@ -461,3 +545,165 @@ def test_exporting_twice_leaves_one_record_per_state(
         assert result.exit_code == 0, result.output
 
     assert len(list((out / "records").glob("*.json"))) == 2
+
+
+# --------------------------------------------------------------------------
+# Experimental conditions
+# --------------------------------------------------------------------------
+
+SAMPLE_MD = """# expt11
+
+## Measurements
+
+| Run    | Type   | Condition   |
+|--------|--------|-------------|
+| 218386 | full Q | OCV         |
+| 218393 | full Q | -0.5 mA/cm2 |
+"""
+
+
+def test_the_condition_comes_out_of_the_measurement_table() -> None:
+    """A fit knows nothing about applied potential. The scientist wrote it in
+    sample.md before any of this ran, and without carrying it over the record
+    says only "ex_situ"."""
+    from nr_workbench.conditions import from_table
+
+    assert from_table(SAMPLE_MD, "218386") == "OCV"
+    assert from_table(SAMPLE_MD, "218393") == "-0.5 mA/cm2"
+
+
+def test_an_unlisted_run_gets_nothing_rather_than_a_neighbour() -> None:
+    """Returning the wrong row would label a measurement with someone else's
+    conditions, which is worse than labelling it with none."""
+    from nr_workbench.conditions import from_table
+
+    assert from_table(SAMPLE_MD, "999999") is None
+    assert from_table("no table here", "218386") is None
+
+
+def test_the_table_and_the_spec_are_combined_not_chosen_between() -> None:
+    """The table says what was applied; the spec says what it was for."""
+    from nr_workbench.conditions import describe
+
+    found = describe(
+        states=[("s1", "218393", "sample realigned")],
+        sample_markdown=SAMPLE_MD,
+        use_llm=False,
+    )
+
+    assert found["s1"].source == "table"
+    assert "-0.5 mA/cm2" in found["s1"].text
+    assert "sample realigned" in found["s1"].text
+
+
+def test_conditions_fall_back_to_the_spec_when_the_table_is_silent() -> None:
+    from nr_workbench.conditions import describe
+
+    found = describe(
+        states=[("s1", "999999", "under potential")],
+        sample_markdown=SAMPLE_MD,
+        use_llm=False,
+    )
+
+    assert found["s1"].source == "spec"
+    assert found["s1"].text == "under potential"
+
+
+def test_nothing_is_invented_when_nothing_is_known() -> None:
+    """A record that says less is better than one that says something untrue."""
+    from nr_workbench.conditions import describe
+
+    found = describe(states=[("s1", "999999", None)], sample_markdown="", use_llm=False)
+
+    assert found["s1"].text == ""
+    assert found["s1"].source == "none"
+
+
+def test_a_language_model_reply_that_names_an_unknown_state_is_ignored(
+    monkeypatch,
+) -> None:
+    """The reply is parsed, not trusted: a hallucinated state name must not
+    become a condition on a measurement that exists."""
+    import nr_workbench.conditions as module
+
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.llm_available", lambda: True, raising=False
+    )
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.complete",
+        lambda s, u: '{"s1": "OCV in dTHF", "ghost": "invented"}',
+        raising=False,
+    )
+
+    found = module.describe(
+        states=[("s1", "218386", None)], sample_markdown=SAMPLE_MD, use_llm=True
+    )
+
+    assert set(found) == {"s1"}
+    assert found["s1"].source == "llm"
+
+
+def test_an_unusable_language_model_reply_leaves_the_table_answer(
+    monkeypatch,
+) -> None:
+    """Falling back to a worse answer beats failing the export."""
+    import nr_workbench.conditions as module
+
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.llm_available", lambda: True, raising=False
+    )
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.complete", lambda s, u: "not json", raising=False
+    )
+
+    found = module.describe(
+        states=[("s1", "218386", None)], sample_markdown=SAMPLE_MD, use_llm=True
+    )
+
+    assert found["s1"].text == "OCV"
+    assert found["s1"].source == "table"
+
+
+def test_analysis_prose_never_reaches_the_condition_field(
+    corefined: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """The record's electrochemistry falls back to parsing the measurement
+    description when no structured condition was recognised. A shared note
+    reading "co-refinement (OCV/potential/OCV)" therefore relabelled the
+    galvanostatic state as open circuit -- in all three records.
+    """
+    root, fit_id = corefined
+    run(root, monkeypatch, "note", fit_id.rpartition("-")[2], "-m", "OCV/potential/OCV")
+
+    captured: dict[str, object] = {}
+    import nr_workbench.commands.isaac_cmd as module
+
+    monkeypatch.setattr(module, "_assemble", lambda ingest: None)
+    monkeypatch.setattr(
+        module,
+        "_convert",
+        lambda i, r, n: (
+            captured.update(notes=n),
+            r.mkdir(parents=True, exist_ok=True),
+        ),
+    )
+    monkeypatch.setattr(module, "_validate", lambda records: None)
+
+    result = run(
+        root,
+        monkeypatch,
+        "isaac",
+        "export",
+        fit_id,
+        "--out",
+        str(tmp_path / "o"),
+        "--no-llm",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["notes"] is None, (
+        "with several states the per-state condition owns that field"
+    )
+    ingest = json.loads((tmp_path / "o" / "ingest" / "run_info.json").read_text())
+    for state in ingest["states"]:
+        assert "OCV/potential/OCV" not in (state.get("extra_description") or "")
