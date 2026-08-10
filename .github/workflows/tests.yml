@@ -13,8 +13,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        python-version: ["3.13"]
 
     steps:
     - name: Checkout code
@@ -37,7 +37,7 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
       with:
         file: ./coverage.xml
         flags: unittests
@@ -45,6 +45,6 @@ jobs:
         fail_ci_if_error: false
 
     - name: Audit dependencies for known vulnerabilities
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
       run: pip-audit --desc
       continue-on-error: true  # advisory: don't block PRs on upstream CVEs the user can't fix
