@@ -445,3 +445,37 @@ def test_the_loop_starts_nothing_when_nothing_has_settled(
     )
 
     assert started == 0
+
+
+def test_ctrl_c_reports_what_the_night_managed(tmp_path: Path, monkeypatch) -> None:
+    """Overnight, Ctrl-C is how this ends. Handling it in the caller loses the
+    count with the stack frame -- and after eight hours the number of sessions
+    run is the one thing worth knowing before reading anything.
+    """
+    directory = make_sample(tmp_path)
+    (directory / "sample.md").write_text(
+        "# S1\n\n## Fits to perform\n\nFit it.\n", encoding="utf-8"
+    )
+    for segment in (1, 2, 3):
+        write_segment(directory, 218386, segment, 218385 + segment, at=1000.0)
+
+    calls = []
+
+    def one_then_interrupt(root: Path, sample: str, **kwargs: object):
+        calls.append(sample)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return type("S", (), {"returncode": 0})()
+
+    monkeypatch.setattr("nr_workbench.agent.session.run", one_then_interrupt)
+
+    started = watch.watch(
+        tmp_path,
+        ["S1"],
+        settle_seconds=1,
+        poll_seconds=0,
+        max_sessions=5,
+        on_event=lambda _: None,
+    )
+
+    assert started == 1, "the completed session must still be reported"

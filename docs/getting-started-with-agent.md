@@ -1,0 +1,339 @@
+# Getting started with the agent
+
+Setting up nr-workbench to analyse data by itself, first for one sample, then
+for measurements that are still arriving.
+
+Every command and every output below was produced by running it, on real
+REF_L data, in a project built from scratch. The one exception is marked.
+
+> **Before you start.** Read the first section of
+> [docs/agent.md](agent.md) — the one that says what is and is not automated.
+> This page is the how; that page is the why, and the why is short.
+
+---
+
+## The minimal setup
+
+Three things. Nothing else is required.
+
+1. **`nrw init`** — gives the project `.claude/settings.json`, which is where
+   the limits live.
+2. **Write `## Fits to perform`** in the sample's `sample.md`. Without it the
+   agent refuses to start.
+3. **`nrw agent run <sample>`**.
+
+You also need the `claude` CLI on your `PATH`. That is the whole list. If you
+want to know whether you have it, `nrw doctor` says so.
+
+Everything after this point is the same three steps, slowly, with the checks
+worth doing in between.
+
+---
+
+## Part 1 — one sample, once
+
+### 1. Make the project
+
+```bash
+nrw init cu-thf --beamtime jen-apr2025 --ipts IPTS-34347
+cd cu-thf
+nrw sample new Cu1 --title "Cu film in dTHF"
+```
+
+Then copy your reduced data into `samples/Cu1/data/steady/`:
+
+```
+REFL_218386_1_218386_partial.txt
+REFL_218386_2_218387_partial.txt
+REFL_218386_3_218388_partial.txt
+```
+
+`nrw init` is safe on a project that already exists and never overwrites a
+file you have edited — so if your project predates this feature, run it again
+to pick up `.claude/settings.json`.
+
+### 2. Check the setup
+
+```bash
+nrw doctor
+```
+
+```
+  ✓ project       ~/beamtime/cu-thf
+  ✓ skills        15 installed: analysis-provenance, neutron-reflectometry, …
+  ✓ harness       2.1.156 at ~/.local/bin/claude
+  ✓ agent limits  PreToolUse hook + 2 deny rule(s)
+```
+
+Those last two lines are the ones that matter here, and they fail
+independently. The combination to watch for is a harness with no limits:
+
+```
+  ✓ harness       2.1.156 at ~/.local/bin/claude
+  ! agent limits  no .claude/settings.json; run `nrw init` to add the hook
+```
+
+That is worse than having neither, because `nrw agent run` works and nothing
+stops a promotion. It is also exactly the state of a project scaffolded before
+this feature existed.
+
+### 3. Say what you want fitted
+
+Open `samples/Cu1/sample.md` and fill in **`## Fits to perform`**. In words,
+not spec syntax:
+
+```markdown
+## Fits to perform
+
+Fit run 218386 on its own. I expect ~500 A of copper on ~3 nm of titanium,
+measured in dTHF through the silicon. There is probably a thin copper oxide
+on the copper surface -- try it with and without and tell me which the data
+supports.
+```
+
+Skip this and you get:
+
+```
+$ nrw agent run Cu1
+Error: samples/Cu1/sample.md declares no task under '## Fits to perform'.
+An unattended session needs to be told what to fit; deciding that for itself
+is exactly what it must not do.
+Write what you want out of this sample there, then run again.
+```
+
+That refusal is the most important line in the design. An agent that picks its
+own problem is the failure everything else is arranged against, and before it
+starts is the only reliable place to stop it.
+
+**Also fill in the measurement table** while you are there. The scaffold leaves
+it empty, and it is what the header checks compare against:
+
+```markdown
+| Run    | Type   | Condition |
+|--------|--------|-----------|
+| 218386 | full Q | OCV       |
+```
+
+### 4. Read the prompt before you trust it
+
+```bash
+nrw agent run Cu1 --dry-run
+```
+
+This composes the whole session and prints it without starting anything. It is
+five minutes well spent exactly once — after that you will know what the agent
+sees. The interesting part is the middle:
+
+```
+## What the offline checks already found
+
+Run before you started, from the file headers, the specs and the recorded
+fits. Read these before deciding anything --- most of them are the kind of
+thing that is cheap to see now and expensive to discover after five fits.
+
+STILL ARRIVING. These measurements' files changed recently, so what is on disk
+may not be all of it --- a steady-state run is three angle segments written
+minutes apart. Fitting a partial measurement returns a plausible number, not
+an error. Prefer the measurements that are complete, and say in
+ESCALATIONS.md if the task needs one of these:
+  run 218386 (steady): unchanged for 24s of 300s
+
+Data vs sample.md (`nrw data reconcile`):
+  [warn] run 218386: Run 218386 has reduced data but no row in sample.md's
+         measurement table. A run nobody wrote up is a run whose conditions
+         are not recorded anywhere.
+
+No fits recorded for this sample yet.
+```
+
+Both of those are worth acting on before you start, and both went away once
+the files had been sitting for five minutes and the table row was filled in.
+That is the dry run doing its job.
+
+### 5. Run it
+
+```bash
+nrw agent run Cu1
+```
+
+```
+Session finished (exit 0); transcript .nrw/agent/20260810-231402Z-Cu1.jsonl
+  ! ESCALATIONS.md exists -- read it before promoting anything
+```
+
+*(This block is illustrative — it is the one thing on this page not captured
+from a run, because a real session costs a real fit.)*
+
+One session, one sample, and it exits. It does not wait for anything.
+
+| | |
+|---|---|
+| `--dry-run` | Compose and print; start nothing |
+| `--turns N` | Cap on harness turns (default 60) |
+| `--model NAME` | Model to run (default: the harness's own) |
+| `--timeout SECONDS` | Kill the session after this long |
+
+### 6. Read what it did
+
+In this order, and it should take five minutes:
+
+```bash
+cat ESCALATIONS.md            # what it could not decide
+nrw ls --sample Cu1           # every fit, with what changed between them
+ls samples/Cu1/reports/       # what it concluded
+```
+
+Then, if you agree, promote by hand:
+
+```bash
+nrw promote 20260810-231402Z-4f2a8c1e --as final \
+    --reason "oxide is real; excluding it costs 0.4 in chisq and leaves a residual at 0.08"
+```
+
+The agent cannot do this, and the reason string is why. In a year, that
+sentence is what a reader needs, and it is not recoverable from the artifacts.
+
+---
+
+## Part 2 — waiting for more measurements
+
+Same setup, one more command. `nrw agent watch` decides *when* to start a
+session; everything inside one is unchanged.
+
+### Look before you leap
+
+```bash
+nrw agent watch --dry-run
+```
+
+```
+Cu1
+  → run 218386 (steady)  ready        3 segment(s), settled, not yet fitted
+    run 218393 (steady)  arriving     unchanged for 0s of 300s
+```
+
+The arrow marks what would be started. Run 218393's files had just landed, so
+it waits — a steady-state measurement is three angle segments written minutes
+apart, and fitting the first one alone gives a perfectly plausible answer out
+of a third of the data.
+
+Quiet time is read from the files' own timestamps, so one poll tells the
+truth. You do not have to leave it running to get a useful answer out of
+`--dry-run`.
+
+### One measurement, as soon as it is ready
+
+The usual beamtime shape — "analyse this one when it is complete, then stop":
+
+```bash
+nrw agent watch Cu1 --max-sessions 1
+```
+
+It polls until the measurement settles, runs one session, and returns
+immediately rather than sitting out another poll interval.
+
+This is the difference between the two one-shot modes:
+
+| | Waits for settling? | Sessions |
+|---|---|---|
+| `nrw agent run Cu1` | No — warns in the prompt and proceeds | 1 |
+| `nrw agent watch Cu1 --max-sessions 1` | Yes | 1 |
+
+Use the first when you know the data is there. Use the second when you are
+leaving.
+
+### All night
+
+```bash
+nrw agent watch
+```
+
+With no sample named, it watches every sample in the project. It starts a
+session for a measurement only when three things are true:
+
+1. **Its files have stopped changing** for `--settle` seconds (default 300).
+2. **Its files are coherent** — segments contiguous from 1, subruns following
+   the run number, and the run not filed as both a steady state and a series.
+3. **Nothing has fitted it yet** — read from the recorded fits, so a fit you
+   ran by hand counts too.
+
+| | |
+|---|---|
+| `--dry-run` | Report what each measurement is waiting for; start nothing |
+| `--settle N` | Seconds files must be unchanged (default 300) |
+| `--poll N` | Seconds between polls (default 60) |
+| `--max-sessions N` | Stop after N sessions |
+| `--session-timeout N` | Kill one session after N seconds (default 7200) |
+| `--turns N`, `--model NAME` | Passed through to each session |
+
+Ctrl-C stops it and prints the session count.
+
+### When a run is held back
+
+```
+    run 218389 (steady)  quarantined  run 218389 appears as both a steady-state
+                                      measurement and a time-resolved series.
+                                      One of the two is a filing accident, and
+                                      which one is a question for a person.
+```
+
+A quarantined run is never fitted, however long it sits there, and it is named
+in the session prompt under **DO NOT FIT** so an agent working on the rest of
+the sample leaves it alone. Resolving it is a curation decision — usually
+moving a file — and that stays yours.
+
+The asymmetry is deliberate: a run wrongly held back costs one question in the
+morning, a run wrongly fitted costs the night.
+
+---
+
+## What the agent cannot do
+
+Three things, refused by a `PreToolUse` hook *and* by `nrw` itself under
+`NRW_AGENT=1`:
+
+- `nrw promote`
+- `nrw isaac export --upload`
+- any `--force`
+
+You can check any command without running it:
+
+```bash
+$ nrw agent guard --command "nrw promote abc123 --as final --reason 'best chisq'"
+Refused by nr-workbench (promote): Marking a fit as the answer is a person's
+decision, and the reason recorded with it is the part that matters in a year.
+Write what you would have said in ESCALATIONS.md, with the fit id and the
+evidence, and stop.
+$ echo $?
+2
+```
+
+Exit 2 is what blocks the call. Every refusal names `ESCALATIONS.md`, because
+an agent told only "no" retries.
+
+---
+
+## If something looks wrong
+
+| Symptom | Look at |
+|---|---|
+| It refuses to start | `## Fits to perform` is empty. That is the design, not a bug. |
+| `nrw agent run` says the harness is missing | `claude` is not on `PATH`; `nrw doctor` confirms |
+| `agent limits` is a `!` | run `nrw init` to add `.claude/settings.json` |
+| Everything says `arriving` | the files were just written; wait `--settle` seconds, or lower it |
+| Everything says `done` | those runs are already in a recorded fit — `nrw ls` shows which |
+| A run says `quarantined` | read the reason; it is naming a real inconsistency |
+| The prompt is missing a check | run the command it names (`nrw data reconcile`, `nrw check`) directly and compare |
+
+Transcripts are under `.nrw/agent/`, one prompt and one `.jsonl` per session.
+They are gitignored, because a transcript contains everything the session saw.
+
+---
+
+## Where to go next
+
+- [docs/agent.md](agent.md) — what is enforced versus merely asked for, and
+  the evidence behind the split
+- [docs/getting-started.md](getting-started.md) — the same analysis done by
+  hand, end to end, which is worth doing once before delegating it
+- `nrw agent --help`

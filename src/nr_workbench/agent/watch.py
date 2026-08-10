@@ -578,14 +578,94 @@ def watch(
     Returns:
         How many sessions were started.
     """
+    say = on_event or print
+    state = WatchState()
+    seen: set[str] = set()
+
+    return _loop(
+        root,
+        samples,
+        state,
+        say,
+        seen,
+        settle_seconds=settle_seconds,
+        poll_seconds=poll_seconds,
+        max_sessions=max_sessions,
+        session_timeout=session_timeout,
+        turns=turns,
+        model=model,
+        dry_run=dry_run,
+    )
+
+
+def _loop(
+    root: Path,
+    samples: list[str],
+    state: WatchState,
+    say: Any,
+    seen: set[str],
+    *,
+    settle_seconds: float,
+    poll_seconds: float,
+    max_sessions: int | None,
+    session_timeout: float | None,
+    turns: int | None,
+    model: str | None,
+    dry_run: bool,
+) -> int:
+    """The polling loop itself.
+
+    Split out from :func:`watch` so the Ctrl-C handler sits where ``started``
+    is in scope. Handled in the caller instead, the count goes with the stack
+    frame --- and after eight hours it is the one number worth having.
+    """
+
+    started = 0
+    try:
+        started = _poll(
+            root,
+            samples,
+            state,
+            say,
+            seen,
+            settle_seconds=settle_seconds,
+            poll_seconds=poll_seconds,
+            max_sessions=max_sessions,
+            session_timeout=session_timeout,
+            turns=turns,
+            model=model,
+            dry_run=dry_run,
+            count=(counter := [0]),
+        )
+    except KeyboardInterrupt:
+        # Overnight, Ctrl-C is how this ends. Report what it managed rather
+        # than raising over the last session's output.
+        started = counter[0]
+        say("")
+    return started
+
+
+def _poll(
+    root: Path,
+    samples: list[str],
+    state: WatchState,
+    say: Any,
+    seen: set[str],
+    *,
+    settle_seconds: float,
+    poll_seconds: float,
+    max_sessions: int | None,
+    session_timeout: float | None,
+    turns: int | None,
+    model: str | None,
+    dry_run: bool,
+    count: list[int],
+) -> int:
+    """Poll until done. ``count`` carries the tally out through a Ctrl-C."""
     from nr_workbench.agent.session import SessionError
     from nr_workbench.agent.session import run as run_session
 
-    say = on_event or print
-    state = WatchState()
     started = 0
-    seen: set[str] = set()
-
     while max_sessions is None or started < max_sessions:
         try:
             polled = once(Path(root), samples, state, settle_seconds=settle_seconds)
@@ -630,6 +710,7 @@ def watch(
                 continue
 
             started += 1
+            count[0] = started
             say(f"{sample}: session finished (exit {session.returncode})")
 
             crowded = over_budget(Path(root), sample)

@@ -746,27 +746,23 @@ def agent_watch_command(
                 )
         return
 
-    try:
-        started = watcher.watch(
-            layout.root,
-            chosen,
-            settle_seconds=settle_seconds,
-            poll_seconds=watcher.DEFAULT_POLL_SECONDS if poll is None else poll,
-            max_sessions=max_sessions,
-            session_timeout=(
-                watcher.DEFAULT_SESSION_TIMEOUT
-                if session_timeout is None
-                else session_timeout
-            ),
-            turns=turns,
-            model=model,
-            on_event=click.echo,
-        )
-    except KeyboardInterrupt:
-        # Ctrl-C is how this is meant to be stopped, so it reports rather than
-        # printing a traceback over whatever the last session said.
-        click.echo("\nStopped.")
-        return
+    # Ctrl-C is handled inside watch(), which returns what it managed rather
+    # than raising over the last session's output.
+    started = watcher.watch(
+        layout.root,
+        chosen,
+        settle_seconds=settle_seconds,
+        poll_seconds=watcher.DEFAULT_POLL_SECONDS if poll is None else poll,
+        max_sessions=max_sessions,
+        session_timeout=(
+            watcher.DEFAULT_SESSION_TIMEOUT
+            if session_timeout is None
+            else session_timeout
+        ),
+        turns=turns,
+        model=model,
+        on_event=click.echo,
+    )
     click.echo(f"{started} session(s) run.")
 
 

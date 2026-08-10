@@ -200,3 +200,34 @@ def test_a_standard_angle_within_tolerance_is_not_flagged() -> None:
     found = reconcile("expt11", headers, HISTORICAL, standard_thetas=[0.45, 1.2, 3.5])
 
     assert [f for f in found.findings if f.kind == "unusual-angle"] == []
+
+
+def test_the_templates_worked_example_is_not_a_documented_run() -> None:
+    """The scaffolded sample.md ships an example table inside an HTML comment.
+    Counting it reports every fresh sample as documenting three runs it does
+    not have -- and three findings that are always wrong teach a person to
+    skip the whole list, which costs the findings that are right.
+
+    `scan._runs_mentioned` avoids the same trap; this is the other reader.
+    """
+    from nr_workbench.reconcile import documented_runs
+
+    notes = """\
+# Cu1
+
+## Measurements
+
+<!-- One line per run.
+
+| Run    | Type   | Condition   |
+|--------|--------|-------------|
+| 230594 | full Q | air         |
+| 230597 | full Q | OCV         |
+-->
+
+| Run    | Type   | Condition |
+|--------|--------|-----------|
+| 218386 | full Q | OCV       |
+"""
+
+    assert sorted(documented_runs(notes)) == [218386]

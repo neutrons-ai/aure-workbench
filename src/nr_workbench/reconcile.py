@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.web.prose import strip_comments
+
 #: A markdown table row: ``| 218393 | full Q | -0.5 mA/cm2 |``.
 _ROW = re.compile(r"^\s*\|(.+)\|\s*$")
 
@@ -141,6 +143,12 @@ def read_table(markdown: str) -> list[dict[str, str]]:
 def documented_runs(markdown: str) -> dict[int, dict[str, str]]:
     """The runs ``sample.md`` mentions in a table, keyed by run number.
 
+    Commented-out rows do not count. The scaffolded ``sample.md`` ships a
+    worked example inside an HTML comment, so counting it reports every fresh
+    sample as documenting three runs it does not have --- and three findings
+    that are always wrong are how a person learns to skip the whole list.
+    ``scan._runs_mentioned`` avoids the same trap for the same reason.
+
     Args:
         markdown: The sample's prose.
 
@@ -148,7 +156,7 @@ def documented_runs(markdown: str) -> dict[int, dict[str, str]]:
         Run number to its row.
     """
     found: dict[int, dict[str, str]] = {}
-    for row in read_table(markdown):
+    for row in read_table(strip_comments(markdown)):
         raw = row.get("run") or row.get("run number") or ""
         digits = re.fullmatch(r"\s*(\d{4,})\s*", raw)
         if digits:

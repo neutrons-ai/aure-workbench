@@ -121,8 +121,10 @@ bounded session, and a transcript.
 A session refuses to start unless `## Fits to perform` in the sample's notes
 says what you want. Deciding that is the one thing it must not do for itself.
 
-**[docs/agent.md](docs/agent.md) is the setup guide**, including what is
-enforced and what is only asked for.
+**[docs/getting-started-with-agent.md](docs/getting-started-with-agent.md)
+walks the setup through** — one sample first, then measurements that are still
+arriving. [docs/agent.md](docs/agent.md) is the reference: what is enforced,
+what is only asked for, and the evidence behind the split.
 
 ## Status
 

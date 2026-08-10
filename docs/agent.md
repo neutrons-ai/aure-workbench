@@ -42,6 +42,11 @@ around the harness is four things: **observations** it reads before it starts,
 
 ---
 
+> **Want the walkthrough instead?**
+> [docs/getting-started-with-agent.md](getting-started-with-agent.md) does the
+> setup step by step on real data — one sample first, then the overnight case.
+> This page is the reference.
+
 ## Setting it up
 
 ### 1. Scaffold or upgrade the project
