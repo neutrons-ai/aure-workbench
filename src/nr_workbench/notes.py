@@ -43,9 +43,35 @@ _FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
 NOTES_FILENAME = "NOTES.md"
 
-#: Heading `nrw assess` writes under. Used to tell generated prose from a
-#: person's, which matters when only one of the two can be shown.
+#: Heading `nrw assess` writes under.
 ASSESSMENT_HEADING = "## Assessment"
+
+#: Fences around machine-written prose. Everything between them is excluded
+#: from "did a person think about this?" -- otherwise running `nrw assess` on
+#: every fit makes every fit look reasoned about, which is exactly the signal
+#: the blank-note test exists to protect.
+GENERATED_OPEN = "<!-- nrw:generated -->"
+GENERATED_CLOSE = "<!-- /nrw:generated -->"
+
+_GENERATED = re.compile(
+    re.escape(GENERATED_OPEN) + r".*?" + re.escape(GENERATED_CLOSE), re.DOTALL
+)
+
+
+def human_text(text: str) -> str:
+    """The note with every machine-written region removed.
+
+    Args:
+        text: The note's source.
+
+    Returns:
+        Only what a person wrote. An unterminated fence swallows the rest,
+        which is the safe direction: unmarked generated prose counted as
+        human is the failure worth avoiding.
+    """
+    without = _GENERATED.sub("", text)
+    opened = without.find(GENERATED_OPEN)
+    return without if opened < 0 else without[:opened]
 
 
 def _first_prose(text: str) -> str:
@@ -151,7 +177,7 @@ def is_blank(text: str | None) -> bool:
     """
     if not text:
         return True
-    without_comments = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    without_comments = re.sub(r"<!--.*?-->", "", human_text(text), flags=re.DOTALL)
     for line in without_comments.splitlines():
         stripped = line.strip()
         # Headings, comments and the quoted run note are all scaffolding the
@@ -201,8 +227,7 @@ class Note:
         to you is not telling you what you thought.
         """
         text = body(self.text)
-        human, _, generated = text.partition(ASSESSMENT_HEADING)
-        return _first_prose(human) or _first_prose(generated)
+        return _first_prose(human_text(text)) or _first_prose(text)
 
     def as_dict(self) -> dict[str, Any]:
         """Return the JSON form, without the full text."""

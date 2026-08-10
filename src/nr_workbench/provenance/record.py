@@ -150,6 +150,10 @@ class FitRecord:
         chisq: Reduced chi-squared, if the fit produced one.
         n_free: Number of free parameters.
         n_points: Number of data points.
+        converged: Whether the sampler reported convergence; ``None`` when the
+            fitter does not test it. Recorded because a non-converged fit can
+            have the best chi-squared of a set, so this is the caveat most
+            likely to be lost and most needed.
         artifacts: Named output files, relative to the fit directory.
         models: Export position to model name, so a consumer can tie
             ``<basename>-3-refl.dat`` back to the measurement it came from
@@ -173,6 +177,7 @@ class FitRecord:
     chisq: float | None = None
     n_free: int | None = None
     n_points: int | None = None
+    converged: bool | None = None
     artifacts: dict[str, str] = field(default_factory=dict)
     models: list[dict[str, Any]] = field(default_factory=list)
     command: str = ""
@@ -220,6 +225,7 @@ class FitRecord:
             "status": self.status,
             "chisq": self.chisq,
             "n_free": self.n_free,
+            "converged": self.converged,
             "method": self.settings.get("method"),
             # The whole settings dict, not just the method: it is a handful of
             # scalars, and without it a listing can say that a run differs but
@@ -373,6 +379,7 @@ class FitDirectory:
             artifacts=dict(record.artifacts),
             info={
                 "chisq": record.chisq,
+                "converged": record.converged,
                 "n_free": record.n_free,
                 "n_points": record.n_points,
                 "models": record.models,

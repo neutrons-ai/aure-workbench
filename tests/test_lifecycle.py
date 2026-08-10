@@ -603,3 +603,45 @@ def test_diff_rejects_an_unknown_fit(two_fits, monkeypatch) -> None:
 
     assert result.exit_code != 0
     assert "No fit matching" in result.output
+
+
+def test_check_finds_a_result_directory_the_index_never_recorded(
+    two_fits, monkeypatch
+) -> None:
+    """`commands/fit.py` only catches FitError; a kill, an OOM or a full disk
+    during an hour-long DREAM run leaves a directory with a script, inputs and
+    an environment but no index line -- invisible to ls, whence and check. That
+    happened five times in twenty-five in the first real beamtime, and one
+    orphan held a 298 MB posterior nothing could find.
+    """
+    root, fit_id, _ = two_fits
+    orphan = root / "samples" / "S1" / "results" / "20260101-000000Z-deadbeef"
+    (orphan / "fit").mkdir(parents=True)
+    (orphan / "fit" / "big.mc.gz").write_bytes(b"a posterior nobody can see")
+
+    result = run(root, monkeypatch, "check", "--json")
+
+    problems = json.loads(result.stdout)["problems"]
+    orphans = [p for p in problems if p["kind"] == "interrupted-run"]
+    assert [p["fit_id"] for p in orphans] == ["20260101-000000Z-deadbeef"]
+    assert "interrupted" in orphans[0]["detail"]
+
+
+def test_a_fit_records_a_manifest_before_it_starts(two_fits, monkeypatch) -> None:
+    """So an interruption leaves something findable rather than nothing."""
+    root, fit_id, _ = two_fits
+    manifest = json.loads(
+        (root / "samples" / "S1" / "results" / fit_id / "manifest.json").read_text()
+    )
+
+    assert manifest["status"] == "ok", "a completed fit is not left as running"
+
+    import inspect
+
+    from nr_workbench.commands import fit as fit_module
+
+    source = inspect.getsource(fit_module.run_fit_command)
+    before, _, after = source.partition("outcome = run_fit(")
+    assert 'record.status = "running"' in before
+    assert "write_manifest" in before, "the manifest is written before the fit"
+    assert 'record.status = "ok"' in after

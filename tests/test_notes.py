@@ -421,3 +421,50 @@ def test_reports_are_no_longer_discarded_on_import() -> None:
 
 def test_sample_notes_ignores_a_directory_with_no_reports(tmp_path: Path) -> None:
     assert sample_notes(tmp_path, "nope") == []
+
+
+def test_a_generated_assessment_does_not_count_as_thinking() -> None:
+    """`nrw assess` writes into the same NOTES.md a person writes into. Its
+    facts line is bare prose, so before the fence every assessed fit read as
+    "somebody thought about this" in `nrw ls` -- defeating the guard that
+    exists to stop unfilled templates counting as evidence.
+    """
+    from nr_workbench.fitting.assess import Assessment, as_markdown
+
+    stub = NOTES_TEMPLATE.format(fit_id=FIT_A, description="a dream run")
+    assessed = (
+        stub
+        + "\n"
+        + as_markdown(
+            Assessment(fit_id=FIT_A, chisq=1.285, n_free=8, n_points=3915, bic=1047.9)
+        )
+    )
+
+    assert is_blank(assessed), "generated prose is not a note"
+    assert not is_blank(assessed + "\nThe oxide is required.\n")
+
+
+def test_a_persons_words_survive_the_fence(tmp_path: Path) -> None:
+    """Stripping the generated region must not take the human's text with it,
+    wherever it sits relative to the assessment."""
+    from nr_workbench.fitting.assess import Assessment, as_markdown
+
+    generated = as_markdown(Assessment(fit_id=FIT_A, chisq=1.2))
+    path = tmp_path / "NOTES.md"
+    path.write_text(
+        f"# {FIT_A}\n\nBefore the assessment.\n\n{generated}\nAfter it.\n",
+        encoding="utf-8",
+    )
+
+    note = read_note(path, tmp_path, scope="fit", fit_id=FIT_A)
+
+    assert note.summary == "Before the assessment."
+    assert not note.blank
+
+
+def test_an_unterminated_fence_hides_the_rest_rather_than_trusting_it() -> None:
+    """The safe direction: unmarked generated prose counted as human is the
+    failure worth avoiding, so a truncated write reads as blank."""
+    from nr_workbench.notes import GENERATED_OPEN
+
+    assert is_blank(f"# f\n\n{GENERATED_OPEN}\nchi-squared 1.2, 8 free\n")

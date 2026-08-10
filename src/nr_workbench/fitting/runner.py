@@ -17,6 +17,7 @@ from __future__ import annotations
 import runpy
 import sys
 import threading
+import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -122,6 +123,9 @@ class FitOutcome:
         models: Export position to model name; see :func:`describe_models`.
         export_ok: Whether the bumps export completed.
         export_error: Why the export failed, if it did.
+        converged: Whether the sampler reported convergence. ``None`` when the
+            fitter does not report it at all -- an optimiser has no opinion,
+            and that is different from converging.
     """
 
     chisq: float | None = None
@@ -131,6 +135,7 @@ class FitOutcome:
     models: list[dict[str, Any]] = field(default_factory=list)
     export_ok: bool = True
     export_error: str | None = None
+    converged: bool | None = None
 
 
 @dataclass
@@ -360,8 +365,17 @@ def run_fit(
         if value is not None:
             kwargs[key] = value
 
+    # DREAM reports non-convergence by warning and carrying on, so the only
+    # record of it is a line on stderr that nothing reads. A fit that did not
+    # converge can have the best chi-squared of the set -- on the real Cu/THF
+    # corpus it did -- so losing this turns the most important caveat about a
+    # result into the one fact nobody has.
+    converged: bool | None = None
     try:
-        result = bumps_fit(problem, **kwargs)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = bumps_fit(problem, **kwargs)
+        converged = _read_convergence(caught, method)
     except Exception as exc:
         if parallel == 1 or not _is_multiprocessing_failure(exc):
             raise FitError(f"Fit failed: {exc}") from exc
@@ -374,11 +388,14 @@ def run_fit(
         )
         kwargs["parallel"] = 1
         try:
-            result = bumps_fit(problem, **kwargs)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                result = bumps_fit(problem, **kwargs)
+            converged = _read_convergence(caught, method)
         except Exception as serial_exc:
             raise FitError(f"Fit failed: {serial_exc}") from serial_exc
 
-    outcome = FitOutcome()
+    outcome = FitOutcome(converged=converged)
     with suppress(Exception):
         outcome.chisq = float(problem.chisq())
     outcome.n_free, outcome.n_points = describe_problem(problem)
@@ -386,6 +403,35 @@ def run_fit(
 
     _export(problem, result, Path(output_dir), outcome, plots=plots)
     return outcome
+
+
+#: What bumps says when a sampler has not converged. Matched loosely because
+#: it is a human-facing warning, not an API, and a wording change should read
+#: as "unknown" rather than silently as "converged".
+_NOT_CONVERGED = "did not converge"
+
+#: Fitters that test convergence and warn when it fails. An optimiser has no
+#: opinion, and "no opinion" must not be recorded as "converged".
+_CONVERGENCE_TESTING = frozenset({"dream"})
+
+
+def _read_convergence(caught: list[Any], method: str) -> bool | None:
+    """Decide convergence from the warnings a fit emitted.
+
+    Args:
+        caught: Warnings recorded during the fit.
+        method: The fitter that ran.
+
+    Returns:
+        ``False`` if the sampler said it did not converge, ``True`` if a
+        convergence-testing fitter ran and said nothing, and ``None`` when the
+        fitter does not test convergence at all --- which is not the same as
+        converging, and must not be reported as if it were.
+    """
+    for entry in caught:
+        if _NOT_CONVERGED in str(entry.message).lower():
+            return False
+    return True if method.lower() in _CONVERGENCE_TESTING else None
 
 
 def _stats_without_plots(

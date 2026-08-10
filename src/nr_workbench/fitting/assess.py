@@ -468,7 +468,9 @@ def as_markdown(assessment: Assessment) -> str:
     Returns:
         A markdown section.
     """
-    lines = ["## Assessment", ""]
+    from nr_workbench.notes import GENERATED_CLOSE, GENERATED_OPEN
+
+    lines = [GENERATED_OPEN, "## Assessment", ""]
     facts = []
     if assessment.chisq is not None:
         facts.append(f"chi-squared {assessment.chisq:.4g}")
@@ -519,4 +521,6 @@ def as_markdown(assessment: Assessment) -> str:
         lines.append("Not checked:")
         lines += [f"- {p}" for p in assessment.problems]
         lines.append("")
+    lines.append(GENERATED_CLOSE)
+    lines.append("")
     return "\n".join(lines)

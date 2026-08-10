@@ -507,6 +507,7 @@ def run_check(*, as_json: bool = False) -> None:
                 }
             )
 
+    problems.extend(check_orphan_results(layout, index))
     problems.extend(check_generated_scripts(layout))
     if as_json:
         click.echo(json.dumps({"checked": checked, "problems": problems}, indent=2))
@@ -755,6 +756,61 @@ def _diff_verdict(changed: dict[str, bool], info_a: dict, info_b: dict) -> str:
     if changed["environment"]:
         return f"only the environment differs{'; ' + direction if direction else ''}"
     return "nothing recorded differs; these are replicates"
+
+
+def check_orphan_results(
+    layout: ProjectLayout, index: FitIndex
+) -> list[dict[str, str]]:
+    """Find result directories the index does not know about.
+
+    A fit that was killed mid-run leaves its directory behind without ever
+    appending to the index, so it is invisible to `ls`, `whence` and the rest
+    of `check`. In the first real beamtime that happened five times in
+    twenty-five, and one orphan held a 298 MB posterior chain.
+
+    Args:
+        layout: The project layout.
+        index: The fit index.
+
+    Returns:
+        One problem per unrecorded directory.
+    """
+    known = {str(entry.get("fit_id")) for entry in index.fits()}
+    problems: list[dict[str, str]] = []
+    for sample in layout.list_samples():
+        results = layout.sample(sample) / "results"
+        if not results.is_dir():
+            continue
+        for directory in sorted(results.iterdir()):
+            if not directory.is_dir() or directory.name in known:
+                continue
+            manifest = directory / "manifest.json"
+            if not manifest.is_file():
+                detail = (
+                    "result directory with no manifest and no index entry -- a "
+                    "fit was interrupted before it recorded anything"
+                )
+            else:
+                status = _read_status(manifest)
+                if status not in {"running", None}:
+                    continue
+                detail = (
+                    "manifest says the fit was still running -- it was "
+                    "interrupted before it finished"
+                )
+            problems.append(
+                {"fit_id": directory.name, "kind": "interrupted-run", "detail": detail}
+            )
+    return problems
+
+
+def _read_status(manifest: Path) -> str | None:
+    """The status recorded in a manifest, or None if unreadable."""
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload.get("status") if isinstance(payload, dict) else None
 
 
 def check_generated_scripts(layout: ProjectLayout) -> list[dict[str, str]]:

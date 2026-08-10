@@ -115,6 +115,7 @@ def _add_judgement(
             method=str((manifest.get("params") or {}).get("method") or "unknown"),
             parameters=read_par(directory),
             sample_description=description,
+            converged=(manifest.get("info") or {}).get("converged"),
             skill_context=_skill_context(layout),
             boundary_hits=_boundary_hits(assessment),
             bic=assessment.bic,

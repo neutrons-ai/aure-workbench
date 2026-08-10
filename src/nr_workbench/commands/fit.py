@@ -344,6 +344,15 @@ def run_fit_command(
         description=note or f"{method} fit of {record.model}.",
     )
 
+    # A provisional manifest, before the fit rather than after. Only FitError
+    # is catchable; a kill, an OOM or a full disk during an hour-long DREAM run
+    # leaves the directory with a script, inputs and an environment but no
+    # manifest and no index line -- invisible to `whence`, `ls` and `check`.
+    # That is how 5 of 25 result directories in the first real beamtime became
+    # orphans, one of them holding a 298 MB posterior nothing could find.
+    record.status = "running"
+    directory.write_manifest(record)
+
     click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
 
     from nr_workbench.fitting.runner import FitError, run_fit
@@ -372,8 +381,10 @@ def run_fit_command(
         index.append(record.index_entry())
         raise click.ClickException(f"{exc}\nRecorded the failure as {fit_id}.") from exc
 
+    record.status = "ok"
     record.finished_at = format_timestamp(utc_now())
     record.chisq = outcome.chisq
+    record.converged = outcome.converged
     record.n_free = outcome.n_free
     record.n_points = outcome.n_points
     record.artifacts = outcome.artifacts

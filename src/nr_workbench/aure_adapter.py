@@ -575,6 +575,7 @@ def judge_fit(
     method: str,
     parameters: dict[str, float],
     sample_description: str,
+    converged: bool | None = None,
     skill_context: str = "",
     hypothesis: str | None = None,
     boundary_hits: list[dict[str, Any]] | None = None,
@@ -595,6 +596,8 @@ def judge_fit(
             with ``:.3f`` and raises on ``None``.
         method: The fitter used.
         parameters: Best-fit values by name.
+        converged: Whether the sampler reported convergence. ``None`` means the
+            fitter does not test it, which is reported as not converged.
         sample_description: The prose from ``sample.md``.
         skill_context: Concatenated SKILL.md bodies, the physics grounding.
         hypothesis: What the fit was testing, if recorded.
@@ -628,7 +631,13 @@ def judge_fit(
             {
                 "chi_squared": float(chisq),
                 "method": method,
-                "converged": True,
+                # Never hard-code this. A DREAM run that did not converge can
+                # have the best chi-squared of a set -- on the real Cu/THF
+                # corpus it did -- and telling the judge it converged hides
+                # the one fact that disqualifies the fit. Unknown reads as
+                # not-converged here because AuRE's prompt has no third state,
+                # and "not checked" must not read as "clean".
+                "converged": bool(converged),
                 "parameters": {k: float(v) for k, v in parameters.items()},
             },
             sample_description,

@@ -1485,3 +1485,43 @@ still reaches `series[].notes`, so nothing is lost, but the structured fields
 that make a record queryable are empty. Worth fixing upstream: a
 `current_density` field plus `control_mode: galvanostatic`, and the same
 operando bump a potential gets.
+
+### 2026-08-10: three signals an autonomous agent would have read wrong
+
+Surveying nr-workbench for autonomy turned up three defects, each of which
+corrupts an input the agent would depend on. All three were verified against
+the real Cu/THF corpus before being fixed.
+
+**`converged: True` was hard-coded** into `judge_fit`, so the language model
+was told every fit converged. On that corpus the one non-converged fit
+(`20260807-162217Z-d143fdbc`, 17 parameters) has chi-squared 1.264 --- *better*
+than the published answer's 1.285. The judge was being handed a false value on
+the exact axis that disqualified the fit. `FitOutcome` now captures bumps'
+warning, and the distinction that matters is three-valued: `False` warned,
+`True` a sampler ran and was quiet, **`None` the fitter does not test
+convergence at all**. An optimiser has no opinion, and recording that as `True`
+asserts something nobody checked.
+
+**`nrw assess --write` defeated the blank-note test.** It appends into the same
+`NOTES.md` a person writes into, and its facts line (`chi-squared 1.285, 8
+free, ...`) is bare prose --- so `is_blank` returned False and every assessed
+fit read as "somebody thought about this" in `nrw ls`. Running assess over a
+project would have erased the distinction the notebook is built on. Generated
+prose is now fenced in `<!-- nrw:generated -->` markers that `is_blank` and
+`Note.summary` strip. An unterminated fence hides the remainder rather than
+trusting it: unmarked machine prose counted as human is the failure worth
+avoiding.
+
+**Five of twenty-five result directories were orphans.** `commands/fit.py`
+wrote the directory, script, inputs and environment *before* the fit and the
+manifest *after*, and only `FitError` was caught --- so a kill, an OOM or a full
+disk left a directory invisible to `ls`, `whence` and `check`. One orphan held
+a 298 MB posterior chain nothing could find. A provisional manifest with
+`status: running` is now written first, and `nrw check` reports
+`interrupted-run` for any result directory the index does not know. Confirmed:
+it finds all five in the real project.
+
+The general lesson for autonomy: **the failure modes that matter are the ones
+that make a wrong answer look like a checked one.** All three were invisible
+under supervision because a human was reading the terminal; none would have
+been visible to a daemon.

@@ -341,3 +341,42 @@ def test_the_parameter_statistics_are_kept_when_plots_are_off() -> None:
 
     assert written["path"] == "/tmp/base-err.json"
     assert written["stats"] == {"drawn": "the-draw"}, "the real statistics, not a stub"
+
+
+def test_convergence_is_read_from_the_warning_not_assumed() -> None:
+    """DREAM reports non-convergence by warning and carrying on, so the only
+    record of it is a line on stderr nothing reads. On the real Cu/THF corpus
+    the non-converged fit had a *better* chi-squared than the answer, so losing
+    this turns the caveat that disqualifies a result into the one fact nobody
+    has.
+    """
+    from nr_workbench.fitting.runner import _read_convergence
+
+    class Caught:
+        def __init__(self, message: str) -> None:
+            self.message = message
+
+    assert _read_convergence([Caught("Did not converge!")], "dream") is False
+    assert _read_convergence([Caught("something else")], "dream") is True
+
+
+def test_an_optimiser_has_no_opinion_about_convergence() -> None:
+    """`None` and `True` are different claims. amoeba does not test
+    convergence, and recording that as converged would assert something the
+    fitter never checked."""
+    from nr_workbench.fitting.runner import _read_convergence
+
+    assert _read_convergence([], "amoeba") is None
+
+
+def test_the_judge_is_not_told_a_fit_converged_when_it_did_not() -> None:
+    """`judge_fit` hard-coded `converged: True`, so the LLM was told the one
+    non-converged fit in the corpus had converged -- at a chi-squared better
+    than the answer's."""
+    import inspect
+
+    from nr_workbench import aure_adapter
+
+    source = inspect.getsource(aure_adapter.judge_fit)
+    assert '"converged": True' not in source
+    assert "converged" in inspect.signature(aure_adapter.judge_fit).parameters
