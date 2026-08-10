@@ -700,6 +700,23 @@ def data_group() -> None:
     """Check reduced data before modelling it."""
 
 
+@data_group.command("reconcile")
+@click.argument("sample")
+@click.option("--root", default=None, help="Project root [default: discovered].")
+@click.option("--result-out", default=None, help="Write the full result here.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def data_reconcile_command(**kwargs: object) -> None:
+    """Compare what SAMPLE's files record against what sample.md claims.
+
+    Every reduced file carries the run title, the direct beam it was divided
+    by and the angle. Nothing has ever compared those to the measurement
+    table. Exits non-zero when they disagree.
+    """
+    from nr_workbench.commands.data import run_reconcile
+
+    run_reconcile(**kwargs)  # type: ignore[arg-type]
+
+
 @data_group.command("overlap")
 @click.argument("sample")
 @click.option("--run", type=int, help="Restrict to one run number.")

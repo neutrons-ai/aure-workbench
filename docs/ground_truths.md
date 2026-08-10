@@ -1525,3 +1525,40 @@ The general lesson for autonomy: **the failure modes that matter are the ones
 that make a wrong answer look like a checked one.** All three were invisible
 under supervision because a human was reading the terminal; none would have
 been visible to a daemon.
+
+### 2026-08-10: `\b` does not bound a token in a REF_L run title
+
+`nrw data reconcile` compares each run's own title against how `sample.md`
+describes it, and the case it exists for is the real one: a table listing
+218393 as `OCV` when its title says `CA-realigned` --- an error the record says
+*"sent five fits down the wrong path"*.
+
+The first version missed it. `\bCA\b` does not match `_CA-`, because `_` is a
+word character and there is therefore no boundary before the `C`. REF_L run
+titles are underscore-delimited by convention
+(`CuPt_d8-THF-fullQ_CA-realigned-218393-1`), so `\b` is the wrong boundary for
+exactly the strings this parses. Spelled out as
+`(?<![A-Za-z0-9])CA(?![A-Za-z0-9])` instead.
+
+### 2026-08-10: precision is the feature, on a check nobody is obliged to read
+
+Two of the first five reconciliation checks were noise, and both would have
+trained the reader to skip the output:
+
+- **Word overlap between a run title and a table cell.** A title is a
+  filename-shaped label and a cell is prose; they share vocabulary by accident.
+  It fired on 3 of 4 real runs, of which 1 was a true finding and the mechanism
+  for that one was luck. Replaced by a comparison of the *electrochemical
+  state* alone --- the thing that actually got mislabelled --- which fires on
+  the real error and is silent on the other three.
+- **Segments of one run using different direct beams.** That is every REF_L
+  measurement ever made: one direct beam per angle. The real signal is the same
+  *angle* disagreeing across runs, which is what puts another beam's intensity
+  into one measurement. On the real corpus every angle is consistent
+  (218274/218275/218338 for segments 1/2/3) and the only outlier is 218389,
+  already caught as a blocker.
+
+After both changes the real project reports exactly one finding, and it is
+correct. A checker that cries wolf is worse than no checker: it costs attention
+every run and it teaches the reader that the output is noise --- at which point
+the one true finding is missed too.

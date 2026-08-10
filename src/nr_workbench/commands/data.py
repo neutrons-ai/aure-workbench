@@ -57,6 +57,110 @@ def _beam_summary(beams: dict[int, int | None]) -> str:
     )
 
 
+def run_reconcile(
+    *,
+    sample: str,
+    root: str | None = None,
+    result_out: str | None = None,
+    as_json: bool = False,
+) -> None:
+    """Compare what the reduced files record against what sample.md claims.
+
+    Args:
+        sample: Sample identifier.
+        root: Project root; discovered if omitted.
+        result_out: Write the full result here as JSON.
+        as_json: Emit machine-readable JSON.
+
+    Raises:
+        click.ClickException: If there is no project or no such sample.
+        SystemExit: With code 1 when anything disagrees.
+    """
+    from nr_workbench.instrument.header import read_header
+    from nr_workbench.project.scan import scan_sample
+    from nr_workbench.reconcile import reconcile
+
+    layout = _layout(root)
+    directory = layout.sample(sample)
+    if not directory.is_dir():
+        raise click.ClickException(f"No sample {sample!r} in {layout.root}.")
+
+    scan = scan_sample(layout.root, sample)
+    headers = []
+    for measurement in scan.steady.values():
+        for path in [*measurement.partials.values(), measurement.combined]:
+            if not path:
+                continue
+            try:
+                headers.append(read_header(layout.root / path))
+            except Exception as exc:  # noqa: BLE001 - one bad file is a finding
+                click.secho(f"  ! could not read {path}: {exc}", fg="yellow", err=True)
+
+    notes = directory / "sample.md"
+    markdown = notes.read_text(encoding="utf-8") if notes.is_file() else ""
+    if not markdown.strip():
+        click.secho(
+            "  ! sample.md is empty, so there is nothing to reconcile against.",
+            fg="yellow",
+            err=True,
+        )
+
+    config = _config(layout)
+    result = reconcile(
+        sample,
+        headers,
+        markdown,
+        series_runs={s.run for s in scan.series if s.run},
+        standard_thetas=list(getattr(config, "standard_thetas", []) or []),
+    )
+
+    payload = result.as_dict()
+    if result_out:
+        Path(result_out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+    else:
+        _print_reconcile(result)
+    if result.findings:
+        raise SystemExit(1)
+
+
+def _print_reconcile(result: Any) -> None:
+    """Print the reconciliation for a human."""
+    click.echo(
+        f"  {len(result.runs)} run(s) on disk, "
+        f"{len(result.documented)} documented in sample.md"
+    )
+    if not result.findings:
+        click.secho("  The files and the notes agree.", fg="green")
+        return
+    click.echo()
+    colour = {"blocker": "red", "warn": "yellow", "info": None}
+    for finding in result.findings:
+        click.secho(
+            f"  {finding.severity:<7} {finding.message}", fg=colour[finding.severity]
+        )
+        if finding.from_file:
+            click.echo(f"          file:  {finding.from_file}")
+        if finding.from_notes:
+            click.echo(f"          notes: {finding.from_notes}")
+    click.echo()
+    click.echo(
+        "  These are disagreements, not verdicts: sometimes the notes are "
+        "wrong and sometimes the filing is."
+    )
+
+
+def _config(layout: Any) -> Any:
+    """The project config, or None."""
+    from nr_workbench.project.config import ProjectConfigError, load_config
+
+    try:
+        return load_config(layout.root)
+    except (ProjectConfigError, OSError):
+        return None
+
+
 def run_overlap(
     *,
     sample: str,
