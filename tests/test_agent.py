@@ -741,3 +741,55 @@ def test_the_transcript_name_is_usable_as_a_filename(tmp_path: Path) -> None:
     stamp = utc_now().strftime("%Y%m%d-%H%M%SZ")
 
     assert ":" not in stamp
+
+
+# --------------------------------------------------------------------------
+# Bringing your own harness
+# --------------------------------------------------------------------------
+
+
+def test_the_harness_defaults_to_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(session.HARNESS_ENV, raising=False)
+    monkeypatch.setattr(session.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    assert session.resolve_harness() == ["/usr/bin/claude"]
+
+
+def test_a_site_can_name_its_own_harness(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A name, a path, or a command with arguments. A two-line wrapper script
+    is the seam for anything whose invocation differs -- verified end to end
+    against a real wrapper, not just here."""
+    monkeypatch.setenv(session.HARNESS_ENV, "my-harness --settings /etc/mine.json")
+    monkeypatch.setattr(session.shutil, "which", lambda name: f"/opt/{name}")
+
+    assert session.resolve_harness() == [
+        "/opt/my-harness",
+        "--settings",
+        "/etc/mine.json",
+    ]
+
+
+def test_an_unresolvable_harness_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(session.HARNESS_ENV, "nowhere")
+    monkeypatch.setattr(session.shutil, "which", lambda name: None)
+
+    assert session.resolve_harness() is None
+
+
+def test_the_missing_harness_error_distinguishes_it_from_an_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The likely confusion, and an expensive one: a configured LLM endpoint
+    is a completions API, not a tool-using loop. Someone with only the former
+    should be told what is actually missing rather than left to conclude the
+    install is broken.
+    """
+    monkeypatch.setattr(session.shutil, "which", lambda name: None)
+
+    with pytest.raises(session.SessionError) as caught:
+        session.harness_command(tmp_path / "p.md")
+
+    said = str(caught.value)
+    assert "not a completions endpoint" in said
+    assert session.HARNESS_ENV in said
+    assert "--dry-run" in said

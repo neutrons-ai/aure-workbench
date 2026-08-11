@@ -22,8 +22,15 @@ Three things. Nothing else is required.
    agent refuses to start.
 3. **`nrw agent run <sample>`**.
 
-You also need the `claude` CLI on your `PATH`. That is the whole list. If you
-want to know whether you have it, `nrw doctor` says so.
+You also need a coding harness on your `PATH` — `claude` by default, or set
+`NRW_HARNESS` to your own command. That is the whole list. `nrw doctor` says
+what it found.
+
+No Claude Code subscription? You may not need one: Claude Code authenticates
+with an `ANTHROPIC_API_KEY` or with Bedrock/Vertex/Foundry credentials. What
+will *not* work is substituting an `LLM_BASE_URL` completions endpoint — that
+is a text API, and the agent needs a tool-using loop. See
+[docs/agent.md](agent.md#without-a-claude-code-subscription).
 
 **You do not need an LLM endpoint.** `nrw doctor` reports one if you have it
 configured, and `nrw assess`, `nrw model new --from-notes` and `nrw isaac

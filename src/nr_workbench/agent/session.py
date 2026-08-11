@@ -58,6 +58,19 @@ SAFE_SAMPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 #: containing its own headings must not read as part of this prompt.
 QUOTED_FIELD_CHARS = 200
 
+#: The harness to run, overridable so a site is not tied to one binary on one
+#: PATH. Accepts a name, a path, or a command with arguments --- a two-line
+#: wrapper script is the seam for anything whose invocation differs.
+#:
+#: What cannot be swapped this way is the *kind* of thing: this has to be a
+#: tool-using loop that can read files and run `nrw`, not a completions
+#: endpoint. Those are different objects, and turning the second into the
+#: first means writing the decision loop this package exists to avoid.
+HARNESS_ENV = "NRW_HARNESS"
+
+#: Used when ``NRW_HARNESS`` is unset. The only harness this is tested against.
+DEFAULT_HARNESS = "claude"
+
 #: Default cap on harness turns. A beamtime session is one task; a run that
 #: needs more than this has usually lost the thread rather than found a hard
 #: problem, and the cost of stopping early is one more session.
@@ -560,6 +573,30 @@ def _describe_tool(block: dict[str, Any], root: Path | None = None) -> str:
     return f"  · {name:<9} {target}".rstrip()
 
 
+def resolve_harness() -> list[str] | None:
+    """The command that starts a harness, or None if there is none.
+
+    Returns:
+        argv for the launcher --- one element for a bare binary, more when
+        ``NRW_HARNESS`` carries arguments. ``None`` when nothing resolves.
+    """
+    import shlex as _shlex
+
+    configured = (os.environ.get(HARNESS_ENV) or "").strip()
+    if not configured:
+        found = shutil.which(DEFAULT_HARNESS)
+        return [found] if found else None
+
+    try:
+        parts = _shlex.split(configured)
+    except ValueError:
+        parts = [configured]
+    if not parts:
+        return None
+    resolved = shutil.which(parts[0])
+    return [resolved, *parts[1:]] if resolved else None
+
+
 def _shorten(text: str, root: Path | None) -> str:
     """Drop the project-root prefix so what is left is the informative part."""
     if root is None:
@@ -584,15 +621,21 @@ def harness_command(
     Raises:
         SessionError: If the harness is not installed.
     """
-    binary = shutil.which("claude")
-    if not binary:
+    launcher = resolve_harness()
+    if not launcher:
+        wanted = os.environ.get(HARNESS_ENV) or DEFAULT_HARNESS
         raise SessionError(
-            "The `claude` CLI is not on PATH, so there is no harness to run.\n"
-            "Install Claude Code, or use --dry-run to see the composed prompt."
+            f"No harness to run: {wanted!r} is not on PATH.\n"
+            "`nrw agent run` needs a tool-using coding harness, not a "
+            "completions endpoint -- something that can read a file, run "
+            "`nrw fit run`, and decide what to do with the result.\n"
+            f"Install Claude Code, or set {HARNESS_ENV} to your own command "
+            "(a wrapper script is fine). --dry-run shows the composed prompt "
+            "without running anything."
         )
 
     argv = [
-        binary,
+        *launcher,
         "-p",
         f"@{prompt_file}",
         "--max-turns",

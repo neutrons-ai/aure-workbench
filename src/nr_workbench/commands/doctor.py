@@ -135,18 +135,33 @@ def _agent_checks() -> list[Check]:
     promotion. A project scaffolded before `.claude/settings.json` existed is
     exactly that state, so this says so rather than staying quiet.
     """
-    import shutil
+    import os
 
+    from nr_workbench.agent.session import (
+        DEFAULT_HARNESS,
+        HARNESS_ENV,
+        resolve_harness,
+    )
     from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
-    binary = shutil.which("claude")
-    if binary:
-        version = _harness_version(binary)
-        detail = f"{version} at {binary}" if version else binary
+    launcher = resolve_harness()
+    override = (os.environ.get(HARNESS_ENV) or "").strip()
+    if launcher:
+        version = _harness_version(launcher[0])
+        where = " ".join(launcher)
+        detail = f"{version} at {where}" if version else where
+        if override:
+            detail += f"  [{HARNESS_ENV}]"
         checks = [Check("harness", _OK, detail)]
     else:
+        wanted = override or DEFAULT_HARNESS
         checks = [
-            Check("harness", _MISSING, "`claude` not on PATH; `nrw agent run` needs it")
+            Check(
+                "harness",
+                _MISSING,
+                f"{wanted!r} not on PATH; `nrw agent run` needs a coding "
+                f"harness (set {HARNESS_ENV} to use your own)",
+            )
         ]
 
     try:

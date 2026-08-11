@@ -348,6 +348,83 @@ still useful when nobody has a harness open.
 
 ---
 
+## Without a Claude Code subscription
+
+Two different things get called "bringing your own model", and only one of
+them substitutes for the harness.
+
+### An endpoint is not a harness
+
+The `LLM_BASE_URL` / `LLM_API_KEY` endpoint nr-workbench can use is a
+completions API: you send text, you get text back. A harness is a tool-using
+loop — it reads a file, runs `nrw fit run`, looks at what came out, and
+decides what to do next. You cannot substitute the first for the second
+without writing the loop in between, and writing that loop is precisely what
+this package does not do, because the measurement says a good harness beats
+one we would write.
+
+So `nrw agent run` needs a harness. `LLM_BASE_URL` will not stand in for it,
+and the error says so rather than leaving you to conclude the install is
+broken.
+
+### You may not need a subscription
+
+Claude Code itself is not subscription-only. Per its own `--help`, it
+authenticates with `ANTHROPIC_API_KEY` (billed per token) and supports the
+third-party providers **Bedrock, Vertex and Foundry** using their own
+credentials — so an organisation account is enough, with no personal plan.
+Check Claude Code's documentation for the current environment variables; this
+page will go stale on that detail and yours will not.
+
+### Or point us at a different harness
+
+```bash
+export NRW_HARNESS="my-agent"                       # a name or a path
+export NRW_HARNESS="claude --settings /etc/site.json"   # or a command
+export NRW_HARNESS="$HOME/bin/harness-wrapper"      # or a wrapper script
+```
+
+`nrw doctor` reports what resolved, and marks it when the override is in play:
+
+```
+  ✓ harness       2.1.156 at ~/.local/bin/claude --settings /etc/site.json  [NRW_HARNESS]
+```
+
+**What we promise, and what we do not.** Claude Code is the only harness this
+is tested against. The contract your command has to meet is:
+
+```
+<harness> -p @<prompt-file> --max-turns N --output-format stream-json --verbose
+          --permission-mode bypassPermissions [--model M]
+```
+
+…reading the prompt from the named file, and emitting Claude Code's
+newline-delimited JSON events on stdout. A wrapper script that translates
+those arguments is the intended seam, and one was verified end to end.
+
+If your harness emits a different event format, everything still works except
+the progress lines, which go quiet — `describe_event` returns nothing for a
+shape it does not recognise rather than failing. The transcript, the fits and
+the records are unaffected, because those come from `nrw` commands, not from
+the harness's output.
+
+**The two limits do not depend on the harness.** `NRW_AGENT=1` is set on the
+session whatever runs it. The `PreToolUse` hook is Claude Code's mechanism, so
+a different harness must provide its own equivalent — if yours cannot, the
+environment variable is the only layer left, and `nrw agent run` will still
+refuse to start without a configured hook. That refusal is deliberate; read it
+as "this harness is not yet set up safely", not as a bug.
+
+### If you only have an endpoint
+
+Everything except `nrw agent run` and `nrw agent watch` works exactly as
+documented, by hand — and the endpoint powers `nrw assess`'s judgement,
+`nrw model new --from-notes`, and `nrw isaac export`'s condition sentences,
+since those only step aside when a harness is driving.
+[docs/getting-started.md](getting-started.md) is that workflow end to end.
+
+---
+
 ## Permissions, and why the hook still holds
 
 The harness runs with `--permission-mode bypassPermissions`. That is not a
