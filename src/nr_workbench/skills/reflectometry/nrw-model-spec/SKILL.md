@@ -187,9 +187,11 @@ not remove its effect -- it moves the effect into a layer.
 | `probe.intensity` | `value: 1.0, pm: 0.1` | incident-beam normalisation | a layer thickness compensates |
 | `probe.background` | `[0.0, 1.0e-5]` | flat additive background | high-Q points drag the fit |
 | `probe.theta_offset` | `[-0.02, 0.02]` | sample misalignment | shifts Q; becomes a thickness error |
-| `probe.sample_broadening` | `[0.0, 0.05]` | curvature, mosaic, extra divergence | damps fringes; every interface reads rougher |
+| `probe.sample_broadening` | `[0.0, 0.15]` **`per: measurement`** | aperture-limited divergence at small angles, curvature, mosaic | damps fringes; every interface reads rougher |
 
-Ranges are AuRE's defaults, which this beamline's reductions already assume.
+Ranges other than the broadening one are AuRE's defaults, which this beamline's
+reductions already assume. See `sample-broadening` for why that one is both wider
+and scoped differently.
 
 **`theta_offset` and `sample_broadening` are partials-only.** Both describe the
 *incident angle*, and a combined file has already been stitched across several
@@ -197,11 +199,10 @@ of them, so there is no single angle to offset or broaden. They require states
 with `segments: auto`; `nrw model validate` rejects them on a `kind: combined`
 state.
 
-**Scope them by asking whether the sample physically moved.**
+**Scope `theta_offset` by asking whether the sample physically moved.**
 
-`theta_offset` and `sample_broadening` are properties of *how the sample sits
-in the beam* — its alignment and its flatness. So the question is not "did the
-sample change?" but "was it remounted?".
+`theta_offset` is a property of *how the sample sits in the beam*. So the question
+is not "did the sample change?" but "was it remounted?".
 
 For an in-situ cell measured continuously — a sample under potential, an OCV
 before and after, a tNR run in between — the sample never moves. There is one
@@ -211,13 +212,33 @@ alignment for the whole experiment, so:
 parameters:
   # the sample was mounted once and never touched
   - {path: probe.theta_offset, range: [-0.02, 0.02], per: model}
-  - {path: probe.sample_broadening, range: [0.0, 0.05], per: model}
-  # but the normalisation is genuinely per state: each reduction used its own
-  # direct beam
+  # aperture-limited divergence is a property of the ANGLE, not the mounting:
+  # large at 0.37 deg, near zero at 3.5 deg. See `sample-broadening`.
+  - {path: probe.sample_broadening, range: [0.0, 0.15], per: measurement}
+  # normalisation is genuinely per state: each reduction used its own direct beam
   - {path: probe.intensity, value: 1.0, pm: 0.1, per: state}
 ```
 
-Fitting these `per: state` on a sample that never moved is worse than
+**`sample_broadening` does not follow that rule.** It is the exception in this
+table: on BL-4B the dominant contribution is a beam-definition/aperture effect
+that only bites at very small incident angles, so it belongs to the *angle*, not
+to the mounting. Because refl1d adds ω to the divergence, one shared ω becomes
+`dQ/Q = (dθ_nominal + ω)/tan θ`, which diverges as θ → 0 — so a single value
+over-smears the lowest-angle segment or under-smears the rest, and no choice of
+it is right for all three. Scope it `per: measurement` unless you have
+independent reason to think the cause is sample curvature or a pressed window,
+which really are one width for every angle.
+
+**Known cost:** `per: measurement` gives one ω per *segment*, so a three-state ×
+three-angle co-refinement spends nine parameters where the physics only has
+three — the same three angles recur in every state. There is no `per: angle`
+scope. Nine loosely-bounded nuisances on 2000 points is affordable, but check
+that the three values at each angle come out consistent across states; if they
+do not, something else is being absorbed. If they do, say so in the note — that
+agreement is evidence the parameter is measuring the instrument and not soaking
+up structure.
+
+Fitting `theta_offset` `per: state` on a sample that never moved is worse than
 cosmetic. It is several free parameters describing one physical quantity, and
 they will absorb real structural differences between the states — the very
 thing the experiment is trying to measure.
@@ -245,7 +266,8 @@ is a reason, not by default.
 |---|---|
 | "Editing the generated `.py` is quicker than editing the spec." | It is, once. Then the spec and the script disagree, `nrw check` flags it, and you are back to not knowing which file is real. Edit the spec, or `nrw model fork` to take ownership properly. |
 | "I'll add a `USE_OXIDE = True` flag so one file covers both cases." | A toggle inside a model means the file no longer identifies what it produced. Two specs, two hashes, two records. The schema deliberately cannot express it. |
-| "I'll set `per: measurement` everywhere, it's the most flexible." | It multiplies your parameter count by the number of segments and lets the fit absorb noise. `per: state` is right for structure; reach for `measurement` only where the physics differs. |
+| "I'll set `per: measurement` everywhere, it's the most flexible." | It multiplies your parameter count by the number of segments and lets the fit absorb noise. `per: state` is right for structure; reach for `measurement` only where the physics differs — as it does for `sample_broadening`, where the cause depends on the incident angle. |
+| "One `sample_broadening` for the whole sample is the physical choice." | Only if the cause is the sample. On BL-4B the dominant cause is aperture-limited divergence at small angles, and one shared value cannot represent it: `dQ/Q = (dθ + ω)/tan θ` is a different number at every angle. |
 | "The validator complains a constraint anchors on a constant — I'll just fix the bounds." | Read it again: it means the endpoint state has no free parameter for that path, so the interpolation would run between two fixed numbers and freeze every slice. That looks like a working fit and is not one. |
 | "`post_build` is easier than working out the schema." | It is supported, but every use is flagged, and it is a report that the schema is missing something real. Say what you needed. |
 | "I'll copy the spec and change a number for the variant." | Good — that is the intended workflow. Two files, two hashes, two sets of results. |
@@ -258,6 +280,9 @@ is a reason, not by default.
 - A parameter with no `range`, `pm`, or `fixed` — rejected, because it would be
   silently frozen.
 - `resolution` changed from what earlier fits on this sample used.
+- `probe.dq_is_fwhm` set to anything nobody traced to a file's column titles.
+- `probe.sample_broadening` declared `per: model` on multi-angle partials with no
+  stated reason to think the cause is sample curvature.
 - Free parameters approaching a tenth of the data-point count.
 - A generated `.py` edited by hand; `nrw model generate` refuses to overwrite it.
 - An absolute path anywhere in the spec.

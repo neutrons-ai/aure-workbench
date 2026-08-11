@@ -41,16 +41,24 @@ probe-level parameters that are unavailable when fitting a combined file.
 ### `sample_broadening`
 
 An extra angular divergence component, in degrees, added to the Q resolution of
-a probe segment. It accounts for sample curvature, waviness, or alignment
-issues that broaden features beyond the instrumental resolution.
+a probe segment. Full treatment in the **`sample-broadening`** skill, including
+the test that separates instrumental smearing from structural damping. The short
+version:
+
+**Scope it `per: measurement`, not `per: model`.** On BL-4B the dominant cause is
+a beam-definition/aperture effect that only bites at very small incident angles,
+so it is a property of the *angle*, not of the sample. refl1d adds ω to the
+divergence, giving `dQ/Q = (dθ_nominal + ω) / tan θ`, which blows up as θ → 0 — so
+one shared ω necessarily over-smears the lowest-angle segment or under-smears the
+rest. Use `per: model` only with independent reason to think the cause is sample
+curvature or a pressed cell window, which genuinely are one width for all angles.
 
 **Enable when:**
 
-- Per-segment χ² values are uneven, and particularly when the **low-Q segment
-  is significantly worse** (χ² more than about 2× the best segment).
 - The critical edge is rounder or more smeared in the data than in the model.
-- Structural adjustments and intensity normalisation have not resolved the
-  per-segment imbalance after one or two iterations.
+- Per-segment χ² values are uneven — **but check normalisation first** (see the
+  priority order below). An uneven low-angle segment is at least as often a scale
+  error, and broadening applied to a scale error damps every fringe in the fit.
 - Structural parameters are drifting to unphysical values — an adhesion layer
   inflating 5×, an SLD far from nominal. This usually means the fitter is using
   structural parameters as a proxy for missing resolution broadening.
@@ -60,10 +68,22 @@ issues that broaden features beyond the instrumental resolution.
 - Fitting a single combined file. There is no angle information; probes are
   Q-based and the parameter has nothing to act on.
 - All segments fit equally well.
-- χ² is already below the acceptance threshold.
+- The fringe *contrast* is wrong but equally so at equal Q in two overlapping
+  segments. That is a Q-only effect — interfacial width, a lateral thickness
+  distribution, or a relative-resolution floor — and no angular broadening can
+  express it. Run the equal-Q test in `sample-broadening` before reaching here.
 
-**Typical range:** 0.0 to 0.5 degrees. Start there and widen only if the fitted
-value reaches the upper bound.
+**Typical range:** `[0.0, 0.15]` per segment. The older 0.5 was for a single
+shared value; per segment the lowest angle carries most of it and the highest
+should come out near zero.
+
+**Check the fitted values against each other.** They should *decrease* with
+increasing incident angle — that pattern is the signature of the aperture effect
+and the reason to believe the parameter. If they instead scale as `tan θ`, the
+cause is a constant relative `dQ/Q`, i.e. the reduction's `dq_over_q` is too
+small: a reduction bug for `docs/ground_truths.md`, not a sample property. And
+where a total-reflection plateau exists, the roll-off before Q_c measures the
+resolution directly — check against that rather than inferring it from χ².
 
 ### `theta_offset`
 
@@ -87,10 +107,20 @@ rather than absorbed into the model.
 
 When one segment fits much worse than the others:
 
-1. **Intensity normalisation** — widen the intensity bounds if a segment is
-   hitting its limit.
-2. **`sample_broadening`** — the most common cause, especially when the low-Q
-   segment is worst.
-3. **`theta_offset`** — only if the overlap regions show misalignment.
-4. **Structural changes** — only if neither of the above resolves it and
-   residual fringes indicate a missing layer.
+1. **Per-segment scale.** Check the overlap ratio against the neighbouring
+   segment (`nrw data overlap`). A flat-in-Q offset is a normalisation error, not
+   physics: give that segment its own `probe.intensity` with `per: measurement`.
+   Do this first — it is the cheapest and the most often the answer.
+2. **Scale that varies *within* a segment.** If the required scale changes with
+   wavelength across one segment — typically at the short-λ edge of the band — no
+   intensity parameter can absorb it. Trim the band or re-reduce. Treating it as
+   broadening inflates ω and damps every fringe in the problem.
+3. **`sample_broadening`**, `per: measurement`.
+4. **`theta_offset`** — only if the overlap shows a fringe-*position* shift
+   rather than an amplitude one.
+5. **Structural changes** — only if none of the above resolves it and residual
+   fringes indicate a missing layer.
+
+Steps 1 and 2 come before 3 because the fit cannot tell a scale error from a
+resolution error: both make one segment fit worse, and it will spend whichever
+parameter you left free.
