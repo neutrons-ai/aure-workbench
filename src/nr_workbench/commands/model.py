@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import UTC
 from pathlib import Path
@@ -34,8 +33,15 @@ def _load(spec_path: str):
 
 
 def _spec_sha256(path: Path) -> str:
-    """Digest of a spec file, as recorded in a generated script's header."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    """Digest of a spec file, as recorded in a generated script's header.
+
+    Taken over the spec with any deprecation banner removed, so that labelling a
+    spec abandoned never makes its generated script report as stale. See
+    :mod:`nr_workbench.spec.deprecation`.
+    """
+    from nr_workbench.spec.deprecation import identity_hash
+
+    return identity_hash(path)
 
 
 def run_validate(
@@ -51,10 +57,21 @@ def run_validate(
     Raises:
         SystemExit: With code 1 when the spec has errors.
     """
+    from nr_workbench.spec.deprecation import is_deprecated, reason_of
     from nr_workbench.spec.validate import validate_spec
 
     layout, path, model = _load(spec)
     report = validate_spec(model, layout.root)
+
+    # Said before anything else, and not as an error: the spec may well be
+    # perfectly valid. What matters is that someone already decided against it.
+    text = path.read_text(encoding="utf-8")
+    if is_deprecated(text) and not as_json:
+        because = reason_of(text)
+        click.secho(
+            f"  DEPRECATED  {path.name}" + (f" -- {because}" if because else ""),
+            fg="yellow",
+        )
 
     if as_json:
         click.echo(
@@ -233,11 +250,27 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
     """
     from nr_workbench.codegen.generator import generate, verify_self_hash
     from nr_workbench.provenance.env import package_version
+    from nr_workbench.spec.deprecation import is_deprecated, reason_of
     from nr_workbench.spec.models import SpecError
     from nr_workbench.spec.resolve import build_table, discover_measurements
     from nr_workbench.spec.validate import validate_spec
 
     layout, path, model = _load(spec)
+
+    # Before validation: a deprecated spec is not a spec with a problem, it is a
+    # spec someone has already decided against, and reporting its parameter
+    # bounds would invite a fix rather than a stop.
+    text = path.read_text(encoding="utf-8")
+    if is_deprecated(text):
+        because = reason_of(text)
+        raise click.ClickException(
+            f"{path.name} is deprecated"
+            + (f": {because}" if because else ".")
+            + "\nIt is kept because the fits it produced are part of the record, "
+            "not because it is a model to run. Copy it to a new name and fix "
+            "what was wrong, or `nrw model deprecate "
+            f"{Path(spec).as_posix()} --undo` if it should not have been marked."
+        )
 
     report = validate_spec(model, layout.root)
     if not report.ok:
@@ -786,6 +819,58 @@ def _scaffold_document(
         )
     document["fit"] = {"method": "amoeba", "steps": 1000}
     return document
+
+
+def run_deprecate(*, spec: str, reason: str | None = None, undo: bool = False) -> None:
+    """Mark a spec as abandoned, in the spec, where it cannot be missed.
+
+    Specs are never deleted --- the fits they produced are part of the record and
+    a result whose model is gone is not reproducible. The cost is that an
+    abandoned spec is indistinguishable from a live one, and the evidence sits in
+    a ``NOTES.md`` in another directory. This writes it at the top of the file.
+
+    Hash-neutral by construction: the banner is fenced and every digest of a spec
+    is taken with the fence removed, so nothing generated from this spec changes
+    state. See :mod:`nr_workbench.spec.deprecation`.
+
+    Args:
+        spec: Path to the spec YAML.
+        reason: Why it was abandoned. Required unless undoing.
+        undo: Remove an existing banner instead.
+
+    Raises:
+        click.ClickException: On a missing spec, a missing reason, or a spec that
+            is already in the requested state.
+    """
+    from nr_workbench.spec.deprecation import banner, is_deprecated, strip
+
+    path = Path(spec).resolve()
+    if not path.is_file():
+        raise click.ClickException(f"No spec at {spec}")
+    layout = _layout(path.parent)
+    text = path.read_text(encoding="utf-8")
+    relative = path.relative_to(layout.root).as_posix()
+
+    if undo:
+        if not is_deprecated(text):
+            raise click.ClickException(f"{relative} is not deprecated.")
+        path.write_text(strip(text), encoding="utf-8")
+        click.echo(f"  {relative} is live again.")
+        return
+
+    if is_deprecated(text):
+        raise click.ClickException(
+            f"{relative} is already deprecated. `--undo` first to change the reason."
+        )
+    if not (reason or "").strip():
+        raise click.ClickException(
+            "--reason is required. Why a model was abandoned is the part nobody "
+            "can reconstruct later, and it is worth more than the fit."
+        )
+
+    path.write_text(banner(str(reason)) + text, encoding="utf-8")
+    click.echo(f"  {relative} marked deprecated.")
+    click.echo("  Its fits keep their provenance; `nrw model generate` now refuses it.")
 
 
 def _schema_relative(layout, target: Path) -> str:

@@ -6,7 +6,6 @@ these can answer honestly.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -29,6 +28,7 @@ from nr_workbench.provenance.whence import (
     check_inputs,
     whence,
 )
+from nr_workbench.spec.deprecation import identity_hash as spec_identity_hash
 
 _FRESHNESS_MARK = {
     Freshness.FRESH: "fresh",
@@ -935,7 +935,9 @@ def check_generated_scripts(layout: ProjectLayout) -> list[dict[str, str]]:
             continue
 
         recorded = _recorded_spec_hash(source)
-        actual = hashlib.sha256(spec.read_bytes()).hexdigest()
+        # Ignores a deprecation banner: labelling a spec abandoned must not
+        # report every script it produced as older than its model.
+        actual = spec_identity_hash(spec)
         if recorded and recorded != actual:
             problems.append(
                 {

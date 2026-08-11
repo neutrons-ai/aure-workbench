@@ -225,6 +225,25 @@ def model_fork_command(**kwargs: object) -> None:
     run_fork(**kwargs)  # type: ignore[arg-type]
 
 
+@model_group.command("deprecate")
+@click.argument("spec", type=click.Path(exists=True, dir_okay=False))
+@click.option("--reason", default=None, help="Why the model was abandoned.")
+@click.option("--undo", is_flag=True, help="Remove an existing deprecation banner.")
+def model_deprecate_command(**kwargs: object) -> None:
+    """Mark SPEC as abandoned, at the top of the file.
+
+    Specs are never deleted, because the fits they produced are part of the
+    record -- which leaves an abandoned spec looking exactly like a live one,
+    with the evidence in a NOTES.md three directories away. This puts it where
+    anyone opening the file will see it, and makes `nrw model generate` refuse.
+
+    Hash-neutral: nothing generated from the spec changes state.
+    """
+    from nr_workbench.commands.model import run_deprecate
+
+    run_deprecate(**kwargs)  # type: ignore[arg-type]
+
+
 @model_group.command("schema")
 @click.option("--out", default=None, help="Where to write it; '-' for stdout.")
 def model_schema_command(out: str | None) -> None:
@@ -628,6 +647,11 @@ def agent_guard_command(command: str | None) -> None:
     is_flag=True,
     help="Print no progress; the transcript still records everything.",
 )
+@click.option(
+    "--again",
+    is_flag=True,
+    help="Run even though the sample already has a written report.",
+)
 def agent_run_command(
     sample: str,
     dry_run: bool,
@@ -635,12 +659,17 @@ def agent_run_command(
     model: str | None,
     timeout: int | None,
     quiet: bool,
+    again: bool,
 ) -> None:
     """Run one unattended analysis session over SAMPLE.
 
     The task comes from `## Fits to perform` in the sample's notes; with
     nothing written there this refuses to start, because deciding what is
     worth fitting is the one thing an unattended session must not do.
+
+    It also refuses when the sample already has a written report, since the task
+    text does not change when the work is finished. Say what is left under
+    `## Fits to perform`, or pass --again for a deliberate second pass.
     """
     from nr_workbench.agent.session import DEFAULT_TURNS, SessionError, compose
     from nr_workbench.agent.session import run as run_session
@@ -653,7 +682,7 @@ def agent_run_command(
 
     try:
         if dry_run:
-            session = compose(root, sample)
+            session = compose(root, sample, again=again)
             click.echo(session.prompt)
             return
         session = run_session(
@@ -663,6 +692,7 @@ def agent_run_command(
             model=model,
             timeout=timeout,
             on_progress=None if quiet else click.echo,
+            again=again,
         )
     except SessionError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -836,6 +866,30 @@ def note_command(
     from nr_workbench.commands.note import run_note
 
     run_note(target=target, message=message, title=title, sample=sample, edit=edit)
+
+
+@main.command("report")
+@click.argument("sample")
+@click.option("--title", default=None, help="Report title. Defaults to the sample's.")
+@click.option("--root", default=None, help="Project root. Discovered if omitted.")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Refresh the generated sequence table in an existing report.",
+)
+@click.option("--stdout", is_flag=True, help="Print it instead of writing a file.")
+def report_command(
+    sample: str, title: str | None, root: str | None, force: bool, stdout: bool
+) -> None:
+    """Scaffold a sample's closing report, with its fit sequence filled in.
+
+    A sample ends up with a dozen result directories and no file saying what the
+    sequence was for. The ordered chain is generated here because it is
+    derivable; the reasoning is left blank because it is the analysis.
+    """
+    from nr_workbench.commands.report import run_report
+
+    run_report(sample=sample, title=title, root=root, force=force, stdout=stdout)
 
 
 @main.command("pack")

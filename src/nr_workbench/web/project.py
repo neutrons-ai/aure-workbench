@@ -19,7 +19,6 @@ render until everything is present is a UI nobody can use during an experiment.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -702,7 +701,11 @@ class ProjectData:
                 "record. Re-run the fit to get a trajectory.",
             )
 
-        actual = hashlib.sha256(live.read_bytes()).hexdigest()
+        # Ignores a deprecation banner, matching `nrw check` and the generated
+        # header: a label about a spec's status is not a change to its model.
+        from nr_workbench.spec.deprecation import identity_hash
+
+        actual = identity_hash(live)
         if actual != recorded.group(1):
             return (
                 None,
