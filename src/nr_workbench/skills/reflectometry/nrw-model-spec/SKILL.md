@@ -280,14 +280,23 @@ it is right for all three. Scope it `per: measurement` unless you have
 independent reason to think the cause is sample curvature or a pressed window,
 which really are one width for every angle.
 
-**Known cost:** `per: measurement` gives one ω per *segment*, so a three-state ×
-three-angle co-refinement spends nine parameters where the physics only has
-three — the same three angles recur in every state. There is no `per: angle`
-scope. Nine loosely-bounded nuisances on 2000 points is affordable, but check
-that the three values at each angle come out consistent across states; if they
-do not, something else is being absorbed. If they do, say so in the note — that
-agreement is evidence the parameter is measuring the instrument and not soaking
-up structure.
+**Use `per: angle`, not `per: measurement`, when the states share their angles.**
+The aperture effect belongs to the incident angle, so on a three-state ×
+three-angle co-refinement `per: angle` is three parameters where
+`per: measurement` is nine of the same physical quantity:
+
+```yaml
+  - {path: probe.sample_broadening, range: [0.0, 0.15], per: angle}
+```
+
+Angles are grouped with a tolerance, because each theta is read from its own
+file: 0.37 and 0.3698 are one setting, and 1.2002 and 1.2001 are another. The
+parameter is named for the nominal angle — `0.37deg` — so the key does not move
+when another state joins the fit.
+
+Reach for `per: measurement` only when you have reason to think the same angle
+behaved differently in different runs, e.g. the sample was remounted mid-series.
+Measuring one thing nine times is how a nuisance starts absorbing structure.
 
 Fitting `theta_offset` `per: state` on a sample that never moved is worse than
 cosmetic. It is several free parameters describing one physical quantity, and

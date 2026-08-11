@@ -49,6 +49,21 @@ def run_skills_list(*, bundled: bool = False) -> None:
         return
     _print_skills((s.name, s.domain, s.description) for s in installed)
 
+    # A skill that is bundled and absent looks, from inside the project, exactly
+    # like a topic nobody wrote a skill for. Naming them is the whole fix: the
+    # material-specific ones are the ones a given sample most needs, and the ones
+    # most likely to be missing.
+    try:
+        available = {skill.name for skill in discover_skills()}
+    except SkillError:
+        return
+    absent = sorted(available - {skill.name for skill in installed})
+    if absent:
+        click.echo()
+        click.secho(f"  {len(absent)} bundled skill(s) not installed here:", dim=True)
+        click.secho(f"    {', '.join(absent)}", dim=True)
+        click.secho(f"    nrw skills add {absent[0]}", dim=True)
+
 
 def _print_skills(rows) -> None:
     """Print a name/domain/description table."""
@@ -61,8 +76,64 @@ def _print_skills(rows) -> None:
         click.echo(f"  {name:<{width}}  [{domain}]  {summary}")
 
 
+def run_skills_add(*, names: tuple[str, ...], force: bool = False) -> None:
+    """Install named bundled skills into the project.
+
+    ``nrw skills sync`` installs *every* bundled skill, which is the wrong tool
+    when the point is to add the one this sample needs: the material-specific
+    ones are deliberately not seeded, because each costs attention on every query
+    that is not about it. This adds what was asked for and nothing else.
+
+    Args:
+        names: Bundled skill names.
+        force: Overwrite locally edited files, backing the originals up.
+
+    Raises:
+        click.ClickException: If there is no project, or a name is not bundled.
+    """
+    try:
+        layout = ProjectLayout.discover()
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        bundled = {skill.name: skill for skill in discover_skills()}
+    except SkillError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    unknown = [name for name in names if name not in bundled]
+    if unknown:
+        raise click.ClickException(
+            f"Not bundled: {', '.join(unknown)}.\n"
+            f"Available: {', '.join(sorted(bundled))}.\n"
+            "`nrw skills list --bundled` says what each one is for."
+        )
+
+    planned = [
+        PlannedFile(
+            relpath=relpath,
+            content=content,
+            template_id=f"skill/{bundled[name].name}/{relpath}",
+        )
+        for name in names
+        for relpath, content in plan_skill_files(bundled[name])
+    ]
+    report = apply_scaffold(layout.root, planned, force=force)
+    click.echo(
+        f"{report.count(Outcome.CREATE)} added, "
+        f"{report.count(Outcome.UPGRADE)} updated, "
+        f"{report.count(Outcome.UNCHANGED)} unchanged"
+    )
+    for name in names:
+        click.echo(f"  skills/{bundled[name].domain}/{name}/SKILL.md")
+
+
 def run_skills_sync(*, force: bool = False) -> None:
-    """Re-install the bundled skills into the project.
+    """Install or re-install every bundled skill.
+
+    Note that this adds the ones a project does not have as well as refreshing
+    the ones it does --- including the material-specific skills `nrw init`
+    deliberately leaves out. `nrw skills add <name>` is the targeted form.
 
     Locally edited skills are never silently replaced -- the updated copy is
     written alongside as ``.nrw-new`` so a scientist's addition to a skill is

@@ -1091,10 +1091,31 @@ def skills_list_command(bundled: bool) -> None:
     run_skills_list(bundled=bundled)
 
 
+@skills_group.command("add")
+@click.argument("names", nargs=-1, required=True)
+@click.option("--force", is_flag=True, help="Overwrite locally edited files.")
+def skills_add_command(names: tuple[str, ...], force: bool) -> None:
+    """Install the named bundled skills into this project.
+
+    `nrw init` seeds the skills that apply to any sample and leaves out the
+    material-specific ones, because each costs attention on every query that is
+    not about it. Add the ones this sample needs -- `metal-oxide-interfaces` for
+    an electrode, `polymer-films` for a brush, `solvent-contrast-matching` for a
+    contrast series. `nrw skills list --bundled` says what each one is for.
+    """
+    from nr_workbench.commands.skills import run_skills_add
+
+    run_skills_add(names=names, force=force)
+
+
 @skills_group.command("sync")
 @click.option("--force", is_flag=True, help="Overwrite locally edited skills.")
 def skills_sync_command(force: bool) -> None:
-    """Re-install bundled skills, leaving locally edited ones alone."""
+    """Install every bundled skill, leaving locally edited ones alone.
+
+    This adds the skills a project does not have as well as refreshing the ones
+    it does. `nrw skills add <name>` is the targeted form.
+    """
     from nr_workbench.commands.skills import run_skills_sync
 
     run_skills_sync(force=force)

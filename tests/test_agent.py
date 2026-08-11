@@ -970,3 +970,67 @@ def test_no_report_directory_is_not_an_error(tmp_path: Path) -> None:
     with_task(tmp_path)
 
     assert session.compose(tmp_path, "S1").prompt
+
+
+# --------------------------------------------------------------------------
+# Skills the sample needs and does not have
+#
+# `nrw init` seeds what applies to any sample and leaves out the
+# material-specific ones, so the skill a given sample most needs is exactly the
+# one likely to be absent -- and from inside a session an uninstalled skill
+# looks identical to a topic nobody wrote one for.
+# --------------------------------------------------------------------------
+
+COPPER_NOTES = """\
+# S1
+
+Copper oxide electrode in D2O.
+
+## Fits to perform
+
+Co-refine the two runs.
+"""
+
+
+def test_a_session_names_the_skills_this_sample_needs_and_lacks(tmp_path) -> None:
+    directory = tmp_path / "samples" / "S1"
+    directory.mkdir(parents=True)
+    (directory / "sample.md").write_text(COPPER_NOTES, encoding="utf-8")
+
+    composed = session.compose(tmp_path, "S1")
+
+    assert "NOT installed" in composed.prompt
+    assert "metal-oxide-interfaces" in composed.prompt
+    assert "nrw skills add" in composed.prompt, "the fix has to be named"
+
+
+def test_it_names_them_rather_than_installing_them(tmp_path) -> None:
+    """What a project's skills say is a standing decision about how everyone
+    here works; an unattended run is not the place to change it."""
+    directory = tmp_path / "samples" / "S1"
+    directory.mkdir(parents=True)
+    (directory / "sample.md").write_text(COPPER_NOTES, encoding="utf-8")
+
+    session.compose(tmp_path, "S1")
+
+    assert not (tmp_path / "skills").exists()
+
+
+def test_an_installed_skill_drops_out_of_the_missing_list(tmp_path) -> None:
+    """Asserted on the observation, not the whole prompt: an installed skill is
+    supposed to appear further down, under 'Read these first'."""
+    directory = tmp_path / "samples" / "S1"
+    directory.mkdir(parents=True)
+    (directory / "sample.md").write_text(COPPER_NOTES, encoding="utf-8")
+    installed = tmp_path / "skills" / "reflectometry" / "metal-oxide-interfaces"
+    installed.mkdir(parents=True)
+    (installed / "SKILL.md").write_text(
+        "---\nname: metal-oxide-interfaces\ndescription: x\n---\n", encoding="utf-8"
+    )
+
+    composed = session.compose(tmp_path, "S1")
+
+    gaps = [b for b in composed.observations if "NOT installed" in b]
+    assert gaps, "solvent-contrast-matching is still missing"
+    assert "metal-oxide-interfaces" not in gaps[0]
+    assert "metal-oxide-interfaces" in composed.prompt, "it is installed and relevant"

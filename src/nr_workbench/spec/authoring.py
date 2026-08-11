@@ -312,7 +312,7 @@ def build_prompt(
         "    sample curved / bent / warped / mosaic / fringes damped, or any "
         "multi-angle fit at all\n"
         "      -> {path: probe.sample_broadening, range: [0.0, 0.15], "
-        "per: measurement}\n"
+        "per: angle}\n"
         "    high background / poor statistics at high Q\n"
         "      -> {path: probe.background, range: [0.0, 1.0e-5], per: state}\n"
         "  SCOPE theta_offset by asking whether the sample was physically "
@@ -325,7 +325,7 @@ def build_prompt(
         "parameters describing one quantity, and they absorb the real "
         "differences between the states.\n"
         "  sample_broadening does NOT follow that rule -- scope it "
-        "`per: measurement`. On BL-4B its dominant cause is aperture-limited "
+        "`per: angle`. On BL-4B its dominant cause is aperture-limited "
         "divergence at small incident angles, so it belongs to the ANGLE, not "
         "the mounting. refl1d adds it to the divergence, giving "
         "dQ/Q = (dtheta + omega)/tan(theta), which diverges as theta -> 0, so "
@@ -728,7 +728,7 @@ Fill in the model spec at {spec_path} for sample {sample}.
      misaligned / angle uncertain
        {{path: probe.theta_offset, range: [-0.02, 0.02], per: ...}}
      curved / bent / mosaic / fringes damped, or any multi-angle fit
-       {{path: probe.sample_broadening, range: [0.0, 0.15], per: measurement}}
+       {{path: probe.sample_broadening, range: [0.0, 0.15], per: angle}}
      high background at high Q
        {{path: probe.background, range: [0.0, 1.0e-5], per: state}}
 
@@ -738,7 +738,7 @@ Fill in the model spec at {spec_path} for sample {sample}.
    for the whole experiment. `per: state` only if the notes say it was remounted
    or realigned.
 
-   `sample_broadening` is the exception: scope it `per: measurement`. Its dominant
+   `sample_broadening` is the exception: scope it `per: angle`. Its dominant
    cause here is aperture-limited divergence at small incident angles, so it
    belongs to the ANGLE rather than the mounting, and one shared value cannot
    represent it -- dQ/Q = (dtheta + omega)/tan(theta) diverges as theta -> 0.

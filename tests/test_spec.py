@@ -743,3 +743,89 @@ def test_a_trim_naming_an_unknown_state_is_rejected() -> None:
 
     with pytest.raises(SpecError, match="unknown state/series"):
         trim_for(spec, Measurement(group="s1", index=0, file="f", theta=0.45))
+
+
+# --------------------------------------------------------------------------
+# per: angle
+#
+# Aperture-limited divergence belongs to the incident angle, not the sample or
+# the run. On three states x three angles that is three parameters, where
+# `per: measurement` is nine of the same physical quantity and `per: state`
+# cannot express it at all.
+# --------------------------------------------------------------------------
+
+
+def angled(**counts_by_theta: list[float]) -> dict[str, list[Any]]:
+    """Measurements for several groups, each with the given thetas."""
+    from nr_workbench.spec.resolve import Measurement
+
+    return {
+        group: [
+            Measurement(group=group, index=i, file=f"{group}{i}.txt", theta=theta)
+            for i, theta in enumerate(thetas)
+        ]
+        for group, thetas in counts_by_theta.items()
+    }
+
+
+def test_one_parameter_per_angle_shared_across_states() -> None:
+    from nr_workbench.spec.resolve import build_table
+
+    spec = spec_from(
+        states=[
+            {"name": "s1", "run": 1, "segments": [{"file": "a.txt", "theta": 0.45}]},
+            {"name": "s2", "run": 2, "segments": [{"file": "b.txt", "theta": 0.45}]},
+        ],
+        parameters=[
+            {"path": "probe.sample_broadening", "range": [0, 0.15], "per": "angle"}
+        ],
+    )
+
+    table = build_table(
+        spec, angled(s1=[0.37, 1.2002, 3.5001], s2=[0.3698, 1.2001, 3.5001])
+    )
+
+    broadening = [p for p in table.free if "sample_broadening" in p.key]
+    assert len(broadening) == 3, "three angles, not six measurements"
+
+
+def test_thetas_read_from_different_files_group_together() -> None:
+    """Each theta comes from its own header, so the same setting is recorded
+    slightly differently per run. Grouping has to see through that."""
+    from nr_workbench.spec.resolve import angle_groups
+
+    labels = angle_groups(angled(s1=[0.37, 1.2002], s2=[0.3698, 1.2001]))
+
+    assert labels["s1#0"] == labels["s2#0"]
+    assert labels["s1#1"] == labels["s2#1"]
+    assert labels["s1#0"] != labels["s1#1"]
+
+
+def test_genuinely_different_angles_stay_apart() -> None:
+    from nr_workbench.spec.resolve import angle_groups
+
+    labels = angle_groups(angled(s1=[0.45, 1.2, 3.5]))
+
+    assert len({labels[k] for k in labels}) == 3
+
+
+def test_the_label_does_not_move_when_a_state_is_added() -> None:
+    """The label becomes a parameter key, recorded in the .par file and the
+    posterior. A key that shifts when another run joins makes two fits of one
+    model look like fits of two -- and the cluster minimum shifts, because a
+    marginally lower theta can arrive later."""
+    from nr_workbench.spec.resolve import angle_groups
+
+    before = angle_groups(angled(s1=[0.37]))
+    after = angle_groups(angled(s1=[0.37], s2=[0.3698]))
+
+    assert before["s1#0"] == after["s1#0"] == "0.37deg"
+
+
+def test_angles_too_close_to_name_apart_keep_full_precision() -> None:
+    """Rather than silently merging two settings into one parameter."""
+    from nr_workbench.spec.resolve import angle_groups
+
+    labels = angle_groups(angled(s1=[1.20, 1.23]))
+
+    assert len({labels[k] for k in labels}) == 2

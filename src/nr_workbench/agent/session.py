@@ -163,6 +163,7 @@ def observe(root: Path, sample: str) -> list[str]:
         _observe_specs,
         _observe_fits,
         _observe_report,
+        _observe_missing_skills,
     ):
         try:
             block = render(root, sample)
@@ -427,6 +428,41 @@ def _observe_fits(root: Path, sample: str) -> str:
     if dropped:
         header += f" showing the first {len(shown_rows)}; {dropped} more not listed."
     return header + "\n" + "\n".join(lines)
+
+
+def _observe_missing_skills(root: Path, sample: str) -> str:
+    """Bundled skills this sample's notes call for that are not installed.
+
+    ``nrw init`` seeds the skills that apply to any sample and leaves the
+    material-specific ones to ``nrw skills add``. So the skill a particular
+    sample most needs is exactly the one likely to be absent --- and a session
+    cannot notice, because a skill it was never given looks the same as a topic
+    with no skill. The reference experiment ran a copper-oxide analysis with
+    ``metal-oxide-interfaces`` uninstalled, and pinned an oxide SLD to a value
+    that skill would have shown was 24% below bulk density.
+
+    Named rather than installed: what a project's skills say is a standing
+    decision about how everyone here works, and an unattended run is not the
+    place to change it.
+    """
+    from nr_workbench.spec.authoring import find_skills, missing_relevant
+
+    notes_path = Path(root) / "samples" / sample / "sample.md"
+    if not notes_path.is_file():
+        return ""
+    absent = missing_relevant(
+        notes_path.read_text(encoding="utf-8"), find_skills(Path(root))
+    )
+    if not absent:
+        return ""
+    return (
+        "Skills this sample's notes call for that are NOT installed here:\n"
+        + "\n".join(f"  {name}" for name in absent)
+        + "\n  You are working without them. Say so in what you write, and note "
+        "that `nrw skills add "
+        + " ".join(absent)
+        + "` would install them for the next run."
+    )
 
 
 def _observe_report(root: Path, sample: str) -> str:

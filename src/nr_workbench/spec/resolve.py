@@ -464,6 +464,60 @@ def build_table(
 _RANK_GROUP = 1
 _RANK_MEASUREMENT = 2
 
+#: How far two incident angles may differ and still be the same setting, in
+#: degrees. The same nominal angle is recorded slightly differently per run --
+#: 0.37 against 0.3698, 1.2002 against 1.2001 -- because each theta is read from
+#: its own file rather than tidied to the nominal value. Grouping has to see
+#: through that, while staying far below the gap between real settings (0.45,
+#: 1.2, 3.5), so anything from 0.005 to 0.1 would do and 0.02 is the middle of it.
+ANGLE_TOLERANCE = 0.02
+
+
+def angle_groups(measurements: dict[str, list[Measurement]]) -> dict[str, str]:
+    """Map each measurement key to a label for its incident angle.
+
+    Clustered rather than rounded: rounding splits 1.199 from 1.201 at a boundary
+    that has nothing to do with the instrument, and those are the same setting.
+
+    Args:
+        measurements: Every measurement in the problem, by group.
+
+    Returns:
+        ``measurement.key`` to a label such as ``0.37deg``.
+    """
+    every = [m for group in measurements.values() for m in group]
+    clusters: list[list[Measurement]] = []
+    for measurement in sorted(every, key=lambda m: m.theta):
+        if clusters and measurement.theta - clusters[-1][0].theta <= ANGLE_TOLERANCE:
+            clusters[-1].append(measurement)
+        else:
+            clusters.append([measurement])
+
+    # The label becomes a parameter key, which is recorded in the .par file and
+    # the posterior. So it must not move when another state joins the fit: a key
+    # that shifts makes two fits of one model look like fits of two. Neither the
+    # mean nor the cluster minimum is safe -- a slightly lower theta arriving
+    # later moves both. Rounding to the nominal setting is, because at REF_L
+    # distinct settings differ by >=0.15 deg while the spread within one is
+    # ~0.0005 deg, so every member of a cluster rounds to the same 2 decimals.
+    labels: dict[str, str] = {}
+    for cluster in clusters:
+        label = f"{round(cluster[0].theta, 2):g}deg"
+        for measurement in cluster:
+            labels[measurement.key] = label
+
+    distinct = {labels[m.key] for m in every}
+    if len(distinct) != len(clusters):
+        # Two clusters rounded together: the angles are closer than the naming
+        # can express, so fall back to full precision rather than silently
+        # merging two settings into one parameter.
+        labels = {
+            measurement.key: f"{cluster[0].theta:g}deg"
+            for cluster in clusters
+            for measurement in cluster
+        }
+    return labels
+
 
 def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
     """Create free parameters and the slots that read them.
@@ -473,6 +527,7 @@ def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
     the two racing on declaration order.
     """
     claims: dict[tuple[str, str], tuple[int, str, Measurement, ParameterPath]] = {}
+    by_angle = angle_groups(table.measurements)
 
     for parameter in spec.parameters:
         path = parameter.parsed
@@ -494,6 +549,11 @@ def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
                 elif parameter.per == "state" and index is None:
                     key = f"{path.render()}@{group}"
                     label = group
+                elif parameter.per == "angle" and index is None:
+                    # Shared across states, so the key deliberately omits the
+                    # group: that is the whole point of the scope.
+                    label = by_angle[measurement.key]
+                    key = f"{path.render()}@{label}"
                 else:
                     key = f"{path.render()}@{measurement.key}"
                     label = measurement.key

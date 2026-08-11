@@ -14,8 +14,16 @@ that directly, with ``per``:
 ===================  ====================================================
 ``per: model``       one Parameter for the entire FitProblem
 ``per: state``       one per state or series (a whole series counts as one)
+``per: angle``       one per distinct incident angle, shared across states
 ``per: measurement`` one per angle segment, or per time slice
 ===================  ====================================================
+
+``per: angle`` exists for the instrument. Aperture-limited divergence is a
+property of the incident angle rather than of the sample or the run, so on a
+three-state, three-angle co-refinement it is three parameters where
+``per: measurement`` is nine and ``per: state`` cannot express it at all. The
+three values it collapses are the same physical quantity, and measuring one
+thing three times is how a nuisance starts absorbing structure.
 
 Within a state, angle segments alias segment 0 **automatically**. The user
 never writes it, and that single default removes ~180 lines of the reference
@@ -74,7 +82,7 @@ _WHY_NOT_FITTABLE: dict[str, str] = {
 }
 
 #: How a parameter is shared. See the module docstring.
-Grouping = Literal["model", "state", "measurement"]
+Grouping = Literal["model", "state", "measurement", "angle"]
 
 #: Where the data for a state comes from.
 StateKind = Literal["partials", "combined"]
