@@ -793,3 +793,54 @@ def test_the_missing_harness_error_distinguishes_it_from_an_endpoint(
     assert "not a completions endpoint" in said
     assert session.HARNESS_ENV in said
     assert "--dry-run" in said
+
+
+def test_provider_variables_reach_the_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claude Code selects its provider from the environment --
+    CLAUDE_CODE_USE_FOUNDRY, CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX
+    and their credentials. The session inherits the whole environment, which
+    is what makes third-party providers work with no support from us.
+
+    Pinned because the obvious future tidy-up -- passing a scrubbed, minimal
+    env to the subprocess -- would cut every non-default provider off, and the
+    failure would look like an authentication problem at the far end.
+    """
+    seen: dict[str, str] = {}
+
+    def capture(argv, *, root, environment, transcript, timeout, on_progress):
+        seen.update(environment)
+        transcript.write_text("", encoding="utf-8")
+        return 0, False
+
+    sample = tmp_path / "samples" / "S1"
+    sample.mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_WITH_TASK, encoding="utf-8")
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [{"command": "nrw agent guard"}],
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("CLAUDE_CODE_USE_FOUNDRY", "1")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "ornl-neutrons")
+    monkeypatch.setattr(session, "_stream", capture)
+    monkeypatch.setattr(session, "harness_command", lambda *a, **k: ["true"])
+
+    session.run(tmp_path, "S1")
+
+    assert seen.get("CLAUDE_CODE_USE_FOUNDRY") == "1"
+    assert seen.get("ANTHROPIC_FOUNDRY_RESOURCE") == "ornl-neutrons"
+    assert seen.get(guard.AGENT_ENV) == "1", "and ours is still set on top"

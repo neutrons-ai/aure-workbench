@@ -369,12 +369,96 @@ broken.
 
 ### You may not need a subscription
 
-Claude Code itself is not subscription-only. Per its own `--help`, it
-authenticates with `ANTHROPIC_API_KEY` (billed per token) and supports the
-third-party providers **Bedrock, Vertex and Foundry** using their own
-credentials — so an organisation account is enough, with no personal plan.
-Check Claude Code's documentation for the current environment variables; this
-page will go stale on that detail and yours will not.
+Claude Code is not subscription-only. It authenticates with an
+`ANTHROPIC_API_KEY` (billed per token), and it runs against **Microsoft
+Foundry**, **Amazon Bedrock** and **Google Cloud's Agent Platform (Vertex)**
+using your organisation's own cloud credentials and billing. If your
+institution already has an Azure, AWS or GCP account with Claude models
+enabled, that is enough.
+
+All of it is selected by environment variables, and `nrw agent run` passes the
+**whole environment** through to the harness. So there is nothing to configure
+in nr-workbench: set the provider variables in your shell (or in the daemon's
+unit file — see the warning below) and the agent uses them.
+
+#### Microsoft Foundry
+
+In the [Foundry portal](https://ai.azure.com/), create a resource and a
+deployment for each Claude model you want, noting the deployment names. Then:
+
+```bash
+export CLAUDE_CODE_USE_FOUNDRY=1
+export ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name
+export ANTHROPIC_FOUNDRY_API_KEY=your-azure-api-key
+```
+
+Omit the API key to use Microsoft Entra ID instead — Claude Code falls back to
+the Azure default credential chain, so `az login` works locally and a managed
+identity works on a server.
+
+**Pin your model versions.** Foundry has no startup model check, so an
+unpinned alias that is not deployed in your account fails at the first
+request rather than at launch. Set these to *your deployment names*:
+
+```bash
+export ANTHROPIC_DEFAULT_OPUS_MODEL='claude-opus-4-8'
+export ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet-5'
+export ANTHROPIC_DEFAULT_HAIKU_MODEL='claude-haiku-4-5'
+```
+
+This matters more for a beamtime than for interactive use: a wrong model name
+surfaces at 2am as a session that failed on turn one.
+
+#### Amazon Bedrock
+
+```bash
+export CLAUDE_CODE_USE_BEDROCK=1
+export AWS_REGION=us-east-1
+```
+
+Authentication uses your normal AWS credentials.
+
+#### Google Cloud's Agent Platform (Vertex)
+
+```bash
+export CLAUDE_CODE_USE_VERTEX=1
+export CLOUD_ML_REGION=us-east5
+export ANTHROPIC_VERTEX_PROJECT_ID=your-project-id
+```
+
+#### Behind a gateway or proxy
+
+A corporate proxy is `HTTPS_PROXY`. An LLM gateway is `ANTHROPIC_BASE_URL`, or
+the provider-specific `ANTHROPIC_FOUNDRY_BASE_URL` /
+`ANTHROPIC_BEDROCK_BASE_URL` / `ANTHROPIC_VERTEX_BASE_URL`. With Bedrock or
+Vertex, add `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1` or
+`CLAUDE_CODE_SKIP_VERTEX_AUTH=1` when the gateway handles cloud auth itself.
+
+#### Check it before the beam does
+
+Run `claude` interactively once and type `/status`. It names the provider and
+the resource or base URL it resolved. Do that before an overnight run; a
+provider misconfiguration looks exactly like a broken agent from the outside.
+
+> **A daemon has no shell profile.** `nrw agent watch` started from systemd,
+> launchd or cron does not read `.bashrc` or `.zshrc`, so provider variables
+> set there are invisible to it. Put them in the unit file, the plist, or a
+> wrapper script named by `NRW_HARNESS`. This is the most likely reason an
+> agent that works by hand does nothing overnight.
+
+These variable names are current as of writing and come from Claude Code's own
+documentation — [Microsoft Foundry](https://code.claude.com/docs/en/microsoft-foundry),
+[Amazon Bedrock](https://code.claude.com/docs/en/amazon-bedrock),
+[Vertex](https://code.claude.com/docs/en/google-vertex-ai),
+[LLM gateways](https://code.claude.com/docs/en/llm-gateway). Those pages are
+the authority; this one will go stale first.
+
+#### Which model the session uses
+
+`nrw agent run --model NAME` passes straight through to the harness. On a
+third-party provider that is a *deployment name*, not an Anthropic model ID.
+Leave it off and the harness uses whatever your `ANTHROPIC_DEFAULT_*_MODEL`
+pinning resolves to.
 
 ### Or point us at a different harness
 

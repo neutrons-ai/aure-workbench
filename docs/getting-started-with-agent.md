@@ -26,11 +26,23 @@ You also need a coding harness on your `PATH` — `claude` by default, or set
 `NRW_HARNESS` to your own command. That is the whole list. `nrw doctor` says
 what it found.
 
-No Claude Code subscription? You may not need one: Claude Code authenticates
-with an `ANTHROPIC_API_KEY` or with Bedrock/Vertex/Foundry credentials. What
-will *not* work is substituting an `LLM_BASE_URL` completions endpoint — that
-is a text API, and the agent needs a tool-using loop. See
-[docs/agent.md](agent.md#without-a-claude-code-subscription).
+No Claude Code subscription? You may not need one. It runs on an
+`ANTHROPIC_API_KEY`, or on your institution's own Azure, AWS or GCP account:
+
+```bash
+# Microsoft Foundry, for example -- the whole configuration
+export CLAUDE_CODE_USE_FOUNDRY=1
+export ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name
+export ANTHROPIC_FOUNDRY_API_KEY=your-azure-api-key
+```
+
+`nrw agent run` passes the whole environment through, so nothing needs
+configuring on this side. What will *not* work is substituting an
+`LLM_BASE_URL` completions endpoint — that is a text API, and the agent needs
+a tool-using loop.
+[docs/agent.md](agent.md#you-may-not-need-a-subscription) has Bedrock, Vertex,
+gateways, model pinning, and the reason a daemon needs these set somewhere
+other than your shell profile.
 
 **You do not need an LLM endpoint.** `nrw doctor` reports one if you have it
 configured, and `nrw assess`, `nrw model new --from-notes` and `nrw isaac
