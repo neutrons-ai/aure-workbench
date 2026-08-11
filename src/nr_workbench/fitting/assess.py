@@ -67,6 +67,37 @@ CORRELATION_SAMPLE_ROWS = 40_000
 #: much of it, in 1e-6 A^-2.
 ATTAINMENT_SLACK = 0.05
 
+#: How many equal-count Q bands to split a segment into when asking where its
+#: chi-squared lives. Four is enough to separate "the edges" from "the middle"
+#: without any band being too small to mean anything.
+Q_BANDS = 4
+
+#: A band this many times the segment's own mean chi-squared is carrying the
+#: segment. Below it, the excess is spread and a band breakdown says nothing.
+BAND_CONCENTRATION = 2.0
+
+#: Significance at which a coherent residual against the model's own fringes is
+#: worth reporting. Coherent structure adds in phase, so a pattern this strong
+#: can sit inside a chi-squared that reads as "good" -- which is the entire
+#: reason for this check.
+FRINGE_SIGNIFICANCE = 4.0
+
+#: Points per window when separating a model curve into its fringe modulation
+#: and its smooth envelope. About two fringe periods of a 400 A layer at the
+#: sampling REF_L reductions use.
+FRINGE_WINDOW = 41
+
+#: Segments shorter than this are not decomposed: there is no room to separate
+#: a fringe from an envelope.
+MIN_POINTS_FOR_FRINGES = 60
+
+#: Combined uncertainty on the two fringe amplitudes above which their agreement
+#: says nothing. An angle-dependent cause big enough to explain the observed
+#: damping shifts the amplitude ratio by roughly 0.2 between a 1.2 and a 3.5
+#: degree segment, so error bars at that scale cannot exclude one, and the check
+#: must say so rather than return a verdict it has not earned.
+VISIBILITY_RESOLVING_POWER = 0.15
+
 
 @dataclass
 class Finding:
@@ -273,6 +304,317 @@ def per_model_chisq(fit_dir: Path) -> dict[str, float]:
     return found
 
 
+def read_reflectivity(fit_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read each model's measured and theoretical curve from its ``-refl.dat``.
+
+    These files are what makes residual structure visible at all: chi-squared is
+    a sum, and a sum cannot say that its excess is concentrated at one segment's
+    edge, or that it oscillates in step with the model's own fringes.
+
+    Args:
+        fit_dir: The result directory.
+
+    Returns:
+        Model name to ``{"Q", "dQ", "R", "dR", "theory"}`` arrays, keeping only
+        points with a positive uncertainty and a positive measured and modelled
+        reflectivity --- the rest cannot enter a log-space comparison. Empty when
+        the fit exported no curves.
+    """
+    import numpy as np
+
+    by_index = _model_names(fit_dir)
+    curves: dict[str, dict[str, Any]] = {}
+    for path in sorted((fit_dir / "fit").glob("*-refl.dat")):
+        match = re.search(r"-(\d+)-refl\.dat$", path.name)
+        if not match:
+            continue
+        name = by_index.get(int(match.group(1))) or path.stem
+        try:
+            data = np.loadtxt(path, ndmin=2)
+        except (OSError, ValueError):
+            continue
+        if data.shape[1] < 5 or len(data) == 0:
+            continue
+        q, dq, r, dr, theory = (data[:, i] for i in range(5))
+        usable = (
+            (dr > 0) & (r > 0) & (theory > 0) & np.isfinite(r) & np.isfinite(theory)
+        )
+        if usable.sum() < 5:
+            continue
+        curves[name] = {
+            "Q": q[usable],
+            "dQ": dq[usable],
+            "R": r[usable],
+            "dR": dr[usable],
+            "theory": theory[usable],
+        }
+    return curves
+
+
+def _fringe_modulation(theory: Any) -> Any:
+    """Split ``log10(theory)`` into its fringe part, dropping the envelope.
+
+    A running mean over about two fringe periods is the envelope; what is left
+    oscillates with the layer thicknesses. Reflected padding keeps the ends
+    usable rather than tapering the very points a segment edge lives at.
+    """
+    import numpy as np
+
+    curve = np.log10(theory)
+    width = min(FRINGE_WINDOW, len(curve) // 2 * 2 + 1)
+    half = width // 2
+    padded = np.r_[curve[1 : half + 1][::-1], curve, curve[-half - 1 : -1][::-1]]
+    envelope = np.convolve(padded, np.ones(width) / width, mode="valid")
+    return curve - envelope[: len(curve)]
+
+
+def _band_findings(name: str, curve: dict[str, Any]) -> list[Finding]:
+    """Where in Q a segment's chi-squared actually lives.
+
+    An excess concentrated in the *first or last* band is a segment-edge
+    artifact --- a stitching scale, a band-edge normalisation --- and no amount
+    of structural refinement will fix it. One spread across the middle is the
+    model.
+    """
+    import numpy as np
+
+    q, r, dr, theory = curve["Q"], curve["R"], curve["dR"], curve["theory"]
+    residual = (r - theory) / dr
+    edges = np.quantile(q, np.linspace(0, 1, Q_BANDS + 1))
+    bands: list[tuple[float, float, float]] = []
+    for low, high in zip(edges[:-1], edges[1:], strict=False):
+        inside = (q >= low) & (q <= high)
+        if inside.sum() >= 5:
+            bands.append((low, high, float(np.mean(residual[inside] ** 2))))
+    if len(bands) < Q_BANDS:
+        return []
+
+    overall = float(np.mean(residual**2))
+    worst = max(range(len(bands)), key=lambda i: bands[i][2])
+    low, high, value = bands[worst]
+    if overall <= 0 or value < BAND_CONCENTRATION * overall:
+        return []
+
+    at_edge = worst in (0, len(bands) - 1)
+    where = "lowest-Q" if worst == 0 else "highest-Q" if at_edge else "interior"
+    hint = (
+        " That is the segment's own edge, which is where a stitching scale or a "
+        "band-edge normalisation error shows up -- check the overlap with the "
+        "neighbouring segment before changing the model."
+        if at_edge
+        else " That is in the segment's interior, so it is more likely the model "
+        "than the normalisation."
+    )
+    return [
+        Finding(
+            kind="chisq-concentrated",
+            severity="warn",
+            parameter=name,
+            value=value,
+            message=(
+                f"{name}'s chi-squared is concentrated in its {where} band: "
+                f"{value:.3g} over Q {low:.4g}-{high:.4g} against {overall:.3g} for "
+                f"the segment.{hint}"
+            ),
+        )
+    ]
+
+
+def _coherent_findings(name: str, curve: dict[str, Any]) -> list[Finding]:
+    """Residual that oscillates in step with the model's own fringes.
+
+    Regresses the residual on the model's fringe modulation and on its
+    derivative. The two say different things and have different fixes:
+
+    * **in phase** --- the fringe *depth* is wrong. Resolution, interfacial
+      width, or a lateral thickness distribution.
+    * **quadrature** --- the fringe *positions* are wrong. A thickness or an
+      incident angle.
+
+    Coherent residual adds in phase, so a ten-sigma pattern fits comfortably
+    inside a chi-squared that reads as "good". A sum cannot report it.
+    """
+    import numpy as np
+
+    if len(curve["Q"]) < MIN_POINTS_FOR_FRINGES:
+        return []
+
+    residual = (curve["R"] - curve["theory"]) / curve["dR"]
+    in_phase = _fringe_modulation(curve["theory"])
+    if not np.any(np.abs(in_phase) > 0):
+        return []
+    quadrature = np.gradient(in_phase, curve["Q"])
+    spread = np.std(quadrature)
+    if spread > 0:
+        quadrature = quadrature / spread * np.std(in_phase)
+
+    design = np.vstack([in_phase, quadrature]).T
+    try:
+        coefficients, *_ = np.linalg.lstsq(design, residual, rcond=None)
+        covariance = np.linalg.inv(design.T @ design) * np.var(
+            residual - design @ coefficients
+        )
+    except np.linalg.LinAlgError:
+        return []
+
+    errors = np.sqrt(np.abs(np.diag(covariance)))
+    if not np.all(errors > 0):
+        return []
+    significance = np.abs(coefficients) / errors
+    if significance.max() < FRINGE_SIGNIFICANCE:
+        return []
+
+    depth, position = significance
+    if depth >= position:
+        sense = "too deep" if coefficients[0] < 0 else "too shallow"
+        diagnosis = (
+            f"the model's fringes are {sense} ({depth:.0f} sigma in phase against "
+            f"{position:.0f} in quadrature), so the fringe DEPTH is wrong: "
+            "resolution, an interfacial width, or a lateral thickness "
+            "distribution. Changing a thickness will not fix it"
+        )
+    else:
+        diagnosis = (
+            f"the residual is in quadrature with the fringes ({position:.0f} sigma "
+            f"against {depth:.0f} in phase), so the fringe POSITIONS are wrong: "
+            "a thickness or an incident angle, not a roughness"
+        )
+    return [
+        Finding(
+            kind="coherent-residual",
+            severity="warn",
+            parameter=name,
+            value=float(significance.max()),
+            message=(
+                f"{name}'s residual is not noise -- {diagnosis}. Coherent residual "
+                "adds in phase, so this can sit inside a chi-squared that reads as "
+                "acceptable."
+            ),
+        )
+    ]
+
+
+def _visibility_findings(curves: dict[str, dict[str, Any]]) -> list[Finding]:
+    """Compare two overlapping segments at the *same* Q.
+
+    This is the test that says what to do about damped fringes, and it is the
+    one nothing else runs. Where two segments at different incident angles cover
+    the same Q, measure each one's fringe amplitude against the model's:
+
+    * **they differ** --- the cause depends on incident angle, so it is
+      instrumental: ``sample_broadening``, or a resolution term the angular-only
+      convention discards.
+    * **they agree** --- the cause is a function of Q alone: an interfacial
+      width, a lateral thickness distribution, or a relative-resolution floor.
+      No angular broadening can express it, and forcing one to try corrupts the
+      low-angle segment.
+
+    Without this, a fit is damped by whichever parameter happened to be free.
+    """
+    import numpy as np
+
+    def amplitude_ratio(curve, low, high):
+        """Data fringe amplitude over model fringe amplitude, in one Q window."""
+        inside = (curve["Q"] > low) & (curve["Q"] < high)
+        if inside.sum() < 12:
+            return None
+        q = curve["Q"][inside]
+        sigma = curve["dR"][inside] / (curve["R"][inside] * math.log(10))
+        modulation = _fringe_modulation(curve["theory"][inside])
+        if np.std(modulation) <= 0 or not np.all(sigma > 0):
+            return None
+        centred = q - q.mean()
+        design = (
+            np.vstack([np.ones_like(q), centred, centred**2, modulation]).T
+            / sigma[:, None]
+        )
+        try:
+            coefficients, *_ = np.linalg.lstsq(
+                design, np.log10(curve["R"][inside]) / sigma, rcond=None
+            )
+            covariance = np.linalg.inv(design.T @ design)
+        except np.linalg.LinAlgError:
+            return None
+        error = math.sqrt(abs(covariance[3, 3]))
+        return (float(coefficients[3]), error) if error > 0 else None
+
+    findings: list[Finding] = []
+    by_state: dict[str, list[str]] = {}
+    for name in curves:
+        by_state.setdefault(name.split("#", 1)[0], []).append(name)
+
+    for state, names in sorted(by_state.items()):
+        ordered = sorted(names, key=lambda n: float(np.min(curves[n]["Q"])))
+        for lower, upper in zip(ordered[:-1], ordered[1:], strict=False):
+            low = float(np.min(curves[upper]["Q"]))
+            high = float(np.max(curves[lower]["Q"]))
+            if not high > low:
+                continue
+            first = amplitude_ratio(curves[lower], low, high)
+            second = amplitude_ratio(curves[upper], low, high)
+            if first is None or second is None:
+                continue
+            (k_low, e_low), (k_high, e_high) = first, second
+            spread = math.hypot(e_low, e_high)
+            gap = abs(k_low - k_high) / spread
+            damped = min(k_low, k_high) < 0.8 and max(k_low, k_high) < 1.2
+            if gap < 3.0 and not damped:
+                continue
+            if gap >= 3.0:
+                verdict = (
+                    "they disagree, so the cause depends on incident angle and is "
+                    "instrumental -- probe.sample_broadening, per: measurement"
+                )
+            elif spread > VISIBILITY_RESOLVING_POWER:
+                # "They agree, so it is Q-only" is a directive not to reach for
+                # sample_broadening, and an angle-dependent cause large enough to
+                # explain this damping would move the ratio by about as much as
+                # these error bars. Say what was measured, not what it rules out.
+                verdict = (
+                    f"they are consistent ({gap:.1f} sigma apart), but neither is "
+                    "well enough determined for that to exclude an angle-dependent "
+                    "cause: this overlap cannot separate resolution from an "
+                    "interfacial width. What it does establish is that the fringes "
+                    "are damped in both. Get a better-resolved overlap before "
+                    "choosing between them"
+                )
+            else:
+                verdict = (
+                    f"they agree to {gap:.1f} sigma, which points at a cause that is "
+                    "a function of Q alone -- an interfacial width, a lateral "
+                    "thickness distribution, or a relative-resolution floor. Angular "
+                    "broadening cannot express any of those, and forcing it to try "
+                    "will corrupt the low-angle segment"
+                )
+            findings.append(
+                Finding(
+                    kind="fringe-damping",
+                    severity="warn",
+                    parameter=state,
+                    message=(
+                        f"{lower} and {upper} overlap over Q {low:.4g}-{high:.4g}; "
+                        f"their fringe amplitudes against the model are "
+                        f"{k_low:.2f}+-{e_low:.2f} and {k_high:.2f}+-{e_high:.2f}. "
+                        f"At equal Q {verdict}."
+                    ),
+                )
+            )
+    return findings
+
+
+def _residual_findings(fit_dir: Path) -> list[Finding]:
+    """Everything the exported curves say that chi-squared cannot."""
+    curves = read_reflectivity(fit_dir)
+    if not curves:
+        return []
+    findings: list[Finding] = []
+    for name in sorted(curves):
+        findings.extend(_band_findings(name, curves[name]))
+        findings.extend(_coherent_findings(name, curves[name]))
+    findings.extend(_visibility_findings(curves))
+    return findings
+
+
 def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
     """Run every check that needs no language model.
 
@@ -343,6 +685,7 @@ def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
     result.findings.extend(_correlation_findings(fit_dir))
     result.findings.extend(_attainment_findings(fit_dir))
     result.findings.extend(_inflation_findings(result.chisq, result.n_points, stats))
+    result.findings.extend(_residual_findings(fit_dir))
 
     spread = per_model_chisq(fit_dir)
     if len(spread) > 1:

@@ -24,6 +24,7 @@ from nr_workbench.fitting.assess import (
     per_model_chisq,
     read_bounds,
     read_par,
+    read_reflectivity,
 )
 
 from .test_lifecycle import write_partials
@@ -629,3 +630,268 @@ def test_the_inflation_finding_reaches_the_markdown(tmp_path: Path) -> None:
     rendered = as_markdown(check(tmp_path, manifest(chisq=2.94, points=2292)))
 
     assert "too narrow" in rendered
+
+
+# --------------------------------------------------------------------------
+# Residual structure
+#
+# Chi-squared is a sum, and a sum cannot say that its excess sits at one
+# segment's edge, or that it oscillates in step with the model's own fringes.
+# Coherent residual adds in phase, so a ten-sigma pattern fits inside a
+# chi-squared that reads as "good" -- which is how the real analysis stopped at
+# 2.94 with 11 sigma of unmodelled fringe contrast in it.
+# --------------------------------------------------------------------------
+
+
+def write_refl(
+    directory: Path,
+    index: int,
+    q,
+    r,
+    dr,
+    theory,
+    *,
+    stem: str = "m",
+) -> None:
+    """Write a `<stem>-<index>-refl.dat` in the five-column export format."""
+    fit = directory / "fit"
+    fit.mkdir(parents=True, exist_ok=True)
+    rows = "\n".join(
+        f"{a:.8g} {a * 0.02:.8g} {b:.8g} {c:.8g} {d:.8g}"
+        for a, b, c, d in zip(q, r, dr, theory, strict=True)
+    )
+    (fit / f"{stem}-{index}-refl.dat").write_text(
+        "# Q dQ R dR theory\n" + rows + "\n", encoding="utf-8"
+    )
+
+
+def fringed(q, *, thickness: float = 400.0, depth: float = 0.3, level: float = 1e-3):
+    """A decaying curve with Kiessig fringes, as a stand-in for a real model."""
+    import numpy as np
+
+    return level * (q / q[0]) ** -4 * (1.0 + depth * np.cos(q * thickness))
+
+
+def refl_manifest(names: dict[int, str], chisq: float = 1.0) -> dict:
+    """A manifest naming each exported model, as `read_reflectivity` needs."""
+    return {
+        "info": {
+            "chisq": chisq,
+            "n_free": 2,
+            "models": [
+                {"index": i, "name": n, "n_points": 200} for i, n in names.items()
+            ],
+        },
+        "provenance": {"fit_id": "20260807-163359Z-0103d9c7"},
+    }
+
+
+def test_reflectivity_is_keyed_by_model_name(tmp_path: Path) -> None:
+    import numpy as np
+
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q)
+    write_refl(tmp_path, 1, q, theory, theory * 0.05, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "run100001#0"})), encoding="utf-8"
+    )
+
+    curves = read_reflectivity(tmp_path)
+
+    assert list(curves) == ["run100001#0"]
+    assert len(curves["run100001#0"]["Q"]) == 200
+
+
+def test_nonpositive_points_are_dropped(tmp_path: Path) -> None:
+    """A negative R cannot enter a log-space comparison; refl exports contain them."""
+    import numpy as np
+
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q)
+    r = theory.copy()
+    r[10] = -1e-9
+    dr = theory * 0.05
+    dr[20] = 0.0
+    write_refl(tmp_path, 1, q, r, dr, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "a"})), encoding="utf-8"
+    )
+
+    assert len(read_reflectivity(tmp_path)["a"]["Q"]) == 198
+
+
+def test_a_model_with_fringes_too_deep_is_reported_in_phase(tmp_path: Path) -> None:
+    """The real signature: data fringes shallower than the model's.
+
+    Depth is wrong, not position, so the fix is resolution or an interfacial
+    width -- and the finding has to say that rather than "chi-squared is high".
+    """
+    import numpy as np
+
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q, depth=0.3)
+    data = fringed(q, depth=0.1)  # same positions, shallower fringes
+    write_refl(tmp_path, 1, q, data, theory * 0.01, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "run1#1"})), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest({1: "run1#1"})).findings
+
+    flagged = [f for f in findings if f.kind == "coherent-residual"]
+    assert len(flagged) == 1
+    assert "too deep" in flagged[0].message
+    assert "DEPTH" in flagged[0].message
+
+
+def test_a_model_with_shifted_fringes_is_reported_in_quadrature(tmp_path: Path) -> None:
+    """A thickness error moves the fringes; that is a different fix entirely."""
+    import numpy as np
+
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q, thickness=400.0)
+    data = fringed(q, thickness=404.0)  # same depth, shifted positions
+    write_refl(tmp_path, 1, q, data, theory * 0.01, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "run1#1"})), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest({1: "run1#1"})).findings
+
+    flagged = [f for f in findings if f.kind == "coherent-residual"]
+    assert len(flagged) == 1
+    assert "POSITIONS" in flagged[0].message
+
+
+def test_a_faithful_model_produces_no_coherent_finding(tmp_path: Path) -> None:
+    """Noise around the right curve must not be reported as structure."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q)
+    dr = theory * 0.05
+    write_refl(tmp_path, 1, q, theory + rng.normal(0, 1, 200) * dr, dr, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "run1#1"})), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest({1: "run1#1"})).findings
+
+    assert not [f for f in findings if f.kind == "coherent-residual"]
+    assert not [f for f in findings if f.kind == "chisq-concentrated"]
+
+
+def test_excess_at_a_segment_edge_is_named_as_an_edge(tmp_path: Path) -> None:
+    """An edge excess is a stitching or band-edge problem, not the model."""
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    q = np.linspace(0.01, 0.2, 200)
+    theory = fringed(q)
+    dr = theory * 0.05
+    data = theory + rng.normal(0, 1, 200) * dr
+    data[-50:] = theory[-50:] * 1.30  # the top band is 30% high
+    write_refl(tmp_path, 1, q, data, dr, theory)
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest({1: "run1#1"})), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest({1: "run1#1"})).findings
+
+    flagged = [f for f in findings if f.kind == "chisq-concentrated"]
+    assert len(flagged) == 1
+    assert "highest-Q" in flagged[0].message
+    assert "segment's own edge" in flagged[0].message
+
+
+def test_equal_q_damping_that_differs_by_angle_points_at_the_instrument(
+    tmp_path: Path,
+) -> None:
+    """Two segments overlapping in Q, damped by different amounts.
+
+    Angle-dependent means instrumental, and the finding must name
+    sample_broadening rather than leave the analyst to guess.
+    """
+    import numpy as np
+
+    lower_q = np.linspace(0.03, 0.10, 200)
+    upper_q = np.linspace(0.08, 0.20, 200)
+    names = {1: "run1#0", 2: "run1#1"}
+    # The lower-angle segment matches; the upper one is heavily damped.
+    write_refl(
+        tmp_path,
+        1,
+        lower_q,
+        fringed(lower_q, depth=0.30),
+        fringed(lower_q) * 0.002,
+        fringed(lower_q, depth=0.30),
+    )
+    write_refl(
+        tmp_path,
+        2,
+        upper_q,
+        fringed(upper_q, depth=0.02),
+        fringed(upper_q) * 0.002,
+        fringed(upper_q, depth=0.30),
+    )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest(names)), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest(names)).findings
+
+    flagged = [f for f in findings if f.kind == "fringe-damping"]
+    assert len(flagged) == 1
+    assert "disagree" in flagged[0].message
+    assert "sample_broadening" in flagged[0].message
+
+
+def test_agreement_within_wide_error_bars_is_not_called_agreement(
+    tmp_path: Path,
+) -> None:
+    """The honest case, and the one the real fit lands in.
+
+    "They agree, so it is Q-only" is a directive NOT to reach for
+    sample_broadening. An angle-dependent cause big enough to explain the damping
+    moves the amplitude ratio by about as much as these error bars, so the check
+    must report what it measured rather than what it cannot exclude.
+    """
+    import numpy as np
+
+    lower_q = np.linspace(0.03, 0.10, 200)
+    upper_q = np.linspace(0.08, 0.20, 200)
+    names = {1: "run1#0", 2: "run1#1"}
+    # Both damped to nothing, with uncertainties too large to compare them.
+    for index, q in ((1, lower_q), (2, upper_q)):
+        write_refl(
+            tmp_path,
+            index,
+            q,
+            fringed(q, depth=0.0),
+            fringed(q) * 0.30,
+            fringed(q, depth=0.30),
+        )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(refl_manifest(names)), encoding="utf-8"
+    )
+
+    findings = check(tmp_path, refl_manifest(names)).findings
+
+    flagged = [f for f in findings if f.kind == "fringe-damping"]
+    assert len(flagged) == 1
+    assert "cannot separate resolution from an interfacial width" in flagged[0].message
+    assert "damped in both" in flagged[0].message
+
+
+def test_a_fit_with_no_exported_curves_says_nothing(tmp_path: Path) -> None:
+    """An older result directory must not raise, and must not invent findings."""
+    write_fit(tmp_path, par={}, bounds={})
+
+    findings = check(tmp_path, manifest()).findings
+
+    assert not [
+        f
+        for f in findings
+        if f.kind in {"coherent-residual", "chisq-concentrated", "fringe-damping"}
+    ]

@@ -77,7 +77,51 @@ not determined.
 DREAM gives you this directly: the 2D marginal for `(ρ, t)` will show the ridge.
 An optimizer run gives a point on the ridge and no indication there is a ridge.
 
-### 3. Do not let BIC reject a layer the optimizer failed to fit
+**Fixing the SLD does not escape the ridge — it hides it.** With `ρ` pinned, the
+thickness inherits a tight-looking interval that is *conditional on the value you
+chose*, and nothing in the output says so. The measured quantity is still the
+product, so report it:
+
+```
+Γ = t · Δρ        Δρ = ρ_layer − ρ_of_the_medium_it_displaces
+```
+
+`Γ`, in `10⁻⁶ Å⁻¹`, is the integrated scattering-length deficit of the region —
+what the reflectivity actually constrains. It survives both the smearing and the
+choice of `ρ`. A worked case: an oxide fitted at `t = 11.1 ± 0.3 Å` with `ρ`
+pinned at 4.10 against `ρ_D₂O = 6.10` gives `Γ = 22.2 ± 1.0`. Move the pinned
+SLD and `t` moves with it; `Γ` barely does.
+
+Two states differ only if their `Γ` intervals separate, **after** inflating by
+`√χ²_red`. Comparing thicknesses obtained under a fixed SLD compares two
+conditional numbers, and the condition only cancels in the product.
+
+### 3. Look at the profile, because the layer may not be in it
+
+A slab between interfaces of σ comparable to its own thickness is rendered as
+overlapping error functions, and the result is not bounded by the media it
+connects. From a real fit — an 11 Å oxide at ρ = 4.10 between σ = 18.9 and 8.9,
+with D₂O at 6.10 and Cu at 6.55:
+
+```
+  z (Å)    -46    -18     +9     +80
+  ρ       6.10   6.18   5.59    6.55
+                  ^^^^   ^^^^
+            above D₂O    the only dip: 5.59, not 4.10
+```
+
+Two things to take from it. The profile **rises 0.08 above the D₂O it starts
+from**, over ~36 Å, before dipping — an excursion outside both bounding media,
+which is a rendering artifact and not a layer. And the nominal 4.10 is **never
+attained**: the closest the profile comes is 5.59, 1.5 away. So "an 11 Å layer of
+SLD 4.10" describes something that is not in the model, while `Γ = 22.2` describes
+something that is.
+
+Always read `<model>-<n>-profile.dat` before quoting a thin layer's numbers. If
+the profile excurses outside the media on either side, the slab parameters are
+bookkeeping for a shape, and the shape is what to report.
+
+### 4. Do not let BIC reject a layer the optimizer failed to fit
 
 Model selection compares the *best achievable* fit of each candidate. If the
 optimizer settled in a local minimum for the more complex model, its χ² is too
@@ -94,7 +138,7 @@ Signatures of a layer-absorbing local minimum, rather than a true rejection:
 Any of those means re-optimise the complex model from better starting points and
 compare again. It does not mean the layer is absent.
 
-### 4. Enumerate SLD modes rather than hoping
+### 5. Enumerate SLD modes rather than hoping
 
 The reliable escape is to stop treating SLD as continuous. Fit the same model
 several times with the thin layer's SLD **fixed** at each physically plausible
@@ -117,7 +161,7 @@ If several modes fit comparably, that is the answer — the data does not
 distinguish them — and it belongs in the paper rather than being resolved by
 whichever one you ran last.
 
-### 5. Use the rest of the experiment as a prior
+### 6. Use the rest of the experiment as a prior
 
 This is where a REF_L sequence has an advantage over a single curve.
 
@@ -154,6 +198,15 @@ territory to explore.
 Defensible, but then say so: it is an assumption, not a measurement, and the
 uncertainty on everything downstream inherits it.
 
+**"I fixed the SLD, so the thickness is now well determined."** Its interval got
+narrow, which is not the same thing. It is a conditional interval — conditional on
+a value you chose and the output does not mention — and the ridge is still there.
+Quote `Γ = t · Δρ`, which does not depend on where on the ridge you pinned it.
+
+**"The oxide came out 11 Å, so there is an 11 Å oxide."** Read the profile before
+you believe that. If its interfaces are wider than it is, the nominal SLD is
+attained nowhere and the 11 Å is a coordinate on a shape, not a layer thickness.
+
 ## Red Flags
 
 - A thin layer reported with a precise SLD *and* a precise thickness from an
@@ -163,8 +216,12 @@ uncertainty on everything downstream inherits it.
 - A thin-layer SLD outside the range of anything the sample could be made of.
 - Two committed specs differing only in a thin layer's starting value, with
   materially different fitted structures and comparable χ².
-- Roughness larger than about half the layer it bounds — the layer is being
-  smeared out of existence.
+- Roughness larger than about half the layer it bounds, with the slab's thickness
+  and SLD still being quoted as if they were separable.
+- An SLD profile that excurses outside the media on either side of the layer.
+- A thin layer's thickness compared between states when its SLD was fixed, without
+  the comparison being made on `Γ = t · Δρ` instead.
+- A layer's nominal SLD appearing nowhere in `<model>-<n>-profile.dat`.
 
 ## Verification
 
@@ -177,8 +234,15 @@ Then, on the fit page or the `-err.json`:
 
 1. **Look at the (ρ, t) correlation** for every thin layer. A ridge means quote
    the product.
-2. **Check nothing is at a bound.** `nrw serve` shows the parameter table with
+2. **Read `<model>-<n>-profile.dat`.** Does the layer's nominal SLD appear in it
+   at all? Does the profile stay between the media it connects? If either answer
+   is no, report the profile and `Γ`, not the slab.
+3. **Compute `Γ = t · Δρ`** and compare states on that, with intervals inflated by
+   `√χ²_red`. If the thicknesses separate but the `Γ` values do not, there is no
+   measured difference.
+4. **Check nothing is at a bound.** `nrw serve` shows the parameter table with
    its 68% intervals; an interval clipped at a bound is not an interval.
-3. **Run at least two SLD modes** for any layer under the resolution limit and
+5. **Run at least two SLD modes** for any layer under the resolution limit and
    compare with `nrw diff`. If they disagree structurally at similar χ², the
-   degeneracy is real and unresolved — report it rather than picking one.
+   degeneracy is real and unresolved — report it rather than picking one. If `Γ`
+   agrees across the modes, that is your answer and the split is not.
