@@ -213,6 +213,36 @@ instruction to tighten the bound.
 | 5–10 | Marginal; the model is probably missing a feature |
 | > 10 | Poor; structural problem |
 
+**The bands describe how good the fit is, not whether you are finished.** A
+reflectivity co-refinement has 2000+ points. At n = 2000, χ²_red = 1 has a
+standard error of about `sqrt(2/n)` = 0.03, so **χ² = 1.5 is roughly 16σ from
+acceptable** — there is something in the data the model does not contain, and
+"Good; minor discrepancies" is not a licence to stop looking for it. Above ~1.5
+with that many points, decompose before accepting:
+
+1. **Per segment.** One segment three times worse than the others is a
+   normalisation or resolution problem, not structure.
+2. **Per Q band** within each segment. Excess concentrated at a segment *edge* is
+   a stitching or band-edge artifact; excess spread across the fringes is not.
+3. **In-phase vs quadrature against the model's own fringes.** Regress the
+   residual on the model's fringe modulation and on its Q-derivative. In-phase
+   means the fringe *depth* is wrong — resolution, interfacial width, or a
+   thickness distribution. Quadrature means the fringe *positions* are wrong —
+   a thickness or an angle. The two have different fixes and χ² alone hides
+   which you have.
+
+Residual structure is coherent and adds in phase, so a 10σ pattern can sit inside
+a χ² that reads as "good". A flat residual at χ² = 2.5 and an oscillating one at
+χ² = 2.5 are different findings.
+
+**Inflate the uncertainties by √χ²_red before quoting any interval.** DREAM's
+posterior assumes the reported `dR` are correct. χ²_red = 3 says they are
+understated by about `√3` = 1.7, or the model is wrong, or both — and in every
+case the raw 68% interval is too narrow by that factor. Quoting `409.6 ± 0.8 Å`
+off a χ² of 2.9 claims a precision the fit does not have, and it will make two
+states look 3σ apart when they are not. Either fix the model until χ² ≈ 1, or
+scale the intervals and say you did.
+
 ### 6. Justify any added complexity with BIC
 
 `BIC = n·ln(χ²) + k·ln(n)`, lower is better. Each layer costs three parameters
@@ -244,7 +274,10 @@ Full detail, including when to enable `sample_broadening` and `theta_offset`:
 | "The fit is good, so the model is right." | A thin layer sits on an SLD × thickness ridge — many (Δρ, t) pairs give the same χ². A good fit is necessary, not sufficient. |
 | "I'll widen the bounds until it converges." | Widening in an unphysical direction buys χ² with nonsense. Widen only toward values the material could actually take. |
 | "The ambient is water, so SLD = −0.56." | Unless someone confirmed it is H₂O. Unspecified deuteration is the single most common cause of an unexplained critical edge; suspect it first. |
-| "I'll set roughness to 2 Å, the fit likes it." | Below 5 Å is not physical, and roughness above half the adjacent thickness produces profile artifacts χ² cannot see. |
+| "I'll set roughness to 2 Å, the fit likes it." | Below 5 Å is not physical. Above half the adjacent thickness is allowed but stops being a layer — declare it as a gradient parametrisation and report the profile. |
+| "χ² is 2.9, which the table calls good, so I'm done." | The table grades the fit, not your understanding of it. At 2000 points, χ²_red = 1 has a standard error of 0.03, so 2.9 is not a rounding error — something coherent is unmodelled. Decompose it. |
+| "DREAM converged, so ± 0.8 Å is the uncertainty." | Only if χ²_red ≈ 1. DREAM trusts the reported `dR`; at χ²_red = 2.9 the intervals are too narrow by √2.9, and the 3σ difference you are about to report is 1.9σ. |
+| "The two states differ by 3 Å with ± 0.6 Å errors, so it changed." | Inflate first, then check whether the intervals still separate. Then check whether a nuisance parameter is correlated with the thing you think changed. |
 | "`copper.material.rho.range(...)` should work." | It crashes. See Red Flags. |
 
 ## Red Flags
@@ -257,7 +290,11 @@ Full detail, including when to enable `sample_broadening` and `theta_offset`:
 - dQ used as sigma without dividing by 2.355 (or `FWHM=True` not passed).
 - Substrate SLD floating.
 - A layer thinner than the resolution limit reported with a tight uncertainty.
-- Roughness exceeding half of an adjacent layer's thickness.
+- Roughness past half an adjacent thickness with no note saying it is a gradient
+  parametrisation.
+- A DREAM interval quoted without inflation on a fit whose χ²_red is well above 1.
+- Two states declared different on intervals that overlap once inflated.
+- χ² accepted as "good" with no per-segment or per-Q-band breakdown behind it.
 - Suggesting a change to the fitting method, the error bars, the Q range, or the
   back-reflection geometry. Those are set by the experiment, not the model.
 - Several structural changes made in one step, so none can be attributed.
@@ -267,12 +304,23 @@ Full detail, including when to enable `sample_broadening` and `theta_offset`:
 Before reporting a fit:
 
 - [ ] χ² is in a defensible band, and you have said which.
+- [ ] Above χ²_red ≈ 1.5 on a large point count, the residual has been decomposed
+      per segment, per Q band, and in-phase vs quadrature — and what it showed is
+      written down.
+- [ ] Every quoted interval is inflated by √χ²_red, and the note says so.
+- [ ] No difference between states is called significant on raw DREAM intervals
+      when χ²_red > 1.2.
 - [ ] BIC supports every layer present.
-- [ ] Every roughness ≥ 5 Å and below half of each adjacent thickness.
+- [ ] Every roughness ≥ 5 Å. Any roughness past half an adjacent thickness is
+      declared as a gradient parametrisation, with the profile and `Γ = d · Δρ`
+      reported instead of the slab numbers.
 - [ ] No parameter is pinned at a bound.
-- [ ] The SLD profile stays within its bounding media — no erf-tail excursion
-      outside the ambient or substrate values.
+- [ ] The SLD profile stays within its bounding media, or an erf-tail excursion
+      outside them is identified as the arithmetic artifact it is.
+- [ ] Every nominal SLD has the density it assumes recorded next to it, and any
+      fitted SLD below bulk is converted back to a density fraction and judged.
 - [ ] The ambient SLD matches the stated solvent, or the discrepancy is
       explained.
-- [ ] For multi-segment fits, per-segment χ² values are comparable; if the
-      low-Q segment is much worse, consider `sample_broadening`.
+- [ ] For multi-segment fits, per-segment χ² values are comparable; if one is
+      much worse, the normalisation was checked before `sample_broadening` was
+      reached for.

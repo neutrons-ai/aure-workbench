@@ -534,3 +534,98 @@ def test_no_chain_means_no_correlation_opinion(tmp_path: Path) -> None:
     assert [
         f for f in check(tmp_path, manifest()).findings if f.kind == "correlated"
     ] == []
+
+
+# --------------------------------------------------------------------------
+# Interval inflation
+#
+# DREAM's posterior width is conditional on the reported dR being right. At
+# chi-squared 2.9 they are understated by about 1.7, and the interval it prints
+# is too narrow by that factor -- which is how two states come to look 3 sigma
+# apart when they are 1.9.
+# --------------------------------------------------------------------------
+
+
+def err_for(**halves: float) -> dict[str, dict]:
+    """An uncertainty summary with the given half-widths at 68%."""
+    return {
+        name: {"median": 100.0, "p68": [100.0 - half, 100.0 + half]}
+        for name, half in halves.items()
+    }
+
+
+def test_a_high_chisq_asks_for_the_intervals_to_be_inflated(tmp_path: Path) -> None:
+    """The real case: chi-squared 2.94, Cu thickness +-0.774 -> +-1.33."""
+    write_fit(tmp_path, par={}, bounds={}, err=err_for(Cu_thickness=0.774))
+
+    findings = check(tmp_path, manifest(chisq=2.94, points=2292)).findings
+
+    flagged = [f for f in findings if f.kind == "intervals-need-inflation"]
+    assert len(flagged) == 1
+    assert flagged[0].severity == "warn"
+    assert "1.71" in flagged[0].message
+    assert "+-0.774 -> +-1.33" in flagged[0].message
+    # sqrt(2/2292) = 0.0295, so 2.94 is 66 sigma from 1 -- not a rounding error.
+    assert "66 sigma from 1 at 2292 points" in flagged[0].message
+
+
+def test_a_good_chisq_leaves_the_intervals_alone(tmp_path: Path) -> None:
+    """Below the threshold the posterior width is the honest one."""
+    write_fit(tmp_path, par={}, bounds={}, err=err_for(Cu_thickness=0.774))
+
+    findings = check(tmp_path, manifest(chisq=1.1, points=2292)).findings
+
+    assert not [f for f in findings if f.kind == "intervals-need-inflation"]
+
+
+def test_an_optimiser_run_is_not_asked_to_inflate_nothing(tmp_path: Path) -> None:
+    """No posterior, no intervals to scale -- `no-uncertainty` already covers it."""
+    write_fit(tmp_path, par={}, bounds={}, err=None)
+
+    findings = check(tmp_path, manifest(chisq=12.1, points=2292)).findings
+
+    assert not [f for f in findings if f.kind == "intervals-need-inflation"]
+    assert [f for f in findings if f.kind == "no-uncertainty"]
+
+
+def test_the_widest_intervals_are_the_ones_named(tmp_path: Path) -> None:
+    """Those are what a reader leans on, and what the correction moves most."""
+    write_fit(
+        tmp_path,
+        par={},
+        bounds={},
+        err=err_for(tiny=0.01, small=0.1, big=5.0, medium=1.0, mid=0.5),
+    )
+
+    findings = check(tmp_path, manifest(chisq=4.0, points=2292)).findings
+    message = next(f for f in findings if f.kind == "intervals-need-inflation").message
+
+    assert message.index("big") < message.index("medium") < message.index("mid")
+    assert "+-5 -> +-10" in message  # sqrt(4) = 2
+
+
+def test_naming_only_the_widest_says_how_many_were_not_named(tmp_path: Path) -> None:
+    """The factor applies to every interval, not the four that fit in a sentence.
+
+    A truncated list with no count reads as "these are the affected parameters",
+    which is the opposite of what the finding means.
+    """
+    write_fit(
+        tmp_path,
+        par={},
+        bounds={},
+        err=err_for(a=5.0, b=4.0, c=3.0, d=2.0, e=1.0, f=0.5),
+    )
+
+    findings = check(tmp_path, manifest(chisq=4.0, points=2292)).findings
+    message = next(f for f in findings if f.kind == "intervals-need-inflation").message
+
+    assert "(and 2 more, all by 2.00)" in message
+
+
+def test_the_inflation_finding_reaches_the_markdown(tmp_path: Path) -> None:
+    write_fit(tmp_path, par={}, bounds={}, err=err_for(Cu_thickness=0.774))
+
+    rendered = as_markdown(check(tmp_path, manifest(chisq=2.94, points=2292)))
+
+    assert "too narrow" in rendered

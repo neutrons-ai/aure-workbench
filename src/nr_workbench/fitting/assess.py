@@ -342,6 +342,7 @@ def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
 
     result.findings.extend(_correlation_findings(fit_dir))
     result.findings.extend(_attainment_findings(fit_dir))
+    result.findings.extend(_inflation_findings(result.chisq, result.n_points, stats))
 
     spread = per_model_chisq(fit_dir)
     if len(spread) > 1:
@@ -360,6 +361,99 @@ def check(fit_dir: Path, manifest: dict[str, Any]) -> Assessment:
                 )
             )
     return result
+
+
+#: Below this, the posterior's own width is the honest one and inflating it would
+#: overstate the uncertainty instead. Chosen rather than 1.0 so ordinary
+#: point-count scatter does not trigger a finding on every good fit.
+INFLATION_THRESHOLD = 1.2
+
+#: How many parameters to name in the inflation finding. The point is to make the
+#: correction concrete on the numbers most likely to be quoted, not to reprint the
+#: whole table -- that is what the .par and err.json files are for.
+INFLATION_EXAMPLES = 4
+
+
+def _inflation_findings(
+    chisq: float | None,
+    n_points: int | None,
+    stats: dict[str, dict[str, Any]],
+) -> list[Finding]:
+    """Report that the DREAM intervals are too narrow, and by how much.
+
+    DREAM's posterior width is conditional on the reported ``dR`` being right. A
+    reduced chi-squared of 3 says they are understated by about ``sqrt(3)``, or
+    the model is missing something, or both -- and in every one of those cases the
+    68% interval it prints is too narrow by that factor. Quoting it unscaled is
+    how two states come to look three sigma apart when they are not.
+
+    This is deliberately a finding rather than a silent rescaling of ``err.json``:
+    the raw posterior is what the sampler produced and the record should keep it.
+    The correction belongs in the note, applied by someone who has said why.
+
+    Args:
+        chisq: Reduced chi-squared for the fit.
+        n_points: Data points, for the significance of the excess.
+        stats: The uncertainty summary, keyed by parameter name.
+
+    Returns:
+        One finding when inflation is warranted, otherwise nothing.
+    """
+    if not stats or not isinstance(chisq, int | float) or chisq <= INFLATION_THRESHOLD:
+        return []
+
+    scale = math.sqrt(float(chisq))
+
+    # Widest-relative-interval first: those are the ones a reader is most likely
+    # to be leaning on, and the ones the correction changes most in absolute terms.
+    widths: list[tuple[str, float, float]] = []
+    for name, entry in stats.items():
+        interval = entry.get("p68") or entry.get("p68_range")
+        if not (isinstance(interval, list | tuple) and len(interval) == 2):
+            continue
+        try:
+            low, high = float(interval[0]), float(interval[1])
+        except (TypeError, ValueError):
+            continue
+        half = abs(high - low) / 2.0
+        if half > 0:
+            widths.append((name, half, half * scale))
+
+    ranked = sorted(widths, key=lambda w: -w[1])
+    examples = ", ".join(
+        f"{name} +-{half:.3g} -> +-{scaled:.3g}"
+        for name, half, scaled in ranked[:INFLATION_EXAMPLES]
+    )
+    # Never let the truncation read as "these are the affected parameters": the
+    # factor applies to every interval in the fit, not the four that are named.
+    if examples and len(ranked) > INFLATION_EXAMPLES:
+        examples += (
+            f" (and {len(ranked) - INFLATION_EXAMPLES} more, all by {scale:.2f})"
+        )
+
+    # sqrt(2/N) is the standard error of chi-squared-reduced at N points, so this
+    # says how far from 1 the fit actually is rather than just that it is above.
+    distance = ""
+    if isinstance(n_points, int) and n_points > 1:
+        sigma = math.sqrt(2.0 / n_points)
+        distance = f" -- {abs(float(chisq) - 1.0) / sigma:.0f} sigma from 1 at {n_points} points"
+
+    return [
+        Finding(
+            kind="intervals-need-inflation",
+            severity="warn",
+            value=float(chisq),
+            message=(
+                f"chi-squared is {float(chisq):.3g}{distance}, so every 68% interval "
+                f"below is too narrow by about sqrt({float(chisq):.3g}) = {scale:.2f}. "
+                "DREAM's widths assume the reported dR are correct; this fit says "
+                "they are understated, the model is incomplete, or both. Scale the "
+                "intervals by that factor before quoting one, and before calling any "
+                "difference between states significant"
+                + (f". For example: {examples}" if examples else ".")
+            ),
+        )
+    ]
 
 
 def read_chain(fit_dir: Path) -> tuple[Any, list[str]]:
