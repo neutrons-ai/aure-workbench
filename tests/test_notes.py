@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from nr_workbench import notes
 from nr_workbench.cli import main
 from nr_workbench.notes import (
     NOTES_TEMPLATE,
@@ -468,3 +469,89 @@ def test_an_unterminated_fence_hides_the_rest_rather_than_trusting_it() -> None:
     from nr_workbench.notes import GENERATED_OPEN
 
     assert is_blank(f"# f\n\n{GENERATED_OPEN}\nchi-squared 1.2, 8 free\n")
+
+
+# --------------------------------------------------------------------------
+# Filling the template's sections
+#
+# The template asks three questions and `-m` appended below all of them, so
+# every note in the reference experiment has three empty headings and one
+# paragraph at the bottom answering some mixture of them.
+# --------------------------------------------------------------------------
+
+FILLED_TEMPLATE = NOTES_TEMPLATE.format(
+    fit_id="20260807-163359Z-0103d9c7", description="dream fit of backrefl3."
+)
+
+
+def test_a_message_lands_under_its_own_heading() -> None:
+    result = notes.write_section(FILLED_TEMPLATE, "Why this run", "testing the oxide")
+
+    why = result.index("## Why this run")
+    showed = result.index("## What it showed")
+    assert why < result.index("testing the oxide") < showed
+
+
+def test_the_prompt_comment_is_kept_and_the_prose_follows_it() -> None:
+    """The comment is guidance for the next reader; deleting it is not our call."""
+    result = notes.write_section(FILLED_TEMPLATE, "Caveats", "rho was pinned")
+
+    assert "degeneracy you broke" in result
+    assert result.index("degeneracy you broke") < result.index("rho was pinned")
+
+
+def test_writing_to_every_section_keeps_them_in_template_order() -> None:
+    text = FILLED_TEMPLATE
+    for heading, message in (
+        ("Why this run", "why text"),
+        ("What it showed", "showed text"),
+        ("Caveats", "caveat text"),
+    ):
+        text = notes.write_section(text, heading, message)
+
+    assert (
+        text.index("why text") < text.index("showed text") < text.index("caveat text")
+    )
+
+
+def test_prose_goes_before_a_generated_assessment_block() -> None:
+    """`## Caveats` is the last template section, and `nrw assess` appends a
+    block containing its own `## Assessment` heading. The section boundary has
+    to be that heading, not the end of the file."""
+    text = FILLED_TEMPLATE + (
+        "\n<!-- nrw:generated -->\n## Assessment\n\nchi-squared 2.94\n"
+        "<!-- /nrw:generated -->\n"
+    )
+
+    result = notes.write_section(text, "Caveats", "rho was pinned")
+
+    assert result.index("rho was pinned") < result.index("<!-- nrw:generated -->")
+
+
+def test_a_missing_heading_is_appended_rather_than_dropped() -> None:
+    """A note predating the template, or one whose author deleted a heading."""
+    result = notes.write_section("# 20260807-163359Z-0103d9c7\n", "Caveats", "careful")
+
+    assert "## Caveats" in result
+    assert "careful" in result
+
+
+def test_an_empty_message_changes_nothing() -> None:
+    assert notes.write_section(FILLED_TEMPLATE, "Caveats", "   ") == FILLED_TEMPLATE
+
+
+def test_writing_twice_to_one_section_keeps_both(tmp_path: Path) -> None:
+    text = notes.write_section(FILLED_TEMPLATE, "Caveats", "first")
+
+    result = notes.write_section(text, "Caveats", "second")
+
+    assert result.index("first") < result.index("second")
+    assert result.index("second") < result.index("## Caveats") + len(result)
+
+
+def test_filled_sections_count_as_a_person_having_written_something() -> None:
+    """The blank-note signal has to see them, or `nrw ls` still nags."""
+    filled = notes.write_section(FILLED_TEMPLATE, "Why this run", "testing the oxide")
+
+    assert not notes.is_blank(filled)
+    assert notes.is_blank(FILLED_TEMPLATE), "the bare template is still blank"

@@ -38,6 +38,9 @@ def run_note(
     title: str | None = None,
     sample: str | None = None,
     edit: bool = False,
+    why: str | None = None,
+    showed: str | None = None,
+    caveat: str | None = None,
 ) -> None:
     """Append to, create, or show a note.
 
@@ -47,6 +50,9 @@ def run_note(
         title: Title for a new sample report.
         sample: Write a sample-level report instead of a fit note.
         edit: Open the note in ``$EDITOR`` after writing.
+        why: Fill the fit note's "Why this run" section.
+        showed: Fill the fit note's "What it showed" section.
+        caveat: Fill the fit note's "Caveats" section.
 
     Raises:
         click.ClickException: If there is no project, or the target is
@@ -64,10 +70,18 @@ def run_note(
             "to that run."
         )
 
+    sections = {"why": why, "showed": showed, "caveat": caveat}
+    if sample and any(sections.values()):
+        raise click.ClickException(
+            "--why/--showed/--caveat fill in a fit note's template sections, and "
+            "a sample report has no such sections. Use --title and -m for a "
+            "report about how the fits relate."
+        )
+
     if sample:
         _sample_note(layout, sample, message, title, edit)
     elif target:
-        _fit_note(layout, target, message, edit)
+        _fit_note(layout, target, message, edit, sections)
     else:
         raise click.ClickException(
             "Nothing named. Give a fit id, or --sample <id> for a report about "
@@ -78,9 +92,15 @@ def run_note(
 
 
 def _fit_note(
-    layout: ProjectLayout, target: str, message: str | None, edit: bool
+    layout: ProjectLayout,
+    target: str,
+    message: str | None,
+    edit: bool,
+    sections: dict[str, str | None] | None = None,
 ) -> None:
-    """Append to or show one fit's NOTES.md."""
+    """Append to, fill in, or show one fit's NOTES.md."""
+    from nr_workbench.notes import SECTIONS, write_section
+
     index = FitIndex(layout.index_file)
     try:
         entry, directory = resolve_fit(layout, index, target)
@@ -89,8 +109,9 @@ def _fit_note(
 
     fit_id = str(entry["fit_id"])
     path = directory / NOTES_FILENAME
+    filled = {key: value for key, value in (sections or {}).items() if value}
 
-    if message is None:
+    if message is None and not filled:
         _show(layout, fit_id, entry.get("sample"), directory)
         if edit:
             click.edit(filename=str(path))
@@ -101,11 +122,23 @@ def _fit_note(
 
         FitDirectory(directory).write_notes_stub(fit_id=fit_id)
 
-    stamped = f"\n{message.strip()}\n"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(stamped)
+    # Sections first, so a call giving both still leaves a free-text message
+    # exactly where a bare `-m` would have put it.
+    if filled:
+        text = path.read_text(encoding="utf-8")
+        for key, heading in SECTIONS.items():  # template order, not argument order
+            if key in filled:
+                text = write_section(text, heading, filled[key])
+        path.write_text(text, encoding="utf-8")
+
+    if message:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n{message.strip()}\n")
 
     click.echo(f"  {path.relative_to(layout.root)}")
+    for key, heading in SECTIONS.items():
+        if key in filled:
+            click.secho(f"      under '{heading}'", dim=True)
     if edit:
         click.edit(filename=str(path))
 

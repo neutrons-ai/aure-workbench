@@ -513,6 +513,7 @@ def run_check(*, as_json: bool = False) -> None:
     problems.extend(check_orphan_results(layout, index))
     problems.extend(check_contradictions(layout))
     problems.extend(check_generated_scripts(layout))
+    problems.extend(check_reported_finality(layout, index))
     if as_json:
         click.echo(json.dumps({"checked": checked, "problems": problems}, indent=2))
     else:
@@ -760,6 +761,101 @@ def _diff_verdict(changed: dict[str, bool], info_a: dict, info_b: dict) -> str:
     if changed["environment"]:
         return f"only the environment differs{'; ' + direction if direction else ''}"
     return "nothing recorded differs; these are replicates"
+
+
+#: Phrases that assert a fit *is the answer*, rather than merely discussing it.
+#: Deliberately short. This check fails the build, so it has to fire on a claim
+#: nobody would dispute is a claim -- not on any mention of a fit that happens to
+#: sit near an approving adjective.
+_FINALITY_CLAIMS = (
+    "reference fit",
+    "final fit",
+    "as final",
+    "the final",
+    "keeper",
+    "the answer",
+)
+
+#: Words that turn a claim into its opposite, or into a claim about something
+#: else. `nrw check` failing on "this is *not* the reference fit" would teach
+#: people to stop reading it.
+_NOT_A_CLAIM = (
+    "not ",
+    "n't",
+    "rather than",
+    "superseded",
+    "instead of",
+    "no longer",
+    "would be",
+    "is not yet",
+)
+
+
+def check_reported_finality(
+    layout: ProjectLayout, index: FitIndex
+) -> list[dict[str, str]]:
+    """Reports that name a fit as the answer without it being promoted.
+
+    ``nrw promote`` is how a result becomes citable, and it is the scientist's
+    decision --- so the agent is forbidden from running it. The failure mode that
+    leaves is a report whose prose says "reference fit: <id>" while the index
+    records no promotion at all, which is exactly the state the reference
+    experiment ended in. The designation then exists only in one paragraph, and
+    `nrw ls`, `nrw whence` and `nrw pack` all disagree with it.
+
+    Matched narrowly and against the *line*, because this fails the build.
+
+    Args:
+        layout: The project layout.
+        index: The fit index, for what is promoted.
+
+    Returns:
+        One problem per claimed-but-unpromoted fit.
+    """
+    from nr_workbench.notes import FIT_ID_PATTERN
+
+    promoted = {
+        str(entry.get("fit_id"))
+        for label in {str(e.get("label")) for e in index.promotions()}
+        if (entry := index.current_label(label)) is not None
+    }
+
+    problems: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for sample in layout.list_samples():
+        reports = layout.sample(sample) / "reports"
+        if not reports.is_dir():
+            continue
+        for path in sorted(reports.glob("*.md")):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            relative = path.relative_to(layout.root).as_posix()
+            for line in text.splitlines():
+                lowered = line.lower()
+                if not any(claim in lowered for claim in _FINALITY_CLAIMS):
+                    continue
+                if any(negation in lowered for negation in _NOT_A_CLAIM):
+                    continue
+                for fit_id in FIT_ID_PATTERN.findall(line):
+                    if fit_id in promoted or (relative, fit_id) in seen:
+                        continue
+                    seen.add((relative, fit_id))
+                    problems.append(
+                        {
+                            "fit_id": fit_id,
+                            "kind": "unpromoted-reference",
+                            "detail": (
+                                f"{relative} names this fit as the answer, but "
+                                "nothing is promoted. Either "
+                                f"`nrw promote {fit_id} --as final --reason '...'` "
+                                "so the record agrees with the prose, or reword "
+                                "the report if it is not the answer."
+                            ),
+                        }
+                    )
+    return problems
 
 
 def check_contradictions(layout: ProjectLayout) -> list[dict[str, str]]:

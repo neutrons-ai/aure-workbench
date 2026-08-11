@@ -846,12 +846,24 @@ def assess_command(fit_id: str, write: bool, use_llm: bool, as_json: bool) -> No
 )
 @click.option("--title", default=None, help="Title for a new sample report.")
 @click.option("--edit", is_flag=True, help="Open it in $EDITOR afterwards.")
+@click.option("--why", default=None, help="Fill 'Why this run': what you were testing.")
+@click.option(
+    "--showed", default=None, help="Fill 'What it showed': the result in words."
+)
+@click.option(
+    "--caveat",
+    default=None,
+    help="Fill 'Caveats': what not to conclude from this fit.",
+)
 def note_command(
     target: str | None,
     message: str | None,
     sample: str | None,
     title: str | None,
     edit: bool,
+    why: str | None,
+    showed: str | None,
+    caveat: str | None,
 ) -> None:
     """Write or read the notes attached to a fit or a sample.
 
@@ -865,7 +877,16 @@ def note_command(
     """
     from nr_workbench.commands.note import run_note
 
-    run_note(target=target, message=message, title=title, sample=sample, edit=edit)
+    run_note(
+        target=target,
+        message=message,
+        title=title,
+        sample=sample,
+        edit=edit,
+        why=why,
+        showed=showed,
+        caveat=caveat,
+    )
 
 
 @main.command("report")

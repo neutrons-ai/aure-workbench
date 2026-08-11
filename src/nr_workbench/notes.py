@@ -114,6 +114,71 @@ NOTES_TEMPLATE = """\
 """
 
 
+#: The template's sections, by the flag that writes into each. The headings are
+#: the ones :data:`NOTES_TEMPLATE` asks questions under, so a note filled in this
+#: way reads as the template intended rather than as a paragraph underneath it.
+SECTIONS: dict[str, str] = {
+    "why": "Why this run",
+    "showed": "What it showed",
+    "caveat": "Caveats",
+}
+
+
+def write_section(text: str, heading: str, message: str) -> str:
+    """Return ``text`` with ``message`` added under ``heading``.
+
+    The template asks three questions and `nrw note -m` appended below all of
+    them, so every note in the reference experiment has three empty headings and
+    a paragraph at the bottom answering some mixture of them. Writing into the
+    section keeps the question next to its answer.
+
+    The prompt comment is left in place and the message goes after it: the
+    comment is guidance for the next person to open the file, and deleting a
+    reader's text to save them scrolling is not this function's call. A heading
+    that is not present is appended, so a note that predates the template --- or
+    one whose author deleted a heading they had nothing to say under --- still
+    gets the message filed rather than dropped.
+
+    Args:
+        text: The note's current contents.
+        heading: Section heading, without the ``##``.
+        message: Prose to add.
+
+    Returns:
+        The updated text.
+    """
+    addition = message.strip()
+    if not addition:
+        return text
+
+    pattern = re.compile(rf"^##\s+{re.escape(heading)}\s*$", re.MULTILINE)
+    match = pattern.search(text)
+    if match is None:
+        separator = (
+            "" if text.endswith("\n\n") else "\n" if text.endswith("\n") else "\n\n"
+        )
+        return f"{text}{separator}## {heading}\n\n{addition}\n"
+
+    # The section ends at the next heading *or* at the start of the generated
+    # block, whichever comes first. `nrw assess` appends a block containing its
+    # own `## Assessment` heading, so taking only the next heading puts prose
+    # inside the fence -- where `human_text` strips it and the note reads as
+    # never written, which is the one signal this must not break.
+    following = re.compile(r"^##\s+", re.MULTILINE).search(text, match.end())
+    generated = text.find(GENERATED_OPEN, match.end())
+    candidates = [
+        position
+        for position in (
+            following.start() if following else None,
+            generated if generated >= 0 else None,
+        )
+        if position is not None
+    ]
+    end = min(candidates) if candidates else len(text)
+    section, tail = text[match.end() : end], text[end:]
+    return f"{text[: match.end()]}{section.rstrip()}\n\n{addition}\n\n{tail}"
+
+
 def fits_mentioned(text: str) -> list[str]:
     """Return every fit id referenced by a note, in order of first appearance.
 
