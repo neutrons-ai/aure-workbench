@@ -101,28 +101,106 @@ def create_probe(data_file, theta):
 
 ### 3. Choose SLDs and bounds
 
-| Material | SLD (×10⁻⁶ Å⁻²) | | Material | SLD |
-|---|---|---|---|---|
-| Silicon | 2.07 | | Copper | 6.55 |
-| SiO₂ | 3.47 | | Titanium | −1.95 |
-| Air | 0.0 | | D₂O | 6.19 |
-| Gold | 4.5 | | H₂O | −0.56 |
+**SLD is a density measurement, not a composition label.** It is
+`ρ = (mass density / molar mass) · N_A · b_coh`, so at fixed composition it scales
+linearly with density. A sputtered or electrochemically cycled film is routinely
+well below bulk — porosity, grain boundaries, hydrogen or deuterium uptake,
+partial oxidation, solvent ingress. **Copper is a repeat offender.** So the useful
+quantity is the *fraction of bulk density*, and a nominal SLD is meaningless
+without the density it assumes:
+
+| Material | Bulk SLD (10⁻⁶ Å⁻²) | at density (g/cm³) |
+|---|---|---|
+| Si | 2.07 | 2.329 |
+| SiO₂ | 3.47 | 2.196 |
+| Cu | 6.55 | 8.96 |
+| Ti | −1.91 | 4.506 |
+| Au | 4.66 | 19.3 |
+| D₂O | **6.37** | 1.107 |
+| H₂O | −0.56 | 0.997 |
+| Air | 0.0 | — |
+
+**D₂O is 6.37, not 6.19.** 6.19 is roughly 96% deuteration and it is a value that
+circulates. Pinning a solvent 0.18 below pure is a 0.18 of contrast handed to
+whatever layer is next to it. If a fit pulls the solvent *below* pure D₂O the
+usual causes are real H in the cell — atmospheric exchange, an exchangeable
+proton on the electrolyte, incomplete purging — or a diffuse interfacial region
+bleeding into the backing. Both are findings. Neither is a reason to widen the
+bound and move on.
+
+Compute anything not in that table rather than copying a quick-reference one —
+several published tables disagree, badly, for the oxides:
+
+```python
+from nr_workbench.aure_adapter import sld
+
+sld("Cu")  # 6.55, bulk density from the built-in table
+sld("Cu2O", density=6.00)  # 5.36 -- an oxide needs an explicit density
+```
 
 Bounds rules:
 
-- At least **±2.0** around nominal — materials are rarely stoichiometric and
-  intermixing is real. Never narrower than ±1.0.
-- **±3.0 or wider** for adhesion layers such as Ti, which intermix freely
-  (e.g. −5.0 to 1.0).
-- **Never let the substrate SLD vary** unless the user asks for it.
+- **State the bound as a density range, then convert.** A metal film that may be
+  up to 15% porous is `0.85–1.02 × bulk`: for Cu that is `range: [5.57, 6.69]`.
+  Put the fraction in a spec comment — the fraction is the physical claim and the
+  SLD number is only its consequence.
+- **±3.0 or wider** for an adhesion layer such as Ti, which intermixes freely
+  (e.g. −5.0 to 1.0). Intermixing changes composition, not just density, so a
+  fraction-of-bulk bound is the wrong shape there.
+- **Fixing a metal SLD to its bulk value is a choice, not a default.** It asserts
+  the film is fully dense. If you fix it, say so in the note, and test it once by
+  freeing it and comparing BIC. A fit that improves materially when a metal SLD
+  is freed was being told something false.
+- **Never let the substrate SLD vary** unless asked. A silicon wafer really is
+  bulk-dense.
+
+**A fitted SLD below bulk is information, not an error.** Convert it back to a
+density fraction and ask whether that fraction is plausible for how the film was
+made. It means porosity, solvent ingress, or roughness being absorbed — not a
+different material.
+
+**Naming a value after a compound makes a claim about density.** Calling 4.1
+"Cu₂O" says Cu₂O at 76% of bulk, because bulk Cu₂O is 5.36. That may be the right
+model for a porous native oxide, but it is an assumption to be recorded, not a
+material constant to be looked up.
+
+For the copper and titanium oxides — including the fact that dense CuO (6.46) is
+nearly contrast-matched to Cu (6.55) and therefore close to invisible — read
+`metal-oxide-interfaces`.
 
 ### 4. Respect the physical floors
 
-- Roughness **≥ 5 Å**; below that is not physical.
-- Roughness **< half the thickness** of either adjacent layer, or you get
-  profile artifacts the χ² will not show you.
+- Roughness **≥ 5 Å**; below that is not physical. Watch for it railing *down* on
+  that floor — that usually means something else in the model is over-smeared.
 - Typical roughness 5–30 Å.
 - Minimum layer thickness **5 Å** — thinner cannot be resolved.
+
+**Half the thickness is where interpretation changes, not where the model breaks.**
+Roughness in refl1d is the σ of an error function, and a slab between two erfs of
+σ comparable to its own thickness is no longer a slab: its nominal SLD is attained
+nowhere in the profile, and its fitted thickness and SLD stop being separable
+quantities. What you have instead is a **three-parameter parametrisation of a
+graded SLD profile**, and that is a legitimate and often necessary tool — a
+diffuse hydroxide or hydrated-oxide region, an SEI, a gas-populated electrode
+interface, a swollen polymer surface. Electrochemistry produces these routinely
+and no slab model describes them.
+
+So crossing the line is allowed. What is not allowed is crossing it silently:
+
+1. **Say in the note that you are parametrising a gradient**, not measuring a
+   layer. One sentence.
+2. **Report the SLD profile**, not the slab numbers. `d = 11 Å, ρ = 4.1` describes
+   a shape that is not in your model; the profile is what the model actually says.
+3. **Quote an invariant.** For a smeared slab the product `Γ = d · Δρ` survives
+   the degeneracy that `d` and `Δρ` individually do not — see
+   `thin-layer-degeneracy`.
+4. **Check the profile for erf artifacts.** Two independent error functions closer
+   together than their widths can make ρ(z) *overshoot* the bounding medium before
+   it dips, which is arithmetic, not physics.
+
+`nrw check` reports when a layer's roughnesses can sum past its thickness. Treat
+that as a prompt to write down which of the two things you are doing, not as an
+instruction to tighten the bound.
 
 ### 5. Read the χ² honestly
 

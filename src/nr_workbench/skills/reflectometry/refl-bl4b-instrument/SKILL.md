@@ -247,8 +247,13 @@ the detector was half a metre closer.
 - `R > 1` on anything but the lowest-angle segment.
 - A `theta_offset` fitting to the edge of its range: usually a real
   misalignment, worth computing properly rather than absorbing.
-- Roughness larger than about half the layer it bounds — often a resolution
-  convention error rather than a rough interface.
+- Fringe contrast mismatched between model and data with nobody having compared
+  two overlapping segments at equal Q (see `sample-broadening`) — the fit is then
+  damped by whichever parameter is cheapest, not by the mechanism that is
+  actually damping the data.
+- A roughness quoted with a tight interval on a fit whose fringe contrast was
+  never checked. A resolution error and an interfacial width damp fringes with the
+  same `exp(−cQ²)` form; the fit cannot tell them apart and will not say so.
 - Co-refined runs whose dates straddle 2024-08-26 or 2025-01-01.
 - A combined file and its own partials used in the same fit: the same neutrons
   counted twice.

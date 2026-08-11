@@ -326,10 +326,14 @@ def _roughness_coherence(spec: Any) -> list[Contradiction]:
                     message=(
                         f"{name}'s interfaces may sum to {top + bottom:g} A "
                         f"against a minimum thickness of {thickness:g} A, so "
-                        "the fit is free to erase the layer into its own "
-                        "boundaries -- its nominal SLD would then be attained "
-                        "nowhere in the profile. Bound the roughnesses so "
-                        "they cannot."
+                        f"{name}'s nominal SLD may be attained nowhere in the "
+                        "profile and its thickness and SLD stop being separable. "
+                        "That is either a layer being erased, or a deliberate "
+                        "three-parameter parametrisation of a graded profile -- "
+                        "which is a normal tool for a diffuse electrochemical "
+                        "interface. Say which in the note, and if it is the "
+                        "second, report the SLD profile and the invariant "
+                        "d x drho rather than the slab numbers."
                     ),
                     evidence=(
                         f"max sigma_top {top:g} + max sigma_bottom {bottom:g} "
@@ -345,8 +349,11 @@ def _roughness_coherence(spec: Any) -> list[Contradiction]:
                     subject=f"{name}.roughness",
                     message=(
                         f"{name}'s roughness may reach {top:g} A against a "
-                        f"minimum thickness of {thickness:g} A. Past half, the "
-                        "model is describing a gradient with the wrong tool."
+                        f"minimum thickness of {thickness:g} A. Past half, "
+                        f"{name} is no longer interpretable as a slab: it is a "
+                        "parametrisation of a graded SLD profile, which is fine "
+                        "as long as the profile rather than the thickness is what "
+                        "gets reported."
                     ),
                     evidence=f"{top:g} > {ROUGHNESS_FRACTION} x {thickness:g}",
                 )
