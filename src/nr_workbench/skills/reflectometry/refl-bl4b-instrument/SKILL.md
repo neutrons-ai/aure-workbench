@@ -40,8 +40,12 @@ The four that matter:
 |---|---|
 | Angles | 0.45°, 1.2°, 3.5° for full-Q; 0.6° for time-resolved |
 | Resolution | **angular-only**: `dT = dQ/Q · tan(θ)`, `dL = 0` |
-| `dQ` column | **FWHM**, not sigma |
+| `dQ` column | **FWHM today** — stated in the column titles, and read, never assumed |
 | Normalisation | one direct-beam run per segment, recorded only in the template XML |
+
+The `dQ` row is the one that is going to change: the reduction intends to move
+from FWHM to sigma. It says which it wrote on the column-title line, so read
+that line rather than carrying the convention in your head — see step 2.
 
 ## When to Use
 
@@ -61,8 +65,10 @@ Not for the physics of reflectivity, and not for the spec schema.
 
 ### 1. Build the probe with angular-only resolution
 
-The fourth column of a reduced file is `dQ` as **FWHM**. Convert to the
-angular divergence refl1d wants and set the wavelength spread to zero:
+The fourth column is `dQ`, and **the file says whether it is FWHM or sigma** —
+read that before using it. `make_probe` wants FWHM, so a sigma column must be
+multiplied by 2.355 first. Convert to the angular divergence refl1d wants and
+set the wavelength spread to zero:
 
 ```python
 import numpy as np
@@ -91,9 +97,28 @@ moderator-spread option computed the wavelength term as
 dimensionally wrong — and it is retired. **Fits made under the two conventions
 are not numerically comparable**; re-run rather than compare.
 
-For a *combined* file, `load4(data_file, FWHM=True)` is correct and simpler.
-Use the per-segment form when you want `theta_offset` or `sample_broadening`
-to be fittable, which requires an angle-based probe.
+For a *combined* file, `load4(data_file, FWHM=...)` is correct and simpler — but
+the flag has to match the file, not the habit. Use the per-segment form when you
+want `theta_offset` or `sample_broadening` to be fittable, which requires an
+angle-based probe.
+
+**Where the convention is written.** The column-title line states it:
+
+```
+# Q [1/Angstrom]        R                     dR                    dQ [FWHM]
+```
+
+Every reduction so far has written `FWHM`, and the intention is to move to
+`sigma`. So this is read per file, at intake, and never defaulted:
+`read_header(path).dq_convention` returns `"fwhm"`, `"sigma"`, or `None` when the
+file does not say — a time-resolved slice has no header, and there the
+convention must be declared rather than inherited. An unrecognised label raises
+instead of falling back to FWHM, because a silent 2.355 is exactly the error
+this whole skill exists to prevent.
+
+`nrw data check` reports the convention per file, and `nrw model new` writes what
+it read into `probe.dq_is_fwhm`. Runs whose files disagree cannot go in one
+spec — that flag is a single boolean for the whole model.
 
 ### 2. Decode the filename
 
@@ -198,9 +223,14 @@ a 27% step is a barely perceptible kink. Run the check; it reports 14.8σ.
 an SLD. The intensity and the structure are degenerate over a limited Q range,
 and the fit has no way to know which one you meant.
 
-**"dQ is dQ."** It is FWHM here and sigma in some other reductions. A factor
-of 2.355 in the resolution broadens or sharpens every fringe, which the fit
+**"dQ is dQ."** It is FWHM in some reductions and sigma in others. A factor of
+2.355 in the resolution broadens or sharpens every fringe, which the fit
 compensates for with roughness.
+
+**"REF_L always writes FWHM, so I can skip the check."** It always has, and it
+is not going to keep doing so — the move to sigma is intended. A convention you
+carry in your head is one that silently stops being true, and this one stops
+being true without a single fit failing. Read the column title.
 
 **"I'll use the moderator resolution, it's more physical."** The retired
 implementation was dimensionally wrong, and the whole group's fits use

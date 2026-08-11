@@ -31,6 +31,7 @@ SEED_SKILLS = (
     "refl-bl4b-instrument",
     "refl-reduced-headers",
     "refl1d-script-review",
+    "sample-broadening",
     "thin-layer-degeneracy",
     "steady-state-corefinement",
     "tnr-change-assessment",

@@ -87,7 +87,7 @@ nrw doctor
 
 ```
   ✓ project       ~/beamtime/cu-thf
-  ✓ skills        15 installed: analysis-provenance, neutron-reflectometry, …
+  ✓ skills        16 installed: analysis-provenance, neutron-reflectometry, …
   ✓ harness       2.1.156 at ~/.local/bin/claude
   ✓ agent limits  PreToolUse hook + 2 deny rule(s)
 ```

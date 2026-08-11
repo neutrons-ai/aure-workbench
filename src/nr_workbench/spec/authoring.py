@@ -50,10 +50,14 @@ PROPOSABLE = (
 PROPOSABLE_PROBE = ("back_reflection",)
 
 #: Skills always sent: the schema, the physics, and the beamline conventions.
+#: `sample-broadening` is here rather than in CONTEXTUAL_SKILLS because the
+#: `per:` scope of the broadening term is a decision every multi-angle spec
+#: makes, and getting it wrong is absorbed by a roughness rather than reported.
 CORE_SKILLS = (
     "nrw-model-spec",
     "neutron-reflectometry",
     "refl-bl4b-instrument",
+    "sample-broadening",
 )
 
 #: Skills sent when the notes mention them. Keyed by the words that select

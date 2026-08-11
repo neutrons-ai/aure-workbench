@@ -86,10 +86,21 @@ where a parameter may go; the stack says where it starts.
 probe: {resolution: angular_only, dq_is_fwhm: true}
 ```
 
-- `dq_is_fwhm: true` — the 4th column of every REF_L file is FWHM. Getting this
-  wrong scales all resolution by 2.355.
+- `dq_is_fwhm` — **a measured property of the reduction, not a default.** Every
+  reduction written so far puts FWHM in the 4th column, and there is an
+  intention to move to sigma. The two differ by 2.355, and a resolution wrong by
+  that factor does not raise: the fit absorbs it into roughness and reports a
+  confident wrong interface width. The convention is stated in the column-title
+  line — `# Q [1/Angstrom]  R  dR  dQ [FWHM]` — so `nrw model new` parses it and
+  writes the value it read, and `nrw data check` reports it per file. Treat it
+  like `theta`: read, never tidied.
 - `resolution: angular_only` derives dT from dQ at the known incident angle and
   sets dL = 0. It is the only supported convention.
+
+**Runs whose files disagree cannot be co-refined.** `dq_is_fwhm` is one boolean
+for the whole spec, so a set mixing conventions would have half its resolution
+wrong by 2.355 with nothing in the record to show it. `nrw model new` refuses,
+rather than picking. Fit each convention as its own spec.
 
 Some older hand-written scripts instead computed dL from the SNS moderator
 emission-time polynomial as `delta_wl_over_wl(wl) * q` — multiplied by q rather

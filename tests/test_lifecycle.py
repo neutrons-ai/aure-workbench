@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from nr_workbench.cli import main
@@ -645,3 +646,85 @@ def test_a_fit_records_a_manifest_before_it_starts(two_fits, monkeypatch) -> Non
     assert 'record.status = "running"' in before
     assert "write_manifest" in before, "the manifest is written before the fit"
     assert 'record.status = "ok"' in after
+
+
+# --------------------------------------------------------------------------
+# The dQ width convention reaches the spec from the files
+#
+# `probe.dq_is_fwhm` used to be hardcoded True at scaffold time. FWHM is what
+# every reduction has written so far, and it is expected to change to sigma --
+# at which point a hardcoded True scales every resolution by 2.355 and the fit
+# absorbs it into roughness rather than raising.
+# --------------------------------------------------------------------------
+
+COLUMNS = "# Q [1/Angstrom]  R  dR  dQ [{label}]\n"
+
+
+def write_partials_labelled(directory: Path, run: int, label: str, segments: int = 3):
+    """Partials whose column-title line states the dQ width convention."""
+    write_partials(directory, run, segments)
+    for segment in range(1, segments + 1):
+        path = directory / f"REFL_{run}_{segment}_{run + segment - 1}_partial.txt"
+        path.write_text(
+            COLUMNS.format(label=label) + path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+
+def test_model_new_reads_sigma_out_of_the_headers(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "proj"
+    assert (
+        CliRunner().invoke(main, ["init", str(root), "--sample", "S1"]).exit_code == 0
+    )
+    write_partials_labelled(root / "samples/S1/data/steady", 100001, "sigma")
+
+    result = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+
+    assert result.exit_code == 0, result.output
+    spec = yaml.safe_load((root / "samples/S1/models/m.yaml").read_text())
+    assert spec["probe"]["dq_is_fwhm"] is False
+
+
+def test_model_new_reads_fwhm_out_of_the_headers(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "proj"
+    assert (
+        CliRunner().invoke(main, ["init", str(root), "--sample", "S1"]).exit_code == 0
+    )
+    write_partials_labelled(root / "samples/S1/data/steady", 100001, "FWHM")
+
+    result = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+
+    assert result.exit_code == 0, result.output
+    spec = yaml.safe_load((root / "samples/S1/models/m.yaml").read_text())
+    assert spec["probe"]["dq_is_fwhm"] is True
+
+
+def test_model_new_refuses_a_set_that_mixes_conventions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """One boolean cannot describe two conventions; splitting is the scientist's call."""
+    root = tmp_path / "proj"
+    assert (
+        CliRunner().invoke(main, ["init", str(root), "--sample", "S1"]).exit_code == 0
+    )
+    steady = root / "samples/S1/data/steady"
+    write_partials_labelled(steady, 100001, "FWHM")
+    write_partials_labelled(steady, 100005, "sigma")
+
+    result = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+
+    assert result.exit_code != 0
+    assert "do not share a dQ convention" in result.output
+    assert not (root / "samples/S1/models/m.yaml").exists()
+
+
+def test_model_new_says_so_when_no_file_states_the_convention(
+    project: Path, monkeypatch
+) -> None:
+    """The fixture's partials carry no header. Assuming is fine; silence is not."""
+    result = run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+
+    assert result.exit_code == 0, result.output
+    assert "FWHM or sigma" in result.output
+    spec = yaml.safe_load((project / "samples/S1/models/m.yaml").read_text())
+    assert spec["probe"]["dq_is_fwhm"] is True

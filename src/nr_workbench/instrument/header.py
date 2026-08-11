@@ -44,6 +44,25 @@ _TABLE_RE = re.compile(
     r"^#\s+(?P<run>\d+)\s+(?P<norm>\d+)\s+(?P<twotheta>[\d.eE+-]+)\s+"
 )
 
+#: The column-title line, which states the width convention of the 4th column:
+#:
+#:     # Q [1/Angstrom]   R   dR   dQ [FWHM]
+#:
+#: This is the only place on disk that says whether ``dQ`` is a full width or a
+#: standard deviation, and the two differ by 2.355 -- a factor that broadens or
+#: sharpens every fringe and that a fit absorbs into roughness rather than
+#: reporting. The reduction writes FWHM today and there is an intention to move
+#: to sigma, so the convention is read per file and never assumed.
+_DQ_COLUMN_RE = re.compile(r"^#.*\bdQ\b\s*\[\s*(?P<label>[^\]]*?)\s*\]", re.IGNORECASE)
+
+#: Column labels meaning a full width at half maximum.
+_FWHM_LABELS = frozenset({"fwhm", "full width", "full width at half maximum"})
+
+#: Column labels meaning one standard deviation.
+_SIGMA_LABELS = frozenset(
+    {"sigma", "σ", "1-sigma", "1 sigma", "one sigma", "std", "stdev", "std dev"}
+)
+
 #: How many leading lines to scan. The header is a dozen lines; reading the
 #: whole of a 250-row file to find it would still be cheap, but a malformed
 #: file should not be read in full either.
@@ -67,6 +86,12 @@ class ReducedHeader:
         sequence_number: Which angle segment this is, 1-based.
         sequence_id: The run number of the measurement as a whole.
         dq_over_q: Fractional resolution as reduced.
+        dq_convention: ``"fwhm"`` or ``"sigma"`` -- what the 4th column's width
+            actually is, read from the column-title line. ``None`` when the file
+            does not say, which is normal for a time-resolved slice and means
+            the caller must declare it rather than assume.
+        dq_column_label: The label exactly as written, for the error message
+            when it is one we do not recognise.
         scaling_factor: The constant the reduction multiplied this segment by.
         q_range: ``(q_min, q_max)`` as recorded.
         wavelength_range: ``(wl_min, wl_max)`` in angstroms.
@@ -86,6 +111,8 @@ class ReducedHeader:
     sequence_number: int | None = None
     sequence_id: int | None = None
     dq_over_q: float | None = None
+    dq_convention: str | None = None
+    dq_column_label: str | None = None
     scaling_factor: float | None = None
     q_range: tuple[float | None, float | None] = (None, None)
     wavelength_range: tuple[float | None, float | None] = (None, None)
@@ -101,6 +128,18 @@ class ReducedHeader:
         """Whether an angle was actually recorded."""
         return self.theta is not None
 
+    @property
+    def dq_is_fwhm(self) -> bool | None:
+        """Whether the 4th column is FWHM, or ``None`` if the file does not say.
+
+        ``None`` is deliberately not ``True``. A caller that needs the answer
+        must decide, and record what it decided, rather than inherit a default
+        from a reduction that is expected to change.
+        """
+        if self.dq_convention is None:
+            return None
+        return self.dq_convention == "fwhm"
+
     def as_dict(self) -> dict[str, Any]:
         """Return the JSON form."""
         return {
@@ -111,6 +150,8 @@ class ReducedHeader:
             "sequence_number": self.sequence_number,
             "sequence_id": self.sequence_id,
             "dq_over_q": self.dq_over_q,
+            "dq_convention": self.dq_convention,
+            "dq_column_label": self.dq_column_label,
             "scaling_factor": self.scaling_factor,
             "q_range": list(self.q_range),
             "wavelength_range": list(self.wavelength_range),
@@ -134,7 +175,8 @@ def read_header(path: Path) -> ReducedHeader:
         time-resolved slice, not an error.
 
     Raises:
-        HeaderError: If a ``# Meta:`` line is present but is not valid JSON.
+        HeaderError: If a ``# Meta:`` line is present but is not valid JSON, or
+            if the ``dQ`` column carries a width convention we do not know.
         OSError: If the file cannot be read.
     """
     path = Path(path)
@@ -146,6 +188,10 @@ def read_header(path: Path) -> ReducedHeader:
             if index >= _MAX_HEADER_LINES or not line.startswith("#"):
                 break
             lines.append(line.rstrip("\n"))
+
+    # Read first and unconditionally: the column titles sit *below* the JSON
+    # block, so anything that returns on finding `# Meta:` would never see them.
+    _apply_dq_convention(header, lines, path)
 
     for line in lines:
         if line.startswith(META_PREFIX):
@@ -163,6 +209,40 @@ def read_header(path: Path) -> ReducedHeader:
             return header
 
     return header
+
+
+def _apply_dq_convention(header: ReducedHeader, lines: list[str], path: Path) -> None:
+    """Record whether the 4th column is FWHM or sigma, from the column titles.
+
+    Leaves both fields ``None`` when no column-title line names ``dQ`` -- a
+    time-resolved slice has no header at all, and that is not an error.
+
+    Raises:
+        HeaderError: If ``dQ`` is labelled with something we do not recognise.
+            Guessing here would silently scale every resolution by 2.355, so an
+            unknown label has to stop the caller rather than default to FWHM.
+    """
+    for line in lines:
+        match = _DQ_COLUMN_RE.match(line)
+        if match is None:
+            continue
+        label = match.group("label")
+        header.dq_column_label = label
+        normalised = label.strip().lower()
+        if normalised in _FWHM_LABELS:
+            header.dq_convention = "fwhm"
+        elif normalised in _SIGMA_LABELS:
+            header.dq_convention = "sigma"
+        else:
+            raise HeaderError(
+                f"{path}: the dQ column is labelled {label!r}, which is neither "
+                "a FWHM nor a sigma convention this package knows. FWHM and "
+                "sigma differ by 2.355 and the difference is absorbed into "
+                "roughness rather than raised, so it cannot be assumed. Add the "
+                "label to instrument/header.py once you have confirmed what the "
+                "reduction meant."
+            )
+        return
 
 
 def _apply_meta(header: ReducedHeader, payload: str, path: Path) -> None:

@@ -157,3 +157,101 @@ def test_the_real_apr2025_headers_give_the_expected_angles() -> None:
 
     assert angles == {1: 0.45, 2: 1.201, 3: 3.5003}
     assert theta_for_run(steady, 218389)[0] == pytest.approx(0.5997, abs=1e-4)
+
+
+# --------------------------------------------------------------------------
+# The dQ width convention
+#
+# FWHM and sigma differ by 2.355. A resolution wrong by that factor does not
+# raise: the fit absorbs it into roughness and reports a confident wrong
+# interface width. Every reduction so far writes FWHM and there is an intention
+# to move to sigma, so it is read per file and never defaulted.
+# --------------------------------------------------------------------------
+
+COLUMNS_FWHM = (
+    "# Q [1/Angstrom]        R                     dR                    dQ [FWHM]\n"
+)
+COLUMNS_SIGMA = (
+    "# Q [1/Angstrom]        R                     dR                    dQ [sigma]\n"
+)
+
+
+def test_fwhm_column_label_is_read(tmp_path: Path) -> None:
+    header = read_header(write(tmp_path / "a.txt", META + "\n" + COLUMNS_FWHM))
+
+    assert header.dq_convention == "fwhm"
+    assert header.dq_is_fwhm is True
+    assert header.dq_column_label == "FWHM"
+
+
+def test_sigma_column_label_is_read(tmp_path: Path) -> None:
+    """The change the reduction intends to make must be picked up, not assumed."""
+    header = read_header(write(tmp_path / "a.txt", META + "\n" + COLUMNS_SIGMA))
+
+    assert header.dq_convention == "sigma"
+    assert header.dq_is_fwhm is False
+
+
+@pytest.mark.parametrize("label", ["sigma", "1-sigma", "SIGMA", "std", "stdev"])
+def test_sigma_spellings_are_all_recognised(tmp_path: Path, label: str) -> None:
+    columns = f"# Q [1/A]  R  dR  dQ [{label}]\n"
+    header = read_header(write(tmp_path / "a.txt", META + "\n" + columns))
+
+    assert header.dq_convention == "sigma"
+
+
+def test_the_column_line_is_read_even_though_it_sits_below_meta(
+    tmp_path: Path,
+) -> None:
+    """Regression: the reader used to return as soon as it found `# Meta:`.
+
+    The column titles are written *after* the JSON block, so an early return
+    meant the convention was never seen on any real file.
+    """
+    header = read_header(write(tmp_path / "a.txt", META + "\n" + COLUMNS_FWHM))
+
+    assert header.source == "meta"
+    assert header.theta == pytest.approx(0.45, abs=1e-4)
+    assert header.dq_convention == "fwhm"
+
+
+def test_a_file_that_does_not_say_reports_none_rather_than_fwhm(
+    tmp_path: Path,
+) -> None:
+    """A tNR slice has no header. `None` forces the caller to decide."""
+    header = read_header(write(tmp_path / "a.txt", ""))
+
+    assert header.dq_convention is None
+    assert header.dq_is_fwhm is None
+
+
+def test_an_unrecognised_width_convention_raises(tmp_path: Path) -> None:
+    """Guessing would scale every resolution by up to 2.355, silently."""
+    columns = "# Q [1/A]  R  dR  dQ [half width]\n"
+
+    with pytest.raises(HeaderError, match="half width"):
+        read_header(write(tmp_path / "a.txt", META + "\n" + columns))
+
+
+def test_as_dict_carries_the_convention(tmp_path: Path) -> None:
+    payload = read_header(
+        write(tmp_path / "a.txt", META + "\n" + COLUMNS_SIGMA)
+    ).as_dict()
+
+    assert payload["dq_convention"] == "sigma"
+    assert payload["dq_column_label"] == "sigma"
+
+
+@pytest.mark.integration
+def test_the_real_files_state_fwhm() -> None:
+    """Today's reduction. When this fails, the convention has changed."""
+    steady = Path.home() / "git/experiments-2025/jen-apr2025/data/steady"
+    if not steady.is_dir():
+        pytest.skip("experiments-2025 not checked out here")
+
+    conventions = {
+        read_header(p).dq_convention
+        for p in sorted(steady.glob("REFL_218386_[123]_*_partial.txt"))
+    }
+
+    assert conventions == {"fwhm"}

@@ -540,6 +540,76 @@ def _thetas_from_headers(paths: list[Path]) -> tuple[list[float], list[str]]:
     return thetas or [FALLBACK_THETAS[0]], unreadable
 
 
+def _dq_is_fwhm_from_headers(paths: list[Path]) -> tuple[bool, list[str]]:
+    """Read the ``dQ`` width convention off the files, rather than assuming it.
+
+    The 4th column is FWHM in every reduction written so far, but that is a
+    property of the reduction and it is expected to change to sigma. The two
+    differ by 2.355, and a resolution wrong by that factor does not raise -- the
+    fit absorbs it into roughness and reports a confident wrong interface width.
+    So the convention is read from each file's column-title line at intake and
+    written into the spec as a fact, the same way theta is.
+
+    Args:
+        paths: The steady-state files this spec will fit.
+
+    Returns:
+        ``(dq_is_fwhm, notes)`` -- the convention to write into the spec, and
+        human-readable notes for anything the caller should be told: files that
+        did not state a convention, or a set that disagrees with itself.
+
+    Raises:
+        click.ClickException: If the files disagree. ``probe.dq_is_fwhm`` is one
+            boolean for the whole spec, so a spec mixing conventions would be
+            wrong for half its data with nothing to show it. Splitting the fit
+            is the only correct answer and it has to be the scientist's.
+    """
+    from nr_workbench.instrument.header import read_header
+
+    seen: dict[str, list[str]] = {}
+    silent: list[str] = []
+    for path in paths:
+        try:
+            convention = read_header(path).dq_convention
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            silent.append(f"{path.name} ({exc})")
+            continue
+        if convention is None:
+            silent.append(path.name)
+        else:
+            seen.setdefault(convention, []).append(path.name)
+
+    notes: list[str] = []
+    if len(seen) > 1:
+        detail = "; ".join(
+            f"{convention}: {', '.join(names)}"
+            for convention, names in sorted(seen.items())
+        )
+        raise click.ClickException(
+            "These runs do not share a dQ convention, so one spec cannot fit "
+            f"them: {detail}. probe.dq_is_fwhm applies to the whole spec, so a "
+            "mixed set would scale half the data's resolution by 2.355 with "
+            "nothing in the record to show it. Fit each convention as its own "
+            "spec, or re-reduce so they agree."
+        )
+
+    if silent:
+        notes.append(
+            f"{len(silent)} file(s) do not state whether dQ is FWHM or sigma "
+            f"({', '.join(silent[:3])}"
+            f"{', ...' if len(silent) > 3 else ''}). "
+            "Assuming FWHM, which is what every reduction has written so far -- "
+            "confirm it, because sigma is 2.355x different and would be absorbed "
+            "into roughness rather than reported."
+        )
+
+    if not seen:
+        return True, notes
+    convention = next(iter(seen))
+    notes.append(f"dQ read from the file headers as {convention.upper()}.")
+    return convention == "fwhm", notes
+
+
 def _series_theta(root: Path, found_series, unknown: list[str]) -> float:
     """Resolve a time-resolved series' incident angle.
 
@@ -573,6 +643,7 @@ def _scaffold_document(
     root = Path(root) if root is not None else Path.cwd()
     states = []
     unknown_angles: list[str] = []
+    steady_files: list[Path] = []
 
     # A time-resolved run is *also* reduced as a summed dataset into
     # data/steady, under the same run number. That file is the sum of the very
@@ -590,6 +661,7 @@ def _scaffold_document(
         entry = found.steady[run]
         if entry.partials:
             paths = [root / entry.partials[k] for k in sorted(entry.partials)]
+            steady_files.extend(paths)
             thetas, missing = _thetas_from_headers(paths)
             unknown_angles.extend(missing)
             states.append(
@@ -602,6 +674,7 @@ def _scaffold_document(
                 }
             )
         elif entry.combined:
+            steady_files.append(root / entry.combined)
             thetas, missing = _thetas_from_headers([root / entry.combined])
             unknown_angles.extend(missing)
             states.append(
@@ -636,6 +709,12 @@ def _scaffold_document(
             }
         series.append(block)
 
+    # A measured property of the reduction, read off the files like theta -- not
+    # a default. See `_dq_is_fwhm_from_headers`.
+    dq_is_fwhm, dq_notes = _dq_is_fwhm_from_headers(steady_files)
+    for note in dq_notes:
+        click.secho(f"  {note}", fg="yellow" if not dq_is_fwhm else None, err=True)
+
     document: dict[str, Any] = {
         "schema": "nrw-model/1",
         "name": name,
@@ -652,7 +731,7 @@ def _scaffold_document(
             {"name": "Film", "material": "Film", "thickness": 100, "roughness": 5},
             {"name": "Si", "material": "Si"},
         ],
-        "probe": {"resolution": "angular_only", "dq_is_fwhm": True},
+        "probe": {"resolution": "angular_only", "dq_is_fwhm": dq_is_fwhm},
     }
     if states:
         document["states"] = states

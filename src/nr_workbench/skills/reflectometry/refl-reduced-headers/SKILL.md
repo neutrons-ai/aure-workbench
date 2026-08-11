@@ -85,6 +85,30 @@ The fixed-width table below it repeats some of this. `TwoTheta(deg)` is
 **twice** theta and already in degrees — 0.899957 for a 0.45° measurement — so
 it is a usable fallback when the JSON block is missing.
 
+**One fact is not in the JSON block: whether `dQ` is FWHM or sigma.** It is in
+the column-title line, further down the header:
+
+```
+# Q [1/Angstrom]        R                     dR                    dQ [FWHM]
+```
+
+`dq_over_q` gives the *magnitude* of the resolution; only this line gives the
+*convention*. Every reduction so far writes `FWHM` and the intention is to move
+to `sigma`. The two differ by 2.355 — enough to broaden or sharpen every fringe,
+and a factor the fit absorbs into roughness rather than reporting. So it is read,
+not remembered:
+
+| Field | Meaning |
+|---|---|
+| `dq_convention` | `"fwhm"`, `"sigma"`, or `None` when the file does not say |
+| `dq_column_label` | The label exactly as written |
+| `dq_is_fwhm` | The same thing as a bool, `None` when unstated |
+
+`None` is deliberately not `True`: a caller that needs the answer must decide and
+record what it decided. An *unrecognised* label raises `HeaderError` rather than
+falling back, because a silent 2.355 is the failure mode this skill exists to
+prevent.
+
 ### 2. Read it
 
 ```python
@@ -182,6 +206,12 @@ a small angle in degrees, it is 0.45°.
 **"The file has no header, so I'll use the default."** Check `data/steady` for
 the same run number first — for a tNR series the header is there.
 
+**"`dQ` is FWHM at REF_L, everyone knows that."** It has been, and the move to
+sigma is intended. A convention held in your head is one that silently stops
+being true, and this one stops being true without a single fit failing — the
+resolution is simply wrong by 2.355 and the roughness quietly absorbs it. The
+file states it. Read the file.
+
 ## Red Flags
 
 - A spec whose `thetas:` are round numbers when the files record otherwise.
@@ -192,6 +222,9 @@ the same run number first — for a tNR series the header is there.
   `norm_run`.
 - A parser that silently substitutes a default when a header is missing, rather
   than reporting it.
+- `probe.dq_is_fwhm` in a spec that nobody traced to a column-title line.
+- Runs from different reduction versions co-refined in one spec without checking
+  that they agree on the `dQ` convention.
 
 ## Verification
 
@@ -204,8 +237,15 @@ nrw model new <sample> --name <n>   # reads every angle from its file's header
 scaffolded spec tells you which of its `thetas:` are measured and which are
 assumed.
 
-Three checks:
+`nrw data check` reports the `dQ` convention per file, and flags a sample whose
+files disagree — that set cannot be co-refined, because `probe.dq_is_fwhm` is one
+boolean for the whole spec.
 
+Four checks:
+
+0. **`probe.dq_is_fwhm` matches the column titles.** `grep 'dQ \[' <file>` on any
+   segment the spec fits. If they disagree, every resolution in the fit is wrong
+   by 2.355 and the roughnesses are absorbing it.
 1. **Every `thetas:` entry traces to a header.** If one is a round number and
    the rest are not, it is the assumed one.
 2. **`theta` converted from radians.** Anything under 0.1 in a spec is radians

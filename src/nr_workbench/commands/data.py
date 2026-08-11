@@ -372,6 +372,7 @@ def run_check(
     import numpy as np
 
     from nr_workbench.aure_adapter import AureUnavailableError, validate
+    from nr_workbench.instrument.header import HeaderError, read_header
 
     layout = _layout(root)
     samples = [sample] if sample else layout.list_samples()
@@ -402,6 +403,21 @@ def run_check(
                 raise click.ClickException(str(exc)) from exc
             except (OSError, ValueError, IndexError) as exc:
                 entry.update({"valid": False, "issues": [f"unreadable: {exc}"]})
+
+            # Whether dQ is FWHM or sigma is a 2.355x factor on every
+            # resolution, it is stated in the column titles, and it is expected
+            # to change. Report it per file so a mixed set is visible here
+            # rather than in a roughness three fits later.
+            try:
+                header = read_header(layout.root / relative)
+                entry["dq_convention"] = header.dq_convention
+            except HeaderError as exc:
+                entry["dq_convention"] = None
+                entry.setdefault("issues", []).append(str(exc))
+                entry["valid"] = False
+            except OSError:
+                entry["dq_convention"] = None
+
             if not entry.get("valid"):
                 failures += 1
             report["files"].append(entry)
@@ -422,6 +438,29 @@ def run_check(
     if not report["files"]:
         click.echo("  No reduced steady-state files found.")
         return
+
+    conventions = {e.get("dq_convention") for e in report["files"]}
+    stated = {c for c in conventions if c}
+    if len(stated) > 1:
+        click.secho(
+            f"\n  ! Mixed dQ conventions in one sample: {', '.join(sorted(stated))}.\n"
+            "    probe.dq_is_fwhm is one boolean per spec, so these cannot be\n"
+            "    co-refined in a single model -- the resolution of one set would be\n"
+            "    wrong by 2.355x. Fit each convention separately.",
+            fg="red",
+        )
+        failures += 1
+    elif stated:
+        click.echo(
+            f"\n  dQ convention: {next(iter(stated)).upper()} (from the headers)"
+        )
+    if None in conventions:
+        click.secho(
+            "  ! Some files do not state whether dQ is FWHM or sigma; it will be\n"
+            "    assumed FWHM. Confirm before quoting a roughness.",
+            fg="yellow",
+        )
+
     if failures:
         click.echo(
             f"\n  {failures} of {len(report['files'])} file(s) have issues.\n"
