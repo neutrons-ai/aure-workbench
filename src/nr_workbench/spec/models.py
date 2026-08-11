@@ -47,6 +47,32 @@ LAYER_ATTRS = ("thickness", "roughness", "rho", "irho")
 #: Attributes addressable on the probe.
 PROBE_ATTRS = ("intensity", "background", "theta_offset", "sample_broadening")
 
+#: Extra help for probe settings people reasonably try to fit and cannot. Being
+#: told a name is invalid, when the name exists and is settable elsewhere in the
+#: same block, is the kind of error that reads as a typo.
+_WHY_NOT_FITTABLE: dict[str, str] = {
+    "dq_is_fwhm": (
+        "\n`dq_is_fwhm` is a property of the reduction, not a quantity to "
+        "estimate: the file's column titles say which convention it wrote. Set "
+        "it under `probe:`, or let `nrw model new` read it."
+    ),
+    "dq_scale": (
+        "\n`dq_scale` is a fixed correction to a reduction whose dQ is wrong, so "
+        "set it under `probe:` rather than fitting it. refl1d has no fittable dQ "
+        "scale -- `Probe.dQ` is derived from a fixed array plus the broadening. "
+        "To *fit* a resolution, use `probe.sample_broadening` with "
+        "`per: measurement`: dtheta = f * tan(theta) is a constant dQ/Q, so one "
+        "broadening per angle is a fitted relative resolution."
+    ),
+    "back_reflection": (
+        "\n`back_reflection` is the measurement geometry -- which side the beam "
+        "entered. Set it under `probe:`; it is not something a fit can discover."
+    ),
+    "resolution": (
+        "\n`resolution` names the convention, not a number. Set it under `probe:`."
+    ),
+}
+
 #: How a parameter is shared. See the module docstring.
 Grouping = Literal["model", "state", "measurement"]
 
@@ -112,7 +138,8 @@ class ParameterPath(_Base):
         allowed = PROBE_ATTRS if owner == "probe" else LAYER_ATTRS
         if attr not in allowed:
             raise SpecError(
-                f"{text!r}: '{attr}' is not valid for {owner}. Allowed: {', '.join(allowed)}."
+                f"{text!r}: '{attr}' is not valid for {owner}. "
+                f"Allowed: {', '.join(allowed)}." + _WHY_NOT_FITTABLE.get(attr, "")
             )
         return cls(owner=owner, attr=attr, state=state)
 
@@ -187,8 +214,12 @@ class Probe(_Base):
         resolution: Only ``angular_only``: dT is derived from dQ at the known
             incident angle and dL is zero. See the class body for why the
             moderator variant was dropped.
-        dq_is_fwhm: Whether the 4th data column is FWHM. It is, for REF_L --
-            treating it as sigma scales every resolution by 2.355.
+        dq_is_fwhm: Whether the 4th data column is FWHM. Read it off the file's
+            column titles rather than assuming; treating FWHM as sigma scales
+            every resolution by 2.355.
+        dq_scale: Constant factor applied to the dQ column, for a reduction whose
+            resolution estimate is demonstrably wrong. Fixed rather than fitted;
+            see the note in the class body.
         back_reflection: Neutrons enter through the substrate.
     """
 
@@ -201,9 +232,34 @@ class Probe(_Base):
     #
     # A spec that asks for it fails loudly rather than silently changing the
     # physics, which is what a bare Literal error would amount to.
+    # `dq_scale` is FIXED, not fittable, and that is a refl1d constraint rather
+    # than a preference. `Probe.parameters()` exposes exactly five knobs --
+    # intensity, background, back_absorption, theta_offset, sample_broadening --
+    # and `Probe.dQ` is a property derived from a plain `dQo` array plus the
+    # broadening. There is no fittable dQ scale to bind to, and inventing one
+    # would mean a Probe subclass overriding the resolution path, which the
+    # generated script could no longer claim to be ordinary refl1d.
+    #
+    # The fittable route already exists: a constant *relative* resolution is
+    # `probe.sample_broadening` scoped `per: measurement`, because dtheta = f *
+    # tan(theta) gives a constant dQ/Q. Use this field for the different case of
+    # a reduction whose dQ column is wrong by a known factor -- a correction to
+    # the data, which belongs beside `dq_is_fwhm` and not in the fit.
     resolution: Literal["angular_only"] = "angular_only"
     dq_is_fwhm: bool = True
+    dq_scale: float = 1.0
     back_reflection: bool = False
+
+    @field_validator("dq_scale")
+    @classmethod
+    def _positive_scale(cls, value: float) -> float:
+        if not value > 0:
+            raise SpecError(
+                f"probe.dq_scale must be positive, got {value}. It multiplies the "
+                "resolution; zero would make every point infinitely sharp and a "
+                "negative value is not a width."
+            )
+        return value
 
     @model_validator(mode="before")
     @classmethod
@@ -219,6 +275,84 @@ class Probe(_Base):
                 "than compare."
             )
         return data
+
+
+class Trim(_Base):
+    """A range of the data to keep, for one measurement or all of them.
+
+    Some data is wrong in a way no parameter can absorb. A segment whose required
+    scale varies *across* its own wavelength band --- typically at the short-λ
+    edge, where the direct-beam spectrum is weakest --- cannot be fixed by
+    ``probe.intensity``, which is one number per segment. Left in, the fit spends
+    a thickness or a roughness on it. The honest options are to re-reduce or to
+    cut the band, and until now cutting meant ``nrw model fork``, which takes the
+    model out of the spec entirely for the sake of two numbers.
+
+    Cuts are declared here so they stay in the spec, get hashed with it, and
+    appear in the generated script's own docstring. Dropping data must never be
+    invisible.
+
+    **λ and Q are not interchangeable across segments.** A band-edge problem is a
+    property of the wavelength, and one λ cut maps to a different Q in every
+    segment: at 0.37° λ = 3.5 Å is Q = 0.023, at 3.5° it is Q = 0.219. State it
+    in λ and it is right everywhere; state it in Q and it is right once.
+
+    Attributes:
+        in_: Measurements this applies to, as state names or ``state#index``
+            keys. ``None`` means every measurement.
+        q_min: Drop points below this Q.
+        q_max: Drop points above this Q.
+        lambda_min: Drop points below this wavelength, in angstroms.
+        lambda_max: Drop points above this wavelength.
+        reason: Why the data is being cut. Required: a silent cut is
+            indistinguishable from a mistake six months later.
+    """
+
+    in_: list[str] | None = Field(default=None, alias="in")
+    q_min: float | None = None
+    q_max: float | None = None
+    lambda_min: float | None = None
+    lambda_max: float | None = None
+    reason: str
+
+    @model_validator(mode="after")
+    def _coherent_range(self) -> Trim:
+        if not (self.reason or "").strip():
+            raise SpecError(
+                "trim: `reason` is required. Cutting data changes what a fit is "
+                "fitted to, and a cut nobody explained reads as an error later."
+            )
+        for low, high, name in (
+            (self.q_min, self.q_max, "q"),
+            (self.lambda_min, self.lambda_max, "lambda"),
+        ):
+            if low is not None and high is not None and low >= high:
+                raise SpecError(
+                    f"trim: {name}_min ({low}) must be below {name}_max ({high}); "
+                    "as written this keeps nothing."
+                )
+        if all(
+            bound is None
+            for bound in (self.q_min, self.q_max, self.lambda_min, self.lambda_max)
+        ):
+            raise SpecError(
+                "trim: give at least one of q_min, q_max, lambda_min, lambda_max. "
+                "An entry with no bounds cuts nothing and reads as though it does."
+            )
+        return self
+
+    def as_kwargs(self) -> dict[str, float]:
+        """The bounds as keyword arguments for the generated ``create_probe``."""
+        return {
+            name: value
+            for name, value in (
+                ("q_min", self.q_min),
+                ("q_max", self.q_max),
+                ("lambda_min", self.lambda_min),
+                ("lambda_max", self.lambda_max),
+            )
+            if value is not None
+        }
 
 
 class Segment(_Base):
@@ -473,6 +607,8 @@ class ModelSpec(_Base):
         series: Time-resolved measurements.
         parameters: Free and fixed parameters.
         constraints: Functional forms across a series.
+        trim: Ranges of the data to keep. Later entries win field by field,
+            so a global cut can be narrowed for one measurement.
         fit: Default fit settings.
         post_build: Verbatim Python appended to the generated script. An escape
             hatch, hash-tracked and flagged -- every use is a schema bug report.
@@ -489,6 +625,7 @@ class ModelSpec(_Base):
     series: list[Series] = Field(default_factory=list)
     parameters: list[ParameterSpec] = Field(default_factory=list)
     constraints: list[Constraint] = Field(default_factory=list)
+    trim: list[Trim] = Field(default_factory=list)
     fit: FitSettings = Field(default_factory=FitSettings)
     post_build: str | None = None
 

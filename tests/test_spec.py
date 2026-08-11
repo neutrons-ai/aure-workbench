@@ -651,3 +651,95 @@ def test_every_double_assignment_is_reported_at_once(tmp_path) -> None:
         assert path in message, f"{path} was not reported"
     # and it names the fix that is actually right
     assert "in: [ocv1, ocv2]" in message
+
+
+# --------------------------------------------------------------------------
+# probe.dq_scale
+# --------------------------------------------------------------------------
+
+
+def test_dq_scale_defaults_to_one() -> None:
+    from nr_workbench.spec.models import Probe
+
+    assert Probe().dq_scale == 1.0
+
+
+@pytest.mark.parametrize("value", [0, -1.0])
+def test_a_non_positive_dq_scale_is_rejected(value: float) -> None:
+    """It multiplies a width; zero makes every point infinitely sharp."""
+    from nr_workbench.spec.models import Probe, SpecError
+
+    with pytest.raises((SpecError, Exception), match="must be positive|dq_scale"):
+        Probe(dq_scale=value)
+
+
+@pytest.mark.parametrize(
+    "attr", ["dq_scale", "dq_is_fwhm", "back_reflection", "resolution"]
+)
+def test_a_probe_setting_that_cannot_be_fitted_says_why(attr: str) -> None:
+    """These are settable under `probe:` and not fittable, and being told only
+    that the name is invalid reads as a typo rather than a category error."""
+    from nr_workbench.spec.models import ParameterPath, SpecError
+
+    with pytest.raises(SpecError) as caught:
+        ParameterPath.parse(f"probe.{attr}")
+
+    assert "not valid for probe" in str(caught.value)
+    assert "under `probe:`" in str(caught.value), "the message must say where to set it"
+
+
+def test_fitting_a_resolution_is_pointed_at_sample_broadening() -> None:
+    """The fittable route exists; the error has to name it."""
+    from nr_workbench.spec.models import ParameterPath, SpecError
+
+    with pytest.raises(SpecError) as caught:
+        ParameterPath.parse("probe.dq_scale")
+
+    message = str(caught.value)
+    assert "sample_broadening" in message
+    assert "per: measurement" in message
+
+
+# --------------------------------------------------------------------------
+# trim
+# --------------------------------------------------------------------------
+
+
+def test_a_trim_needs_a_reason() -> None:
+    """A cut nobody explained reads as an error six months later."""
+    from nr_workbench.spec.models import SpecError, Trim
+
+    with pytest.raises((SpecError, Exception), match="reason"):
+        Trim(lambda_min=3.5)
+
+
+def test_a_trim_needs_at_least_one_bound() -> None:
+    from nr_workbench.spec.models import SpecError, Trim
+
+    with pytest.raises((SpecError, Exception), match="at least one"):
+        Trim(reason="cutting nothing at all")
+
+
+def test_an_inverted_range_is_rejected() -> None:
+    """As written it keeps nothing, which is never what was meant."""
+    from nr_workbench.spec.models import SpecError, Trim
+
+    with pytest.raises((SpecError, Exception), match="must be below"):
+        Trim(q_min=0.2, q_max=0.02, reason="inverted")
+
+
+def test_only_the_bounds_that_were_set_are_passed_on() -> None:
+    from nr_workbench.spec.models import Trim
+
+    assert Trim(lambda_min=3.5, reason="band edge").as_kwargs() == {"lambda_min": 3.5}
+
+
+def test_a_trim_naming_an_unknown_state_is_rejected() -> None:
+    """The same treatment `parameters` gets: a typo must not silently do nothing."""
+    from nr_workbench.spec.models import SpecError
+    from nr_workbench.spec.resolve import Measurement, trim_for
+
+    spec = spec_from(trim=[{"in": ["nosuchstate"], "q_max": 0.2, "reason": "typo"}])
+
+    with pytest.raises(SpecError, match="unknown state/series"):
+        trim_for(spec, Measurement(group="s1", index=0, file="f", theta=0.45))

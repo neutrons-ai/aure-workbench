@@ -381,6 +381,57 @@ def _discover_series_from_json(
 # --------------------------------------------------------------------------
 
 
+def trim_for(spec: ModelSpec, measurement: Measurement) -> dict[str, float]:
+    """The data bounds in force for one measurement.
+
+    Entries merge field by field in declaration order, so a cut that applies
+    everywhere can be narrowed for one segment without restating the rest:
+
+    .. code-block:: yaml
+
+        trim:
+          - {lambda_min: 3.5, reason: "direct beam unreliable below this"}
+          - {in: [run226649#0], q_max: 0.022, reason: "scale drifts across the band"}
+
+    Args:
+        spec: The model spec.
+        measurement: The measurement to resolve for.
+
+    Returns:
+        Only the bounds that apply, as ``create_probe`` keyword arguments.
+
+    Raises:
+        SpecError: If an entry's ``in`` names an unknown state or series.
+    """
+    effective: dict[str, float] = {}
+    for entry in spec.trim:
+        if entry.in_ is not None:
+            for target in entry.in_:
+                group = target.partition("#")[0]
+                if group not in spec.group_names:
+                    raise SpecError(
+                        f"trim: `in` names unknown state/series {group!r}. "
+                        f"Known: {', '.join(spec.group_names)}."
+                    )
+            if not any(_trim_matches(t, measurement) for t in entry.in_):
+                continue
+        effective.update(entry.as_kwargs())
+    return effective
+
+
+def _trim_matches(target: str, measurement: Measurement) -> bool:
+    """Whether a ``state`` or ``state#index`` target names this measurement."""
+    group, _, suffix = target.partition("#")
+    if group != measurement.group:
+        return False
+    if not suffix:
+        return True
+    try:
+        return int(suffix) == measurement.index
+    except ValueError:
+        return False
+
+
 def build_table(
     spec: ModelSpec, measurements: dict[str, list[Measurement]]
 ) -> ParameterTable:

@@ -279,3 +279,133 @@ def test_post_build_is_emitted_verbatim_and_flagged() -> None:
 
     assert "problem.name = 'overridden'" in source
     assert "escape hatch" in source.lower()
+
+
+# --------------------------------------------------------------------------
+# probe.dq_scale
+#
+# A correction for a reduction whose resolution estimate is wrong. Fixed rather
+# than fitted because refl1d has nothing to bind a fitted scale to: `Probe.dQ`
+# is a property over a fixed array plus `sample_broadening`, and
+# `Probe.parameters()` exposes five knobs, none of them a dQ scale.
+# --------------------------------------------------------------------------
+
+
+def test_dq_scale_reaches_the_generated_probe() -> None:
+    payload = {
+        **BASE,
+        "probe": {"resolution": "angular_only", "dq_is_fwhm": True, "dq_scale": 4.1},
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "dq = dq * 4.1" in source
+    assert "probe.dq_scale" in source, "and says where the number came from"
+
+
+def test_the_default_scale_emits_no_multiplication() -> None:
+    """A no-op line in every generated script is noise that invites editing."""
+    payload = {**BASE, "probe": {"resolution": "angular_only"}}
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "dq = dq * 1.0" not in source
+    assert "dq_scale" not in source
+
+
+def test_a_scale_composes_with_a_sigma_column() -> None:
+    """Both corrections are about the same column and both must apply."""
+    payload = {
+        **BASE,
+        "probe": {"resolution": "angular_only", "dq_is_fwhm": False, "dq_scale": 2.0},
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "dq = dq * 2.355" in source
+    assert "dq = dq * 2.0" in source
+    assert source.index("2.355") < source.index("dq = dq * 2.0"), (
+        "convert to FWHM first, then correct the magnitude"
+    )
+
+
+# --------------------------------------------------------------------------
+# trim: cutting data that no parameter can absorb
+#
+# A segment whose required scale varies *across* its own wavelength band cannot
+# be fixed by probe.intensity, which is one number per segment. Left in, the fit
+# spends a thickness or a roughness on it. Cutting it was previously only
+# possible via `nrw model fork`, which takes the model out of the spec for the
+# sake of two numbers.
+# --------------------------------------------------------------------------
+
+TRIM_REASON = "required scale varies across the band; no intensity can absorb it"
+
+
+def test_a_trim_reaches_only_the_measurement_it_names() -> None:
+    payload = {
+        **BASE,
+        "trim": [{"in": ["a#0"], "lambda_min": 3.5, "reason": TRIM_REASON}],
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    calls = [
+        line
+        for line in source.splitlines()
+        if "create_probe(" in line and "def " not in line
+    ]
+    assert "lambda_min=3.5" in calls[0]
+    assert all("lambda_min" not in line for line in calls[1:])
+
+
+def test_a_global_trim_reaches_every_measurement() -> None:
+    payload = {**BASE, "trim": [{"q_max": 0.2, "reason": TRIM_REASON}]}
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    calls = [
+        line
+        for line in source.splitlines()
+        if "create_probe(" in line and "def " not in line
+    ]
+    assert calls and all("q_max=0.2" in line for line in calls)
+
+
+def test_a_later_entry_narrows_an_earlier_one_field_by_field() -> None:
+    """So a blanket cut can be tightened for one segment without restating it."""
+    payload = {
+        **BASE,
+        "trim": [
+            {"lambda_min": 2.5, "reason": TRIM_REASON},
+            {"in": ["a#0"], "lambda_min": 3.5, "reason": "worse on this one"},
+        ],
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    calls = [
+        line
+        for line in source.splitlines()
+        if "create_probe(" in line and "def " not in line
+    ]
+    assert "lambda_min=3.5" in calls[0]
+    assert "lambda_min=2.5" in calls[1]
+
+
+def test_a_spec_with_no_trim_generates_what_it_did_before() -> None:
+    """No dead parameters, and regenerating an untouched spec makes no diff."""
+    source = generate(table_from(BASE, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "def create_probe(data_file, theta):" in source
+    assert "lambda_min" not in source
+    assert "the trim bounds keep no points" not in source
+
+
+def test_the_generated_probe_refuses_a_trim_that_keeps_nothing() -> None:
+    """Better to fail there than hand refl1d an empty probe."""
+    payload = {**BASE, "trim": [{"q_min": 99.0, "reason": TRIM_REASON}]}
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "the trim bounds keep no points" in source
+    assert "raise ValueError" in source

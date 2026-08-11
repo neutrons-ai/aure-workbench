@@ -22,7 +22,7 @@ import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
-from nr_workbench.spec.resolve import ParameterTable
+from nr_workbench.spec.resolve import ParameterTable, trim_for
 
 #: Written into the header so `nrw check` can tell a hand-edited script from a
 #: stale one.
@@ -157,11 +157,25 @@ def _imports(table: ParameterTable) -> str:
 def _instrument_helpers(table: ParameterTable) -> str:
     """The BL-4B probe construction, inlined so the script stands alone."""
     fwhm = table.spec.probe.dq_is_fwhm
+    scale = table.spec.probe.dq_scale
+    # Emitted only when the spec declares a cut, so a model with no `trim:`
+    # generates exactly what it did before this existed -- no dead parameters,
+    # and regenerating an untouched spec produces no diff.
+    trimming = bool(table.spec.trim)
     lines = [
         "# --- instrument (BL-4B) " + "-" * 52,
         "",
         "",
-        "def create_probe(data_file, theta):",
+        *(
+            [
+                "def create_probe(",
+                "    data_file, theta,",
+                "    q_min=None, q_max=None, lambda_min=None, lambda_max=None,",
+                "):",
+            ]
+            if trimming
+            else ["def create_probe(data_file, theta):"]
+        ),
         '    """Angle-based probe from a 4-column Q, R, dR, dQ file.',
         "",
         "    dT is derived from dQ at the known incident angle, and dL is zero:",
@@ -170,18 +184,69 @@ def _instrument_helpers(table: ParameterTable) -> str:
         f"    The 4th column is {'FWHM' if fwhm else 'sigma'}; make_probe wants FWHM",
         "    for both dT and dL.",
         "",
+        *(
+            [
+                f"    Its dQ is scaled by {scale!r} (probe.dq_scale): the reduction's",
+                "    resolution estimate was found to be wrong by that factor. This is",
+                "    a correction to the data, not a property of the sample -- sample",
+                "    broadening is a fitted parameter and appears below.",
+                "",
+            ]
+            if scale != 1.0
+            else []
+        ),
         "    Points with a non-positive uncertainty are dropped. Reduced REF_L",
         "    files do contain them -- 14 of run 218389's 130 slices have dR = 0",
         "    somewhere -- and chi-squared divides by dR, so a single one makes",
         "    the whole problem non-finite. refl1d does not warn; it returns inf.",
+        *(
+            [
+                "",
+                "    The q/lambda bounds come from the spec's `trim:` block, which is",
+                "    where a deliberate cut is declared and explained. Each call below",
+                "    passes the bounds in force for that measurement, so what was",
+                "    dropped is visible here and not only in the spec.",
+            ]
+            if trimming
+            else []
+        ),
         '    """',
         "    q, data, errors, dq = np.loadtxt(data_file).T",
         "    usable = np.isfinite(errors) & (errors > 0) & np.isfinite(data) & (q > 0)",
+    ]
+    if trimming:
+        lines += [
+            "",
+            "    # Folded into the same mask, so a cut that removes everything fails",
+            "    # here rather than handing refl1d an empty probe.",
+            "    if q_min is not None:",
+            "        usable &= q >= q_min",
+            "    if q_max is not None:",
+            "        usable &= q <= q_max",
+            "    if lambda_min is not None or lambda_max is not None:",
+            "        wavelength = 4 * np.pi * np.sin(np.pi / 180 * theta) / q",
+            "        if lambda_min is not None:",
+            "            usable &= wavelength >= lambda_min",
+            "        if lambda_max is not None:",
+            "            usable &= wavelength <= lambda_max",
+            "    if not usable.any():",
+            "        raise ValueError(",
+            '            f"{data_file}: the trim bounds keep no points. "',
+            '            f"q=[{q_min}, {q_max}] lambda=[{lambda_min}, {lambda_max}] "',
+            '            f"against measured Q {q.min():.5g}-{q.max():.5g}."',
+            "        )",
+        ]
+    lines += [
         "    if not usable.all():",
         "        q, data, errors, dq = q[usable], data[usable], errors[usable], dq[usable]",
     ]
     if not fwhm:
         lines.append("    dq = dq * 2.355  # file holds sigma; make_probe wants FWHM")
+    if scale != 1.0:
+        lines.append(
+            f"    dq = dq * {scale!r}  # probe.dq_scale: the reduction's dQ is "
+            "wrong by this factor"
+        )
     lines += [
         "    wl = 4 * np.pi * np.sin(np.pi / 180 * theta) / q",
         "    dT = dq / q * np.tan(np.pi / 180 * theta) * 180 / np.pi",
@@ -252,8 +317,11 @@ def _experiments(table: ParameterTable) -> str:
         lines += ["", f"EXP[{group!r}] = []", f"SAMPLES[{group!r}] = []"]
         for m in measurements:
             comment = f"  # t = {m.time:g} s" if m.time is not None else ""
+            trim = trim_for(table.spec, m)
+            cuts = "".join(f", {name}={value!r}" for name, value in trim.items())
             lines += [
-                f"_probe = create_probe(PROJECT_ROOT / {m.file!r}, {m.theta!r}){comment}",
+                f"_probe = create_probe("
+                f"PROJECT_ROOT / {m.file!r}, {m.theta!r}{cuts}){comment}",
                 "_sample = create_sample()",
                 f"EXP[{group!r}].append("
                 f"Experiment(sample=_sample, probe=_probe, name={m.key!r}))",

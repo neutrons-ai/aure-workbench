@@ -96,6 +96,57 @@ probe: {resolution: angular_only, dq_is_fwhm: true}
   like `theta`: read, never tidied.
 - `resolution: angular_only` derives dT from dQ at the known incident angle and
   sets dL = 0. It is the only supported convention.
+- `dq_scale` multiplies the dQ column by a constant, for a reduction whose
+  resolution estimate is **demonstrably** wrong — measured against something,
+  not guessed to improve χ². Default 1.0.
+
+**`dq_scale` is fixed, not fitted, and that is refl1d's constraint rather than a
+preference.** `Probe.parameters()` exposes five knobs — `intensity`,
+`background`, `back_absorption`, `theta_offset`, `sample_broadening` — and
+`Probe.dQ` is a property derived from a fixed array plus the broadening. There is
+nothing to bind a fitted scale to.
+
+To **fit** a resolution, use `probe.sample_broadening` with `per: measurement`.
+Because dθ = f·tanθ is a constant dQ/Q, one broadening per angle *is* a fitted
+relative resolution. Use `dq_scale` for the different case where you have
+established the reduction's number is wrong and want the correction recorded in
+the spec rather than absorbed by a fit.
+
+Where a total-reflection plateau exists, the observed roll-off before Q_c
+measures the resolution directly, so it is the thing to establish `dq_scale`
+against.
+
+### 3b. Cut data that no parameter can absorb
+
+Some data is wrong in a way the model cannot express. The case that matters here:
+a segment whose required scale varies *across its own wavelength band*, typically
+at the short-λ edge where the direct-beam spectrum is weakest. `probe.intensity`
+is one number per segment, so it cannot follow that — and left in, the fit pays
+for it with a thickness or a roughness.
+
+```yaml
+trim:
+  # applies to every measurement
+  - {lambda_min: 3.5, reason: "direct-beam spectrum unreliable below 3.5 A"}
+  # narrows the blanket cut for one segment; later entries win field by field
+  - {in: [run226649#0], q_max: 0.022,
+     reason: "required scale drifts 15% across this segment's band"}
+```
+
+- **`reason` is required.** A cut nobody explained is indistinguishable from a
+  mistake six months later.
+- **State a band-edge cut in λ, not Q.** It is a property of the wavelength, and
+  one λ cut maps to a different Q in every segment: λ = 3.5 Å is Q = 0.023 at
+  0.37° and Q = 0.219 at 3.5°. In λ it is right everywhere; in Q it is right once.
+- The cut lives in the spec, so it is hashed with it, appears in the generated
+  script, and shows up as a reduced point count in `nrw model preview`. Dropping
+  data is never invisible.
+- A trim that keeps no points **raises** rather than handing refl1d an empty probe.
+
+**This is not a way to improve χ² by deleting the disagreeing points.** Establish
+that the data is wrong first — the overlap with a neighbouring segment, or a
+required scale that varies within one segment — and write that evidence into
+`reason`. Re-reducing is better than trimming whenever it is available.
 
 **Runs whose files disagree cannot be co-refined.** `dq_is_fwhm` is one boolean
 for the whole spec, so a set mixing conventions would have half its resolution
@@ -286,6 +337,11 @@ is a reason, not by default.
 - Free parameters approaching a tenth of the data-point count.
 - A generated `.py` edited by hand; `nrw model generate` refuses to overwrite it.
 - An absolute path anywhere in the spec.
+- A `trim:` whose `reason` restates the bound (`"cut below 3.5"`) instead of the
+  evidence for it.
+- A band-edge cut expressed in `q_min`/`q_max` across several angles — the same
+  physical cut is a different Q in each, so at most one of them is right.
+- `dq_scale` moved to improve χ² rather than to match a measured resolution.
 
 ## Verification
 
