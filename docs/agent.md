@@ -540,10 +540,13 @@ you trust what it wrote.
 
 ## Compute, during a beamtime
 
-The session is told to fit with `--method amoeba` while the beam is running and
-to use DREAM only once a fit is good and uncertainties are wanted. That matches
-how this is done by hand and by AuRE, and the reason is throughput: amoeba
-keeps pace with arriving data, DREAM does not. One fit at a time.
+The session is told to explore with `--method amoeba` while the beam is
+running and the model is still moving, and to switch to `--method dream`
+before quoting any uncertainty, claiming two fits differ, or writing the note
+that settles on a model — amoeba has no posterior, so none of those are
+answerable from it. That matches how this is done by hand and by AuRE, and the
+reason amoeba leads is throughput: it keeps pace with arriving data, DREAM does
+not. One fit at a time.
 
 Nothing enforces this — it is guidance in the prompt, not a limit, because a
 harness that decides a long DREAM run is the right call at 2am is probably

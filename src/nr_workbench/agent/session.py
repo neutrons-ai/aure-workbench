@@ -684,8 +684,11 @@ done to it.
 ## How to work
 
 - `nrw --help` is the tool surface; every subcommand has `--help`.
-- Fit with `--method amoeba` while the beam is running, so results keep pace \
-with the data. Use DREAM only once a fit is good and you want uncertainties.
+- Explore with `--method amoeba` --- it is fast enough to keep pace with the \
+beam and with your own iteration on the model. But it has no posterior, so the \
+moment you are about to quote an uncertainty, claim two fits differ, or write \
+the note that settles on a model, switch to `--method dream` and re-fit first. \
+Do not report a number DREAM was never asked to produce.
 - One fit at a time.
 - After each fit, `nrw assess <fit-id>`. It reports what is measurable --- \
 parameters on bounds, unconstrained posteriors, correlated pairs. Whether the \

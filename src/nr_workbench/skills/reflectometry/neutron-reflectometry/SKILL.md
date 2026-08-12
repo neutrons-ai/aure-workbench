@@ -269,6 +269,19 @@ unevenly fit → and only then consider structural changes, one at a time.
 Full detail, including when to enable `sample_broadening` and `theta_offset`:
 [references/refinement-strategy.md](references/refinement-strategy.md).
 
+### 8. Explore with amoeba; decide with DREAM
+
+Amoeba is fast and good enough while the model is still moving — every step of
+the priority order above is cheaper to iterate with it. But it returns a point
+estimate, not a posterior, so it cannot tell you an uncertainty, a parameter
+correlation, or whether two fits are significantly different, because it never
+sampled one.
+
+The moment any of that is what you are about to do — quote an interval, claim
+two states or two fits differ, or write the note that settles on a model —
+re-fit with `--method dream` first. A conclusion drawn from amoeba's point
+estimate where DREAM was never run is a guess dressed as a number.
+
 ## Rationalizations
 
 | Excuse | Rebuttal |
@@ -280,6 +293,7 @@ Full detail, including when to enable `sample_broadening` and `theta_offset`:
 | "I'll set roughness to 2 Å, the fit likes it." | Below 5 Å is not physical. Above half the adjacent thickness is allowed but stops being a layer — declare it as a gradient parametrisation and report the profile. |
 | "χ² is 2.9, which the table calls good, so I'm done." | The table grades the fit, not your understanding of it. At 2000 points, χ²_red = 1 has a standard error of 0.03, so 2.9 is not a rounding error — something coherent is unmodelled. Decompose it. |
 | "DREAM converged, so ± 0.8 Å is the uncertainty." | Only if χ²_red ≈ 1. DREAM trusts the reported `dR`; at χ²_red = 2.9 the intervals are too narrow by √2.9, and the 3σ difference you are about to report is 1.9σ. |
+| "The amoeba fit converged nicely, so ± the last step size is close enough." | Amoeba has no posterior; there is no ± to read off it, close or otherwise. Re-fit with `--method dream` before quoting anything. |
 | "The two states differ by 3 Å with ± 0.6 Å errors, so it changed." | Inflate first, then check whether the intervals still separate. Then check whether a nuisance parameter is correlated with the thing you think changed. |
 | "`copper.material.rho.range(...)` should work." | It crashes. See Red Flags. |
 
@@ -296,6 +310,8 @@ Full detail, including when to enable `sample_broadening` and `theta_offset`:
 - Roughness past half an adjacent thickness with no note saying it is a gradient
   parametrisation.
 - A DREAM interval quoted without inflation on a fit whose χ²_red is well above 1.
+- An uncertainty, a significance claim, or a promoted fit backed only by an
+  amoeba run — none of those are answerable without a posterior.
 - Two states declared different on intervals that overlap once inflated.
 - χ² accepted as "good" with no per-segment or per-Q-band breakdown behind it.
 - Suggesting a change to the fitting method, the error bars, the Q range, or the
@@ -310,6 +326,8 @@ Before reporting a fit:
 - [ ] Above χ²_red ≈ 1.5 on a large point count, the residual has been decomposed
       per segment, per Q band, and in-phase vs quadrature — and what it showed is
       written down.
+- [ ] Any quoted uncertainty or claimed significance comes from a `--method
+      dream` run, not amoeba's point estimate.
 - [ ] Every quoted interval is inflated by √χ²_red, and the note says so.
 - [ ] No difference between states is called significant on raw DREAM intervals
       when χ²_red > 1.2.
