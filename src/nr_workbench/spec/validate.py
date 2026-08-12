@@ -83,6 +83,7 @@ def validate_spec(spec: ModelSpec, root: Path) -> ValidationReport:
     _check_series_times(table, report)
     _check_unfitted(spec, table, report)
     _check_angle_nuisance(spec, report)
+    _check_geometry(spec, table, root, report)
     _note_escape_hatches(spec, report)
 
     report.info.append(
@@ -279,3 +280,56 @@ def _check_angle_nuisance(spec, report) -> None:
                 "angle (segments: auto) or scope this parameter to the states "
                 "that have segments with `in:`."
             )
+
+
+def _check_geometry(spec, table, root: Path, report: ValidationReport) -> None:
+    """Say which side the beam enters from, and refuse a stack that contradicts it.
+
+    The costliest error this package has seen, twice: an inverted stack fits,
+    converges and reports a chi-squared in the hundreds with nothing naming the
+    cause. Both times it took two runs to find. Everything needed to catch it
+    before the first fit is already on disk -- the material names, and the
+    presence or absence of a total-reflection plateau in the data.
+
+    Stated as info even when correct. A geometry nobody mentioned is the state
+    the mistake hides in, so the report always says which end the beam enters.
+    """
+    from nr_workbench.spec.geometry import critical_edge_side, read_geometry
+
+    geometry = read_geometry(spec)
+    if geometry is None:
+        return
+
+    declared = getattr(spec.probe, "back_reflection", None)
+    implied = geometry.back_reflection
+    entering = (
+        "through the substrate (back reflection)"
+        if implied
+        else "from the ambient side"
+        if implied is False
+        else "from an end this cannot classify"
+    )
+    report.info.append(
+        f"beam enters {geometry.incident} last in the stack, i.e. {entering}; "
+        f"{geometry.backing} is the backing"
+    )
+
+    if declared is not None and implied is not None and declared != implied:
+        report.errors.append(
+            f"probe.back_reflection is {str(declared).lower()}, but the stack is "
+            f"ordered with {geometry.incident} last -- and refl1d takes the last "
+            f"entry as the medium the beam is incident from, so this stack says "
+            f"{str(implied).lower()}. Reorder the stack, or correct the flag. "
+            "back_reflection does not reorder anything for you: the order IS the "
+            "geometry, and this flag only asserts what you meant by it."
+        )
+        return
+
+    verdict = critical_edge_side(spec, table, root)
+    if verdict == "reversed":
+        report.errors.append(
+            f"the data contradict the stack order. With {geometry.incident} last "
+            "the model predicts the opposite of the total-reflection plateau the "
+            "measurement actually shows. Reverse the stack: refl1d takes the last "
+            "entry as the medium the beam enters from."
+        )

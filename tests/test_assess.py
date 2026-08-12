@@ -895,3 +895,61 @@ def test_a_fit_with_no_exported_curves_says_nothing(tmp_path: Path) -> None:
         for f in findings
         if f.kind in {"coherent-residual", "chisq-concentrated", "fringe-damping"}
     ]
+
+
+# --------------------------------------------------------------------------
+# The note is not the assessment
+#
+# `nrw assess --write` fills the generated block, and a note holding only that
+# block looks written to anyone skimming it -- headings, prose, numbers. Every
+# note in the reference sample was in that state: three empty template sections
+# with a machine-written assessment under them.
+# --------------------------------------------------------------------------
+
+
+def _captured(action) -> str:
+    """Run a click-printing callable and return what it wrote."""
+    import contextlib
+    import io
+
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        action()
+    return buffer.getvalue()
+
+
+def test_assess_says_the_note_is_still_unwritten(tmp_path: Path) -> None:
+    from nr_workbench.commands.assess import _nudge_if_unwritten
+    from nr_workbench.notes import NOTES_TEMPLATE
+
+    path = tmp_path / "NOTES.md"
+    path.write_text(
+        NOTES_TEMPLATE.format(fit_id="20260807-163359Z-0103d9c7", description="x")
+        + "\n<!-- nrw:generated -->\n## Assessment\n\nchi-squared 2.9\n"
+        "<!-- /nrw:generated -->\n",
+        encoding="utf-8",
+    )
+
+    printed = _captured(lambda: _nudge_if_unwritten(path, "20260807-163359Z-0103d9c7"))
+
+    assert "not what you concluded" in printed
+    assert "nrw note 0103d9c7" in printed, "the exact command, not a hint"
+
+
+def test_assess_stays_quiet_once_someone_has_written(tmp_path: Path) -> None:
+    from nr_workbench.commands.assess import _nudge_if_unwritten
+    from nr_workbench.notes import NOTES_TEMPLATE, write_section
+
+    path = tmp_path / "NOTES.md"
+    path.write_text(
+        write_section(
+            NOTES_TEMPLATE.format(fit_id="20260807-163359Z-0103d9c7", description="x"),
+            "Why this run",
+            "testing whether the oxide is resolvable",
+        ),
+        encoding="utf-8",
+    )
+
+    printed = _captured(lambda: _nudge_if_unwritten(path, "20260807-163359Z-0103d9c7"))
+
+    assert printed.strip() == ""

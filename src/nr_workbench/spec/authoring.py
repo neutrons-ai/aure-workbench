@@ -718,7 +718,13 @@ Fill in the model spec at {spec_path} for sample {sample}.
    are already correct -- the incident angles in particular are measured
    values, not the nominal settings, so do not "tidy" 1.201 to 1.2.
 
-4. Order the stack ambient first, substrate last. Prefer fewer layers: below
+4. Order the stack so the LAST entry is the medium the beam enters through.
+   refl1d takes the last entry as the incident medium, so this order is the
+   measurement geometry -- not a presentation choice. A solid/liquid cell
+   measured through the wafer ends with the substrate; a film in air ends
+   with the air. Getting it backwards fits, converges, and reports a
+   chi-squared in the hundreds with nothing naming the cause.
+   Prefer fewer layers: below
    about 30 A a layer is barely resolvable, so do not add one without a reason
    from the notes.
 

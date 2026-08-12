@@ -93,6 +93,53 @@ class FitIndex:
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
 
+    def forget(self, sample: str) -> int:
+        """Remove every entry for one sample. Returns how many were dropped.
+
+        The only operation here that is not append-only, and it exists because
+        deleting files could not work without it. The index is the project's
+        memory: removing a result directory by hand leaves the fit recorded,
+        `nrw ls` reports it BROKEN forever, and an unattended session -- which
+        reads the index, not the directory -- keeps counting from models it can
+        no longer see. That is how a sample whose output had been deleted still
+        started at `corefine6`.
+
+        Rewritten through a temporary file inside the lock, so a crash mid-write
+        leaves the original index rather than half of one.
+
+        Args:
+            sample: Sample identifier to forget.
+
+        Returns:
+            Number of entries removed.
+        """
+        with _locked(self.path):
+            if not self.path.is_file():
+                return 0
+            kept: list[str] = []
+            dropped = 0
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    value = json.loads(stripped)
+                except json.JSONDecodeError:
+                    kept.append(stripped)  # unreadable: not ours to discard
+                    continue
+                if isinstance(value, dict) and value.get("sample") == sample:
+                    dropped += 1
+                    continue
+                kept.append(stripped)
+
+            if dropped:
+                temporary = self.path.with_suffix(".jsonl.rewriting")
+                temporary.write_text(
+                    "".join(f"{line}\n" for line in kept), encoding="utf-8"
+                )
+                temporary.replace(self.path)
+            return dropped
+
     def entries(self) -> list[dict[str, Any]]:
         """Read every entry, oldest first.
 

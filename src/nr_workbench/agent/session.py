@@ -678,10 +678,22 @@ parameters on bounds, unconstrained posteriors, correlated pairs. Whether the \
 values are *physically sensible* is yours to decide, and it will say so: no \
 second model is consulted while you are driving, because you are the better \
 one and a weaker verdict handed back would read as evidence.
-- Record your reasoning as you go with `nrw note <fit-id>` --- for a fit you \
-abandon as much as one you keep. Why a model was rejected is the part nobody \
-can reconstruct later.
-- `nrw ls` shows what is already recorded, and what changed between fits.
+- **Write the note before you start the next fit.** Not at the end --- by then \
+you will have the numbers and not the reason, which is the half nobody can \
+reconstruct. It takes one command:
+
+      nrw note <fit-id> --why "what I was testing" \\
+                        --showed "what the numbers mean" \\
+                        --caveat "what not to conclude from this"
+
+  Those three go into the note's own sections. A fit you abandon needs them as \
+much as one you keep --- more, because why a model was rejected is exactly what \
+is lost. `nrw assess` fills in a separate machine-written block; it is the \
+input to your sentence, not a substitute for it, and a note holding only that \
+block counts as unwritten.
+- `nrw ls` shows what is already recorded, and what changed between fits. It \
+also says how many fits have nothing written down --- if that number is not \
+zero when you finish, you are not finished.
 
 ## What you must not do
 
@@ -921,6 +933,7 @@ def run(
 
     session = compose(Path(root), sample, again=again)
     _require_guard(Path(root))
+    _require_not_already_running(Path(root), sample)
 
     # The same compact form fit ids use. `format_timestamp` is ISO-8601 with
     # colons, which is fine in a record and wrong in a filename.
@@ -945,6 +958,7 @@ def run(
         transcript=transcript,
         timeout=timeout,
         on_progress=on_progress,
+        sample=sample,
     )
     if timed_out:
         raise SessionError(
@@ -955,6 +969,32 @@ def run(
     session.transcript = transcript
     session.returncode = returncode
     return session
+
+
+def _require_not_already_running(root: Path, sample: str) -> None:
+    """Refuse to start a second session on a sample one is already analysing.
+
+    Nothing in the project guards a result directory or the fit index against
+    two writers. Two sessions on one sample interleave their fits, and the
+    second inherits the first's half-written specs as though they were settled.
+
+    A stale pidfile -- process gone -- is cleared rather than obeyed, so a
+    crashed session does not lock the sample out.
+    """
+    from nr_workbench.agent.running import clear, running
+
+    for existing in running(root, sample):
+        if not existing.alive:
+            clear(root, sample)
+            continue
+        raise SessionError(
+            f"A session is already analysing {sample}: pid {existing.pid}, started "
+            f"{existing.started}.\n"
+            "Two sessions on one sample interleave their fits and neither record "
+            "is trustworthy afterwards.\n"
+            f"  - `nrw agent stop {sample}` ends it.\n"
+            "  - `nrw agent status` shows everything running."
+        )
 
 
 def _require_guard(root: Path) -> None:
@@ -999,6 +1039,7 @@ def _stream(
     transcript: Path,
     timeout: float | None,
     on_progress: Any,
+    sample: str | None = None,
 ) -> tuple[int, bool]:
     """Run the harness, tee its events to the transcript, report progress.
 
@@ -1033,11 +1074,71 @@ def _stream(
         stopped.set()
         _kill_group(process.pid)
 
-    timer = threading.Timer(timeout, stop) if timeout else None
-    if timer:
-        timer.daemon = True
-        timer.start()
+    # From here on the harness is alive, so *nothing* may raise without taking it
+    # down. This was learned the hard way: a TypeError in the pidfile write --
+    # three lines below, after Popen had already succeeded -- killed the parent
+    # `nrw` and left the harness reparented to init, running unattended on the
+    # sample with no pidfile, invisible to `nrw agent status`, still writing
+    # results. The traceback made it look as though nothing had started.
+    try:
+        # Recorded as soon as the process exists, so `nrw agent stop` can reach
+        # it for the whole of its life rather than only once it has settled.
+        # Wrapped separately because a pidfile is a convenience and the session
+        # is the work: losing the first must never cost the second.
+        if sample is not None:
+            from nr_workbench.agent.running import record
+            from nr_workbench.provenance.record import format_timestamp, utc_now
 
+            try:
+                record(
+                    root, sample, process.pid, format_timestamp(utc_now()), transcript
+                )
+            except Exception as exc:  # noqa: BLE001 - see above
+                if on_progress:
+                    on_progress(
+                        f"could not record the session for `nrw agent stop`: {exc}"
+                    )
+
+        timer = threading.Timer(timeout, stop) if timeout else None
+        if timer:
+            timer.daemon = True
+            timer.start()
+
+        return _pump(
+            process,
+            root=root,
+            transcript=transcript,
+            timer=timer,
+            stopped=stopped,
+            on_progress=on_progress,
+            sample=sample,
+        )
+    except BaseException:
+        # Includes KeyboardInterrupt: a Ctrl-C at the terminal must not leave an
+        # unattended session running either.
+        _kill_group(process.pid)
+        if sample is not None:
+            from nr_workbench.agent.running import clear
+
+            clear(root, sample)
+        raise
+
+
+def _pump(
+    process: Any,
+    *,
+    root: Path,
+    transcript: Path,
+    timer: Any,
+    stopped: Any,
+    on_progress: Any,
+    sample: str | None,
+) -> tuple[int, bool]:
+    """Tee the harness's events to the transcript until it ends.
+
+    Split out so :func:`_stream` can wrap everything after ``Popen`` in one
+    handler that kills what it spawned.
+    """
     try:
         with transcript.open("w", encoding="utf-8") as handle:
             for line in process.stdout or ():
@@ -1052,6 +1153,13 @@ def _stream(
             timer.cancel()
         if process.stdout:
             process.stdout.close()
+        # However this ended -- finished, killed, timed out, exception -- the
+        # pidfile must not outlive it, or `nrw agent status` reports a session
+        # that is not there.
+        if sample is not None:
+            from nr_workbench.agent.running import clear
+
+            clear(root, sample)
 
     return process.wait(), stopped.is_set()
 

@@ -264,3 +264,96 @@ def _echo_scan(name, result, register, root, write) -> None:
 
     if write:
         click.echo(f"  wrote {register.relative_to(root)}")
+
+
+def run_sample_reset(
+    *, sample_id: str, dry_run: bool = False, yes: bool = False
+) -> None:
+    """Clear a sample's fits, models and index entries together.
+
+    Deleting a result directory by hand does not work, and the failure is
+    silent: the index still records the fit, `nrw ls` reports it BROKEN
+    forever, and an unattended session -- which reads the index rather than the
+    directory -- keeps numbering from models that are no longer there. A sample
+    whose output had been deleted still started its next model at `corefine6`.
+
+    So reset is one operation over all three, or it is not a reset.
+
+    Data and notes are deliberately untouched: `data/` is the measurement, and
+    `sample.md` and `reports/` are what a person wrote. Only the derived work
+    goes.
+
+    Args:
+        sample_id: The sample to reset.
+        dry_run: Report what would go and change nothing.
+        yes: Skip the confirmation prompt.
+
+    Raises:
+        click.ClickException: If there is no project, no such sample, or the
+            sample holds a promoted fit.
+    """
+    import shutil
+
+    from nr_workbench.provenance.index import FitIndex
+
+    try:
+        layout = ProjectLayout.discover()
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    directory = layout.sample(sample_id)
+    if not directory.is_dir():
+        raise click.ClickException(f"No sample {sample_id!r} in {layout.root}.")
+
+    index = FitIndex(layout.index_file)
+    entries = index.fits(sample=sample_id)
+
+    # A promoted fit is a citable result; resetting past one silently unpublishes
+    # it. Refusing is the whole reason `nrw promote` is a separate decision.
+    promoted = {
+        str(entry.get("fit_id"))
+        for label in {str(e.get("label")) for e in index.promotions()}
+        if (entry := index.current_label(label)) is not None
+        and entry.get("sample") == sample_id
+    }
+    if promoted:
+        raise click.ClickException(
+            f"{sample_id} holds a promoted fit ({', '.join(sorted(promoted))}). "
+            "Resetting would delete a result something may already cite.\n"
+            "Promotion is a separate decision on purpose; undo it deliberately "
+            "before resetting."
+        )
+
+    results = sorted(p for p in (directory / "results").glob("*") if p.is_dir())
+    models = sorted((directory / "models").glob("*"))
+    models = [p for p in models if p.name != ".gitkeep"]
+
+    if not results and not models and not entries:
+        click.echo(f"{sample_id} has nothing to reset.")
+        return
+
+    click.echo(f"  {len(results)} result director(ies)")
+    click.echo(f"  {len(models)} model file(s)")
+    click.echo(f"  {len(entries)} index entr(ies)")
+    click.secho(
+        "  data/, sample.md and reports/ are left alone.",
+        dim=True,
+    )
+
+    if dry_run:
+        click.echo("\n  --dry-run: nothing changed.")
+        return
+
+    if not yes:
+        click.confirm(f"\nReset {sample_id}? This cannot be undone", abort=True)
+
+    for path in results:
+        shutil.rmtree(path, ignore_errors=True)
+    for path in models:
+        path.unlink(missing_ok=True)
+    forgotten = index.forget(sample_id)
+
+    click.echo(
+        f"  removed {len(results)} result(s), {len(models)} model file(s), "
+        f"and forgot {forgotten} index entr(ies)."
+    )
+    click.echo(f"  {sample_id} is back to its data and its notes.")

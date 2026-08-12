@@ -135,6 +135,28 @@ def sample_scan_command(sample_id: str | None, write: bool, as_json: bool) -> No
     run_sample_scan(sample_id=sample_id, as_json=as_json, write=write)
 
 
+@sample_group.command("reset")
+@click.argument("sample_id")
+@click.option(
+    "--dry-run", is_flag=True, help="Report what would go and change nothing."
+)
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+def sample_reset_command(sample_id: str, dry_run: bool, yes: bool) -> None:
+    """Clear SAMPLE_ID's fits, models and index entries together.
+
+    Deleting result directories by hand does not work: the index still records
+    the fits, `nrw ls` reports them BROKEN forever, and an unattended session --
+    which reads the index, not the directory -- keeps numbering from models that
+    are no longer there.
+
+    Leaves data/, sample.md and reports/ alone, and refuses if the sample holds
+    a promoted fit.
+    """
+    from nr_workbench.commands.sample import run_sample_reset
+
+    run_sample_reset(sample_id=sample_id, dry_run=dry_run, yes=yes)
+
+
 @main.group("model")
 def model_group() -> None:
     """Write, check, and generate fit scripts from a model spec."""
@@ -620,6 +642,32 @@ def agent_guard_command(command: str | None) -> None:
     from nr_workbench.agent.guard import run_guard
 
     run_guard(command)
+
+
+@agent_group.command("status")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def agent_status_command(as_json: bool) -> None:
+    """Show which unattended sessions are running.
+
+    A stale entry -- a pidfile whose process is gone -- is reported rather than
+    hidden: it means a session died without cleaning up.
+    """
+    from nr_workbench.commands.agent_cmd import run_agent_status
+
+    run_agent_status(as_json=as_json)
+
+
+@agent_group.command("stop")
+@click.argument("sample", required=False)
+def agent_stop_command(sample: str | None) -> None:
+    """Stop the unattended session on SAMPLE, or every running session.
+
+    Kills the process group, not just the harness: it launches refl1d, and a fit
+    that outlives its session keeps writing into the project.
+    """
+    from nr_workbench.commands.agent_cmd import run_agent_stop
+
+    run_agent_stop(sample=sample)
 
 
 @agent_group.command("run")

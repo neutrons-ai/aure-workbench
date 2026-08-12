@@ -809,7 +809,7 @@ def test_provider_variables_reach_the_harness(
     """
     seen: dict[str, str] = {}
 
-    def capture(argv, *, root, environment, transcript, timeout, on_progress):
+    def capture(argv, *, root, environment, transcript, timeout, on_progress, sample):
         seen.update(environment)
         transcript.write_text("", encoding="utf-8")
         return 0, False

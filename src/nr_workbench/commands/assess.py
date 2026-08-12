@@ -77,6 +77,36 @@ def run_assess(
             handle.write("\n" + as_markdown(assessment))
         click.echo()
         click.echo(f"  written to {path.relative_to(layout.root)}")
+        _nudge_if_unwritten(path, assessment.fit_id)
+
+
+def _nudge_if_unwritten(path: Path, fit_id: str) -> None:
+    """Say so when the note still holds nothing a person wrote.
+
+    `nrw assess --write` fills the generated block, and a note holding only that
+    block *looks* written to anyone skimming it -- headings, prose, numbers.
+    Every note in the reference sample was in exactly that state: three empty
+    template sections with a machine-written assessment under them. `nrw ls`
+    knew, because it strips the generated fence before asking, but the one
+    command guaranteed to run right after a fit said nothing -- so the gap
+    survived a whole unattended session.
+    """
+    from nr_workbench.notes import is_blank
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    if not is_blank(text):
+        return
+
+    click.echo()
+    click.secho(
+        "  ! That is what the checks found, not what you concluded. This note "
+        "still has\n    nothing you wrote in it:\n"
+        f'      nrw note {fit_id[-8:]} --why "..." --showed "..." --caveat "..."',
+        fg="yellow",
+    )
 
 
 def _add_judgement(

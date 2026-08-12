@@ -256,7 +256,11 @@ class Probe(_Base):
     resolution: Literal["angular_only"] = "angular_only"
     dq_is_fwhm: bool = True
     dq_scale: float = 1.0
-    back_reflection: bool = False
+    # Tri-state on purpose. `False` and "not declared" have to be tellable
+    # apart: the stack order alone decides the geometry, so an undeclared spec
+    # is not making a claim and must not be failed for disagreeing with one.
+    # Only an explicit value is checked against the ordering.
+    back_reflection: bool | None = None
 
     @field_validator("dq_scale")
     @classmethod
@@ -609,7 +613,9 @@ class ModelSpec(_Base):
         sample: Sample identifier this model belongs to.
         description: Free prose. Carried into the generated script and the record.
         materials: Material definitions by name.
-        stack: Layers, ambient first and substrate last.
+        stack: Layers in beam order, ending with the medium the neutron is
+            incident from. refl1d takes the LAST entry as the incident
+            medium, so this order IS the measurement geometry.
         probe: Probe construction settings.
         states: Steady-state measurements.
         series: Time-resolved measurements.
@@ -665,7 +671,7 @@ class ModelSpec(_Base):
 
     @property
     def layer_names(self) -> list[str]:
-        """Every layer name, ambient first."""
+        """Every layer name, backing first and incident medium last."""
         return [layer.name for layer in self.stack]
 
     def layer(self, name: str) -> Layer | None:

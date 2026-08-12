@@ -268,7 +268,13 @@ def _stack(table: ParameterTable) -> str:
         "",
         "",
         "def create_sample():",
-        '    """Build the layer stack, ambient first."""',
+        '    """Build the layer stack.',
+        "",
+        "    Declared order is preserved, and in refl1d the LAST entry is the",
+        "    medium the neutron is incident from -- so the order is the",
+        "    measurement geometry, not a presentation choice. For a solid/liquid",
+        "    cell measured through the wafer, the substrate belongs last.",
+        '    """',
     ]
 
     for name in spec.layer_names:
@@ -292,9 +298,12 @@ def _stack(table: ParameterTable) -> str:
             parts.append(f"{_ident(name)}({layer.thickness!r}, {layer.roughness!r})")
     lines.append("    return " + " | ".join(parts))
 
-    if spec.probe.back_reflection:
-        lines.append("")
-        lines.append("    # back_reflection: neutrons enter through the substrate")
+    # `probe.back_reflection` deliberately emits nothing. It used to write a
+    # comment here, which read as though declaring it did something -- it did
+    # not, and an inverted stack with the flag set still fit upside down. It is
+    # now an assertion checked in `spec/validate.py` against the ordering and
+    # against the measured critical edge, and the ordering above is the whole
+    # of the mechanism.
     return "\n".join(lines)
 
 
