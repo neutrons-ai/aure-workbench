@@ -84,7 +84,7 @@ If the stated solvent is protonated THF (0.18) and the fitted ambient comes back
 near 6.3, the sample was in d8-THF. That is not a fit problem to be tuned away —
 it is the data telling you what was in the cell.
 
-### 3. Let the ambient float, at first
+### 3. Fit the ambient SLD, unless it is air
 
 Give the ambient a range spanning both isotopes on the first fit of a new
 sample:
@@ -97,8 +97,23 @@ parameters:
 ```
 
 Where it settles tells you what you measured. Once you know, tighten the range
-to the known value ± a little and note it in `sample.md`. A permanently wide
-ambient is a free parameter absorbing other people's errors.
+to the known value ± a little — **keep it a `parameters:` entry**, not a
+number pinned in `materials:` with nothing in `parameters:` to free it — and
+note the tightened range in `sample.md`. A permanently wide ambient is a free
+parameter absorbing other people's errors; a permanently *fixed* one is a
+claim that the book value is exactly what was in the cell.
+
+Book values assume a pure, fully isotoped liquid at a stated temperature.
+What was actually in the cell rarely matches: atmospheric H/D exchange,
+isotopic purity short of 100%, a run temperature different from the one the
+value was tabulated at, dissolved gas, trace carryover from the cell or a
+previous sample. Each moves the real SLD by a few tenths — small next to the
+~6-unit gap that told you which isotope it is, not small next to the contrast
+of whatever layer sits against it. A range of ±0.3–0.5 around the book value
+survives all of that; a pinned number asserts none of it happened.
+
+**Air is the one ambient worth fixing.** Its SLD really is 0 to the precision
+reflectometry reaches, so there is no equivalent uncertainty to fit away.
 
 ### 4. Choose a match point deliberately
 
@@ -134,9 +149,12 @@ says what was measured. When they disagree, the data wins.
 **"The ambient fitted to 6.3 instead of 0.18, but χ² is fine."** χ² being fine
 is the problem. The model found a consistent story about the wrong sample.
 
-**"I'll fix the ambient at the book value to reduce free parameters."** Do that
-only after one fit has confirmed the value. Fixing a wrong ambient pushes the
-error into a layer thickness where it is much harder to see.
+**"It's clearly D₂O/H₂O, so I'll pin the SLD at the book value."** Knowing the
+isotope is not the same as knowing the SLD. Purity, H/D exchange with the
+atmosphere, and temperature all move the real value by a few tenths, and
+fixing it pushes that error into a layer thickness where it is much harder to
+see. Fit it with a tight range around the book value instead — unless the
+ambient is air, which has no equivalent uncertainty to fit away.
 
 **"Contrast matching means the layer disappears from the fit."** It disappears
 from the *signal*. It is still in the model, and its thickness is now
@@ -155,6 +173,8 @@ precision reflectometry reaches.
   it were the material's SLD.
 - A contrast series whose points all sit on one side of the layer being studied.
 - An ambient with a wide free range in a fit being quoted as final.
+- An ambient other than air pinned in `materials:` with no `parameters:` entry
+  freeing its `rho` — a solvent SLD that was never checked against the data.
 
 ## Verification
 
@@ -162,7 +182,7 @@ precision reflectometry reaches.
 nrw data features <file>        # the critical edge and its implied SLD
 ```
 
-Three checks:
+Four checks:
 
 1. **Implied SLD from `Qc` against the stated solvent.** They should agree to
    better than a few tenths.
@@ -171,3 +191,5 @@ Three checks:
    a mixed solvent you did not declare or a fit absorbing an error.
 3. **Any solvated layer converted to a volume fraction** and sanity-checked:
    between 0 and 1, and consistent with what the film should do in that solvent.
+4. **The ambient's `rho` is a `parameters:` entry, not a number pinned in
+   `materials:`** — unless the ambient is air.

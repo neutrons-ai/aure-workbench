@@ -151,6 +151,11 @@ Bounds rules:
   is freed was being told something false.
 - **Never let the substrate SLD vary** unless asked. A silicon wafer really is
   bulk-dense.
+- **Float the ambient medium's SLD, unless it is air.** A book value for H₂O,
+  D₂O or a deuterated solvent assumes 100% isotopic purity at a stated
+  temperature, and the cell rarely delivers either — pinning it pushes that
+  few-tenths error into a layer thickness instead. Air is the one ambient
+  worth fixing; its SLD really is 0. See `solvent-contrast-matching`.
 
 **A fitted SLD below bulk is information, not an error.** Convert it back to a
 density fraction and ask whether that fraction is plausible for how the film was
@@ -319,6 +324,8 @@ Before reporting a fit:
       fitted SLD below bulk is converted back to a density fraction and judged.
 - [ ] The ambient SLD matches the stated solvent, or the discrepancy is
       explained.
+- [ ] The ambient's `rho` is a fitted parameter, not pinned to a book value —
+      unless the ambient is air.
 - [ ] For multi-segment fits, per-segment χ² values are comparable; if one is
       much worse, the normalisation was checked before `sample_broadening` was
       reached for.

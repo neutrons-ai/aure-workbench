@@ -452,9 +452,12 @@ def _observe_missing_skills(root: Path, sample: str) -> str:
     ``metal-oxide-interfaces`` uninstalled, and pinned an oxide SLD to a value
     that skill would have shown was 24% below bulk density.
 
-    Named rather than installed: what a project's skills say is a standing
-    decision about how everyone here works, and an unattended run is not the
-    place to change it.
+    Told to install rather than merely named: ``nrw skills add <name>`` only
+    ever adds a bundled, already-vetted skill file, and never overwrites one
+    that was edited locally without ``--force`` (the scaffold's three-way
+    merge). There is nothing in that for an unattended run to defer to a
+    person about --- working the rest of the session without a skill the
+    notes call for is the worse default.
     """
     from nr_workbench.spec.authoring import find_skills, missing_relevant
 
@@ -469,10 +472,10 @@ def _observe_missing_skills(root: Path, sample: str) -> str:
     return (
         "Skills this sample's notes call for that are NOT installed here:\n"
         + "\n".join(f"  {name}" for name in absent)
-        + "\n  You are working without them. Say so in what you write, and note "
-        "that `nrw skills add "
+        + "\n  Install them before working from them, then read what you just "
+        "installed:\n    nrw skills add "
         + " ".join(absent)
-        + "` would install them for the next run."
+        + "\n  Say in what you write that you installed it."
     )
 
 

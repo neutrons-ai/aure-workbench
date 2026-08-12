@@ -99,6 +99,11 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         # A word that merely contains a refused one.
         "nrw ls --sample promotion-study",
         "echo 'do not promote this'",
+        # Installing a bundled skill only ever adds a vetted file, and is
+        # never overwritten locally without --force -- nothing here needs a
+        # person, so `_observe_missing_skills` tells the agent to run it.
+        "nrw skills add metal-oxide-interfaces",
+        "nrw skills sync",
     ],
 )
 def test_the_working_commands_are_allowed(command: str) -> None:
@@ -992,7 +997,9 @@ Co-refine the two runs.
 """
 
 
-def test_a_session_names_the_skills_this_sample_needs_and_lacks(tmp_path) -> None:
+def test_a_session_tells_the_agent_to_install_the_skills_this_sample_needs(
+    tmp_path,
+) -> None:
     directory = tmp_path / "samples" / "S1"
     directory.mkdir(parents=True)
     (directory / "sample.md").write_text(COPPER_NOTES, encoding="utf-8")
@@ -1002,11 +1009,13 @@ def test_a_session_names_the_skills_this_sample_needs_and_lacks(tmp_path) -> Non
     assert "NOT installed" in composed.prompt
     assert "metal-oxide-interfaces" in composed.prompt
     assert "nrw skills add" in composed.prompt, "the fix has to be named"
+    assert "Install them" in composed.prompt, "told to act, not just to note it"
 
 
-def test_it_names_them_rather_than_installing_them(tmp_path) -> None:
-    """What a project's skills say is a standing decision about how everyone
-    here works; an unattended run is not the place to change it."""
+def test_composing_the_prompt_never_installs_anything_itself(tmp_path) -> None:
+    """Telling the agent it may run `nrw skills add` is not the same as
+    `compose` running it: composing the prompt stays a pure read of the
+    project, and it is the agent's own tool call that installs anything."""
     directory = tmp_path / "samples" / "S1"
     directory.mkdir(parents=True)
     (directory / "sample.md").write_text(COPPER_NOTES, encoding="utf-8")
