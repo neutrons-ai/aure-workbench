@@ -140,25 +140,6 @@ def test_theta_for_run_is_silent_when_there_is_no_such_run(tmp_path: Path) -> No
     assert theta_for_run(tmp_path / "nope", 218389) == (None, None)
 
 
-@pytest.mark.integration
-def test_the_real_apr2025_headers_give_the_expected_angles() -> None:
-    """The shipped parser against the actual instrument output."""
-    steady = Path.home() / "git/experiments-2025/apr2025/data/steady"
-    if not steady.is_dir():
-        pytest.skip("experiments-2025 not checked out here")
-
-    angles = {
-        h.sequence_number: round(h.theta, 4)
-        for h in (
-            read_header(p)
-            for p in sorted(steady.glob("REFL_218386_[123]_*_partial.txt"))
-        )
-    }
-
-    assert angles == {1: 0.45, 2: 1.201, 3: 3.5003}
-    assert theta_for_run(steady, 218389)[0] == pytest.approx(0.5997, abs=1e-4)
-
-
 # --------------------------------------------------------------------------
 # The dQ width convention
 #
@@ -240,18 +221,3 @@ def test_as_dict_carries_the_convention(tmp_path: Path) -> None:
 
     assert payload["dq_convention"] == "sigma"
     assert payload["dq_column_label"] == "sigma"
-
-
-@pytest.mark.integration
-def test_the_real_files_state_fwhm() -> None:
-    """Today's reduction. When this fails, the convention has changed."""
-    steady = Path.home() / "git/experiments-2025/apr2025/data/steady"
-    if not steady.is_dir():
-        pytest.skip("experiments-2025 not checked out here")
-
-    conventions = {
-        read_header(p).dq_convention
-        for p in sorted(steady.glob("REFL_218386_[123]_*_partial.txt"))
-    }
-
-    assert conventions == {"fwhm"}

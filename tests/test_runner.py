@@ -380,3 +380,48 @@ def test_the_judge_is_not_told_a_fit_converged_when_it_did_not() -> None:
     source = inspect.getsource(aure_adapter.judge_fit)
     assert '"converged": True' not in source
     assert "converged" in inspect.signature(aure_adapter.judge_fit).parameters
+
+
+# --------------------------------------------------------------------------
+# Quiet by default
+#
+# bumps' live progress on a DREAM run overflows a coding harness's output
+# buffer, and the agent then pages the overflow file back in 60-200 lines at a
+# time. Measured on one real session: 19 of 95 tool calls -- a fifth of a
+# 60-turn budget -- were re-reading two fit logs it had caused to be written.
+# --------------------------------------------------------------------------
+
+
+def test_the_fitter_is_quiet_unless_asked() -> None:
+    """`--verbose` opts back in; nothing else turns it on."""
+    import inspect
+
+    from nr_workbench.commands import fit as fit_cmd
+
+    default = inspect.signature(fit_cmd.run_fit_command).parameters["verbose"].default
+    assert default is False, "verbose must be opt-in"
+
+    source = inspect.getsource(fit_cmd.run_fit_command)
+    assert "quiet=not verbose or as_json" in source, (
+        "quiet must follow from verbose, and JSON output must stay parseable"
+    )
+
+
+def test_the_log_is_written_whether_or_not_it_was_printed(tmp_path: Path) -> None:
+    """Suppressing the live output must not cost the record.
+
+    `nrw assess` reads per-model chi-squared out of `fit/<model>.out`, which is
+    the `uneven-fit` finding -- the one that says an overall chi-squared is
+    hiding a segment fitting far worse than the others.
+    """
+    from nr_workbench.fitting.assess import per_model_chisq
+
+    fit = tmp_path / "fit"
+    fit.mkdir()
+    (fit / "m.out").write_text(
+        "-- Model 0 a#0\n[chisq=1.5(2), nllf=10]\n"
+        "-- Model 1 a#1\n[chisq=4.0(3), nllf=20]\n",
+        encoding="utf-8",
+    )
+
+    assert per_model_chisq(tmp_path) == {"a#0": 1.5, "a#1": 4.0}

@@ -167,24 +167,3 @@ def test_a_template_with_no_entries_is_reported(tmp_path: Path) -> None:
 
     with pytest.raises(TemplateError, match="no RefLData"):
         parse_template(path)
-
-
-@pytest.mark.integration
-def test_the_real_apr2025_template_parses() -> None:
-    """The shipped parser must handle the actual instrument output.
-
-    Segments 1 and 2 were normalised against adjacent direct beams (218274,
-    218275); segment 3 against 218338, measured much later. That is where to
-    look first when `nrw data overlap` reports the 3.5 deg segment 27.6% out.
-    """
-    real = (
-        Path.home()
-        / "git/experiments-2025/apr2025/data/steady"
-        / "REF_L_218386_auto_template.xml"
-    )
-    if not real.is_file():
-        pytest.skip("experiments-2025 not checked out here")
-
-    beams = direct_beams_for(real.parent, 218386)
-
-    assert beams == {218386: 218274, 218387: 218275, 218388: 218338}

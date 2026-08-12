@@ -322,6 +322,13 @@ def fit_group() -> None:
     "is saved, so a failure costs the uncertainty output).",
 )
 @click.option(
+    "--verbose",
+    is_flag=True,
+    help="Stream the fitter's own progress. Off by default -- the same log is "
+    "written to fit/<model>.out, and on a DREAM run the live output is long "
+    "enough that an unattended session spends turns paging it back in.",
+)
+@click.option(
     "--json",
     "as_json",
     is_flag=True,
@@ -681,7 +688,7 @@ def agent_stop_command(sample: str | None) -> None:
     "--turns",
     default=None,
     type=int,
-    help="Cap on harness turns [default: 60].",
+    help="Cap on harness turns [default: 200].",
 )
 @click.option("--model", default=None, help="Model to run [default: the harness's].")
 @click.option(

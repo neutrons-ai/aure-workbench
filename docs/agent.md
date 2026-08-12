@@ -26,9 +26,7 @@ Two results from that corpus say the same thing from the other side:
 
 - **χ² ranks it backwards.** Both promoted fits are *worse* in χ² than the best
   fit in their arm (1.285 against 1.193; 1.698 against 1.411). A loop that
-  optimises χ² gets both of the decisions that produced the paper wrong. There
-  is a test asserting this so nobody builds a ranking on it later:
-  `tests/test_benchmark_expt11.py::test_the_promoted_fits_are_not_the_lowest_chi_squared`.
+  optimises χ² gets both of the decisions that produced the paper wrong.
 - **A pinned parameter implies three different correct actions.** In one fit,
   three parameters sat on their bounds. `Ti.rho` at −2.0 is bulk titanium and
   widening it would have destroyed the result — it *was* the result.

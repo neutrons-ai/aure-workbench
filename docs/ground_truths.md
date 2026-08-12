@@ -1642,11 +1642,20 @@ the fit moved, not whether the answer is sound.
 ### 2026-08-10: the checks reproduce the findings; the count does not rank the fits
 
 Running every Stage-1 check over the 25 recorded fits of the real beamtime,
-against the 17 findings the analyst wrote by hand. Nine labelled cases pass in
-`tests/test_benchmark_expt11.py` --- the swallowed oxide at 1.55x its thickness,
-the roughness that caused it named as `dTHF.roughness=20`, the ranges that
-permitted it flagged before any fit, the (rho, t) ridge, the three pinned
-parameters, and the stray partial as a blocker.
+against the 17 findings the analyst wrote by hand. Nine labelled cases passed
+--- the swallowed oxide at 1.55x its thickness, the roughness that caused it
+named as `dTHF.roughness=20`, the ranges that permitted it flagged before any
+fit, the (rho, t) ridge, the three pinned parameters, and the stray partial as
+a blocker.
+
+**The benchmark that ran them was removed on 2026-08-12.** It lived in
+`tests/test_benchmark_expt11.py` and reached into a 5.8 GB corpus under
+`~/Dropbox-ORNL`, so it skipped everywhere except one machine --- and silently,
+which is worse than not existing: the suite reported success while the claims
+here went unchecked. A test suite may not depend on data outside the repository.
+The measurement above stands as a record of what was found; nothing asserts it
+any more, and re-establishing it would mean vendoring the handful of numbers it
+turns on rather than the corpus.
 
 Two negative results are worth more than the positives.
 

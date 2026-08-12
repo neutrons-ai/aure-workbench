@@ -83,10 +83,21 @@ HARNESS_ENV = "NRW_HARNESS"
 #: Used when ``NRW_HARNESS`` is unset. The only harness this is tested against.
 DEFAULT_HARNESS = "claude"
 
-#: Default cap on harness turns. A beamtime session is one task; a run that
-#: needs more than this has usually lost the thread rather than found a hard
-#: problem, and the cost of stopping early is one more session.
-DEFAULT_TURNS = 60
+#: Default cap on harness turns.
+#:
+#: Was 60, on the premise that a longer run has lost the thread rather than found
+#: a hard problem. Measuring a real session said otherwise: it was working
+#: steadily and got cut off mid-report, having spent 22 of 95 tool calls on
+#: unavoidable orientation (seven skills, the sample notes, the prior sample's
+#: specs) and 19 more re-reading fit logs it had caused to be written. The
+#: orientation is a fixed cost every session pays before it can think, so a cap
+#: near it leaves little for the analysis.
+#:
+#: The paging is fixed at source -- `nrw fit run` is quiet by default now -- and
+#: this is the headroom for the work itself. It remains a real limit, and
+#: ``--timeout`` is the independent one: raising turns without a wall clock is
+#: how an unattended run becomes unbounded.
+DEFAULT_TURNS = 200
 
 
 class SessionError(RuntimeError):

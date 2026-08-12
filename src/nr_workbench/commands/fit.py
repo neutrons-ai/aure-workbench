@@ -212,6 +212,7 @@ def run_fit_command(
     force: bool = False,
     dry_run: bool = False,
     as_json: bool = False,
+    verbose: bool = False,
 ) -> FitRecord | None:
     """Run a fit script and write an immutable record of the run.
 
@@ -378,9 +379,16 @@ def run_fit_command(
             seed=seed,
             parallel=parallel,
             plots=plots,
-            # bumps prints its progress to stdout, which would sit in front of
-            # the JSON and make it unparseable for the driver that asked for it.
-            quiet=as_json,
+            # Quiet by default, for two reasons. It would sit in front of the
+            # JSON and make it unparseable for a driver that asked for JSON. And
+            # an unattended session pays for it by the turn: bumps' progress on a
+            # DREAM run overflows the harness's output buffer, so the agent then
+            # pages the overflow file back in 60-200 lines at a time. Measured on
+            # one real session: 19 of 95 tool calls -- a fifth of a 60-turn
+            # budget -- were re-reading two fit logs it had already caused to be
+            # written. The same text is in `fit/<model>.out` either way, and
+            # `nrw assess` reads the per-model chi-squared straight out of it.
+            quiet=not verbose or as_json,
         )
     except FitError as exc:
         # A failed fit is still recorded. Knowing that a model was tried and
@@ -453,6 +461,12 @@ def _report_success(record: FitRecord, fit_dir: Path, root: Path, outcome: Any) 
     if record.n_free is not None:
         click.echo(f"  free     {record.n_free} parameter(s)")
     click.echo(f"  output   {fit_dir.relative_to(root)}")
+
+    # The fitter's own log is suppressed by default, so say where it went rather
+    # than leaving someone to wonder why a DREAM run printed four lines.
+    log = next((fit_dir / "fit").glob("*.out"), None)
+    if log is not None:
+        click.echo(f"  log      {log.relative_to(root)}  (--verbose to see it live)")
 
     if not outcome.export_ok:
         click.echo(f"  ! bumps export incomplete: {outcome.export_error}", err=True)

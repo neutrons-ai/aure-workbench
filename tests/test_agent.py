@@ -1034,3 +1034,17 @@ def test_an_installed_skill_drops_out_of_the_missing_list(tmp_path) -> None:
     assert gaps, "solvent-contrast-matching is still missing"
     assert "metal-oxide-interfaces" not in gaps[0]
     assert "metal-oxide-interfaces" in composed.prompt, "it is installed and relevant"
+
+
+def test_the_turn_cap_leaves_room_for_the_analysis() -> None:
+    """Raised from 60 after measuring where a real session's turns went.
+
+    22 of 95 tool calls were orientation -- seven skills, the sample notes, the
+    prior sample's specs and their notes -- which is a fixed cost every session
+    pays before it can think. A cap near that leaves little for the work, and the
+    measured session was cut off mid-report while still making progress.
+
+    Pinned because raising it was a deliberate decision with a cost attached: an
+    unattended run's bound is turns AND `--timeout`, and this is half of that.
+    """
+    assert session.DEFAULT_TURNS >= 150
