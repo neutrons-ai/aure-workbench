@@ -7,7 +7,8 @@ distinguishes *verbatim* from *adapted* is that the right response differs:
 
 * **verbatim** is a shared contract. If it changed upstream, we take the change
   or we consciously fork. If it changed *locally*, that is a bug --
-  ``tests/test_vendor.py`` already fails on it, offline.
+  ``tests/test_upstream.py::test_the_repos_own_manifest_is_clean`` already
+  fails on it, offline.
 * **adapted** is code we deliberately changed. Upstream moving is information,
   not an instruction: the adaptation notes in ``upstream.toml`` say what we did
   and why, and that reasoning is what decides whether to follow.

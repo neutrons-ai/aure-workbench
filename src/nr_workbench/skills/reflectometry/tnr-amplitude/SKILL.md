@@ -14,12 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, time-resolved]
   tags: [tnr, amplitude, template, trajectory, gls, time-resolved]
-  source:
-    repo: mdoucet/experiments-2025
-    path: docs/tnr-amplitude.md
-    adaptation: >
-      Restructured into the v2 anatomy and pointed at `nrw tnr`. The physics,
-      the formulas and the interpretation rules are unchanged.
 ---
 
 # tNR Change Amplitude

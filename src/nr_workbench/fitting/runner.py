@@ -1,12 +1,8 @@
 """Execute a refl1d script and capture its output.
 
-Adapted from ``neutrons-ai/nr-analyzer`` ``analyzer_tools/analysis/run_fit.py``
-@ b09e2e4 (BSD-3-Clause). See ``upstream.toml``.
-
-The load-bearing detail carried over is the bumps 1.0.x export workaround
-documented in :func:`run_fit` -- getting that wrong silently discards every
-uncertainty output, which is exactly the kind of failure this package exists to
-prevent.
+The load-bearing detail is the bumps 1.0.x export workaround documented in
+:func:`run_fit` -- getting that wrong silently discards every uncertainty
+output, which is exactly the kind of failure this package exists to prevent.
 
 refl1d and bumps are imported inside the functions that use them: importing
 them at module scope would add seconds to ``nrw --help``.

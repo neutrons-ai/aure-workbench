@@ -370,7 +370,7 @@ class FitDirectory:
         Returns:
             The manifest that was written.
         """
-        from nr_workbench._vendor.result_manifest import build_manifest
+        from nr_workbench.provenance.result_manifest import build_manifest
 
         manifest = build_manifest(
             "nrw-fit-run",

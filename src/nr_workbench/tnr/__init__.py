@@ -1,8 +1,8 @@
 """Time-resolved neutron reflectometry change assessment.
 
-Adapted from ``experiments-2025/tnr_chi2.py`` -- a single 1992-line module with
-one Click command carrying ~60 options. The numerics were excellent and are
-moved here byte-for-byte; only the structure changed.
+Split out of a single 1992-line module with one Click command carrying ~60
+options. The numerics were sound and are carried over byte-for-byte; only the
+structure changed.
 
 Three rules hold this layer together:
 

@@ -14,13 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, co-refinement]
   tags: [refl1d, review, aliasing, parameters, corefinement, bumps, pitfalls]
-  source:
-    repo: mdoucet/experiments-2025
-    path: jen-oct2025/models/Cu-THF-223918-full-sequence.py
-    adaptation: >
-      Written from the failure modes present in the hand-written co-refinement
-      scripts this package replaces. The aliasing pitfall is the one that has
-      produced wrong results in practice.
 ---
 
 # Reviewing a hand-written refl1d script

@@ -114,13 +114,59 @@ person decides, and the reason is the part worth keeping. Promotion is refused
 on a stale fit. Superseding an earlier decision records both; the history of
 what was once considered final is provenance too.
 
-### 7. Check before you commit or publish
+### 7. Every derived number gets a script
+
+A fit record accounts for the fit. It accounts for nothing you compute **afterwards**
+— and a report's headline numbers are usually that arithmetic, not a value read out of
+a `.par` file.
+
+**If a number is not a direct quote from a fit record, it needs a script in
+`samples/<id>/reports/`, and the report must name that script.** No exemption for
+"it's just a subtraction".
+
+| Derived quantity | Why it is a choice, not a readout |
+|---|---|
+| A change `Δ = end − start`, with an interval | Must come from the **joint posterior**. Differencing two medians and adding errors in quadrature overstates the uncertainty whenever the endpoints are correlated — by ~2x at r = 0.85. |
+| A stoichiometry from an SLD | Depends on scattering lengths, an assumed number density, and a conservation assumption. |
+| An areal quantity (`rho x t`) | Often the only combination the data determine when the factors are degenerate — and differencing the factor instead of the product can flip a conclusion. |
+| BIC or any model comparison | `nrw` reports chi-squared and `n_free`, never BIC. `n`, `k` and the chi-squared convention all have to be stated. |
+| A significance in sigma | Which spreads were combined, and how. |
+| A correlation coefficient | Which fit's chain, and which two parameters. |
+| Anything from a header or timestamp | Timezone, and which file. |
+
+**State your uncertainty convention once and compute every derived number with it.**
+bumps' `-err.json` reports the 68% credible half-width; the moment standard deviation
+of the draws is a different number, and for a heavy-tailed posterior the two differ by
+up to 2x. Mixing them shifts quoted significances by ~15%, which is invisible unless
+one script owns all of them.
+
+Rules that keep such a script honest:
+
+- **Read only from `results/<fit_id>/`,** with the fit_ids as constants at the top, so
+  the script states which fits it depends on.
+- **Never hardcode a value that came from a fit.** Load it. A hardcoded number is how a
+  report keeps quoting a superseded result after the fit is re-run.
+- **A value a fit held fixed comes from that fit's own `spec.yaml`**, not from
+  recomputing it out of the upstream fit's posterior — the two drift apart.
+- **Print the formula next to the value.** A reader must be able to check the algebra
+  without reading the code, and so must you.
+- **Compute from the draws** (`*-point.mc.gz`), not from summary statistics, wherever
+  the quantity is non-linear or its inputs are correlated.
+- Physical constants are hardcoded, but sourced in a comment and taken from
+  `periodictable` where it can supply them.
+
+This script is part of the provenance package. It is the answer to "where did that
+number come from?" in the way the fit record is the answer to "where did this
+chi-squared come from?" — so it belongs beside the report, not in a notebook or a
+terminal transcript.
+
+### 8. Check before you commit or publish
 
 ```bash
 nrw check
 ```
 
-### 8. Package it before you send it
+### 9. Package it before you send it
 
 ```bash
 nrw pack <fit_id>
@@ -132,6 +178,10 @@ at the paths the frozen script expects, and a `verify.py` that applies the
 recorded parameters and checks chi-squared. Refused when an input has drifted
 — a bundle asserts that its data produced its result.
 
+A bundle covers the fit. If the result being sent includes derived numbers, send
+`reports/` alongside it — the bundle can reproduce the chi-squared but not the
+arithmetic layered on top of it (§7).
+
 ## Rationalizations
 
 | Excuse | Rebuttal |
@@ -142,6 +192,9 @@ recorded parameters and checks chi-squared. Refused when an input has drifted
 | "I'll just edit the generated script, it's quicker than the spec." | Use `nrw model fork`. It gives you a hand-owned script that still has a full record. Escaping the generator must not mean escaping provenance. |
 | "`--reason` is obvious from the chi-squared." | Chi-squared says which fit was numerically best, not why it is the answer. The reason is what a reader in a year needs. |
 | "I'll re-run with `--force` to get a cleaner number." | Running until you like the answer is not a method. If a re-run is warranted, say why in `--note`. |
+| "It is a subtraction, I did it in my head." | Then nobody can check it — and if the endpoints are correlated it is also wrong, because a difference of correlated parameters needs the joint posterior rather than two medians. Write the script (§7). |
+| "The derived number is in the report, that is the record." | The report says what the number is, not how it was obtained. Nobody can re-derive a stoichiometry from the stoichiometry, including you in six months. |
+| "I will paste the fitted values into the script so it runs standalone." | Then it is a transcript, not a derivation, and it keeps reporting the old answer after the fit is re-run. Load from `results/<fit_id>/`. |
 
 ## Red Flags
 
@@ -153,6 +206,12 @@ recorded parameters and checks chi-squared. Refused when an input has drifted
 - Several fits with the same run key, none marked as replicates.
 - A fit whose record lists no data inputs — the script read nothing, or read it
   in a way that could not be observed. Either way the record is incomplete.
+- A number in a report that no script produces and no fit record contains.
+- A `Δ` whose uncertainty was propagated by hand from two correlated endpoints
+  instead of taken from the joint posterior.
+- A derived-quantities script with a fitted value typed into it rather than loaded.
+- Two `±` conventions in one report — an interval half-width in one table and a
+  moment standard deviation in another.
 
 ## Verification
 
@@ -163,4 +222,9 @@ Before citing or sharing a result:
 - [ ] The fit is promoted, with a reason that says why rather than what.
 - [ ] `env/versions.json` records the versions, and a patch is present if the
       tree was dirty.
+- [ ] Every number in the report is either a direct quote from a fit record or is
+      produced by a named script in `reports/` (§7).
+- [ ] That script prints its formulae, loads every fitted input rather than
+      hardcoding it, and names the fit_ids it depends on.
+- [ ] One uncertainty convention, stated, used in every derived significance.
 - [ ] Any hand-owned script is a registered fork, not an edited generated file.

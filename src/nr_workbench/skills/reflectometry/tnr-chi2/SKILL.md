@@ -13,12 +13,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, time-resolved]
   tags: [tnr, chi-squared, delta, significance, qbands, time-resolved]
-  source:
-    repo: mdoucet/experiments-2025
-    paths: [docs/tnr-chi2.md]
-    adaptation: >
-      Restructured into the v2 anatomy, pointed at `nrw tnr`, and merged in the
-      Q-band material since both come from the same command.
 ---
 
 # tNR Chi-Squared, delta, and Q Bands

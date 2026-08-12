@@ -182,7 +182,7 @@ def _echo_assessment(result, out_dir: Path) -> None:
 
 def _write_result_manifest(path: str, result, out_dir: Path) -> None:
     """Write an ``ndip-tool-result/1`` manifest for an orchestrator."""
-    from nr_workbench._vendor.result_manifest import write_manifest
+    from nr_workbench.provenance.result_manifest import write_manifest
 
     payload = result.payload
     amplitude = payload.get("amplitude") or {}

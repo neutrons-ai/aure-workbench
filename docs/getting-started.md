@@ -24,7 +24,7 @@ seconds is the fit.
 
 ```bash
 mkdir -p ~/beamtime && cd ~/beamtime
-nrw init cu-thf-expt11 --beamtime jen-apr2025 --ipts IPTS-34347
+nrw init cu-thf-expt11 --beamtime apr2025 --ipts IPTS-34347
 cd cu-thf-expt11
 ```
 
@@ -64,7 +64,7 @@ Copy the reduced ASCII in. Raw NeXus is gitignored; reduced data is small and
 belongs in the repository with the analysis.
 
 ```bash
-SRC=~/git/experiments-2025/jen-apr2025/data
+SRC=~/git/experiments-2025/apr2025/data
 
 cp $SRC/steady/REFL_218386_{1,2,3}_*_partial.txt samples/Sample6/data/steady/
 cp $SRC/steady/REFL_218393_{1,2,3}_*_partial.txt samples/Sample6/data/steady/
@@ -88,8 +88,8 @@ you already paid beam time for.
 > original tree keeps working, and it writes nothing until you say `--write`:
 >
 > ```bash
-> nrw import ~/git/experiments-2025/jen-oct2025            # plan only
-> nrw import ~/git/experiments-2025/jen-oct2025 --write    # do it
+> nrw import ~/git/experiments-2025/oct2025            # plan only
+> nrw import ~/git/experiments-2025/oct2025 --write    # do it
 > ```
 >
 > Outputs of previous fits are deliberately left behind — 310 files in

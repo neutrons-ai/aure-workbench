@@ -16,13 +16,11 @@ metadata:
   techniques: [reflectometry]
   tags: [refl1d, bumps, sld, chi-squared, bic, roughness, probe, modelling]
   source:
-    repos: [neutrons-ai/aure, mdoucet/experiments-2025]
-    paths:
-      - src/aure/skills/neutron-reflectometry/SKILL.md
-      - docs/neutron-reflectometry.md
+    repo: neutrons-ai/aure
+    path: src/aure/skills/neutron-reflectometry/SKILL.md
     adaptation: >
-      Merged and narrowed to REF_L/BL-4B, restructured into the v2 anatomy.
-      Long refinement guidance moved to references/refinement-strategy.md.
+      Narrowed to REF_L/BL-4B, restructured into the v2 anatomy. Long
+      refinement guidance moved to references/refinement-strategy.md.
 ---
 
 # Neutron Reflectometry

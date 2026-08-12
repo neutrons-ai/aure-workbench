@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from importlib.metadata import packages_distributions, version
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 SCHEMA = "ndip-tool-result/1"
 
@@ -22,9 +22,9 @@ VALID_STATUS = {"ok", "failed", "skipped", "dry-run", "needs-reprocessing"}
 
 
 def _tool_version() -> str:
-    # Auto-derive the installed distribution version for whatever top-level
-    # package vendors this module (analyzer_tools | assembler | nr_isaac_format),
-    # so this file stays byte-identical across the repos that share it.
+    # Auto-derive the installed distribution version from the top-level
+    # package, rather than hardcoding "nr_workbench", so this keeps working if
+    # the schema is ever reused from another tool.
     try:
         top = __name__.split(".")[0]
         dists = packages_distributions().get(top)
@@ -39,14 +39,14 @@ def build_manifest(
     tool: str,
     status: str,
     *,
-    params: Optional[Dict[str, Any]] = None,
-    artifacts: Optional[Dict[str, Any]] = None,
-    info: Optional[Dict[str, Any]] = None,
-    messages: Optional[List[Dict[str, str]]] = None,
+    params: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    info: dict[str, Any] | None = None,
+    messages: list[dict[str, str]] | None = None,
     exit_code: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return a manifest dict. ``None`` values in params/artifacts are dropped."""
-    manifest: Dict[str, Any] = {
+    manifest: dict[str, Any] = {
         "tool": tool,
         "tool_version": _tool_version(),
         "schema": SCHEMA,
@@ -61,7 +61,7 @@ def build_manifest(
     return manifest
 
 
-def write_manifest(path: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+def write_manifest(path: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
     """Build a manifest (see :func:`build_manifest`) and write it to *path*."""
     manifest = build_manifest(*args, **kwargs)
     with open(path, "w") as f:

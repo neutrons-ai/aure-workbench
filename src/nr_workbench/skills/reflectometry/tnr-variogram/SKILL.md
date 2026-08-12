@@ -14,10 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, time-resolved]
   tags: [tnr, variogram, lag, noise-floor, time-resolved]
-  source:
-    repo: mdoucet/experiments-2025
-    path: docs/tnr-variogram.md
-    adaptation: Restructured into the v2 anatomy and pointed at `nrw tnr`.
 ---
 
 # tNR Lag Variogram

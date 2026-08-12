@@ -1,7 +1,6 @@
 """BL-4B geometry, as a function of when the measurement was taken.
 
-Adapted from ``neutrons-ai/nr-analyzer`` ``analysis/theta_offset.py``, which
-took it from ``lr_reduction/settings.json``. See ``upstream.toml``.
+The dated table below traces back to ``lr_reduction/settings.json``.
 
 The detector has not always been in the same place. It moved in on
 2024-08-26 and back out on 2025-01-01, which changes the sample-detector and
@@ -10,12 +9,10 @@ or a resolution from pixel positions needs the values that were true on the day,
 not today's -- and a run reduced with the wrong ones is wrong in a way that
 looks like a real sample.
 
-Only the dated table is carried across. The NeXus event processing and peak
-fitting that surround it upstream are **not** ported: they need raw event files
-that this package never sees (``data/raw/`` is gitignored), and the upstream
-test mocks the computation rather than exercising it, so vendoring 600 lines
-here would mean shipping unverified physics. If you need a theta offset,
-compute it with nr-analyzer and record the number.
+Only the dated table lives here. The NeXus event processing and peak fitting
+that would surround it are deliberately **not** included: they need raw event
+files this package never sees (``data/raw/`` is gitignored). If you need a
+theta offset, compute it separately and record the number.
 """
 
 from __future__ import annotations

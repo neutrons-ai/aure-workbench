@@ -3,150 +3,26 @@
 # Two categories, and the difference matters:
 #
 #   verbatim -- byte-identical copies of a shared contract. Never edited here.
-#               `tests/test_vendor.py` re-hashes these and fails on any drift.
+#               `tools/sync_upstream.py` re-hashes these and fails on any
+#               drift.
 #   adapted  -- code we took and changed. Carries an attribution header at the
 #               top of the file; changes are ours to maintain.
 #
 # `sha256` is of the file as vendored, so a local edit is detectable even
 # without network access to the upstream repo.
-
-[[verbatim]]
-dest = "src/nr_workbench/_vendor/result_manifest.py"
-repo = "neutrons-ai/nr-analyzer"
-path = "analyzer_tools/result_manifest.py"
-commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
-sha256 = "e341a23846c5370e6eda67cfa85ce7038c073ebbb461cc62fa1edf9004624075"
-synced = "2026-08-05"
-reason = """
-The ndip-tool-result/1 manifest is already shared byte-identical across
-analyzer_tools, data-assembler and nr_isaac_format. It is the interop seam:
-any orchestrator that can drive nr-analyzer can drive nr-workbench unchanged.
-"""
-
-[[adapted]]
-dest = "src/nr_workbench/fitting/runner.py"
-repo = "neutrons-ai/nr-analyzer"
-path = "analyzer_tools/analysis/run_fit.py"
-commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
-synced = "2026-08-05"
-adaptation = """
-Kept the hard-won bumps 1.0.x workaround -- never pass export= to
-bumps.fitters.fit, call export_fit yourself -- and the runpy problem-loading
-approach. Dropped the analyzer config singleton, the report/AuRE-export side
-effects, and the click coupling; the runner is a library function that returns
-a result object, and the CLI layer decides what to print.
-"""
-
-[[adapted]]
-dest = "src/nr_workbench/skills_install.py"
-repo = "mdoucet/ai-project-template"
-path = "scripts/install_skills.py"
-commit = "443246b6f1bbf266cd3acba9162416601d3c7495"
-synced = "2026-08-05"
-adaptation = """
-Same copytree-plus-dispatcher shape and the same dispatcher_markdown block
-scalar, but sourced from package data instead of the neutron-skills retriever,
-and routed through the idempotent scaffold engine so a locally edited skill is
-never clobbered.
-"""
+#
+# AuRE is the only genuine upstream dependency tracked here.
 
 [[adapted]]
 dest = "src/nr_workbench/skills/reflectometry/neutron-reflectometry/SKILL.md"
-repos = ["neutrons-ai/aure", "mdoucet/experiments-2025"]
-commits = [
-  "3021fee37294b938134d052e16dac4f9c282e97f",
-  "e6cc7cf363cedda9ce7438a10f43313e9814ae5d",
-]
-paths = [
-  "src/aure/skills/neutron-reflectometry/SKILL.md",
-  "docs/neutron-reflectometry.md",
-]
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/neutron-reflectometry/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
 synced = "2026-08-05"
 adaptation = """
-Merged both sources, narrowed to REF_L/BL-4B, restructured into the
-neutron-skills v2 anatomy, and split the long refinement guidance into
-references/refinement-strategy.md.
+Narrowed to REF_L/BL-4B and restructured into the neutron-skills v2 anatomy.
 
 Now that neutrons-ai/aure#20 has merged, aure ships its SKILL.md files in the
 wheel -- so the remaining pure-AuRE skills should be READ from the installed
 package rather than copied here. See docs/ground_truths.md.
-"""
-
-[[adapted]]
-dest = "src/nr_workbench/tnr/"
-repo = "mdoucet/experiments-2025"
-path = "tnr_chi2.py"
-commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
-synced = "2026-08-05"
-adaptation = """
-Split a 1992-line module with one ~60-option Click command into io / reference /
-metrics / plots / ascii / report. The numerics were extracted BY LINE RANGE so
-they moved byte-for-byte; tests/data/tnr_golden/ holds tables captured from the
-original tool and tests/test_tnr_characterization.py compares against them.
-
-Changed deliberately: click.echo -> tnr/notify.py so metrics/ has no CLI
-dependency; type_style/ordered_types -> tnr/intervals.py so metrics and plots
-can share them without matplotlib; figures always close (the tool never shows
-them interactively); and assessment.json is new.
-"""
-
-[[adapted]]
-dest = "src/nr_workbench/skills/reflectometry/tnr-*"
-repo = "mdoucet/experiments-2025"
-paths = [
-  "docs/notes.md",
-  "docs/tnr-amplitude.md",
-  "docs/tnr-variogram.md",
-  "docs/tnr-chi2.md",
-  "docs/tnr-pca.md",
-  "docs/tnr-kl.md",
-]
-commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
-synced = "2026-08-05"
-adaptation = """
-Restructured into the neutron-skills v2 anatomy and pointed at `nrw tnr`. The
-physics, formulas, worked numbers and interpretation rules are unchanged.
-tnr-pca and tnr-kl are merged: both answer the same follow-up question.
-"""
-
-[[adapted]]
-dest = "tests/data/reference/cu_thf_218386_full_sequence.py"
-repo = "mdoucet/experiments-2025"
-path = "jen-apr2025/models/Cu-THF-218386-full-sequence.py"
-commit = "e6cc7cf363cedda9ce7438a10f43313e9814ae5d"
-synced = "2026-08-05"
-adaptation = """
-The hand-written co-refinement the nrw-model/1 gate compares against: two
-three-segment OCV states plus fifteen tNR slices, 343 lines.
-
-Adapted rather than verbatim, in exactly two places, both noted in its banner:
-
-  1. The two data-directory constants point at the vendored fixture, so
-     tests/test_model_gate.py runs without experiments-2025.
-  2. dL is 0 rather than delta_wl_over_wl(wl) * q. BL-4B standardised on the
-     angular-only convention on 2026-08-05 and the moderator variant was
-     dimensionally wrong. Normalising BOTH sides keeps the gate a test of the
-     model structure rather than of a dropped convention.
-
-Excluded from ruff: reformatting it would obscure the diff against the
-original, which is what makes those two changes auditable.
-"""
-
-[[adapted]]
-dest = "src/nr_workbench/instrument/geometry.py"
-repo = "neutrons-ai/nr-analyzer"
-path = "analyzer_tools/analysis/theta_offset.py"
-commit = "b09e2e43eaae5a7a97ce24fbee22b389f801eea3"
-synced = "2026-08-06"
-adaptation = """
-Only the dated instrument-settings table is carried across, as a typed lookup
-returning millimetres rather than a bare dict of metres, plus `spans_a_change`
-for the co-refinement question the table exists to answer.
-
-The surrounding 600 lines -- NeXus event loading, peak fitting, gravity
-correction, theta-offset computation -- are deliberately NOT ported. They need
-raw event files this package never sees (`data/raw/` is gitignored), and
-upstream's own test mocks `compute_theta_offset` rather than exercising it, so
-vendoring them would mean shipping physics no test here could verify. Compute a
-theta offset with nr-analyzer and record the number.
 """

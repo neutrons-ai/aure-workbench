@@ -1,6 +1,6 @@
 """Do the automatic checks reproduce what a week of expert analysis found?
 
-`jen-apr2025/cu-thf-expt11` is a labelled test set that already exists: 17
+`apr2025/cu-thf-expt11` is a labelled test set that already exists: 17
 dated findings written by hand, 25 fits and 5.8 GB of matching artifacts, with
 the right answers recorded in the project's own `docs/ground_truths.md`. Each
 case below names a finding and asserts that the corresponding check fires on
@@ -28,9 +28,7 @@ from pathlib import Path
 
 import pytest
 
-CORPUS = (
-    Path.home() / "Dropbox-ORNL/Mathieu Doucet/experiments/jen-apr2025/cu-thf-expt11"
-)
+CORPUS = Path.home() / "Dropbox-ORNL/experiments/apr2025/cu-thf-expt11"
 
 pytestmark = pytest.mark.skipif(
     not (CORPUS / ".nrw" / "index.jsonl").is_file(),

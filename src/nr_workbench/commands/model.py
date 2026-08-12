@@ -90,7 +90,7 @@ def run_validate(
         click.echo("  ok" if report.ok else f"\n  {len(report.errors)} error(s)")
 
     if result_out:
-        from nr_workbench._vendor.result_manifest import write_manifest
+        from nr_workbench.provenance.result_manifest import write_manifest
 
         write_manifest(
             result_out,

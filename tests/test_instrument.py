@@ -179,7 +179,7 @@ def test_the_real_apr2025_template_parses() -> None:
     """
     real = (
         Path.home()
-        / "git/experiments-2025/jen-apr2025/data/steady"
+        / "git/experiments-2025/apr2025/data/steady"
         / "REF_L_218386_auto_template.xml"
     )
     if not real.is_file():

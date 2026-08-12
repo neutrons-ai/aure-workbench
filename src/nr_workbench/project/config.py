@@ -47,7 +47,7 @@ class ProjectConfig:
         contract_version: On-disk contract version this project was created with.
         facility: Facility name, e.g. ``"SNS"``.
         instrument: Instrument name. Only ``"REF_L"`` is supported at v1.
-        beamtime: Optional beamtime label, e.g. ``"jen-june2026"``.
+        beamtime: Optional beamtime label, e.g. ``"june2026"``.
         ipts: Optional IPTS proposal identifier.
         conventions: Filename and instrument conventions; see DEFAULT_CONVENTIONS.
         raw: The full parsed TOML document, for forward-compatible access.

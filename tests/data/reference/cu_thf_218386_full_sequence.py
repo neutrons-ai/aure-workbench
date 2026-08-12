@@ -1,13 +1,11 @@
-# VENDORED REFERENCE -- DO NOT EDIT except for the two changes noted here.
+# REFERENCE FIXTURE -- DO NOT EDIT except for the two changes noted here.
 #
-# experiments-2025/jen-apr2025/models/Cu-THF-218386-full-sequence.py, the
-# 343-line hand-written co-refinement that nrw-model/1 has to reproduce. Kept
-# here so tests/test_model_gate.py can compare against it without needing that
-# repository.
+# The 343-line hand-written co-refinement that nrw-model/1 has to reproduce,
+# kept here so tests/test_model_gate.py can compare against it directly.
 #
 # Two deliberate departures from the original:
 #
-#   1. The two data-directory constants point at the vendored fixture.
+#   1. The two data-directory constants point at this fixture's own data.
 #   2. `dL` is 0 rather than delta_wl_over_wl(wl) * q. BL-4B has standardised
 #      on the angular-only resolution convention, and the moderator variant was
 #      dimensionally wrong (multiplied by q, not wl). Normalising BOTH sides is

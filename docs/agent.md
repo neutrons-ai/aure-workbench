@@ -12,7 +12,7 @@ why this looks the way it does.
 ## What is and is not automated
 
 nr-workbench does not contain a decision policy, and that is deliberate. We
-measured. The reference experiment — `jen-apr2025/cu-thf-expt11`, one week of
+measured. The reference experiment — `apr2025/cu-thf-expt11`, one week of
 expert analysis, 25 fits, 17 findings written down as they happened — was
 replayed against every automatic check in this package. Of the 17 findings:
 

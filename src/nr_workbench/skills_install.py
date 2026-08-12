@@ -1,10 +1,9 @@
 """Install bundled skills into a project's ``skills/`` directory.
 
-Mirrors ``scripts/install_skills.py`` from ai-project-template: copy a skill's
-whole directory to ``skills/<domain>/<name>/`` and generate a thin dispatcher
-agent in *both* ``.claude/agents/`` and ``.github/agents/``.
+Copies a skill's whole directory to ``skills/<domain>/<name>/`` and generates
+a thin dispatcher agent in *both* ``.claude/agents/`` and ``.github/agents/``.
 
-Two conventions from that template are load-bearing and deliberately preserved:
+Two conventions are load-bearing and deliberately preserved:
 
 * **Skills live at the repo root, not under ``.claude/skills/``.** Copilot
   cannot read the latter, so a repo-root folder is the only tool-neutral home.

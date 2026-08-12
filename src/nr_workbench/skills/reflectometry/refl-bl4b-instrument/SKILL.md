@@ -14,14 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry]
   tags: [bl4b, refl, instrument, geometry, resolution, filenames, direct-beam, normalisation]
-  source:
-    repo: neutrons-ai/nr-analyzer
-    path: analyzer_tools/analysis/theta_offset.py
-    adaptation: >
-      The dated geometry table and the BL-4B NeXus motor paths are carried
-      across. The NeXus event processing and peak fitting are not: they need
-      raw event files this package never sees, and the upstream test mocks the
-      computation rather than exercising it.
 ---
 
 # REF_L (BL-4B) instrument conventions
@@ -211,8 +203,8 @@ entry/start_time                            for the geometry lookup above
 entry/bank1_events/event_time_offset        TOF, microseconds
 ```
 
-nr-workbench does not process raw events. Compute a theta offset with
-nr-analyzer and record the number.
+nr-workbench does not process raw events. Compute a theta offset separately
+and record the number.
 
 ## Rationalizations
 

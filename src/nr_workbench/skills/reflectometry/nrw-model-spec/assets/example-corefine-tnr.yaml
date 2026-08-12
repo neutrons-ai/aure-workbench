@@ -6,7 +6,7 @@ description: >
   Cu on Ti/Si in THF. Two OCV states either side of an EIS sequence,
   co-refined with the 15 tNR slices measured during it.
 
-  Reproduces experiments-2025/jen-apr2025/models/Cu-THF-218386-full-sequence.py.
+  Reproduces tests/data/reference/cu_thf_218386_full_sequence.py.
 
 materials:
   THF: {rho: 6.2}

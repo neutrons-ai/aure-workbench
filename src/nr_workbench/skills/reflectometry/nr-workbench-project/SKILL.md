@@ -68,6 +68,7 @@ resolved relative to it — never write an absolute path into a committed file.
 | Fit results | `samples/<id>/results/<fit_id>/` | Machine. **Immutable** except `NOTES.md`. |
 | What one fit was and showed | `samples/<id>/results/<fit_id>/NOTES.md` | **You.** `nrw note <fit>`. |
 | How the fits relate; reports | `samples/<id>/reports/*.md` | **You.** `nrw note --sample <id>`. |
+| Scripts producing a report's derived numbers and figures | `samples/<id>/reports/*.py` | **You.** Hand-written; part of the provenance package. See `analysis-provenance` §7. |
 | Skills | `skills/<domain>/<name>/` | Shared. Read by both Claude Code and Copilot. |
 
 ### 3. Respect the ownership boundary
@@ -139,5 +140,7 @@ Before considering a piece of work done:
 - [ ] Findings about the sample are in `samples/<id>/reports/`, citing the
       fit ids they are about. Only non-sample findings went to
       `docs/ground_truths.md`.
+- [ ] Every number in a report is either quoted from a fit record or produced by
+      a script committed beside it in `reports/` — see `analysis-provenance` §7.
 - [ ] `nrw ls` shows no fit with nothing written down.
 - [ ] `git status` shows no unexpected files outside the layout table above.

@@ -143,7 +143,7 @@ def test_theta_for_run_is_silent_when_there_is_no_such_run(tmp_path: Path) -> No
 @pytest.mark.integration
 def test_the_real_apr2025_headers_give_the_expected_angles() -> None:
     """The shipped parser against the actual instrument output."""
-    steady = Path.home() / "git/experiments-2025/jen-apr2025/data/steady"
+    steady = Path.home() / "git/experiments-2025/apr2025/data/steady"
     if not steady.is_dir():
         pytest.skip("experiments-2025 not checked out here")
 
@@ -245,7 +245,7 @@ def test_as_dict_carries_the_convention(tmp_path: Path) -> None:
 @pytest.mark.integration
 def test_the_real_files_state_fwhm() -> None:
     """Today's reduction. When this fails, the convention has changed."""
-    steady = Path.home() / "git/experiments-2025/jen-apr2025/data/steady"
+    steady = Path.home() / "git/experiments-2025/apr2025/data/steady"
     if not steady.is_dir():
         pytest.skip("experiments-2025 not checked out here")
 

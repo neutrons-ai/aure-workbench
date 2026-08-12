@@ -14,12 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, data-reduction]
   tags: [header, metadata, theta, angle, direct-beam, norm-run, provenance, parsing]
-  source:
-    repo: mdoucet/experiments-2025
-    path: jen-apr2025/data/steady/REFL_218386_1_218386_partial.txt
-    adaptation: >
-      Written from the actual header of the apr2025 reduced files. Every field
-      and value quoted here was read off disk, not from documentation.
 ---
 
 # Reading a reduced file's header

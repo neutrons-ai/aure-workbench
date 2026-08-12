@@ -187,13 +187,18 @@ and the second `mkdir` fails. `record.py::create_unique` appends `-2`, `-3`, …
 Because `mkdir` is atomic, the same loop is what makes concurrent fits safe:
 whichever process loses the race takes the next suffix.
 
-### 2026-08-05: `ruff format` will reformat vendored files unless excluded
+### 2026-08-05: `ruff format` will reformat vendored files unless excluded — SUPERSEDED 2026-08-12
 
 `_vendor/result_manifest.py` is a byte-identical copy of a contract shared
 across analyzer_tools, data-assembler and nr_isaac_format. A plain
 `ruff format src tests` reformatted it and broke that guarantee — caught by
 `tests/test_vendor.py` on its first real run. `extend-exclude` in
 `[tool.ruff]` now covers `src/nr_workbench/_vendor`.
+
+The `_vendor/` mechanism this describes is gone — see the 2026-08-12 entry
+below. The file now lives at `provenance/result_manifest.py`, is linted and
+formatted like any other module, and is no longer tracked as byte-identical
+to anything external.
 
 ### 2026-08-05: The tNR refactor is pinned by golden files, not by review
 
@@ -1257,7 +1262,7 @@ The guard is cheap and belongs on anything that emits code:
 
 ### 2026-08-10: the only prose that survived was the field that was mandatory
 
-Measured on the first real beamtime run through this tool (`jen-apr2025/
+Measured on the first real beamtime run through this tool (`apr2025/
 cu-thf-expt11`, 23 fits, 19 model variants, one sample):
 
 | surface | required? | used |
@@ -1845,3 +1850,25 @@ layer that also blocks the work is not a safety layer, it is an off switch.**
 The agent's first instinct on hitting it was to route around it, which is what
 any capable agent will do. Better to remove the layer that cannot distinguish
 `nrw fit run` from `nrw promote`, and keep the one that can.
+
+### 2026-08-12: `upstream.toml` only tracks genuine upstream now
+
+It previously carried entries for `neutrons-ai/nr-analyzer`,
+`mdoucet/experiments-2025` and `mdoucet/ai-project-template` alongside AuRE, as
+if all four were external dependencies being vendored in. They were not: those
+three are this project's own earlier prototypes, being folded into
+nr-workbench properly rather than tracked as if borrowed from elsewhere. AuRE
+is the only repo nr-workbench actually depends on and does not own.
+
+Removed the other three entries, along with the per-file "Adapted from ...,
+see upstream.toml" headers that pointed at them (`fitting/runner.py`,
+`instrument/geometry.py`, `skills_install.py`, `tnr/__init__.py`, several
+`SKILL.md` `source:` blocks) and the matching test infrastructure
+(`tests/test_vendor.py`). `_vendor/result_manifest.py` moved to
+`provenance/result_manifest.py` — it was only in `_vendor/` because of the
+nr-analyzer tracking entry, and the schema it implements is nr-workbench's own
+code now, not a byte-identical copy of something external.
+
+Public-repo motivation: this package is being published alongside a paper, and
+these were internal prototype cross-references the wider audience has no
+reason to see and the team had not deliberately signed off on publicizing.

@@ -95,7 +95,7 @@ def test_overview_of_an_empty_project_lists_the_sample(project: Path) -> None:
     overview = ProjectData(project).overview()
 
     assert overview["name"] == "test-project"
-    assert overview["beamtime"] == "jen-june2026"
+    assert overview["beamtime"] == "june2026"
     assert overview["n_fits"] == 0
     assert [card["id"] for card in overview["samples"]] == ["Sample1"]
     assert overview["samples"][0]["n_steady"] == 0

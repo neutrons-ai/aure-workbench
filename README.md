@@ -49,7 +49,7 @@ pre-commit install
 
 ```bash
 mkdir my-beamtime && cd my-beamtime
-nrw init --beamtime jen-june2026 --ipts IPTS-34567
+nrw init --beamtime june2026 --ipts IPTS-34567
 nrw doctor
 nrw sample new Sample4 --title "ionomer on copper"
 ```

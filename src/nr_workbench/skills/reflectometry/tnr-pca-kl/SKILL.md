@@ -14,12 +14,6 @@ metadata:
   instruments: [REF_L, BL-4B]
   techniques: [reflectometry, time-resolved]
   tags: [tnr, pca, kl-divergence, multi-template, time-resolved]
-  source:
-    repo: mdoucet/experiments-2025
-    paths: [docs/tnr-pca.md, docs/tnr-kl.md]
-    adaptation: >
-      Merged: both answer the same follow-up question, and neither is a first
-      step. Restructured into the v2 anatomy.
 ---
 
 # tNR PCA and KL Divergence

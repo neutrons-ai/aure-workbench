@@ -58,7 +58,7 @@ def main() -> None:
     default=None,
     help="Project name [default: directory name].",
 )
-@click.option("--beamtime", default=None, help="Beamtime label, e.g. 'jen-june2026'.")
+@click.option("--beamtime", default=None, help="Beamtime label, e.g. 'june2026'.")
 @click.option("--ipts", default=None, help="IPTS proposal number, e.g. 'IPTS-34567'.")
 @click.option(
     "--sample",

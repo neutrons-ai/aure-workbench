@@ -96,7 +96,7 @@ def test_init_renders_config_with_the_given_identity(project: Path) -> None:
 
     assert config["project"]["name"] == "test-project"
     assert config["project"]["instrument"] == "REF_L"
-    assert config["beamtime"]["label"] == "jen-june2026"
+    assert config["beamtime"]["label"] == "june2026"
     assert config["conventions"]["dq_convention"] == "FWHM"
 
 

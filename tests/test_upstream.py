@@ -47,7 +47,7 @@ def test_the_repos_own_manifest_is_clean() -> None:
     report = sync_upstream.check(remote=False)
 
     assert report.ok, [f.as_dict() for f in report.findings]
-    assert report.checked >= 8
+    assert report.checked == 1
 
 
 def test_every_manifest_entry_names_a_commit() -> None:

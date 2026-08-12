@@ -17,7 +17,7 @@ def context() -> RenderContext:
     """A render context with a fixed timestamp."""
     return RenderContext(
         project_name="test-project",
-        beamtime="jen-june2026",
+        beamtime="june2026",
         ipts="IPTS-00001",
         created=FIXED_CREATED,
     )

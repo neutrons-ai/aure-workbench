@@ -1,6 +1,6 @@
 """Comparing what the files record against what sample.md claims.
 
-The cases here are the real ones. `jen-apr2025/cu-thf-expt11` lost most of a
+The cases here are the real ones. `apr2025/cu-thf-expt11` lost most of a
 week to two errors that were sitting in the file headers before the first fit
 ran, and both are reproduced below from that project's own record.
 

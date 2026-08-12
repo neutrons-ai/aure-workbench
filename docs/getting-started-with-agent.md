@@ -62,7 +62,7 @@ worth doing in between.
 ### 1. Make the project
 
 ```bash
-nrw init cu-thf --beamtime jen-apr2025 --ipts IPTS-34347
+nrw init cu-thf --beamtime apr2025 --ipts IPTS-34347
 cd cu-thf
 nrw sample new Cu1 --title "Cu film in dTHF"
 ```
