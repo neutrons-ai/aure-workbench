@@ -1881,3 +1881,32 @@ code now, not a byte-identical copy of something external.
 Public-repo motivation: this package is being published alongside a paper, and
 these were internal prototype cross-references the wider audience has no
 reason to see and the team had not deliberately signed off on publicizing.
+
+### 2026-08-12: `nrw init` could scaffold a project inside another project
+
+Nothing checked whether `path` (default `.`) was already inside an existing
+project. `cd` into a sample's data directory out of habit and run `nrw init`
+there, and it would succeed: a second `nrw.toml`, a second `.nrw/`, a second
+`samples/` tree, nested inside the first, with no code anywhere that
+reconciles them. `nrw sample new` was never at risk — it resolves its target
+through `ProjectLayout.discover()`, which walks *up* from the cwd looking for
+`nrw.toml`, so it always lands on the enclosing project regardless of which
+subdirectory it is run from.
+
+Fixed in `commands/init_cmd.py::run_init`: before scaffolding, if `path` has
+no `nrw.toml` of its own (a plain re-init in place is unaffected), walk up
+from its parent and refuse if an ancestor already has one. `--nested` is the
+escape hatch, guarded the same way `--force` is — both the `PreToolUse` hook
+(`agent/guard.py`) and `nrw` itself under `NRW_AGENT=1` — because it is the
+same shape: a flag whose only job is to override a check that said no.
+
+**`click.testing.CliRunner` never touches `sys.argv`.** The group callback in
+`cli.py` that gates `--force` and `--nested` under `NRW_AGENT` reads
+`sys.argv[1:]` directly, which is correct for a real `nrw` process but
+invisible to `CliRunner.invoke(main, [...])` — the args list it takes goes
+straight to Click's parser, never through `sys.argv`. An end-to-end test of
+that gate has to `monkeypatch.setattr(sys, "argv", [...])` itself; without
+that it silently passes for the wrong reason, exit code 0, no exception,
+looking exactly like a working refusal. This is why the pre-existing `--force`
+gate had no end-to-end test at all — only the unit-level `guard.judge`/
+`guard.refuse_if_agent` calls were covered.

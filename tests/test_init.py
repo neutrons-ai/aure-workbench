@@ -264,6 +264,74 @@ def test_init_on_a_non_empty_directory_preserves_existing_files(tmp_path: Path) 
     assert (target / "nrw.toml").is_file()
 
 
+def test_init_refuses_to_nest_inside_an_existing_project(tmp_path: Path) -> None:
+    """`cd` into a sample's data directory out of habit and run `init` there,
+    and it must not quietly grow a second project underneath the first."""
+    runner = CliRunner()
+    outer = tmp_path / "proj"
+    runner.invoke(main, ["init", str(outer)])
+    inner = outer / "samples" / "S1" / "data" / "steady"
+    inner.mkdir(parents=True)
+
+    result = runner.invoke(main, ["init", str(inner)])
+
+    assert result.exit_code != 0
+    assert str(outer) in result.output
+    assert "nrw sample new" in result.output
+    assert "--nested" in result.output
+    assert not (inner / "nrw.toml").is_file()
+
+
+def test_init_nested_flag_overrides_the_refusal(tmp_path: Path) -> None:
+    """The escape hatch exists for the rare case it really is intentional."""
+    runner = CliRunner()
+    outer = tmp_path / "proj"
+    runner.invoke(main, ["init", str(outer)])
+    inner = outer / "samples" / "S1"
+    inner.mkdir(parents=True)
+
+    result = runner.invoke(main, ["init", str(inner), "--nested"])
+
+    assert result.exit_code == 0, result.output
+    assert (inner / "nrw.toml").is_file()
+
+
+def test_init_in_place_upgrade_is_not_refused_as_nested(tmp_path: Path) -> None:
+    """A project re-initializing itself must never trip the nested guard --
+    only an ancestor's `nrw.toml` should, not the project's own."""
+    runner = CliRunner()
+    target = tmp_path / "proj"
+    runner.invoke(main, ["init", str(target)])
+
+    result = runner.invoke(main, ["init", str(target)])
+
+    assert result.exit_code == 0, result.output
+    assert "nested" not in result.output.lower()
+
+
+def test_sample_new_from_inside_a_sample_anchors_at_the_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`sample new` walks up to find `nrw.toml`, so running it from deep
+    inside another sample's directory must still create the new sample under
+    the one project root -- never nested under wherever the cwd happened to
+    be."""
+    runner = CliRunner()
+    target = tmp_path / "proj"
+    runner.invoke(main, ["init", str(target)])
+    monkeypatch.chdir(target)
+    runner.invoke(main, ["sample", "new", "S1"], catch_exceptions=False)
+    cwd = target / "samples" / "S1" / "data" / "steady"
+    cwd.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(cwd)
+
+    result = runner.invoke(main, ["sample", "new", "S2"])
+
+    assert result.exit_code == 0, result.output
+    assert (target / "samples" / "S2" / "sample.md").is_file()
+    assert not (cwd / "samples").exists()
+
+
 def test_sample_new_creates_the_sample(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

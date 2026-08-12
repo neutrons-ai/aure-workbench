@@ -2,15 +2,18 @@
 
 Two things an agent may not do without a person: publish a result as the answer
 (``nrw promote``), and send it outside the project (``nrw isaac export
---upload``). A third is subtler and matters more --- ``--force``. Every forcing
-flag in this codebase exists because some check said no, and each one either
-records that it was forced or backs up what it displaced. An agent reaching for
-one has hit exactly the situation a human is supposed to see.
+--upload``). A third is subtler and matters more --- any flag whose whole job
+is to override a check that said no: ``--force`` everywhere it appears, and
+``nrw init --nested``, which would otherwise let a project be scaffolded
+inside another one with nothing to reconcile the two. Every one of these
+exists because some check said no, and each either records that it was forced
+or backs up what it displaced. An agent reaching for one has hit exactly the
+situation a human is supposed to see.
 
 This runs as a Claude Code ``PreToolUse`` hook, so the refusal happens before
 the command executes and does not depend on the model agreeing. ``nrw`` itself
-refuses the same three under ``NRW_AGENT=1``, which is a second mechanism
-rather than a belt-and-braces flourish: a hook can be misconfigured and an
+refuses the same set under ``NRW_AGENT=1``, which is a second mechanism rather
+than a belt-and-braces flourish: a hook can be misconfigured and an
 environment variable can be unset, but both failing silently at once is a
 different order of accident.
 
@@ -56,6 +59,14 @@ _REASONS = {
         "somebody else wrote. Reaching for one is exactly the situation a "
         "person is meant to see. Record what was refused and why you think it "
         "should be overridden in ESCALATIONS.md."
+    ),
+    "nested": (
+        "`nrw init --nested` was refused because an ancestor directory is "
+        "already a project -- this would create a second nrw.toml, a second "
+        ".nrw/, a second samples/ tree, nested inside the first and "
+        "reconciled with nothing. If a sample is what you need, `nrw sample "
+        "new <ID>` adds one to the existing project. If a nested project is "
+        "genuinely correct here, say so in ESCALATIONS.md and stop."
     ),
 }
 
@@ -172,6 +183,7 @@ def _judge_text(piece: str) -> Verdict:
         (r"(?<![\w-])promote(?![\w-])", "promote"),
         (r"--upload(?![\w-])", "upload"),
         (r"--force(?![\w-])", "force"),
+        (r"--nested(?![\w-])", "nested"),
     ):
         if re.search(pattern, piece):
             return Verdict(allowed=False, rule=rule, reason=_REASONS[rule])
@@ -210,6 +222,9 @@ def _judge_one(tokens: list[str]) -> Verdict:
 
     if "--force" in flags:
         return Verdict(allowed=False, rule="force", reason=_REASONS["force"])
+
+    if "init" in subcommands and "--nested" in flags:
+        return Verdict(allowed=False, rule="nested", reason=_REASONS["nested"])
 
     return Verdict(allowed=True)
 
@@ -321,7 +336,7 @@ def refuse_if_agent(action: str) -> None:
     configured is still protected and a hook that was bypassed still is.
 
     Args:
-        action: ``promote``, ``upload`` or ``force``.
+        action: ``promote``, ``upload``, ``force`` or ``nested``.
 
     Raises:
         click.ClickException: When ``NRW_AGENT`` is set.

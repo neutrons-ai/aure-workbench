@@ -37,6 +37,7 @@ from nr_workbench.agent import guard, session
         ("nrw pack abc123 --force", "force"),
         ("nrw init --force", "force"),
         ("nrw model generate spec.yaml --force", "force"),
+        ("nrw init samples/S1/data/steady --nested", "nested"),
         # Chained: judging only the first command would wave the second past.
         ("nrw ls && nrw promote abc --reason x", "promote"),
         ("nrw check ; nrw isaac export a --upload", "upload"),
@@ -249,8 +250,47 @@ def test_force_refuses_under_nrw_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "ESCALATIONS.md" in str(caught.value)
 
 
+def test_nested_refuses_under_nrw_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--nested` is the same shape as `--force`: it overrides a check that
+    said no, so an unattended run may not reach for it either."""
+    import click
+
+    monkeypatch.setenv(guard.AGENT_ENV, "1")
+
+    with pytest.raises(click.ClickException) as caught:
+        guard.refuse_if_agent("nested")
+
+    assert "--nested" in str(caught.value)
+    assert "ESCALATIONS.md" in str(caught.value)
+
+
+def test_init_nested_refuses_end_to_end_under_nrw_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The group-level check reads `sys.argv` -- true for a real `nrw`
+    invocation, not for `CliRunner`'s, which never touches it -- so this sets
+    it explicitly to prove the wiring, not just `guard.judge` in isolation."""
+    import sys
+
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    outer = tmp_path / "proj"
+    CliRunner().invoke(main, ["init", str(outer)])
+    inner = outer / "samples" / "S1"
+    inner.mkdir(parents=True)
+    monkeypatch.setenv(guard.AGENT_ENV, "1")
+    monkeypatch.setattr(sys, "argv", ["nrw", "init", str(inner), "--nested"])
+
+    result = CliRunner().invoke(main, ["init", str(inner), "--nested"])
+
+    assert result.exit_code != 0
+    assert not (inner / "nrw.toml").is_file()
+
+
 def test_every_refusal_names_a_different_remedy() -> None:
-    """Three rules, three reasons. A shared default would send the agent to
+    """Four rules, four reasons. A shared default would send the agent to
     the wrong remedy, which is worse than no message."""
     reasons = {
         rule: guard.judge(cmd).reason
@@ -258,10 +298,11 @@ def test_every_refusal_names_a_different_remedy() -> None:
             ("promote", "nrw promote abc"),
             ("upload", "nrw isaac export abc --upload"),
             ("force", "nrw pack abc --force"),
+            ("nested", "nrw init --nested"),
         )
     }
 
-    assert len(set(reasons.values())) == 3, reasons
+    assert len(set(reasons.values())) == 4, reasons
 
 
 def test_the_force_refusal_reaches_the_cli(tmp_path: Path) -> None:

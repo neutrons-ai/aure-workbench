@@ -44,6 +44,13 @@ def main() -> None:
 
         refuse_if_agent("force")
 
+    if os.environ.get("NRW_AGENT") and any(
+        arg == "--nested" or arg.startswith("--nested=") for arg in sys.argv[1:]
+    ):
+        from nr_workbench.agent.guard import refuse_if_agent
+
+        refuse_if_agent("nested")
+
 
 @main.command("init")
 @click.argument(
@@ -80,6 +87,11 @@ def main() -> None:
     help="Overwrite user-edited files (backed up under .nrw/backups/).",
 )
 @click.option("--no-skills", is_flag=True, help="Skip installing the bundled skills.")
+@click.option(
+    "--nested",
+    is_flag=True,
+    help="Scaffold here even if an ancestor directory is already a project.",
+)
 def init_command(**kwargs: object) -> None:
     """Scaffold (or upgrade) a workbench project at PATH."""
     from nr_workbench.commands.init_cmd import run_init

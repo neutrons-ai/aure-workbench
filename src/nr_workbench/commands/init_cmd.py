@@ -113,6 +113,7 @@ def run_init(
     show_diff: bool = False,
     force: bool = False,
     no_skills: bool = False,
+    nested: bool = False,
 ) -> None:
     """Scaffold or upgrade a project, then report what changed.
 
@@ -127,12 +128,18 @@ def run_init(
         show_diff: Print unified diffs instead of a summary table.
         force: Overwrite user-edited files, backing them up first.
         no_skills: Skip installing the bundled skills.
+        nested: Scaffold here even if an ancestor is already a project.
 
     Raises:
+        click.ClickException: If this would nest one project inside another
+            and ``nested`` was not passed.
         SystemExit: With code 1 on a scaffold error, or 2 when ``check`` finds
             pending changes.
     """
     root = Path(path).resolve()
+    if not (root / "nrw.toml").is_file():
+        _refuse_if_nested(root, allow=nested)
+
     context = _build_context(
         root,
         project_name=project_name,
@@ -166,6 +173,47 @@ def run_init(
 
     if check and report.changed:
         sys.exit(2)
+
+
+def _refuse_if_nested(root: Path, *, allow: bool) -> None:
+    """Refuse to scaffold a project inside another project's tree.
+
+    ``root`` has no ``nrw.toml`` of its own -- callers check that first, since
+    re-running ``init`` in place on an existing project is the supported
+    upgrade path, not the case this guards against. What this catches is the
+    other way in: `cd` into a sample's data directory out of habit (or a
+    session composing a path wrong) and run `nrw init` there. Nothing here
+    would stop it from succeeding -- it would just produce a second
+    ``nrw.toml``, a second ``.nrw/`` state directory and a second ``samples/``
+    tree, nested inside the first, with no code anywhere that reconciles them.
+
+    Args:
+        root: The directory about to be scaffolded.
+        allow: Skip the refusal. There is almost never a reason to.
+
+    Raises:
+        click.ClickException: If an ancestor of ``root`` is already a
+            project and ``allow`` is False.
+    """
+    if allow:
+        return
+
+    from nr_workbench.project.layout import ProjectNotFoundError, find_project_root
+
+    try:
+        existing = find_project_root(root.parent)
+    except ProjectNotFoundError:
+        return
+
+    raise click.ClickException(
+        f"{root} is inside an existing project at {existing}.\n"
+        "Scaffolding here would nest one project inside another: a second "
+        "nrw.toml, a second .nrw/, a second samples/ tree, none of it "
+        "reconciled with the first.\n"
+        "If you meant to add a sample to the existing project, use "
+        "`nrw sample new <ID>` instead.\n"
+        "If you really want a project here, pass --nested."
+    )
 
 
 def _build_context(
