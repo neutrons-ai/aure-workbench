@@ -8,6 +8,22 @@ shared AI-assisted workflow below.
 
 ## Read this first
 
+**If this project already has fits in it, start with one command:**
+
+```bash
+nrw handoff <sample>
+```
+
+It prints the whole state of play — the escalations a previous session left,
+how that session ended, the integrity check, what has been fitted, who is
+reading, and what to read in what order. It exists because rebuilding that
+picture by hand has been measured at 28 tool calls, and everything in it is
+derivable. `skills/reflectometry/analyst-handoff/SKILL.md` is the standard for
+what to do with it.
+
+If `nrw` is not found, the handoff tells you how to invoke it here. **Do not go
+looking for the binary** — that search has cost ten tool calls before now.
+
 `skills/reflectometry/nr-workbench-project/SKILL.md` is the map of this project:
 where files belong, which command does what, and the provenance rules. Read it
 before creating a file or running a fit.
@@ -74,7 +90,10 @@ worth more than the fit and is the first thing forgotten.
 
 | Task | Command |
 |---|---|
+| **Take over an analysis in progress** | `nrw handoff <ID>` |
 | Check the environment | `nrw doctor` |
+| Make bare `nrw` work in assistant sessions | `nrw doctor --fix-path` |
+| Say who is reading, so reports are pitched right | `nrw audience --ask` |
 | Add a sample | `nrw sample new <ID>` |
 | See what data is actually on disk | `nrw sample scan <ID>` |
 | Browse everything in a browser | `nrw serve` |

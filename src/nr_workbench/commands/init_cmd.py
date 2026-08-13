@@ -26,6 +26,7 @@ from nr_workbench.skills_install import discover_skills, plan_skill_files
 #: them matters depends on the sample.
 SEED_SKILLS = (
     "nr-workbench-project",
+    "analyst-handoff",
     "analysis-provenance",
     "neutron-reflectometry",
     "refl-bl4b-instrument",
@@ -171,8 +172,45 @@ def run_init(
 
     _report(report, root, check=check)
 
+    if not check:
+        _install_toolpath(root)
+
     if check and report.changed:
         sys.exit(2)
+
+
+def _install_toolpath(root: Path) -> None:
+    """Record where ``nrw`` lives on this machine, and say so when it matters.
+
+    Outside the scaffold engine on purpose: the content is machine-specific, so
+    a lock entry for it would report a pending upgrade on every other machine,
+    and `nrw init --check` in CI would never be clean.
+
+    Args:
+        root: Project root, already scaffolded.
+    """
+    from nr_workbench.project import toolpath
+
+    report = toolpath.install(root)
+    if report.executable is None:
+        return
+    if report.settings_note:
+        click.secho(f"  ! {report.settings_note}", fg="yellow")
+
+    if toolpath.resolvable_in_fresh_shell():
+        return
+
+    # The failure this catches is specific and was expensive: an interactive
+    # assistant session started from an editor inherits none of the environment
+    # that put `nrw` on PATH, and spends its first several turns looking for it.
+    click.echo()
+    click.secho("  ! `nrw` is not on the PATH of a freshly started shell.", fg="yellow")
+    click.echo(
+        "    An assistant session started from your editor will not find it.\n"
+        f"    Written for them: {toolpath.SHIM_RELPATH} and "
+        f"${toolpath.NRW_BIN_ENV} in {toolpath.LOCAL_SETTINGS}.\n"
+        "    To make bare `nrw` work in those sessions too: `nrw doctor --fix-path`."
+    )
 
 
 def _refuse_if_nested(root: Path, *, allow: bool) -> None:

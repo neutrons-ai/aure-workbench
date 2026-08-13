@@ -133,6 +133,26 @@ def _print_whence(result: Any) -> None:
         )
         return
 
+    if result.resolution is Resolution.REPORT_FIGURE:
+        # Not a fit's artifact: a figure assembled from several. Printing the
+        # single-fit table here would fill it with `None` and imply a fit
+        # record that does not exist.
+        click.echo(f"{result.query}")
+        click.echo(f"  -> a report figure, built from {len(result.consumed_by)} fit(s)")
+        if result.note:
+            click.echo(f"     ({result.note})")
+        click.echo()
+        for entry in result.consumed_by:
+            click.echo(f"    {entry['fit_id']}")
+        if result.freshness is Freshness.STALE:
+            click.echo()
+            click.secho(
+                "  ! This file has changed since the script last ran. Re-run "
+                "`nrw report-figure`\n    so the record matches what is on disk.",
+                fg="yellow",
+            )
+        return
+
     manifest = result.manifest or {}
     provenance = manifest.get("provenance", {})
     info = manifest.get("info", {})
@@ -428,18 +448,24 @@ def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) ->
         click.echo(f"  supersedes {previous['fit_id']} (kept in the index)")
 
 
-def run_check(*, as_json: bool = False) -> None:
-    """Verify project integrity: stale results, missing inputs, broken pointers.
+def collect_problems(
+    layout: ProjectLayout, index: FitIndex
+) -> tuple[int, list[dict[str, str]]]:
+    """Run every integrity check and return what they found.
+
+    Separated from :func:`run_check` so that other commands can report project
+    state without shelling out to `nrw check` and parsing its output, and
+    without a second copy of the checks that would drift from this one.
+    ``nrw handoff`` is the caller that matters: an assistant taking over needs
+    to know about a stale input *before* it builds on the fit that has one.
 
     Args:
-        as_json: Emit machine-readable JSON.
+        layout: The project layout.
+        index: The fit index.
 
-    Raises:
-        click.ClickException: If there is no project here.
-        SystemExit: With code 1 when any problem is found.
+    Returns:
+        ``(fits_checked, problems)``.
     """
-    layout = _layout()
-    index = FitIndex(layout.index_file)
     problems: list[dict[str, str]] = []
     checked = 0
 
@@ -514,6 +540,60 @@ def run_check(*, as_json: bool = False) -> None:
     problems.extend(check_contradictions(layout))
     problems.extend(check_generated_scripts(layout))
     problems.extend(check_reported_finality(layout, index))
+    problems.extend(check_report_tiers(layout))
+    return (checked, problems)
+
+
+def check_report_tiers(layout: ProjectLayout) -> list[dict[str, str]]:
+    """Report tiers that are missing or disagree with each other.
+
+    Here rather than only behind `nrw report --check` because "all three tiers
+    are always written" is otherwise a suggestion. The failure it catches is
+    silent by construction: three documents that each read perfectly well and
+    give different answers.
+
+    Args:
+        layout: The project layout.
+
+    Returns:
+        Problems in the shape `nrw check` reports.
+    """
+    from nr_workbench.commands.report import check_tiers
+
+    problems: list[dict[str, str]] = []
+    for sample in layout.list_samples():
+        try:
+            found = check_tiers(layout, sample)
+        except Exception as exc:  # noqa: BLE001 - one bad report must not stop the check
+            problems.append(
+                {
+                    "fit_id": sample,
+                    "kind": "report-tiers",
+                    "detail": f"could not be checked: {exc}",
+                }
+            )
+            continue
+        problems.extend(
+            {"fit_id": sample, "kind": "report-tiers", "detail": " ".join(p.split())}
+            for p in found
+        )
+    return problems
+
+
+def run_check(*, as_json: bool = False) -> None:
+    """Verify project integrity: stale results, missing inputs, broken pointers.
+
+    Args:
+        as_json: Emit machine-readable JSON.
+
+    Raises:
+        click.ClickException: If there is no project here.
+        SystemExit: With code 1 when any problem is found.
+    """
+    layout = _layout()
+    index = FitIndex(layout.index_file)
+    checked, problems = collect_problems(layout, index)
+
     if as_json:
         click.echo(json.dumps({"checked": checked, "problems": problems}, indent=2))
     else:

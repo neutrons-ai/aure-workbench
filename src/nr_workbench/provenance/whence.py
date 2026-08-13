@@ -8,7 +8,9 @@ order, cheapest and most certain first:
    time, which survives the file being copied out of the project entirely.
 3. **A recorded input** -- if the path is a data file, report every fit that
    consumed it. ("This file changed. What do I need to redo?")
-4. **Content match** -- hash it and look for a fit that produced identical
+4. **A report figure** -- a plot or table built from several fits by a script
+   under ``reports/``, which belongs to all of them and to no single one.
+5. **Content match** -- hash it and look for a fit that produced identical
    bytes, which catches a figure that was copied and renamed.
 """
 
@@ -31,6 +33,7 @@ class Resolution(StrEnum):
     FIT_DIRECTORY = "fit-directory"
     STAMP = "stamp"
     RECORDED_INPUT = "recorded-input"
+    REPORT_FIGURE = "report-figure"
     CONTENT_MATCH = "content-match"
     UNKNOWN = "unknown"
 
@@ -231,6 +234,29 @@ def whence(path: Path, root: Path, index: FitIndex) -> WhenceResult:
             note=f"{len(consumers)} fit(s) used this file as an input.",
         )
 
+    figure = _report_figure_for(query, root)
+    if figure is not None:
+        fits = [str(f) for f in figure.get("fits", [])]
+        stale = _figure_is_stale(query, root, figure)
+        note = (
+            f"Built by {figure.get('script')} from {len(fits)} fit(s): "
+            f"{', '.join(fits) or 'none named'}."
+        )
+        if stale:
+            note += (
+                " The file has changed since that script last ran, so it is no "
+                "longer the output recorded here -- re-run `nrw report figure`."
+            )
+        return WhenceResult(
+            query=query,
+            resolution=Resolution.REPORT_FIGURE,
+            # A figure drawn from four fits belongs to all four; naming one as
+            # `fit_id` would be a citation the script never made.
+            consumed_by=[{"fit_id": fit} for fit in fits],
+            freshness=Freshness.STALE if stale else Freshness.FRESH,
+            note=note,
+        )
+
     if query.is_file():
         match = _fit_producing_identical_bytes(query, root, index)
         if match is not None:
@@ -246,6 +272,59 @@ def whence(path: Path, root: Path, index: FitIndex) -> WhenceResult:
                 return result
 
     return WhenceResult(query=query, resolution=Resolution.UNKNOWN)
+
+
+def _report_figure_for(path: Path, root: Path) -> dict[str, Any] | None:
+    """The report-figure manifest claiming this path, if any.
+
+    Scans the manifests in the enclosing ``reports/`` directory rather than a
+    project-wide index: figure manifests live beside the scripts that wrote
+    them, so a report directory carries its own provenance and survives being
+    copied out with the sample.
+    """
+    import json
+
+    from nr_workbench.commands.report import FIGURE_MANIFEST_SUFFIX
+
+    try:
+        resolved = path.resolve()
+        relative = resolved.relative_to(Path(root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+
+    for parent in resolved.parents:
+        if parent.name != "reports":
+            continue
+        for manifest_path in sorted(parent.glob(f"*{FIGURE_MANIFEST_SUFFIX}")):
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            outputs = manifest.get("outputs")
+            if not isinstance(outputs, list):
+                continue
+            for output in outputs:
+                if isinstance(output, dict) and output.get("path") == relative:
+                    return manifest
+        break
+    return None
+
+
+def _figure_is_stale(path: Path, root: Path, manifest: dict[str, Any]) -> bool:
+    """Whether a figure differs from the bytes its script last produced."""
+    del root
+    try:
+        current = sha256_file(path)
+    except OSError:
+        return True
+    for output in manifest.get("outputs", []):
+        if (
+            isinstance(output, dict)
+            and output.get("sha256")
+            and path.name.endswith(Path(str(output.get("path"))).name)
+        ):
+            return str(output["sha256"]) != current
+    return False
 
 
 def _from_fit_dir(

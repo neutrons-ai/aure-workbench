@@ -416,8 +416,20 @@ def fit_note(root: Path, fit_dir: Path, fit_id: str, sample: str | None) -> Note
     return read_note(path, root, scope="fit", sample=sample, fit_id=fit_id)
 
 
+#: Filename suffixes of the summary tiers of a report. The three tiers are one
+#: analysis, so a fit cited by all of them has one report about it, not three.
+_SUMMARY_TIERS = ("-si.md", "-plain.md")
+
+
 def notes_about(notes: list[Note], fit_id: str) -> list[Note]:
     """Filter to the notes that mention a fit.
+
+    A report is written at three altitudes and all three cite the same fits, so
+    a summary tier is dropped when its full record is also present -- listing
+    one analysis three times on a fit page reads as three independent pieces of
+    evidence. A summary citing a fit that its technical tier does not is kept:
+    that is a real inconsistency, and hiding it here would be the wrong repair
+    (`nrw report --check` reports it as one).
 
     Args:
         notes: Notes to search.
@@ -428,4 +440,20 @@ def notes_about(notes: list[Note], fit_id: str) -> list[Note]:
         mentions its own fit and would otherwise appear as evidence of
         thinking that did not happen.
     """
-    return [n for n in notes if fit_id in n.fits and not n.blank]
+    matched = [n for n in notes if fit_id in n.fits and not n.blank]
+    stems = {
+        Path(n.path).name[: -len("-technical.md")]
+        for n in matched
+        if Path(n.path).name.endswith("-technical.md")
+    }
+    if not stems:
+        return matched
+
+    kept = []
+    for note in matched:
+        name = Path(note.path).name
+        suffix = next((s for s in _SUMMARY_TIERS if name.endswith(s)), None)
+        if suffix and name[: -len(suffix)] in stems:
+            continue
+        kept.append(note)
+    return kept

@@ -101,11 +101,71 @@ def init_command(**kwargs: object) -> None:
 
 @main.command("doctor")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def doctor_command(as_json: bool) -> None:
+@click.option(
+    "--fix-path",
+    is_flag=True,
+    help="Make bare `nrw` work in assistant sessions here (shows the change first).",
+)
+@click.option("--yes", is_flag=True, help="Skip the --fix-path confirmation.")
+def doctor_command(as_json: bool, fix_path: bool, yes: bool) -> None:
     """Check the environment: versions, optional extras, project integrity."""
     from nr_workbench.commands.doctor import run_doctor
 
+    if fix_path:
+        from nr_workbench.commands.doctor import run_fix_path
+
+        run_fix_path(yes=yes)
+        return
+
     run_doctor(as_json=as_json)
+
+
+@main.command("handoff")
+@click.argument("sample", required=False)
+@click.option("--root", default=None, help="Project root; discovered if omitted.")
+@click.option("--brief", is_flag=True, help="Drop the escalations and the digest.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def handoff_command(
+    sample: str | None, root: str | None, brief: bool, as_json: bool
+) -> None:
+    """Everything a session taking over needs, in one command.
+
+    Run this first when picking up from `nrw agent run`, rather than
+    rediscovering the project by hand.
+    """
+    from nr_workbench.commands.handoff import run_handoff
+
+    run_handoff(sample=sample, root=root, brief=brief, as_json=as_json)
+
+
+@main.command("audience")
+@click.option(
+    "--set",
+    "assignments",
+    multiple=True,
+    metavar="AXIS=VALUE",
+    help="Set one axis, e.g. --set statistics=expert. Repeatable.",
+)
+@click.option("--ask", is_flag=True, help="Walk through the axes interactively.")
+@click.option("--notes", default=None, help="Free text the axes cannot express.")
+@click.option(
+    "--guidance",
+    "show_guidance",
+    is_flag=True,
+    help="Also print the instructions these settings imply.",
+)
+def audience_command(
+    assignments: tuple[str, ...], ask: bool, notes: str | None, show_guidance: bool
+) -> None:
+    """Show or set who this project's output is written for."""
+    from nr_workbench.commands.audience import run_audience
+
+    run_audience(
+        assignments=assignments,
+        ask=ask,
+        notes=notes,
+        show_guidance=show_guidance,
+    )
 
 
 @main.group("sample")
@@ -957,8 +1017,34 @@ def note_command(
 
 
 @main.command("report")
-@click.argument("sample")
-@click.option("--title", default=None, help="Report title. Defaults to the sample's.")
+@click.argument("sample", required=False)
+@click.option(
+    "--topic",
+    default=None,
+    help="Slug for a report on a separate question, so new work needs no overwrite.",
+)
+@click.option(
+    "--tier",
+    default=None,
+    help="Write only one tier: technical, si, or plain. All three by default.",
+)
+@click.option(
+    "--concept",
+    multiple=True,
+    help="Explain an extra concept in the plain tier, by slug. Repeatable.",
+)
+@click.option(
+    "--concepts",
+    "list_concepts",
+    is_flag=True,
+    help="List the concepts detected for this sample, and why.",
+)
+@click.option(
+    "--check",
+    "check_only",
+    is_flag=True,
+    help="Verify the tiers agree with each other, and write nothing.",
+)
 @click.option("--root", default=None, help="Project root. Discovered if omitted.")
 @click.option(
     "--force",
@@ -967,17 +1053,91 @@ def note_command(
 )
 @click.option("--stdout", is_flag=True, help="Print it instead of writing a file.")
 def report_command(
-    sample: str, title: str | None, root: str | None, force: bool, stdout: bool
+    sample: str | None,
+    topic: str | None,
+    tier: str | None,
+    concept: tuple[str, ...],
+    list_concepts: bool,
+    check_only: bool,
+    root: str | None,
+    force: bool,
+    stdout: bool,
 ) -> None:
-    """Scaffold a sample's closing report, with its fit sequence filled in.
+    """Scaffold a sample's report at three levels, with its fit sequence filled in.
 
-    A sample ends up with a dozen result directories and no file saying what the
-    sequence was for. The ordered chain is generated here because it is
-    derivable; the reasoning is left blank because it is the analysis.
+    A beamtime result is read by a mixed team: someone who will argue with the
+    model, someone writing it up, and someone who owns the chemistry and does
+    not fit reflectivity. All three tiers are written, because a document that
+    serves one of those readers well serves the others badly.
+
+    The ordered fit chain is generated because it is derivable; the reasoning is
+    left blank because it is the analysis.
     """
-    from nr_workbench.commands.report import run_report
+    from nr_workbench.commands.report import run_report, run_report_check
 
-    run_report(sample=sample, title=title, root=root, force=force, stdout=stdout)
+    if check_only:
+        run_report_check(sample=sample, root=root)
+        return
+
+    if sample is None:
+        raise click.UsageError("Which sample? `nrw report <sample>`.")
+
+    run_report(
+        sample=sample,
+        topic=topic,
+        tier=tier,
+        concept=concept,
+        root=root,
+        force=force,
+        stdout=stdout,
+        list_concepts=list_concepts,
+    )
+
+
+@main.command("report-figure")
+@click.argument("script", type=click.Path(exists=True, dir_okay=False))
+@click.option("--root", default=None, help="Project root. Discovered if omitted.")
+@click.option(
+    "--stdout-to",
+    default=None,
+    help="Write the script's stdout to this file, beside it. For a markdown table.",
+)
+def report_figure_command(script: str, root: str | None, stdout_to: str | None) -> None:
+    """Run a report's figure script and record what it read and wrote.
+
+    A plot built from several fits belongs to all of them. Without a record,
+    `nrw whence` on a published figure says "unknown" -- which is the one
+    question this project exists to answer.
+    """
+    from nr_workbench.commands.report import run_report_figure
+
+    run_report_figure(script=script, root=root, stdout_to=stdout_to)
+
+
+@main.command("supersede")
+@click.argument("sample")
+@click.argument("old_stem")
+@click.option("--by", "new_stem", required=True, help="The report that replaces it.")
+@click.option("--reason", required=True, help="Why it was superseded.")
+@click.option("--root", default=None, help="Project root. Discovered if omitted.")
+def supersede_command(
+    sample: str, old_stem: str, new_stem: str, reason: str, root: str | None
+) -> None:
+    """Mark a report as replaced, without deleting it.
+
+    The reasoning in a superseded report is usually worth more than its
+    conclusion -- the reference project's most useful artefact is a claim its
+    own author retracted, with both versions left in place.
+    """
+    from nr_workbench.commands.report import run_supersede
+
+    run_supersede(
+        sample=sample,
+        old_stem=old_stem,
+        new_stem=new_stem,
+        reason=reason,
+        root=root,
+    )
 
 
 @main.command("pack")

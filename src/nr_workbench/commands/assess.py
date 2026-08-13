@@ -75,9 +75,32 @@ def run_assess(
             FitDirectory(directory).write_notes_stub(fit_id=assessment.fit_id)
         with path.open("a", encoding="utf-8") as handle:
             handle.write("\n" + as_markdown(assessment))
+
+        # Also as data, beside the prose. The markdown block is for a person;
+        # `nrw report` needs the findings as records so it can work out which
+        # concepts the analysis actually ran into and explain those, rather
+        # than shipping a fixed syllabus nobody asked for.
+        _write_assessment_json(directory, assessment)
+
         click.echo()
         click.echo(f"  written to {path.relative_to(layout.root)}")
         _nudge_if_unwritten(path, assessment.fit_id)
+
+
+def _write_assessment_json(directory: Path, assessment: Assessment) -> None:
+    """Persist the assessment beside the fit, for other commands to read.
+
+    Failure here must not lose the assessment the user just watched print, so
+    it is reported and swallowed rather than raised.
+    """
+    target = directory / "assessment.json"
+    try:
+        target.write_text(
+            json.dumps(assessment.as_dict(), indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        click.secho(f"  ! could not write {target.name}: {exc}", fg="yellow")
 
 
 def _nudge_if_unwritten(path: Path, fit_id: str) -> None:

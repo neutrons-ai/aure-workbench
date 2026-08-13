@@ -30,12 +30,12 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   63 file(s)
+  create   66 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
 to run twice — it never overwrites a file you have edited. Those files are the
-layout, the editor config, and 16 reflectometry skills with dispatcher agents
+layout, the editor config, and 17 reflectometry skills with dispatcher agents
 for both Claude Code and Copilot, so an assistant opened in this folder already
 knows REF_L conventions.
 
@@ -51,7 +51,7 @@ nrw doctor
   ✓ aure          0.1.0 @ 3021fee37294
   ✓ instrument    SNS REF_L
   ! samples       none yet; run `nrw sample new <ID>`
-  ✓ skills        16 installed: analysis-provenance, neutron-reflectometry, ...
+  ✓ skills        17 installed: analysis-provenance, analyst-handoff, ...
 ```
 
 ## 2. Make the sample and bring the data in

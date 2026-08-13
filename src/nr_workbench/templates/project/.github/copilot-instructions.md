@@ -4,6 +4,21 @@ This is an **nr-workbench** project: neutron reflectometry analysis for SNS
 REF_L (BL-4B). These instructions are shared by GitHub Copilot and Claude Code
 (which imports this file from `CLAUDE.md`).
 
+## Taking over work in progress
+
+If this project already has fits in it, your first command is:
+
+```bash
+nrw handoff <sample>
+```
+
+It prints the escalations a previous session left, how that session ended, the
+integrity check, the fit chain, who is reading, and the reading order — all of
+it recomputed now. Rebuilding that picture by hand has been measured at 28 tool
+calls. `skills/reflectometry/analyst-handoff/SKILL.md` is the standard for what
+to do next; the short version is: read `ESCALATIONS.md` before you write a
+spec, and do not re-derive a conclusion a report already records.
+
 ## Core principles
 
 1. **Assess before acting** — read the sample context and existing models before
@@ -30,9 +45,11 @@ reasoning was never recorded is a number nobody can defend, including you.
 
 ## Read the skills
 
-`skills/reflectometry/` holds the domain knowledge for this beamline. Three are
+`skills/reflectometry/` holds the domain knowledge for this beamline. Four are
 effectively always relevant:
 
+- **`analyst-handoff`** — how to pick up an analysis someone else started
+  without re-deriving it or walking into what it already hit.
 - **`nr-workbench-project`** — the project map and the provenance rules. Read
   this before touching files.
 - **`neutron-reflectometry`** — SLD values and bounds, probe construction, χ²

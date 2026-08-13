@@ -10,6 +10,23 @@ instrument = "{{ instrument }}"
 label = {% if beamtime %}"{{ beamtime }}"{% else %}""{% endif %}
 ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
 
+# Who reads what comes out of this project. These change how much an assistant
+# explains and in what order -- they refuse nothing. Set them with
+# `nrw audience --ask`, or edit here.
+#
+#   reflectometry / statistics / domain : newcomer | practitioner | expert
+#   role                                : drives | collaborates | delegates
+#
+# The three knowledge axes are independent on purpose: a reflectometry expert
+# who wants the statistics spelled out is a real and common reader, and a
+# single novice/expert dial gets that reader wrong twice.
+[audience]
+reflectometry = "practitioner"
+statistics = "practitioner"
+domain = "practitioner"
+role = "collaborates"
+notes = ""
+
 # Filename and instrument conventions for REF_L / BL-4B. These are facts about
 # the instrument and its reduction pipeline, not preferences. dq_convention in
 # particular: the 4th column of every reduced file is FWHM, and treating it as

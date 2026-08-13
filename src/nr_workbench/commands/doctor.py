@@ -7,6 +7,7 @@ exception, because the whole point is to run when something is wrong.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import sys
 from dataclasses import asdict, dataclass
@@ -123,7 +124,65 @@ def collect_checks() -> list[Check]:
     checks.extend(_llm_checks())
     checks.extend(_project_checks())
     checks.extend(_agent_checks())
+    checks.extend(_toolpath_checks())
     return checks
+
+
+def _toolpath_checks() -> list[Check]:
+    """Report whether an assistant's shell could find ``nrw``.
+
+    This process found it, or it would not be running -- so the check has to
+    probe a *scrubbed* login shell rather than ask about its own environment.
+    See :func:`nr_workbench.project.toolpath.resolvable_in_fresh_shell`.
+
+    The failure is worth a line of its own because of how it presents: not as
+    an error, but as an interactive session quietly spending its first ten
+    turns searching the filesystem for a binary, and then prefixing every
+    command it runs thereafter.
+    """
+    from nr_workbench.project import toolpath
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    if toolpath.resolvable_in_fresh_shell():
+        return [Check("nrw on PATH", _OK, "a fresh login shell resolves `nrw`")]
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError:
+        return [
+            Check(
+                "nrw on PATH",
+                "warn",
+                "a fresh login shell cannot resolve `nrw`; an assistant session "
+                "started from your editor will not find it",
+            )
+        ]
+
+    have_shim = (root / toolpath.SHIM_RELPATH).is_file()
+    settings = root / toolpath.LOCAL_SETTINGS
+    have_env = False
+    if settings.is_file():
+        try:
+            document = json.loads(settings.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            document = {}
+        environment = document.get("env") if isinstance(document, dict) else None
+        have_env = isinstance(environment, dict) and bool(
+            environment.get(toolpath.NRW_BIN_ENV)
+        )
+
+    if have_shim and have_env:
+        detail = (
+            f"not on PATH, but {toolpath.SHIM_RELPATH} and "
+            f"${toolpath.NRW_BIN_ENV} are installed; `nrw doctor --fix-path` "
+            "makes bare `nrw` work too"
+        )
+    else:
+        detail = (
+            "a fresh login shell cannot resolve `nrw`; run `nrw init` to install "
+            f"{toolpath.SHIM_RELPATH}, or `nrw doctor --fix-path`"
+        )
+    return [Check("nrw on PATH", "warn", detail)]
 
 
 def _agent_checks() -> list[Check]:
@@ -349,6 +408,56 @@ def _project_checks() -> list[Check]:
         checks.append(Check("skills", "warn", "no skills/ directory; run `nrw init`"))
 
     return checks
+
+
+def run_fix_path(*, yes: bool = False) -> None:
+    """Write a literal ``PATH`` into the machine-local harness settings.
+
+    Kept behind a flag, and shown before it is written, because it is an
+    override rather than an addition: harness settings do not interpolate
+    ``${PATH}`` -- verified, not assumed -- so the value has to be a whole PATH
+    copied from this shell. That freezes it. Anything added to your profile
+    afterwards is invisible to assistant sessions in this project until this is
+    run again.
+
+    Args:
+        yes: Skip the confirmation.
+
+    Raises:
+        click.ClickException: If there is no project here, or ``nrw`` cannot be
+            located.
+    """
+    from nr_workbench.project import toolpath
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    executable = toolpath.nrw_executable()
+    if executable is None:
+        raise click.ClickException("Could not locate the `nrw` executable to point at.")
+
+    value = toolpath.path_override(root)
+    click.echo(f"  {toolpath.LOCAL_SETTINGS} would set PATH to:")
+    for part in value.split(os.pathsep):
+        click.echo(f"    {part}")
+    click.echo()
+    click.echo(
+        "  This replaces PATH for assistant sessions in this project rather "
+        "than adding to it,\n  so it is a snapshot of the PATH you have right "
+        "now. Re-run this after you\n  change your profile."
+    )
+
+    if not yes and not click.confirm("  Write it?", default=False):
+        click.echo("  Nothing written.")
+        return
+
+    written, note = toolpath.apply_path_override(root, value)
+    if written is None:
+        raise click.ClickException(note)
+    click.echo(f"  wrote {written}")
 
 
 def run_doctor(*, as_json: bool = False) -> None:

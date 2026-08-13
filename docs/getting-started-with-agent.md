@@ -218,9 +218,24 @@ samples/Cu1/results/20260810-211523Z-43667719/    the immutable record
     manifest.json  inputs.json  spec.yaml  model.py  NOTES.md
     env/{requirements.txt,versions.json}
     fit/…{-expt.json,-profile.dat,-slabs.dat,.par,.out}
-samples/Cu1/reports/run-218386-ocv-first-back-reflection-fit….md
+samples/Cu1/reports/cu1-what-the-fits-show-technical.md   the full record
+samples/Cu1/reports/cu1-what-the-fits-show-si.md          for a peer
+samples/Cu1/reports/cu1-what-the-fits-show-plain.md       for a non-fitter
 ESCALATIONS.md
 ```
+
+Three reports rather than one, because a beamtime result is read by a mixed
+team: someone who will argue with the model, someone writing it up, and someone
+who owns the chemistry and does not fit reflectivity. They are one analysis at
+three altitudes and must agree on the answer — `nrw check` fails the sample if
+a tier is missing or if they give different one-line answers.
+
+The plain tier names the ideas the analysis actually ran into — a correlated
+pair, a skewed posterior, a parameter on its bound — selected from what
+`nrw assess` recorded rather than from a fixed syllabus, and gives a brief for
+each saying what the explanation has to cover. The explanation itself is
+written by whoever writes the report, about this sample and its numbers.
+`nrw report Cu1 --concepts` shows which fired and why.
 
 `nrw ls`, `nrw whence`, `nrw diff`, `nrw check` and `nrw pack` all work on it
 unchanged, and `nrw check` will hold the agent's own spec to the same
@@ -255,6 +270,37 @@ nrw promote 20260810-231402Z-4f2a8c1e --as final \
 
 The agent cannot do this, and the reason string is why. In a year, that
 sentence is what a reader needs, and it is not recoverable from the artifacts.
+
+### 7. Take over interactively
+
+Most sessions do not end here. The agent does the systematic work overnight and
+you carry on with an assistant in the morning — and that handover used to be
+the most expensive part of the loop. Measured on a real beamtime project, an
+assistant told *"pick up where the agent left off"* spent 28 tool calls
+rebuilding a picture of the project before doing anything, ten of them
+searching the filesystem for the `nrw` binary.
+
+All of it was derivable, so it is now one command:
+
+```bash
+nrw handoff Cu1
+```
+
+It prints how to invoke `nrw` in this shell, the declared task, `ESCALATIONS.md`
+in full, how the last session ended and whether it was cut off, the integrity
+check, any fits with nothing written down, the offline checks recomputed now,
+who is reading, and the order to read things in.
+
+Then start your assistant and give it one instruction: *"take over from the
+overnight agent"*. Do not paste context. The `analyst-handoff` skill is
+installed in the project and says what to do with that output; the short
+version is that it reads the escalations before writing a spec, and does not
+re-derive a conclusion a report already records.
+
+If `nrw handoff` says `nrw` is not on your PATH, that is the ten-call search
+being prevented. `nrw init` writes `.nrw/bin/nrw` and `$NRW_BIN` for exactly
+this, and `nrw doctor --fix-path` makes a bare `nrw` work in assistant sessions
+if you want that too.
 
 ---
 
