@@ -1254,6 +1254,172 @@ def test_the_fit_table_says_what_each_row_was_and_what_changed(
     assert f'href="/f/{rows[1]["fit_id"]}"' in detail, "links to what it changed from"
 
 
+# --------------------------------------------------------------------------
+# What the story row under each fit actually says
+#
+# It said "first run of this model" more often than anything else, which tells
+# a reader nothing they cannot see from the list. What they want is the
+# structure and the reason.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def two_fits(project: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A project with two real fits of a D2O|Cu|Si stack, one with a reason."""
+    pytest.importorskip("refl1d")
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    root = sample_with_series(project)
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+    runner.invoke(main, ["model", "generate", "samples/Sample1/models/m.yaml"])
+    for steps, note in ((6, "checking whether the copper is thick enough"), (14, None)):
+        command = [
+            "fit",
+            "run",
+            "samples/Sample1/models/m.py",
+            "--method",
+            "amoeba",
+            "--steps",
+            str(steps),
+            "--parallel",
+            "1",
+        ]
+        if note:
+            command += ["--note", note]
+        assert runner.invoke(main, command).exit_code == 0
+    return root
+
+
+def test_each_fit_row_carries_the_structure_it_was_a_fit_of(two_fits: Path) -> None:
+    """`THF|Cu|Ti|Si` is how a reflectometrist names a model out loud."""
+    rows = ProjectData(two_fits).fits("Sample1")
+
+    assert [row["stack"] for row in rows] == ["D2O|Cu|Si", "D2O|Cu|Si"]
+
+
+def test_the_structure_shows_on_both_pages_that_list_fits(two_fits: Path) -> None:
+    from nr_workbench.web.app import create_app
+
+    client = create_app(two_fits).test_client()
+
+    for url in ("/fits", "/s/Sample1"):
+        assert "D2O|Cu|Si" in client.get(url).get_data(as_text=True), url
+
+
+def test_the_reason_shown_is_the_analysts_not_the_fitters_settings(
+    two_fits: Path,
+) -> None:
+    """ "amoeba, 6 steps, 21 free" answers how it was configured, and every
+    field of that is already a column of the table."""
+    rows = ProjectData(two_fits).fits("Sample1")
+
+    assert rows[1]["why"] == "checking whether the copper is thick enough"
+    assert rows[0]["why"] == "", "nothing was said about the second run"
+
+
+def test_a_reason_written_after_the_fit_reaches_the_listing(
+    two_fits: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`nrw note --why` is the documented way to record this, and it writes
+    into NOTES.md rather than into the index."""
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    rows = ProjectData(two_fits).fits("Sample1")
+    monkeypatch.chdir(two_fits)
+    result = CliRunner().invoke(
+        main,
+        ["note", rows[0]["fit_id"], "--why", "does more amoeba help at all?"],
+    )
+    assert result.exit_code == 0, result.output
+
+    assert ProjectData(two_fits).fits("Sample1")[0]["why"] == (
+        "does more amoeba help at all?"
+    )
+
+
+def test_first_run_of_this_model_is_not_shown_as_though_it_said_something(
+    two_fits: Path,
+) -> None:
+    """It is true and it is useless: a reader looking at the first fit of a
+    model can see that from the list."""
+    from nr_workbench.provenance.summary import FIRST_RUN
+    from nr_workbench.web.app import create_app
+
+    client = create_app(two_fits).test_client()
+
+    for url in ("/fits", "/s/Sample1"):
+        assert FIRST_RUN not in client.get(url).get_data(as_text=True), url
+
+
+def test_a_fit_with_no_reason_names_the_command_that_records_one(
+    two_fits: Path,
+) -> None:
+    """The gap is the point. An empty line teaches nothing; this one says what
+    to type."""
+    from nr_workbench.web.app import create_app
+
+    page = create_app(two_fits).test_client().get("/fits").get_data(as_text=True)
+
+    assert "why not recorded" in page
+    assert "--why" in page
+
+
+def test_the_template_alone_is_not_mistaken_for_a_reason(two_fits: Path) -> None:
+    """Every result directory holds a NOTES.md whether or not anyone wrote in
+    it. Rendering its prompts would put "What were you testing?" on the page
+    as though it were an answer."""
+    rows = ProjectData(two_fits).fits("Sample1")
+    notes = (
+        two_fits / "samples" / "Sample1" / "results" / rows[0]["fit_id"] / "NOTES.md"
+    )
+
+    assert "What were you testing" in notes.read_text(encoding="utf-8")
+    assert rows[0]["why"] == ""
+
+
+def test_the_structure_survives_a_project_that_predates_the_indexed_stack(
+    two_fits: Path,
+) -> None:
+    """Every fit in any project that already exists was recorded before the
+    index carried a stack. Reading it back out of the frozen bumps export is
+    what makes this useful today rather than on the next fit."""
+    index = two_fits / ".nrw" / "index.jsonl"
+    index.write_text(
+        "\n".join(
+            json.dumps({k: v for k, v in json.loads(line).items() if k != "stack"})
+            for line in index.read_text().splitlines()
+            if line.strip()
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = ProjectData(two_fits).fits("Sample1")
+
+    assert [row["stack"] for row in rows] == ["D2O|Cu|Si", "D2O|Cu|Si"]
+
+
+def test_the_structure_survives_the_result_directory_being_deleted(
+    two_fits: Path,
+) -> None:
+    """The index is append-only so a cleaned-up fit still appears. A row with
+    no structure and no link is the least useful row in the table."""
+    import shutil
+
+    rows = ProjectData(two_fits).fits("Sample1")
+    shutil.rmtree(two_fits / "samples" / "Sample1" / "results" / rows[0]["fit_id"])
+
+    after = ProjectData(two_fits).fits("Sample1")[0]
+
+    assert after["present"] is False
+    assert after["stack"] == "D2O|Cu|Si", "recorded in the index, not derived on demand"
+
+
 def test_reflectivity_is_plotted_log_log() -> None:
     """Fresnel decay is a power law, so log-log straightens it.
 

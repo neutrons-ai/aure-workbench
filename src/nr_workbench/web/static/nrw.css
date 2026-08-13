@@ -161,12 +161,41 @@ tr.fit-story > td {
   color: var(--bs-secondary-color);
 }
 
+/* The structure, in beam order. Monospace and first, because it is the field
+   a reader scans down the column to find the fit they mean -- "the one on Ti"
+   is how people refer to these, never by fit id. */
+tr.fit-story .stack {
+  font-family: var(--bs-font-monospace);
+  color: var(--bs-emphasis-color);
+  white-space: nowrap;
+}
+
 tr.fit-story .change {
   color: var(--bs-info-text-emphasis);
 }
 
 tr.fit-story .note {
   font-style: italic;
+}
+
+/* A fit nobody wrote a reason for. Quiet, but present: the gap is the point,
+   and it names the command that closes it. */
+tr.fit-story .unwritten {
+  color: var(--bs-secondary-color);
+  opacity: 0.75;
+}
+
+tr.fit-story .unwritten code {
+  color: inherit;
+}
+
+/* One separator, defined once, so the row reads as a sentence however many of
+   the three parts a given fit actually has. */
+tr.fit-story > td > span + span::before {
+  content: " · ";
+  color: var(--bs-secondary-color);
+  font-style: normal;
+  opacity: 0.6;
 }
 
 /* Bootstrap's table-hover highlights rows one at a time, which would split a

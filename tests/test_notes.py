@@ -604,3 +604,66 @@ def test_a_fit_run_with_no_reason_is_still_blank(tmp_path: Path) -> None:
     """Nothing here may invent the human half. A run launched without `--note`
     has had no reason recorded, and must go on saying so."""
     assert is_blank(_stub(tmp_path, description="amoeba fit of film."))
+
+
+# --------------------------------------------------------------------------
+# Reading a section back
+#
+# `write_section` had no counterpart, so a listing that wanted to show *why* a
+# fit was run could only show how it was configured -- and every field of that
+# is already a column of the table.
+# --------------------------------------------------------------------------
+
+
+def test_a_written_section_reads_back() -> None:
+    text = notes.write_section(FILLED_TEMPLATE, "Why this run", "testing the oxide")
+
+    assert notes.read_section(text, "Why this run") == "testing the oxide"
+
+
+def test_an_untouched_section_reads_as_empty_not_as_its_own_prompt() -> None:
+    """The template's questions rendered as answers is how a panel teaches
+    its readers to ignore it."""
+    assert notes.read_section(FILLED_TEMPLATE, "Why this run") == ""
+    assert notes.read_section(FILLED_TEMPLATE, "Caveats") == ""
+
+
+def test_a_section_stops_at_the_next_heading() -> None:
+    text = notes.write_section(FILLED_TEMPLATE, "Why this run", "the why")
+    text = notes.write_section(text, "What it showed", "the result")
+
+    assert notes.read_section(text, "Why this run") == "the why"
+
+
+def test_a_generated_assessment_is_not_read_as_a_persons_words() -> None:
+    """`nrw assess` appends its own `## Assessment`; a listing that quoted it
+    would show a chi-squared back to someone asking what they concluded."""
+    text = FILLED_TEMPLATE + (
+        "\n<!-- nrw:generated -->\n## Assessment\n\nchi-squared 2.94\n"
+        "<!-- /nrw:generated -->\n"
+    )
+
+    assert notes.read_section(text, "Assessment") == ""
+
+
+def test_a_wrapped_sentence_is_rejoined() -> None:
+    text = "## Why this run\n\ntesting whether the oxide\nlayer is required\n"
+
+    assert notes.read_section(text, "Why this run") == (
+        "testing whether the oxide layer is required"
+    )
+
+
+def test_two_answers_to_one_question_stay_separate() -> None:
+    """`nrw note --why` appends, so a fit asked twice has two answers. Running
+    them into one sentence reports something nobody wrote."""
+    text = notes.write_section(FILLED_TEMPLATE, "Why this run", "first thought")
+    text = notes.write_section(text, "Why this run", "second thought")
+
+    assert notes.read_section(text, "Why this run") == (
+        "first thought\n\nsecond thought"
+    )
+
+
+def test_a_missing_heading_reads_as_empty() -> None:
+    assert notes.read_section(FILLED_TEMPLATE, "Nonexistent") == ""

@@ -44,6 +44,25 @@ from nr_workbench.web.readers import (
 #: unusual -- but one pathological file should degrade the plot, not the tab.
 MAX_CURVE_POINTS = 20_000
 
+#: Longest "why this run" a listing row will carry. A note can be paragraphs;
+#: a table row that carries all of them stops being a table. The full text is
+#: one click away on the fit's own page.
+WHY_LIMIT = 110
+
+
+def _trim(text: str) -> str:
+    """Collapse prose to one line a table row can hold.
+
+    The first paragraph only. `nrw note --why` appends, so a fit run twice
+    against the same question has two answers under one heading, and a row that
+    concatenates them reads as one sentence that nobody wrote. The rest is on
+    the fit's own page, one click away.
+    """
+    first = text.strip().split("\n\n", 1)[0]
+    line = " ".join(first.split())
+    return line if len(line) <= WHY_LIMIT else line[: WHY_LIMIT - 1].rstrip() + "…"
+
+
 #: Cap on heatmap cells (intervals x Q bins). A 21 x 250 series is 5k.
 MAX_HEATMAP_CELLS = 400_000
 
@@ -470,11 +489,58 @@ class ProjectData:
             # true even after someone clears out disk space. But its artifacts
             # may be gone, and a row that links to a 404 is worse than one that
             # says so.
-            entry["present"] = (
-                self._fit_dir_or_none(fit_id, row.get("sample")) is not None
-            )
+            directory = self._fit_dir_or_none(fit_id, row.get("sample"))
+            entry["present"] = directory is not None
+            entry["stack"] = self._stack_for(row, directory)
+            entry["why"] = self._why_for(row, directory)
             rows.append(entry)
         return rows
+
+    def _stack_for(self, row: dict[str, Any], directory: Path | None) -> str:
+        """The structure this fit was of, as ``THF|Cu|Ti|Si``.
+
+        The index first, because it is the only source that survives the result
+        directory being deleted --- and because it costs no file read. Fits
+        recorded before the stack was indexed fall back to the frozen bumps
+        export, which is what makes this useful on a project that already has
+        fits in it rather than only on the next one.
+        """
+        from nr_workbench.provenance import stack
+
+        recorded = row.get("stack")
+        if isinstance(recorded, str) and recorded:
+            return recorded
+        return stack.from_fit_dir(directory) if directory is not None else ""
+
+    def _why_for(self, row: dict[str, Any], directory: Path | None) -> str:
+        """Why this run was made, in the analyst's words.
+
+        Three sources, most deliberate first: the *Why this run* section of the
+        fit's own NOTES.md, then any other prose in that note, then the
+        ``--note`` given at launch. What is *not* here is the generated
+        fallback -- "amoeba, 12 steps, 2 free" answers "how was it configured",
+        and every field in it is already a column of the table.
+        """
+        from nr_workbench.notes import SECTIONS, fit_note, read_section
+
+        if directory is not None:
+            sample = row.get("sample")
+            own = fit_note(
+                self.root,
+                directory,
+                str(row.get("fit_id")),
+                str(sample) if sample else None,
+            )
+            # `blank` is the check that keeps the template's own prompts off
+            # the page: "What were you testing?" rendered as an answer reads
+            # like one, and taught readers the line was noise.
+            if own is not None and not own.blank:
+                written = read_section(own.text, SECTIONS["why"]) or own.summary
+                if written:
+                    return _trim(written)
+
+        note = row.get("note")
+        return _trim(str(note)) if isinstance(note, str) and note.strip() else ""
 
     def _fit_dir_or_none(self, fit_id: str, sample: Any) -> Path | None:
         """Locate a fit directory without raising when it is gone."""

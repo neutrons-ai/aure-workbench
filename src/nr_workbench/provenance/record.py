@@ -160,6 +160,10 @@ class FitRecord:
             rather than inferring it from build order.
         command: The command line that produced this record.
         note: Optional free-text note supplied at run time.
+        stack: The layer stack as ``THF|Cu|Ti|Si``. Recorded rather than
+            derived on demand because the index outlives the result directory
+            --- a listing still shows a fit whose artifacts were deleted, and
+            the structure is the one thing that makes such a row mean anything.
         error: Failure message when ``status`` is ``failed``.
     """
 
@@ -182,6 +186,7 @@ class FitRecord:
     models: list[dict[str, Any]] = field(default_factory=list)
     command: str = ""
     note: str | None = None
+    stack: str = ""
     error: str | None = None
 
     def data_digest(self) -> str:
@@ -243,6 +248,9 @@ class FitRecord:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "note": self.note,
+            # One short string, and the only field here a person reads as a
+            # description of the science rather than of the run.
+            "stack": self.stack,
         }
 
 

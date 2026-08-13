@@ -1942,3 +1942,56 @@ on a refusal at the exact moment the session should have been writing down what
 it just learned. `_next_steps` now leads with `nrw note`, asks only for the
 sections `--note` did not already answer, and drops the `promote` line when
 `agent_is_driving()`.
+
+### 2026-08-13: a fit listing that names the script has not named the model
+
+The fits page showed model name, chi-squared, free parameters, and a change
+line that read `first run of this model` for every fit that started a new
+model — which is most of them early in a beamtime, and which tells a reader
+nothing they cannot see from the list itself. None of it answers the question a
+reflectometrist actually asks about a row, which is *what was this a fit of*.
+
+Two additions, both to `ProjectData.fits()` so `/fits`, `/s/<id>` and
+`/api/fits` get them at once:
+
+**The stack, as `THF|Cu|Ti|Si`.** Three sources, and the order matters:
+
+1. `provenance/stack.py::describe` reads it off the assembled refl1d `Stack` at
+   fit time and `fit run` records it in the index entry. Authoritative — it is
+   the object the optimizer sees — and free, since the problem is already
+   loaded.
+2. `from_fit_dir` reconstructs it from bumps' own `fit/*-expt.json`, whose
+   `object.sample.layers[].name` survives in every result directory. This is
+   what makes the feature useful on a project that already has fits rather than
+   only on the next one.
+3. The frozen `spec.yaml`, which is the only source left for a fit that failed
+   before bumps exported anything — exactly the fit somebody is trying to tell
+   apart from the one before it.
+
+It is *not* parsed out of `model.py`. The stack expression is ordinary Python —
+built in a loop, assembled in a helper, conditional on a flag — and a regex over
+it fails quietly, which for a structure label is the worst available failure: a
+plausible stack that is not the one that was fitted.
+
+`problem.models` is a **generator**, not a list. Reading it twice reads it
+empty; `runner.describe_models` already knew this and `stack.describe` has to.
+
+**Why the run was made.** `summary.describe` falls back to a settings phrase
+(`amoeba, 12 steps, 21 free`) when there is no note — but every field of that is
+already a column of the same table. The listing now reads the *Why this run*
+section of the fit's own `NOTES.md` (`notes.read_section`, the counterpart
+`write_section` never had), then any other prose in that note, then the launch
+`--note`, and shows nothing generated. A fit with no reason gets the command
+that records one instead of a filler phrase.
+
+`read_section` keeps paragraph breaks rather than joining the section into one
+line: `nrw note --why` *appends*, so a fit asked twice has two answers under one
+heading, and running them together reports a sentence nobody wrote. The listing
+takes the first paragraph; the fit page shows all of it.
+
+**One template, included twice.** `fits.html` and `sample.html` each had their
+own copy of the story row and the copies had already drifted. They are now
+`_fit_story.html`, and `first_run` is a Jinja *global* rather than a per-route
+variable — an undefined name in Jinja is falsy, so a route that forgot to pass
+it would silently start showing the useless line again with nothing to show for
+it.

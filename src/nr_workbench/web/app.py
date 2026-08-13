@@ -50,6 +50,14 @@ def create_app(root: Path) -> Flask:
     app.jinja_env.filters["nrwjson"] = _compact_json
     app.jinja_env.filters["markdown"] = _render_markdown
 
+    # A global rather than a per-route variable: the fit-story row is included
+    # by two pages and would otherwise silently lose its meaning on whichever
+    # route forgot to pass it -- an undefined name in Jinja is falsy, so every
+    # change line would read as informative again with nothing to show for it.
+    from nr_workbench.provenance.summary import FIRST_RUN
+
+    app.jinja_env.globals["first_run"] = FIRST_RUN
+
     _register_views(app)
     return app
 

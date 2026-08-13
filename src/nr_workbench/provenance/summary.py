@@ -28,6 +28,13 @@ _UNINTERESTING_SETTINGS = frozenset({"replicate_of", "parallel"})
 #: Longest note we will inline before truncating.
 _NOTE_LIMIT = 72
 
+#: What :func:`compare` says when a model has no predecessor. Named because it
+#: is the one change line that carries no information --- a reader looking at
+#: the first fit of a model can see that from the list --- so a surface with
+#: something better to show in that space needs to recognise it rather than
+#: match the literal in two places.
+FIRST_RUN = "first run of this model"
+
 
 def describe(entry: dict[str, Any]) -> str:
     """Return a short human description of one fit.
@@ -65,7 +72,7 @@ def compare(entry: dict[str, Any], previous: dict[str, Any] | None) -> str:
         A single line describing the difference.
     """
     if previous is None:
-        return "first run of this model"
+        return FIRST_RUN
 
     parts: list[str] = []
     if _differs(entry, previous, "data_digest"):

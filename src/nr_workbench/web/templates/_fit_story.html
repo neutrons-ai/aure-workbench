@@ -1,0 +1,20 @@
+{# The continuation row under one fit: the structure it was of, why it was run,
+   and what changed since the previous run of the same model.
+
+   Included by both fits.html and sample.html. It was copied between them once
+   and the copies had already drifted; a reader who learns to read this line on
+   one page must find the same line on the other.
+
+   Expects `row` (a ProjectData.fits() entry), `span` (the table's column
+   count) and `first_run` (summary.FIRST_RUN). #}
+{% set changed = row.change if row.change != first_run else '' %}
+{% if row.stack or row.why or changed %}
+<tr class="fit-story">
+  <td colspan="{{ span }}">
+    {% if row.stack %}<span class="stack" title="the layer stack, in beam order">{{ row.stack }}</span>{% endif %}
+    {% if row.why %}<span class="note">{{ row.why }}</span>
+    {% else %}<span class="unwritten" title="no reason recorded for this run">why not recorded — <code>nrw note {{ row.fit_id[-8:] }} --why "…"</code></span>{% endif %}
+    {% if changed %}<span class="change">{{ changed }}</span>{% endif %}
+  </td>
+</tr>
+{% endif %}

@@ -179,6 +179,44 @@ def write_section(text: str, heading: str, message: str) -> str:
     return f"{text[: match.end()]}{section.rstrip()}\n\n{addition}\n\n{tail}"
 
 
+def read_section(text: str, heading: str) -> str:
+    """Return the prose a person wrote under one heading.
+
+    The counterpart to :func:`write_section`, and the reason a listing can show
+    *why* a fit was run rather than how it was configured. Generated blocks and
+    the template's own prompt comments are stripped, so an untouched section
+    reads as empty rather than as its own instructions --- which is the failure
+    that put "What were you testing?" on screen as though somebody had answered
+    it.
+
+    Args:
+        text: The note's full source.
+        heading: Section heading, without the ``##``.
+
+    Returns:
+        The section's human prose, wrapped lines rejoined but paragraph breaks
+        kept --- `nrw note --why` can be run twice on one fit, and running two
+        separate answers into one sentence misreports what was said. ``""`` if
+        the heading is absent or nothing was written under it.
+    """
+    written = human_text(text)
+    pattern = re.compile(rf"^##\s+{re.escape(heading)}\s*$", re.MULTILINE)
+    match = pattern.search(written)
+    if match is None:
+        return ""
+
+    body_text = written[match.end() :]
+    following = re.compile(r"^##\s+", re.MULTILINE).search(body_text)
+    section = body_text[: following.start()] if following else body_text
+
+    without_comments = re.sub(r"<!--.*?-->", "", section, flags=re.DOTALL)
+    paragraphs = [
+        " ".join(line.strip() for line in block.splitlines() if line.strip())
+        for block in re.split(r"\n\s*\n", without_comments)
+    ]
+    return "\n\n".join(p for p in paragraphs if p)
+
+
 def fits_mentioned(text: str) -> list[str]:
     """Return every fit id referenced by a note, in order of first appearance.
 

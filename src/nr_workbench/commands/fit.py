@@ -20,6 +20,7 @@ import click
 
 from nr_workbench.project.config import ProjectConfigError, load_config
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+from nr_workbench.provenance import stack
 from nr_workbench.provenance.env import capture as capture_env
 from nr_workbench.provenance.hashing import HashCache, digest_files, inputs_digest
 from nr_workbench.provenance.index import FitIndex
@@ -333,6 +334,9 @@ def run_fit_command(
         started_at=format_timestamp(started),
         command=_command_line(),
         note=note,
+        # From the assembled problem, not from the script's text: this is the
+        # stack the optimizer is about to see.
+        stack=stack.describe(loaded.problem) if loaded is not None else "",
     )
     if duplicates:
         record.settings["replicate_of"] = duplicates[0]["fit_id"]
