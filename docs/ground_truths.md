@@ -1910,3 +1910,35 @@ that it silently passes for the wrong reason, exit code 0, no exception,
 looking exactly like a working refusal. This is why the pre-existing `--force`
 gate had no end-to-end test at all — only the unit-level `guard.judge`/
 `guard.refuse_if_agent` calls were covered.
+
+### 2026-08-13: `--note` was recorded, stored, and then counted as nothing
+
+`nrw fit run --note "..."` reached `write_notes_stub` as `description`, which
+the template renders as a blockquote — and `notes.is_blank` skips `>` lines by
+design, because that blockquote is an echo of the launch command and counting
+it as content would make every untouched stub look written-in. So a reason that
+*was* stated at the one moment it is in front of the person running the fit was
+captured, written to disk, and then reported by `nrw ls`, `report --check` and
+`handoff` as a fit nobody had thought about.
+
+Fixed by separating the two things that had been folded into one field. The
+blockquote is now always what ran (`amoeba fit of film.`); `--note` goes through
+`notes.write_section` into `## Why this run`, where the blank-note signal can
+see it. `write_notes_stub` gained a `why=` parameter to keep that split at the
+one place the stub is written.
+
+The signal itself is untouched, and must stay that way: a run launched with no
+`--note` still reads as blank, and nothing generates the other two sections.
+The reason to resist filling `What it showed` from chisq is the same reason
+`nrw assess` wraps its output in `nrw:generated` fences — a note holding only
+machine prose looks written to anyone skimming it, which is precisely how 25
+result directories in the reference beamtime passed for documented.
+
+**The post-fit summary was pointing an agent at a command a hook refuses.** It
+ended with `nrw whence` and `nrw promote`, and `promote` is one of the three
+things `agent/guard.py` blocks outright. Under `NRW_AGENT` that is not merely
+useless: an unattended session has a finite turn budget, and it was being spent
+on a refusal at the exact moment the session should have been writing down what
+it just learned. `_next_steps` now leads with `nrw note`, asks only for the
+sections `--note` did not already answer, and drops the `promote` line when
+`agent_is_driving()`.

@@ -347,9 +347,15 @@ def run_fit_command(
     directory.freeze_script(script_path)
     directory.write_inputs(inputs)
     directory.write_environment(environment)
+    # Two different things, so they go to two different places: the blockquote
+    # says what was launched, and --note says why it was launched. Folding the
+    # second into the first put a sentence a person typed into scaffolding
+    # `is_blank` skips, so a run whose reason *was* stated still read as a fit
+    # nobody had thought about.
     directory.write_notes_stub(
         fit_id=fit_id,
-        description=note or f"{method} fit of {record.model}.",
+        description=f"{method} fit of {record.model}.",
+        why=note or "",
     )
 
     # A provisional manifest, before the fit rather than after. Only FitError
@@ -474,9 +480,41 @@ def _report_success(record: FitRecord, fit_dir: Path, root: Path, outcome: Any) 
             "    Parameters were fitted; uncertainty output may be missing.", err=True
         )
 
+    _next_steps(record)
+
+
+def _next_steps(record: FitRecord) -> None:
+    """Name what to do with the fit that just finished.
+
+    ``nrw note`` leads because it is the only one of these a machine cannot do
+    later. The numbers stay in the record forever; the reason lasts about as
+    long as it takes to start the next fit, which is why an unattended session
+    reached morning with 25 result directories and no reason recorded in any of
+    them. Naming the exact command --- with the sections it still needs, not the
+    one ``--note`` already answered --- is the difference between a reminder and
+    an instruction.
+
+    ``nrw promote`` is dropped when an agent is driving: a hook refuses it
+    (:mod:`nr_workbench.agent.guard`), so offering it as the next step spends a
+    turn on a command that cannot run, at the moment the session should be
+    writing down what it just learned.
+    """
+    from nr_workbench.agent.guard import agent_is_driving
+
+    short = record.fit_id[-8:]
+    # --note filled "Why this run" at launch, so asking for it again invites a
+    # second answer to a question already answered.
+    wanted = '--showed "..." --caveat "..."'
+    if not record.note:
+        wanted = f'--why "..." {wanted}'
+
     click.echo()
+    click.echo(f"  nrw assess {short}      the checks that can be automated")
+    click.echo(f"  nrw note {short} {wanted}")
+    click.secho("      why you ran it, what it means, what not to conclude", dim=True)
     click.echo(f"  nrw whence {record.fit_id}      show the full provenance")
-    click.echo(f"  nrw promote {record.fit_id} --as final --reason '...'")
+    if not agent_is_driving():
+        click.echo(f"  nrw promote {record.fit_id} --as final --reason '...'")
 
 
 def _write_trajectory(layout: ProjectLayout, fit_dir: Path, record: Any) -> None:

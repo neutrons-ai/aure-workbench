@@ -283,6 +283,96 @@ def test_a_failing_script_is_still_recorded(
 
 
 # --------------------------------------------------------------------------
+# What the run leaves in NOTES.md
+#
+# An unattended session reached morning with every result directory holding the
+# untouched template. The reason is knowable at launch and nowhere else after;
+# these fix the two ends of that -- capture what was said, and ask for the rest
+# at the one moment somebody is looking.
+# --------------------------------------------------------------------------
+
+
+def test_a_launch_reason_is_filed_under_why_this_run(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nr_workbench.notes import is_blank
+
+    result = do_fit(fitted_project, monkeypatch, "--note", "testing a thicker oxide")
+    assert result.exit_code == 0, result.output
+
+    text = (only_fit_dir(fitted_project) / "NOTES.md").read_text(encoding="utf-8")
+    why = text.index("## Why this run")
+    showed = text.index("## What it showed")
+
+    assert why < text.index("testing a thicker oxide") < showed
+    assert not is_blank(text), "a reason that was stated must not read as unwritten"
+
+
+def test_a_documented_fit_stops_being_counted_as_undocumented(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`nrw ls` and `report --check` are the surfaces that nag, and they were
+    nagging about runs whose reason had in fact been given."""
+    from nr_workbench.commands.report import undocumented_fits
+    from nr_workbench.project.layout import ProjectLayout
+
+    assert (
+        do_fit(fitted_project, monkeypatch, "--note", "the oxide again").exit_code == 0
+    )
+
+    layout = ProjectLayout.discover(fitted_project)
+    assert undocumented_fits(layout, "S1") == []
+
+
+def test_a_run_with_no_reason_is_still_reported_as_undocumented(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The signal has to survive. Nothing here may invent the human half."""
+    from nr_workbench.commands.report import undocumented_fits
+    from nr_workbench.project.layout import ProjectLayout
+
+    assert do_fit(fitted_project, monkeypatch).exit_code == 0
+
+    layout = ProjectLayout.discover(fitted_project)
+    assert len(undocumented_fits(layout, "S1")) == 1
+
+
+def test_the_summary_names_the_note_command_and_the_sections_still_missing(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The output right after a fit is the last moment anyone is looking, and
+    it used to name only `whence` and `promote`."""
+    result = do_fit(fitted_project, monkeypatch, "--note", "testing a thicker oxide")
+
+    assert "nrw note" in result.output
+    assert "--showed" in result.output and "--caveat" in result.output
+    assert "--why" not in result.output, "--note already answered that one"
+
+
+def test_the_summary_asks_for_all_three_when_no_reason_was_given(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = do_fit(fitted_project, monkeypatch)
+
+    assert "nrw note" in result.output
+    assert "--why" in result.output
+
+
+def test_an_unattended_session_is_not_pointed_at_a_command_it_cannot_run(
+    fitted_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`nrw promote` is refused by the agent hook. Offering it as the next step
+    spends a turn of a finite budget on a command that cannot succeed."""
+    monkeypatch.setenv("NRW_AGENT", "1")
+
+    result = do_fit(fitted_project, monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert "nrw promote" not in result.output
+    assert "nrw note" in result.output
+
+
+# --------------------------------------------------------------------------
 # The query surface
 # --------------------------------------------------------------------------
 

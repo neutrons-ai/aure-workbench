@@ -756,7 +756,12 @@ parameters on bounds, unconstrained posteriors, correlated pairs. Whether the \
 values are *physically sensible* is yours to decide, and it will say so: no \
 second model is consulted while you are driving, because you are the better \
 one and a weaker verdict handed back would read as evidence.
-- **Write the note before you start the next fit.** Not at the end --- by then \
+- **Say why as you launch it**: `nrw fit run ... --note "what I am testing"`. \
+That sentence is filed under *Why this run* in the fit's own NOTES.md, and the \
+moment you are typing the command is the only moment the reason is in front of \
+you anyway. It costs one flag and leaves you two questions afterwards instead \
+of three.
+- **Write the rest before you start the next fit.** Not at the end --- by then \
 you will have the numbers and not the reason, which is the half nobody can \
 reconstruct. It takes one command:
 
@@ -764,11 +769,11 @@ reconstruct. It takes one command:
                         --showed "what the numbers mean" \\
                         --caveat "what not to conclude from this"
 
-  Those three go into the note's own sections. A fit you abandon needs them as \
-much as one you keep --- more, because why a model was rejected is exactly what \
-is lost. `nrw assess` fills in a separate machine-written block; it is the \
-input to your sentence, not a substitute for it, and a note holding only that \
-block counts as unwritten.
+  Those three go into the note's own sections; drop `--why` if `--note` already \
+answered it. A fit you abandon needs them as much as one you keep --- more, \
+because why a model was rejected is exactly what is lost. `nrw assess` fills in \
+a separate machine-written block; it is the input to your sentence, not a \
+substitute for it, and a note holding only that block counts as unwritten.
 - `nrw ls` shows what is already recorded, and what changed between fits. It \
 also says how many fits have nothing written down --- if that number is not \
 zero when you finish, you are not finished.

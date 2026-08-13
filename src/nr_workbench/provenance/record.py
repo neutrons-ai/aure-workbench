@@ -391,7 +391,9 @@ class FitDirectory:
         _write_json(self.path / "manifest.json", manifest)
         return manifest
 
-    def write_notes_stub(self, fit_id: str = "", description: str = "") -> None:
+    def write_notes_stub(
+        self, fit_id: str = "", description: str = "", why: str = ""
+    ) -> None:
         """Create ``NOTES.md``, the only mutable file in the record.
 
         The template asks questions rather than granting permission. Its
@@ -399,18 +401,25 @@ class FitDirectory:
         to edit, and across a real 25-fit beamtime not one copy was ever
         written in: a blank page with no question is a file you close again.
 
+        ``why`` is filed under the heading that asks for it rather than left in
+        the blockquote. Someone who ran ``--note "testing a thicker oxide"``
+        *did* say why, and the blockquote is scaffolding that
+        :func:`~nr_workbench.notes.is_blank` skips by design --- so that
+        sentence used to be written, stored, and then counted as nothing.
+
         Args:
             fit_id: Used as the heading, so the file identifies itself.
             description: A one-line reminder of what the run was.
+            why: The reason the run was launched, for "Why this run".
         """
-        from nr_workbench.notes import NOTES_TEMPLATE
+        from nr_workbench.notes import NOTES_TEMPLATE, SECTIONS, write_section
 
-        (self.path / NOTES_FILENAME).write_text(
-            NOTES_TEMPLATE.format(
-                fit_id=fit_id or self.path.name, description=description
-            ),
-            encoding="utf-8",
+        text = NOTES_TEMPLATE.format(
+            fit_id=fit_id or self.path.name, description=description
         )
+        if why.strip():
+            text = write_section(text, SECTIONS["why"], why)
+        (self.path / NOTES_FILENAME).write_text(text, encoding="utf-8")
 
     def read_manifest(self) -> dict[str, Any]:
         """Read this fit's manifest.

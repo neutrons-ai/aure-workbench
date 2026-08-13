@@ -555,3 +555,52 @@ def test_filled_sections_count_as_a_person_having_written_something() -> None:
 
     assert not notes.is_blank(filled)
     assert notes.is_blank(FILLED_TEMPLATE), "the bare template is still blank"
+
+
+# --------------------------------------------------------------------------
+# The stub `nrw fit run` writes
+#
+# `--note` is the reason, typed at the one moment it is in front of the person
+# running the fit. It used to go into the blockquote, which `is_blank` skips by
+# design -- so the sentence was written, stored, and counted as nothing.
+# --------------------------------------------------------------------------
+
+
+def _stub(tmp_path: Path, **kwargs: str) -> str:
+    """Write a stub into a directory and return its text."""
+    from nr_workbench.provenance.record import FitDirectory
+
+    FitDirectory(tmp_path).write_notes_stub(fit_id=FIT_A, **kwargs)
+    return (tmp_path / "NOTES.md").read_text(encoding="utf-8")
+
+
+def test_the_launch_reason_lands_under_the_heading_that_asks_for_it(
+    tmp_path: Path,
+) -> None:
+    text = _stub(tmp_path, description="amoeba fit of film.", why="testing the oxide")
+
+    why = text.index("## Why this run")
+    showed = text.index("## What it showed")
+    assert why < text.index("testing the oxide") < showed
+
+
+def test_a_fit_run_with_a_reason_does_not_read_as_unwritten(tmp_path: Path) -> None:
+    """The whole point: `nrw ls` and `report --check` must stop counting a fit
+    whose reason *was* stated among the ones nobody thought about."""
+    text = _stub(tmp_path, description="amoeba fit of film.", why="testing the oxide")
+
+    assert not is_blank(text)
+
+
+def test_the_blockquote_still_says_what_ran_not_why(tmp_path: Path) -> None:
+    """Two different things. Folding the reason into the description is what
+    put it in scaffolding in the first place."""
+    text = _stub(tmp_path, description="amoeba fit of film.", why="testing the oxide")
+
+    assert "> amoeba fit of film." in text
+
+
+def test_a_fit_run_with_no_reason_is_still_blank(tmp_path: Path) -> None:
+    """Nothing here may invent the human half. A run launched without `--note`
+    has had no reason recorded, and must go on saying so."""
+    assert is_blank(_stub(tmp_path, description="amoeba fit of film."))
