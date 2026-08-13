@@ -16,8 +16,23 @@ from __future__ import annotations
 import click
 
 from nr_workbench import __version__
+from nr_workbench.fitters import FITTERS, refuse
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
+
+
+def _fitter(ctx: click.Context, param: click.Parameter, value: str) -> str:
+    """Accept only the fitters on the menu, and say why when refusing.
+
+    A `click.Choice` would refuse just as firmly and print `'de' is not one of
+    'amoeba', 'dream'`, which reads as an arbitrary restriction. The reason is
+    the substance of this limit --- the alternative to a different fitter is
+    looking at the model --- so the refusal carries it.
+    """
+    del ctx, param
+    if value not in FITTERS:
+        raise click.BadParameter(refuse(value))
+    return value
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -369,9 +384,11 @@ def fit_group() -> None:
 )
 @click.option(
     "--method",
+    metavar="[amoeba|dream]",
+    callback=_fitter,
     default="amoeba",
     show_default=True,
-    help="Bumps fitter: amoeba, dream, lm, de, newton.",
+    help="amoeba while you are still changing the model, dream to quote a number.",
 )
 @click.option("--steps", type=int, default=None, help="Maximum optimizer steps.")
 @click.option("--samples", type=int, default=None, help="DREAM sample count.")

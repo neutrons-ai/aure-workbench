@@ -1995,3 +1995,59 @@ own copy of the story row and the copies had already drifted. They are now
 variable — an undefined name in Jinja is falsy, so a route that forgot to pass
 it would silently start showing the useless line again with nothing to show for
 it.
+
+### 2026-08-13: `bool` subclasses `int`, and it cost a whole beamtime session
+
+`spec/resolve.py` resolved a pinned parameter with
+
+```python
+pinned = parameter.fixed if isinstance(parameter.fixed, int | float) else value
+```
+
+`ParameterSpec.fixed` is typed `float | bool | None`, so both forms are legal:
+`fixed: 31.2` means "pin here", `fixed: true` means "pin at `value`". But
+**`isinstance(True, int)` is `True`** — `bool` is a subclass of `int` in Python —
+so every `fixed: true` took the numeric branch and pinned the parameter to
+`float(True)` == **1.0**, silently discarding the `value:` beside it.
+
+What that did to a real analysis: `{path: Ti.thickness, value: 31.2, fixed:
+true}` generated a 1 Å Ti layer, and `{path: Ti.rho, value: -1.88, fixed: true}`
+generated ρ = +1.0. The stack being fitted was physically impossible while the
+spec, read by eye, was exactly right. χ² went 1.31 → 16.6 on that one edit and
+the session spent eleven more fits trying to optimise its way out, then wrote an
+escalation concluding the *data* could not constrain the structure. Thirteen of
+nineteen recorded fits carried a spuriously pinned parameter.
+
+Three lessons, all now enforced:
+
+1. **In any `X | bool` union, test `bool` first.** The numeric test accepts it.
+   `_pinned_value` in `contradictions.py` carries the same ordering for the same
+   reason.
+2. **A silent default is worse than a crash.** 1.0 is a plausible-looking number
+   for a thickness, an SLD, an intensity — nothing downstream could tell it from
+   a value someone meant. `tests/test_spec.py` now asserts the pinned *value*,
+   not just that the parameter came out fixed.
+3. **A pin needs a reader-facing cross-check**, because the number was on screen
+   the whole time as an unremarkable `1` in a Start column. `nrw check` now
+   reports `pin-contradicts-stack` when a pin sits more than a factor of two
+   (length) or `SLD_SLACK` (SLD) from what the stack declares.
+
+### 2026-08-13: two fitters, because a fitter menu is an escape hatch
+
+`nrw fit run --method` accepted anything bumps offers. It now accepts `amoeba`
+and `dream` only — `nr_workbench/fitters.py`, enforced at the CLI
+(`click.Choice`), in `FitSettings.method`, and in `run_fit` for the library path.
+
+The reason is behavioural, not technical: `de`, `lm` and `newton` work fine. But
+in the session above, five of the twelve doomed fits differed from their
+predecessor in *nothing but the optimiser* — the menu was what the session
+reached for instead of reverting the edit that broke the model. Two fitters with
+their roles named (`amoeba` explores, `dream` quotes) make the next thing to
+change obviously the model. Off-menu fitters remain reachable by running bumps
+on the generated script directly, which is a deliberate speed bump and leaves
+the result outside the provenance record.
+
+Paired with it: `summary._chisq_trend` now appends `(12.7x WORSE)` past
+`REGRESSION_FACTOR`, and `nrw fit run` prints a yellow warning naming the model
+edit as the suspect. `chisq 1.306 -> 16.58` had been on screen all along and read
+as a neutral fact, which is what it looks like.

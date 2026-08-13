@@ -46,6 +46,12 @@ ROUGHNESS_FRACTION = 0.5
 #: little; a real mismatch is a whole unit or more.
 SLD_SLACK = 0.15
 
+#: How far a pinned thickness or roughness may sit from the stack's own
+#: declaration before the two are describing different structures. Carrying a
+#: measured value forward moves a number by a few percent; a factor of two is
+#: not a refinement of the stack, it is a disagreement with it.
+PIN_DRIFT_FACTOR = 2.0
+
 #: Which constraint forms assert what about a trajectory's shape.
 _FORM_SHAPE = {
     "linear_in_time": "monotonic",
@@ -140,6 +146,7 @@ def check(
     report.contradictions.extend(_constraint_on_a_flat_run(spec, tnr))
     report.contradictions.extend(_roughness_coherence(spec))
     report.contradictions.extend(_sld_within_material(spec, fitted))
+    report.contradictions.extend(_pins_against_the_stack(spec))
     return report
 
 
@@ -408,6 +415,101 @@ def _sld_within_material(
             )
         )
     return found
+
+
+def _pins_against_the_stack(spec: Any) -> list[Contradiction]:
+    """A pinned value that disagrees with the stack the spec displays.
+
+    A pin is a bound of zero width, so the module's rule applies to it: bound
+    it, do not check it afterwards. The stack is the structure a reader sees ---
+    it is what ``model.md`` renders and what anyone judging the model reads ---
+    so a pin far from it means the readable description and the fitted model are
+    two different structures, and only one of them is in front of the reader.
+
+    This exists because that gap can open without anybody typing a wrong
+    number. A generator bug pinned every ``fixed: true`` parameter to 1.0
+    (``bool`` subclasses ``int``), so a spec declaring a 31.2 A Ti layer at rho
+    -1.88 fitted a 1 A layer at rho +1.0. Twelve fits chased the unfittable
+    result, and the number was on screen the whole time as an unremarkable ``1``
+    in a Start column. The bug is fixed and tested; this is the check that would
+    have named it in one line.
+
+    Carrying a measured value forward is normal and moves a number by a few
+    percent, so only a real disagreement is reported: past
+    :data:`PIN_DRIFT_FACTOR` for a length, past :data:`SLD_SLACK` for an SLD.
+    Silence on absence --- a pin on a path the stack does not describe claims
+    nothing.
+    """
+    layers = {
+        str(getattr(layer, "name", "")): layer
+        for layer in (getattr(spec, "stack", None) or [])
+    }
+    materials = getattr(spec, "materials", None) or {}
+
+    found = []
+    for parameter in getattr(spec, "parameters", None) or []:
+        pinned = _pinned_value(parameter)
+        if pinned is None:
+            continue
+        path = str(getattr(parameter, "path", ""))
+        if "." not in path:
+            continue
+        owner, attr = path.rsplit(".", 1)
+        layer = layers.get(owner)
+        if layer is None:
+            continue
+
+        if attr in {"thickness", "roughness"}:
+            declared = getattr(layer, attr, None)
+            if not declared or not pinned:
+                continue
+            ratio = max(pinned / declared, declared / pinned)
+            if ratio <= PIN_DRIFT_FACTOR:
+                continue
+            unit, what = "A", attr
+        elif attr == "rho":
+            material = materials.get(getattr(layer, "material_key", owner))
+            declared = getattr(material, "rho", None) if material else None
+            if declared is None or abs(pinned - declared) <= SLD_SLACK:
+                continue
+            unit, what = "1e-6/A2", "SLD"
+        else:
+            continue
+
+        found.append(
+            Contradiction(
+                kind="pin-contradicts-stack",
+                severity="warn",
+                subject=path,
+                message=(
+                    f"{path} is pinned at {pinned:g} {unit} while the stack "
+                    f"declares {declared:g}. The fit will use the pin and every "
+                    f"table a reader sees will show the stack, so the {what} "
+                    "being modelled is not the one being described. If the pin "
+                    "is the value you mean -- a result carried forward from an "
+                    "earlier fit, say -- put it in the stack too, so the "
+                    "structure on the page is the structure being fitted."
+                ),
+                evidence=f"pinned {pinned:g} vs stack {declared:g}",
+            )
+        )
+    return found
+
+
+def _pinned_value(parameter: Any) -> float | None:
+    """What a pinned parameter will hold during the fit, or None if it is free.
+
+    Mirrors ``resolve._create_free``: ``fixed: 42`` pins to 42, ``fixed: true``
+    pins to ``value``. The ``bool`` test comes first because ``bool`` subclasses
+    ``int`` --- the trap this whole check exists to catch.
+    """
+    fixed = getattr(parameter, "fixed", None)
+    if fixed in (None, False):
+        return None
+    if not isinstance(fixed, bool) and isinstance(fixed, int | float):
+        return float(fixed)
+    value = getattr(parameter, "value", None)
+    return float(value) if value is not None else None
 
 
 def _bounds_of(parameter: Any) -> tuple[float, float] | None:

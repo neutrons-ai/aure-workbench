@@ -266,6 +266,56 @@ def test_range_midpoint_is_used_when_the_stack_value_is_out_of_bounds() -> None:
     assert table.free[0].value == 400.0
 
 
+def test_fixed_true_pins_to_the_value_not_to_one() -> None:
+    """`fixed: true` must honour `value`, not float(True).
+
+    bool subclasses int, so a numeric test that runs before the bool test
+    accepts True and pins the parameter to 1.0. This shipped once and cost a
+    whole session: `{path: Ti.thickness, value: 31.2, fixed: true}` generated a
+    1 A Ti layer, `{path: Ti.rho, value: -1.88, fixed: true}` generated rho
+    +1.0, and the resulting stack was one no optimiser could fit -- from a spec
+    that read exactly right. The failure is silent by construction, so it needs
+    a test that names the value.
+    """
+    spec = spec_from(
+        parameters=[{"path": "Film.thickness", "value": 31.2, "fixed": True}]
+    )
+
+    table = build_table(spec, measurements_for(spec, {"s1": 1}))
+
+    assert table.free[0].value == 31.2
+    assert table.free[0].fixed
+
+
+def test_fixed_true_falls_back_to_the_stack_when_no_value_is_given() -> None:
+    """With no `value`, a pin means "hold the stack's starting value"."""
+    spec = spec_from(parameters=[{"path": "Film.thickness", "fixed": True}])
+
+    table = build_table(spec, measurements_for(spec, {"s1": 1}))
+
+    assert table.free[0].value == 100.0
+
+
+def test_a_numeric_fixed_pins_to_that_number() -> None:
+    """`fixed: 42` is the shorthand for value + pin, and still works."""
+    spec = spec_from(parameters=[{"path": "Film.thickness", "fixed": 42.0}])
+
+    table = build_table(spec, measurements_for(spec, {"s1": 1}))
+
+    assert table.free[0].value == 42.0
+
+
+def test_a_numeric_fixed_wins_over_value() -> None:
+    """If both are given the explicit pin is the one that was meant."""
+    spec = spec_from(
+        parameters=[{"path": "Film.thickness", "value": 31.2, "fixed": 42.0}]
+    )
+
+    table = build_table(spec, measurements_for(spec, {"s1": 1}))
+
+    assert table.free[0].value == 42.0
+
+
 # --------------------------------------------------------------------------
 # Constraints
 # --------------------------------------------------------------------------
@@ -829,3 +879,18 @@ def test_angles_too_close_to_name_apart_keep_full_precision() -> None:
     labels = angle_groups(angled(s1=[1.20, 1.23]))
 
     assert len({labels[k] for k in labels}) == 2
+
+
+def test_a_spec_cannot_ask_for_an_off_menu_fitter() -> None:
+    """`fit:` is the default every later `nrw fit run` inherits.
+
+    An off-menu choice written once would keep being made silently, so the
+    schema refuses it as firmly as the CLI does.
+    """
+    with pytest.raises(Exception, match="amoeba"):
+        spec_from(fit={"method": "de", "steps": 3000})
+
+
+def test_a_spec_may_name_either_fitter_on_the_menu() -> None:
+    for method in ("amoeba", "dream"):
+        assert spec_from(fit={"method": method}).fit.method == method

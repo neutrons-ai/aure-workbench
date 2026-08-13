@@ -319,6 +319,74 @@ def test_no_fit_yet_means_no_sld_opinion(tmp_path) -> None:
     assert [c for c in check(spec).contradictions if "sld" in c.kind] == []
 
 
+# --------------------------------------------------------------------------
+# Pins against the stack
+# --------------------------------------------------------------------------
+
+
+def test_a_pin_far_from_the_stack_thickness_is_flagged(tmp_path) -> None:
+    """The readable stack and the fitted model must be the same structure.
+
+    Drawn from the real failure: a generator bug pinned every `fixed: true`
+    parameter to 1.0, so a spec declaring a 500 A Cu layer fitted a 1 A one and
+    nothing said so. Twelve fits chased the result.
+    """
+    parameters = DEFAULT_PARAMETERS + "  - {path: Cu.thickness, fixed: 1.0}\n"
+    spec = spec_of(parameters=parameters, tmp_path=tmp_path)
+
+    found = [c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"]
+
+    assert len(found) == 1
+    assert found[0].subject == "Cu.thickness"
+    assert "pinned 1 vs stack 500" in found[0].evidence
+
+
+def test_a_pin_far_from_the_material_sld_is_flagged(tmp_path) -> None:
+    parameters = DEFAULT_PARAMETERS + "  - {path: Cu.rho, value: 1.0, fixed: true}\n"
+    spec = spec_of(parameters=parameters, tmp_path=tmp_path)
+
+    found = [c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"]
+
+    assert [c.subject for c in found] == ["Cu.rho"]
+    assert "6.55" in found[0].message
+
+
+def test_carrying_a_measured_value_forward_is_not_flagged(tmp_path) -> None:
+    """Pinning to an earlier fit's result is the normal use and moves a number
+    by a few percent, not a factor of two."""
+    parameters = (
+        DEFAULT_PARAMETERS
+        + "  - {path: Cu.thickness, value: 494.3, fixed: true}\n"
+        + "  - {path: Cu.rho, value: 6.51, fixed: true}\n"
+    )
+    spec = spec_of(parameters=parameters, tmp_path=tmp_path)
+
+    assert [
+        c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"
+    ] == []
+
+
+def test_a_free_parameter_is_not_a_pin(tmp_path) -> None:
+    """A range wide enough to reach 1 A is the roughness checker's business,
+    not this one's: only a pin asserts a value."""
+    parameters = DEFAULT_PARAMETERS + "  - {path: Cu.thickness, range: [1, 600]}\n"
+    spec = spec_of(parameters=parameters, tmp_path=tmp_path)
+
+    assert [
+        c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"
+    ] == []
+
+
+def test_nothing_is_claimed_about_a_pin_on_an_unknown_layer(tmp_path) -> None:
+    """Silence on absence: a path the stack does not describe says nothing."""
+    parameters = DEFAULT_PARAMETERS + "  - {path: Ti.thickness, fixed: 1.0}\n"
+    spec = spec_of(parameters=parameters, tmp_path=tmp_path)
+
+    assert [
+        c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"
+    ] == []
+
+
 def test_the_report_reports_its_worst(tmp_path) -> None:
     parameters = """\
   - {path: CuOx.thickness, range: [10, 80], per: state}

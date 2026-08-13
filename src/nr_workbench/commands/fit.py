@@ -434,6 +434,7 @@ def run_fit_command(
         click.echo(json.dumps(record.index_entry(), indent=2, default=str))
     else:
         _report_success(record, fit_dir, layout.root, outcome)
+        _report_regression(record, index)
 
     return record
 
@@ -485,6 +486,63 @@ def _report_success(record: FitRecord, fit_dir: Path, root: Path, outcome: Any) 
         )
 
     _next_steps(record)
+
+
+def _report_regression(record: FitRecord, index: Any) -> None:
+    """Say so, loudly, when this fit is much worse than the last of its model.
+
+    The information already existed --- `nrw ls` has always shown
+    `chisq 1.306 -> 16.58` --- but only afterwards, in a list, phrased as a
+    fact. An unattended session read exactly that line, kept the one-line spec
+    edit that caused it, and spent eleven further fits changing the optimiser,
+    the population and the step count. None of it could work: the edit had made
+    the model physically impossible, and a better search of an impossible model
+    is still impossible.
+
+    So it is said here, at the only moment it can change what happens next, and
+    it names the move rather than describing it: the edit is the suspect, not
+    the fitter. Never fatal --- a regression is a legitimate thing to record,
+    and this must not stop a fit that ran.
+    """
+    from nr_workbench.provenance.summary import REGRESSION_FACTOR
+
+    try:
+        previous = _previous_fit_of_model(record, index)
+        if previous is None or record.chisq is None:
+            return
+        was = previous.get("chisq")
+        if not isinstance(was, int | float) or was <= 0:
+            return
+        if record.chisq <= was * REGRESSION_FACTOR:
+            return
+
+        click.echo()
+        click.secho(
+            f"  ! chi-squared got {record.chisq / was:.3g}x worse than "
+            f"{str(previous.get('fit_id') or '')[-8:]} ({was:.4g} -> "
+            f"{record.chisq:.4g}).",
+            fg="yellow",
+            err=True,
+        )
+        click.secho(
+            "    Suspect the last change to the model, not the fitter. Read the "
+            "spec diff\n    first; a search that cannot find a good minimum is "
+            "usually one that has none\n    to find. Changing method, steps or "
+            "population will not recover this.",
+            err=True,
+        )
+    except Exception:  # noqa: BLE001 - a warning must not fail a fit that ran
+        return
+
+
+def _previous_fit_of_model(record: FitRecord, index: Any) -> dict[str, Any] | None:
+    """The fit of this same model that ran before this one, if there is one."""
+    for entry in index.fits(sample=record.sample):
+        if entry.get("fit_id") == record.fit_id:
+            continue
+        if entry.get("model") == record.model:
+            return entry
+    return None
 
 
 def _next_steps(record: FitRecord) -> None:

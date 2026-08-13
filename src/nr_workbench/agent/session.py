@@ -750,6 +750,20 @@ beam and with your own iteration on the model. But it has no posterior, so the \
 moment you are about to quote an uncertainty, claim two fits differ, or write \
 the note that settles on a model, switch to `--method dream` and re-fit first. \
 Do not report a number DREAM was never asked to produce.
+- **Those two are the only fitters.** amoeba while the model is still moving, \
+dream to quote a number. There is no third choice to make and no menu to work \
+through, which is deliberate: see the next point for what the menu was being \
+used for.
+- **A chi-squared that got worse means the last edit was wrong.** Not the \
+optimiser, not the step count, not the population. If a spec change made \
+chi-squared worse, revert it and understand why before you do anything else --- \
+read the spec diff and the generated script, and check that the model you are \
+fitting is the model you think you wrote. A real session watched chi-squared go \
+1.3 to 16.6 on a one-line edit, kept the edit, and spent eleven more fits \
+changing fitters and settings. The edit had pinned a layer to an impossible \
+value; no search was ever going to fix it. Two consecutive fits differing only \
+in how they were run is the signature of that failure --- if you are about to \
+launch one, stop and look at the model instead.
 - One fit at a time.
 - After each fit, `nrw assess <fit-id>`. It reports what is measurable --- \
 parameters on bounds, unconstrained posteriors, correlated pairs. Whether the \

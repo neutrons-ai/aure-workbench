@@ -102,3 +102,28 @@ def test_skills_path_prints_an_existing_directory() -> None:
 
     assert result.exit_code == 0
     assert Path(result.output.strip()).is_dir()
+
+
+def test_an_off_menu_fitter_is_refused_at_the_cli(tmp_path) -> None:
+    """`de` is a real bumps fitter and is still not on the menu.
+
+    Five of twelve fits in one real session differed from their predecessor in
+    nothing but the optimiser, while the model underneath was broken. Click
+    refuses before anything is recorded.
+    """
+    script = tmp_path / "m.py"
+    script.write_text("problem = None\n", encoding="utf-8")
+
+    result = CliRunner().invoke(main, ["fit", "run", str(script), "--method", "de"])
+
+    assert result.exit_code != 0
+    assert "de" in result.output
+    assert "amoeba" in result.output and "dream" in result.output
+
+
+def test_the_two_fitters_on_the_menu_are_accepted() -> None:
+    """The refusal must not have narrowed the menu to one."""
+    help_text = CliRunner().invoke(main, ["fit", "run", "--help"]).output
+
+    assert "amoeba" in help_text
+    assert "dream" in help_text

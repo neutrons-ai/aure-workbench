@@ -153,6 +153,32 @@ def test_compare_caps_a_long_list_of_settings_changes() -> None:
     assert "settings" not in result, "one change left over, not two"
 
 
+def test_compare_names_a_chisq_regression_as_one() -> None:
+    """`chisq 1.306 -> 16.58` reads as a neutral fact and was read as one.
+
+    A real session saw that line, kept the spec edit that caused it, and spent
+    eleven more fits changing optimisers. The move has to be labelled.
+    """
+    worse = compare(entry(fit_id="later", chisq=16.58), entry(chisq=1.306))
+
+    assert "chisq 1.306 -> 16.58" in worse
+    assert "12.7x WORSE" in worse
+
+
+def test_compare_does_not_cry_regression_over_a_small_move() -> None:
+    """Reduced chi-squared wanders between equivalent runs of one model."""
+    result = compare(entry(fit_id="later", chisq=2.2), entry(chisq=2.0))
+
+    assert "chisq 2 -> 2.2" in result
+    assert "WORSE" not in result
+
+
+def test_compare_says_nothing_about_worsening_when_it_improved() -> None:
+    result = compare(entry(fit_id="later", chisq=1.2), entry(chisq=16.0))
+
+    assert "WORSE" not in result
+
+
 def test_compare_omits_knobs_a_method_change_made_meaningless() -> None:
     """amoeba counts `steps`, dream counts `samples`. Switching between them
     is one decision, and rendering the knobs that stopped applying as

@@ -711,7 +711,21 @@ def _create_free(
             value = _midpoint(parameter)
 
     if parameter.is_fixed:
-        pinned = parameter.fixed if isinstance(parameter.fixed, int | float) else value
+        # `fixed: 31.2` pins to that number; `fixed: true` pins to `value` (or the
+        # stack default). The bool test comes FIRST because bool is a subclass of
+        # int in Python: `isinstance(True, int)` is True, so testing the numeric
+        # case first pins every `fixed: true` parameter to float(True) == 1.0 and
+        # silently discards the value the spec asked for. That shipped once, and
+        # it turned a 31.2 A Ti layer at rho -1.88 into a 1 A layer at rho +1.0 --
+        # a physically impossible stack no optimiser could fit, in a spec that
+        # read correctly. See docs/ground_truths.md.
+        pinned = (
+            value
+            if isinstance(parameter.fixed, bool)
+            else parameter.fixed
+            if isinstance(parameter.fixed, int | float)
+            else value
+        )
         table.free.append(
             FreeParameter(
                 key,

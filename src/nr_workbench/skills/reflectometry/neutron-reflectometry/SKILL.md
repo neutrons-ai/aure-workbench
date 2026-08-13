@@ -294,6 +294,7 @@ estimate where DREAM was never run is a guess dressed as a number.
 | "χ² is 2.9, which the table calls good, so I'm done." | The table grades the fit, not your understanding of it. At 2000 points, χ²_red = 1 has a standard error of 0.03, so 2.9 is not a rounding error — something coherent is unmodelled. Decompose it. |
 | "DREAM converged, so ± 0.8 Å is the uncertainty." | Only if χ²_red ≈ 1. DREAM trusts the reported `dR`; at χ²_red = 2.9 the intervals are too narrow by √2.9, and the 3σ difference you are about to report is 1.9σ. |
 | "The amoeba fit converged nicely, so ± the last step size is close enough." | Amoeba has no posterior; there is no ± to read off it, close or otherwise. Re-fit with `--method dream` before quoting anything. |
+| "χ² jumped after my last edit — I'll try a different fitter, or more steps." | A χ² regression after a model change is evidence about the change, not about the search. Revert it and read the spec diff. One real session watched 1.3 → 16.6 on a one-line edit and spent eleven more fits on optimisers and step counts; the edit had pinned a layer to an impossible value, and no search can find a minimum that is not there. `nrw fit run` now says this at the fit, in yellow. |
 | "The two states differ by 3 Å with ± 0.6 Å errors, so it changed." | Inflate first, then check whether the intervals still separate. Then check whether a nuisance parameter is correlated with the thing you think changed. |
 | "`copper.material.rho.range(...)` should work." | It crashes. See Red Flags. |
 
@@ -317,6 +318,12 @@ estimate where DREAM was never run is a guess dressed as a number.
 - Suggesting a change to the fitting method, the error bars, the Q range, or the
   back-reflection geometry. Those are set by the experiment, not the model.
 - Several structural changes made in one step, so none can be attributed.
+- Two consecutive fits of the same model differing only in how they were run —
+  method, steps, population, seed. That is a broken model being blamed on the
+  search. Go back to the last fit that was good and diff the spec against it.
+- A pinned value (`fixed:`) that disagrees with the stack the spec displays. The
+  fit uses the pin; every table a reader sees shows the stack. `nrw check`
+  reports this as `pin-contradicts-stack`.
 
 ## Verification
 

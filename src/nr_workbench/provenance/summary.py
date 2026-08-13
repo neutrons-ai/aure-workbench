@@ -35,6 +35,12 @@ _NOTE_LIMIT = 72
 #: match the literal in two places.
 FIRST_RUN = "first run of this model"
 
+#: How much worse chi-squared has to get before the move is called a
+#: regression rather than reported as a number. Reduced chi-squared moves by a
+#: few percent between equivalent fits; half again as large is a different
+#: model, not a different run of the same one.
+REGRESSION_FACTOR = 1.5
+
 
 def describe(entry: dict[str, Any]) -> str:
     """Return a short human description of one fit.
@@ -220,13 +226,22 @@ def _settings_order(key: str) -> tuple[int, str]:
 
 
 def _chisq_trend(a: dict[str, Any], b: dict[str, Any]) -> str:
-    """Describe the chi-squared move, or return an empty string."""
+    """Describe the chi-squared move, or return an empty string.
+
+    A regression is named as one. `chisq 1.306 -> 16.58` reads as a neutral fact
+    and was read as one: a real session saw that line, kept the model edit that
+    caused it, and spent eleven more fits changing optimisers. The number was
+    never the problem -- how unremarkable it looked was.
+    """
     now, was = a.get("chisq"), b.get("chisq")
     if not isinstance(now, int | float) or not isinstance(was, int | float):
         return ""
     if now == was:
         return "chisq unchanged"
-    return f"chisq {was:.4g} -> {now:.4g}"
+    line = f"chisq {was:.4g} -> {now:.4g}"
+    if was > 0 and now > was * REGRESSION_FACTOR:
+        line += f" ({now / was:.3g}x WORSE)"
+    return line
 
 
 def _settings_phrase(entry: dict[str, Any]) -> str:

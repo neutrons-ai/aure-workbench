@@ -590,7 +590,8 @@ class FitSettings(_Base):
     """Default fit settings recorded with the model.
 
     Attributes:
-        method: Bumps fitter name.
+        method: Which fitter, ``amoeba`` or ``dream``. See
+            :mod:`nr_workbench.fitters` for why those are the only two.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
@@ -602,6 +603,21 @@ class FitSettings(_Base):
     samples: int | None = None
     burn: int | None = None
     seed: int | None = None
+
+    @field_validator("method")
+    @classmethod
+    def _known_fitter(cls, value: str) -> str:
+        """Reject a fitter the tool will not run.
+
+        Checked here as well as at the CLI because a spec's `fit:` block is the
+        default every later `nrw fit run` inherits, so an off-menu choice
+        written once would keep being made silently.
+        """
+        from nr_workbench.fitters import FITTERS, refuse
+
+        if value not in FITTERS:
+            raise ValueError(refuse(value))
+        return value
 
 
 class ModelSpec(_Base):

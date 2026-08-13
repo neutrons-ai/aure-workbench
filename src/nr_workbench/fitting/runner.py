@@ -318,7 +318,8 @@ def run_fit(
     Args:
         problem: A bumps ``FitProblem``.
         output_dir: Directory to write the bumps export into.
-        method: Bumps fitter name (``amoeba``, ``dream``, ``lm``, ``de``, ...).
+        method: Which fitter: ``amoeba`` to explore, ``dream`` to quote. Those
+            are the only two; see :mod:`nr_workbench.fitters`.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
@@ -327,18 +328,25 @@ def run_fit(
         alpha: Bumps convergence parameter.
         plots: Let bumps render its PNGs. Off by default; see :func:`_export`.
         parallel: CPUs to use. ``0`` means all of them, ``1`` forces serial.
-            Population fitters -- dream, de -- evaluate their whole population
-            each generation and scale well; amoeba is sequential and gains
-            nothing.
+            dream evaluates its whole population each generation and scales
+            well; amoeba is sequential and gains nothing.
         quiet: Suppress the fitter's own progress output.
 
     Returns:
         What the fit produced.
 
     Raises:
-        FitError: If the fit itself fails.
+        FitError: If the fit itself fails, or the fitter is not on the menu.
     """
     from bumps.fitters import fit as bumps_fit
+
+    from nr_workbench.fitters import FITTERS, refuse
+
+    # Last gate before bumps. The CLI and the spec both check, but this function
+    # is also the library entry point, and a fitter that reaches bumps directly
+    # would land in the provenance record as a legitimate result.
+    if method not in FITTERS:
+        raise FitError(refuse(method))
 
     # bumps names its export files after ``problem.name``; unset, that becomes
     # the literal string "None" in every filename.
