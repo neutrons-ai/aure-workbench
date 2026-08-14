@@ -2051,3 +2051,34 @@ Paired with it: `summary._chisq_trend` now appends `(12.7x WORSE)` past
 `REGRESSION_FACTOR`, and `nrw fit run` prints a yellow warning naming the model
 edit as the suspect. `chisq 1.306 -> 16.58` had been on screen all along and read
 as a neutral fact, which is what it looks like.
+
+### 2026-08-14: a committed copy of a generated schema drifts, and closed objects make that a rejection
+
+`skills/reflectometry/nrw-model-spec/assets/nrw-model-1.json` was maintained by
+hand alongside the pydantic models it claims to describe. It fell four changes
+behind: no `Constraint.endpoint_range`, no `Trim`, no `probe.dq_scale`, no
+`per: angle`, and it still listed a `moderator` resolution the code had dropped.
+
+The damage is not staleness, it is that every generated `$def` carries
+`"additionalProperties": false` (from `ConfigDict(extra="forbid")`). A closed
+object missing a key does not ignore it — it *rejects* it. So the asset said a
+valid, documented, supported spec was invalid, while the SKILL.md three
+directories up documented `endpoint_range` correctly. A reader believed the
+machine-readable file over the prose, concluded the key was unsupported, and
+designed a model around its absence.
+
+Two rules came out of it:
+
+1. **Generated artifacts that must be committed get a regeneration command and
+   a test, never a maintainer.** `python tools/regen_schema_asset.py` writes it;
+   `test_spec.py::test_the_bundled_schema_asset_matches_the_live_models` compares
+   bytes and names the command in its failure message.
+2. **`nrw init` writes the project's `.nrw/schema/nrw-model-1.json` as a scaffold
+   file.** It never had — `spec/schema.py`'s own docstring claimed it did, and
+   `.vscode/settings.json` had mapped `samples/*/models/*.yaml` onto the missing
+   path since the beginning, so real projects showed "Unable to load schema ...
+   No content" and got zero editor validation. Routing it through the scaffold
+   (rather than a one-off write at init) means a package upgrade refreshes it on
+   the next `nrw init`, `--check` reports it pending, and a hand-edited copy is
+   left alone. `nrw doctor` now reports it as missing or stale, because the
+   failure was otherwise silent by construction.

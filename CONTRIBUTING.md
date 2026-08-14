@@ -21,6 +21,10 @@ pre-commit install        # enable the lint / format / secret-scan hooks
   over heavy mocking — see the standard in [skills/review-test/SKILL.md](skills/review-test/SKILL.md).
 - Record non-obvious decisions, API quirks, or constraints in
   [docs/ground_truths.md](docs/ground_truths.md) so they persist across sessions.
+- Changed `nr_workbench/spec/models.py`? Run `python tools/regen_schema_asset.py`
+  and commit the result. The bundled JSON Schema is generated from those models,
+  and a stale copy does not merely go out of date — every object in it is closed,
+  so a key it has not heard of is *rejected*. `pytest` fails if you forget.
 
 ## Reviews
 

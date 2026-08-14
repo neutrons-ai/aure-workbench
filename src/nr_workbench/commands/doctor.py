@@ -407,7 +407,45 @@ def _project_checks() -> list[Check]:
     else:
         checks.append(Check("skills", "warn", "no skills/ directory; run `nrw init`"))
 
+    checks.append(_spec_schema_check(layout))
+
     return checks
+
+
+def _spec_schema_check(layout: Any) -> Check:
+    """Report on the project's copy of the `nrw-model/1` JSON Schema.
+
+    Its absence is silent everywhere else: `.vscode/settings.json` points at
+    it, the editor says "Unable to load schema" in a corner, and every spec in
+    the project simply gets no validation. Projects scaffolded before the
+    schema was part of the scaffold are in exactly that state, so the check
+    has to distinguish missing from stale -- both are fixed by `nrw init`,
+    but only one of them looks like a bug.
+
+    Args:
+        layout: The discovered :class:`~nr_workbench.project.layout.ProjectLayout`.
+
+    Returns:
+        One diagnostic line.
+    """
+    from nr_workbench.spec.schema import SCHEMA_FILENAME, schema_bytes
+
+    path = layout.schema_dir / SCHEMA_FILENAME
+    relative = path.relative_to(layout.root)
+
+    if not path.is_file():
+        return Check(
+            "spec schema",
+            _MISSING,
+            f"no {relative}; model specs get no editor validation. Run `nrw init`.",
+        )
+    if path.read_bytes() != schema_bytes():
+        return Check(
+            "spec schema",
+            "warn",
+            f"{relative} does not match this nr-workbench; run `nrw init`",
+        )
+    return Check("spec schema", _OK, str(relative))
 
 
 def run_fix_path(*, yes: bool = False) -> None:

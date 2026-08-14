@@ -2,7 +2,7 @@
   "$defs": {
     "Constraint": {
       "additionalProperties": false,
-      "description": "A functional form tying a series' parameters to its endpoints.\n\nThis is what the hand-written ``linear_constraints()`` does, declared\ninstead of coded: each slice's value becomes an expression in the endpoint\nparameters, so only the endpoints are free.\n\nAttributes:\n    series: The series this applies to.\n    form: The functional form. See :mod:`nr_workbench.spec.constraints`.\n    paths: Parameter paths to constrain. Globs allowed, e.g. ``*.roughness``.\n    from_: State supplying the starting value, for interpolating forms.\n    to: State supplying the final value.\n    knots: Number of free knots, for ``piecewise_linear``.\n    tau: Bounds for the time constant, for ``exponential``.\n    t_half: Bounds for the midpoint, for ``logistic``.\n    width: Bounds for the transition width, for ``logistic``.",
+      "description": "A functional form tying a series' parameters to its endpoints.\n\nThis is what the hand-written ``linear_constraints()`` does, declared\ninstead of coded: each slice's value becomes an expression in the endpoint\nparameters, so only the endpoints are free.\n\nAttributes:\n    series: The series this applies to.\n    form: The functional form. See :mod:`nr_workbench.spec.constraints`.\n    paths: Parameter paths to constrain. Globs allowed, e.g. ``*.roughness``.\n    from_: State supplying the starting value, for interpolating forms.\n    to: State supplying the final value.\n    knots: Number of free knots, for ``piecewise_linear``.\n    endpoint_range: Bounds for an endpoint written as ``free``. Needed\n        only when the path has no other declaration to borrow from -- a\n        series with no bracketing steady states.\n    tau: Bounds for the time constant, for ``exponential``.\n    t_half: Bounds for the midpoint, for ``logistic``.\n    width: Bounds for the transition width, for ``logistic``.",
       "properties": {
         "series": {
           "title": "Series",
@@ -47,6 +47,28 @@
           "default": 3,
           "title": "Knots",
           "type": "integer"
+        },
+        "endpoint_range": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint Range"
         },
         "tau": {
           "anyOf": [
@@ -125,7 +147,7 @@
     },
     "FitSettings": {
       "additionalProperties": false,
-      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Bumps fitter name.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    seed: Random seed.",
+      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Which fitter, ``amoeba`` or ``dream``. See\n        :mod:`nr_workbench.fitters` for why those are the only two.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    seed: Random seed.",
       "properties": {
         "method": {
           "default": "amoeba",
@@ -283,7 +305,8 @@
           "enum": [
             "model",
             "state",
-            "measurement"
+            "measurement",
+            "angle"
           ],
           "title": "Per",
           "type": "string"
@@ -398,14 +421,11 @@
     },
     "Probe": {
       "additionalProperties": false,
-      "description": "How the probe is constructed from the data.\n\nAttributes:\n    resolution: ``angular_only`` builds dT from dQ and sets dL = 0, which\n        is the BL-4B convention and what the hand-written scripts do.\n        ``moderator`` additionally models the wavelength spread.\n    dq_is_fwhm: Whether the 4th data column is FWHM. It is, for REF_L --\n        treating it as sigma scales every resolution by 2.355.\n    back_reflection: Neutrons enter through the substrate.",
+      "description": "How the probe is constructed from the data.\n\nAttributes:\n    resolution: Only ``angular_only``: dT is derived from dQ at the known\n        incident angle and dL is zero. See the class body for why the\n        moderator variant was dropped.\n    dq_is_fwhm: Whether the 4th data column is FWHM. Read it off the file's\n        column titles rather than assuming; treating FWHM as sigma scales\n        every resolution by 2.355.\n    dq_scale: Constant factor applied to the dQ column, for a reduction whose\n        resolution estimate is demonstrably wrong. Fixed rather than fitted;\n        see the note in the class body.\n    back_reflection: Neutrons enter through the substrate.",
       "properties": {
         "resolution": {
+          "const": "angular_only",
           "default": "angular_only",
-          "enum": [
-            "angular_only",
-            "moderator"
-          ],
           "title": "Resolution",
           "type": "string"
         },
@@ -414,10 +434,22 @@
           "title": "Dq Is Fwhm",
           "type": "boolean"
         },
+        "dq_scale": {
+          "default": 1.0,
+          "title": "Dq Scale",
+          "type": "number"
+        },
         "back_reflection": {
-          "default": false,
-          "title": "Back Reflection",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Back Reflection"
         }
       },
       "title": "Probe",
@@ -646,6 +678,84 @@
       ],
       "title": "State",
       "type": "object"
+    },
+    "Trim": {
+      "additionalProperties": false,
+      "description": "A range of the data to keep, for one measurement or all of them.\n\nSome data is wrong in a way no parameter can absorb. A segment whose required\nscale varies *across* its own wavelength band --- typically at the short-\u03bb\nedge, where the direct-beam spectrum is weakest --- cannot be fixed by\n``probe.intensity``, which is one number per segment. Left in, the fit spends\na thickness or a roughness on it. The honest options are to re-reduce or to\ncut the band, and until now cutting meant ``nrw model fork``, which takes the\nmodel out of the spec entirely for the sake of two numbers.\n\nCuts are declared here so they stay in the spec, get hashed with it, and\nappear in the generated script's own docstring. Dropping data must never be\ninvisible.\n\n**\u03bb and Q are not interchangeable across segments.** A band-edge problem is a\nproperty of the wavelength, and one \u03bb cut maps to a different Q in every\nsegment: at 0.37\u00b0 \u03bb = 3.5 \u00c5 is Q = 0.023, at 3.5\u00b0 it is Q = 0.219. State it\nin \u03bb and it is right everywhere; state it in Q and it is right once.\n\nAttributes:\n    in_: Measurements this applies to, as state names or ``state#index``\n        keys. ``None`` means every measurement.\n    q_min: Drop points below this Q.\n    q_max: Drop points above this Q.\n    lambda_min: Drop points below this wavelength, in angstroms.\n    lambda_max: Drop points above this wavelength.\n    reason: Why the data is being cut. Required: a silent cut is\n        indistinguishable from a mistake six months later.",
+      "properties": {
+        "in": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "In"
+        },
+        "q_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q Min"
+        },
+        "q_max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Q Max"
+        },
+        "lambda_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lambda Min"
+        },
+        "lambda_max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lambda Max"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "title": "Trim",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -720,6 +830,13 @@
         "$ref": "#/$defs/Constraint"
       },
       "title": "Constraints",
+      "type": "array"
+    },
+    "trim": {
+      "items": {
+        "$ref": "#/$defs/Trim"
+      },
+      "title": "Trim",
       "type": "array"
     },
     "fit": {
