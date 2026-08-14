@@ -894,3 +894,49 @@ def test_a_spec_cannot_ask_for_an_off_menu_fitter() -> None:
 def test_a_spec_may_name_either_fitter_on_the_menu() -> None:
     for method in ("amoeba", "dream"):
         assert spec_from(fit={"method": method}).fit.method == method
+
+
+# --- The committed copies of the schema ------------------------------------
+#
+# The pydantic models above are the authority. Two files on disk claim to be
+# the same schema, and both are generated -- but one of them was hand-written
+# for a while and drifted, dropping `Constraint.endpoint_range` while keeping
+# `additionalProperties: false`. That combination does not merely go stale, it
+# actively rejects valid specs, and it cost a user a redesign.
+
+
+def test_the_bundled_schema_asset_matches_the_live_models() -> None:
+    """The skill's committed schema must be exactly what the models generate.
+
+    Compared as bytes, not as parsed JSON: the asset is a generated artifact
+    that happens to be committed, so "regenerate and commit" is the only
+    correct response to a difference, and a byte comparison is the one that
+    says so unambiguously.
+    """
+    from nr_workbench.spec.schema import schema_bytes, skill_asset_path
+
+    asset = skill_asset_path()
+    assert asset.is_file(), f"the skill asset is missing: {asset}"
+    assert asset.read_bytes() == schema_bytes(), (
+        f"{asset} has drifted from nr_workbench.spec.models. "
+        "Run `python tools/regen_schema_asset.py` and commit the result."
+    )
+
+
+def test_the_bundled_schema_asset_admits_endpoint_range() -> None:
+    """The specific drift that shipped, named so it cannot come back quietly.
+
+    `endpoint_range` is documented in the skill's own SKILL.md, so an asset
+    that forbids it makes the skill contradict itself.
+    """
+    import json
+
+    from nr_workbench.spec.schema import skill_asset_path
+
+    schema = json.loads(skill_asset_path().read_text(encoding="utf-8"))
+    constraint = schema["$defs"]["Constraint"]
+    assert "endpoint_range" in constraint["properties"]
+    assert constraint["additionalProperties"] is False, (
+        "closed objects are what make the missing key a rejection rather than "
+        "a shrug; if this ever opens up, the test above is the only guard left"
+    )

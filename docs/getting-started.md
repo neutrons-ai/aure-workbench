@@ -30,7 +30,7 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   66 file(s)
+  create   67 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
@@ -38,6 +38,13 @@ to run twice — it never overwrites a file you have edited. Those files are the
 layout, the editor config, and 17 reflectometry skills with dispatcher agents
 for both Claude Code and Copilot, so an assistant opened in this folder already
 knows REF_L conventions.
+
+One of them is `.nrw/schema/nrw-model-1.json`, the JSON Schema for a model spec,
+generated from the code rather than written by hand. `.vscode/settings.json`
+points every `samples/*/models/*.yaml` at it, so a mistyped key is underlined in
+the editor rather than surfacing as a validation error at fit time. Re-run
+`nrw init` after upgrading nr-workbench to refresh it — `nrw doctor` says so if
+it is missing or stale.
 
 Check the environment:
 

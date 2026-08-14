@@ -165,6 +165,40 @@ def test_scaffold_lock_records_every_installed_file(project: Path) -> None:
     assert set(lock["files"]) >= expected_project_files()
 
 
+def test_init_writes_the_spec_schema_the_editor_points_at(project: Path) -> None:
+    """`.vscode/settings.json` names this file; init has to actually write it.
+
+    It did not, for a while. Projects scaffolded in that period showed
+    "Unable to load schema ... No content" on every spec and got no editor
+    validation at all, which stays invisible until a typo survives to fit time.
+    """
+    from nr_workbench.spec.schema import schema_bytes
+
+    schema = project / ".nrw" / "schema" / "nrw-model-1.json"
+
+    assert schema.is_file(), "nrw init did not write the project's JSON Schema"
+    assert schema.read_bytes() == schema_bytes()
+
+    settings = json.loads(
+        (project / ".vscode" / "settings.json").read_text(encoding="utf-8")
+    )
+    assert "./.nrw/schema/nrw-model-1.json" in set(settings["yaml.schemas"])
+
+
+def test_doctor_reports_a_missing_spec_schema(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project scaffolded before the fix must not stay silently broken."""
+    from nr_workbench.commands.doctor import collect_checks
+
+    (project / ".nrw" / "schema" / "nrw-model-1.json").unlink()
+    monkeypatch.chdir(project)
+
+    by_name = {check.name: check for check in collect_checks()}
+
+    assert by_name["spec schema"].status == "missing"
+
+
 # --------------------------------------------------------------------------
 # Samples
 # --------------------------------------------------------------------------

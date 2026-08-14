@@ -71,6 +71,7 @@ def plan_project_files(
         TemplateError: If the packaged template tree is missing.
     """
     planned = render_tree("project", context)
+    planned.append(_plan_schema())
 
     for relpath in (f"{name}/.gitkeep" for name in SEED_DIRS):
         planned.append(
@@ -101,6 +102,31 @@ def plan_project_files(
                 )
 
     return planned
+
+
+def _plan_schema() -> PlannedFile:
+    """Plan the project's copy of the `nrw-model/1` JSON Schema.
+
+    It is not a template: its content is generated from the pydantic models,
+    so it changes when they do. Routing it through the scaffold anyway is what
+    makes it *maintained* rather than merely written once -- re-running `nrw
+    init` after a package upgrade replaces a stale copy, `--check` reports it
+    as pending, and a copy the user has edited is left alone like any other.
+
+    Without it, `.vscode/settings.json` points `samples/*/models/*.yaml` at a
+    file that does not exist, and every spec in the project shows "Unable to
+    load schema" with no editor validation at all.
+
+    Returns:
+        The planned file for ``.nrw/schema/nrw-model-1.json``.
+    """
+    from nr_workbench.spec.schema import PROJECT_SCHEMA_RELPATH, schema_bytes
+
+    return PlannedFile(
+        relpath=PROJECT_SCHEMA_RELPATH,
+        content=schema_bytes(),
+        template_id="schema/nrw-model-1.json",
+    )
 
 
 def run_init(
