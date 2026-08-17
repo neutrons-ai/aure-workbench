@@ -17,6 +17,7 @@ from typing import Any
 from jinja2 import StrictUndefined, Template
 
 from nr_workbench import __version__
+from nr_workbench.harness import DEFAULT_HARNESSES, agent_dirs, resolve
 from nr_workbench.project.config import CONTRACT_VERSION
 from nr_workbench.project.scaffold import PlannedFile
 
@@ -42,6 +43,27 @@ class TemplateError(Exception):
     """Raised when the packaged template tree is missing or cannot render."""
 
 
+def _prose_list(items: tuple[str, ...]) -> str:
+    """Join paths the way a sentence would, as ``a``, ``a and b``, ``a, b and c``.
+
+    Instruction files name the directories a project actually has, so a
+    scaffold for one assistant does not tell it to look somewhere that was
+    never written.
+
+    Args:
+        items: Paths to join.
+
+    Returns:
+        A prose fragment with each path in backticks, or an empty string.
+    """
+    quoted = [f"`{item}/`" for item in items]
+    if not quoted:
+        return ""
+    if len(quoted) == 1:
+        return quoted[0]
+    return f"{', '.join(quoted[:-1])} and {quoted[-1]}"
+
+
 @dataclass(frozen=True)
 class RenderContext:
     """Values substituted into ``.j2`` templates.
@@ -55,6 +77,9 @@ class RenderContext:
         sample_id: Sample identifier, when rendering the sample templates.
         title: Human-readable sample title, when rendering sample templates.
         created: ISO-8601 UTC timestamp for the scaffold run.
+        harnesses: Names of the coding assistants this project is scaffolded
+            for. Templates use it to record the choice and to recommend the
+            matching editor extensions.
     """
 
     project_name: str
@@ -65,6 +90,7 @@ class RenderContext:
     sample_id: str = ""
     title: str = ""
     created: str = ""
+    harnesses: tuple[str, ...] = DEFAULT_HARNESSES
 
     def as_dict(self) -> dict[str, Any]:
         """Return the template variables, filling in derived defaults.
@@ -83,6 +109,14 @@ class RenderContext:
             "created": self.created or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "nrw_version": __version__,
             "contract_version": CONTRACT_VERSION,
+            "harnesses": list(self.harnesses),
+            "agent_dirs": list(agent_dirs(resolve(self.harnesses))),
+            "agent_dirs_prose": _prose_list(agent_dirs(resolve(self.harnesses))),
+            "vscode_extensions": [
+                harness.vscode_extension
+                for harness in resolve(self.harnesses)
+                if harness.vscode_extension
+            ],
         }
 
 
@@ -146,7 +180,18 @@ def render_tree(
             try:
                 # StrictUndefined: a typo'd variable must fail loudly at scaffold
                 # time, not silently produce an empty field in a config file.
-                content = Template(raw, undefined=StrictUndefined).render(**variables)
+                #
+                # keep_trailing_newline: Jinja drops the final newline by
+                # default, so every rendered file shipped without one -- git
+                # reports "\ No newline at end of file" on each of them, and a
+                # scaffolded project's own `end-of-file-fixer` would rewrite
+                # them on its first commit. Only visible once a file that
+                # previously had one (.vscode/extensions.json) became a
+                # template; the .md and .toml ones had been missing it since
+                # the beginning.
+                content = Template(
+                    raw, undefined=StrictUndefined, keep_trailing_newline=True
+                ).render(**variables)
             except Exception as exc:
                 raise TemplateError(f"Failed to render {source}: {exc}") from exc
             data = content.encode("utf-8")

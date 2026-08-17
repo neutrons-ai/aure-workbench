@@ -14,6 +14,28 @@ from nr_workbench.skills_install import (
 )
 
 
+def _project_harnesses(layout: ProjectLayout) -> tuple[str, ...]:
+    """The harnesses a project is scaffolded for, for dispatcher placement.
+
+    Falls back to the default set rather than failing: a skill install must not
+    be blocked by an unreadable ``nrw.toml``, and the default is what the
+    project would have had anyway.
+
+    Args:
+        layout: The project to read.
+
+    Returns:
+        Harness names.
+    """
+    from nr_workbench.harness import DEFAULT_HARNESSES
+    from nr_workbench.project.config import ProjectConfigError, load_config
+
+    try:
+        return load_config(layout.root).harnesses
+    except ProjectConfigError:
+        return DEFAULT_HARNESSES
+
+
 def run_skills_list(*, bundled: bool = False) -> None:
     """List skills, either installed in this project or bundled in the package.
 
@@ -116,7 +138,9 @@ def run_skills_add(*, names: tuple[str, ...], force: bool = False) -> None:
             template_id=f"skill/{bundled[name].name}/{relpath}",
         )
         for name in names
-        for relpath, content in plan_skill_files(bundled[name])
+        for relpath, content in plan_skill_files(
+            bundled[name], harnesses=_project_harnesses(layout)
+        )
     ]
     report = apply_scaffold(layout.root, planned, force=force)
     click.echo(
@@ -162,7 +186,9 @@ def run_skills_sync(*, force: bool = False) -> None:
             template_id=f"skill/{skill.name}/{relpath}",
         )
         for skill in skills
-        for relpath, content in plan_skill_files(skill)
+        for relpath, content in plan_skill_files(
+            skill, harnesses=_project_harnesses(layout)
+        )
     ]
 
     report = apply_scaffold(layout.root, planned, force=force)

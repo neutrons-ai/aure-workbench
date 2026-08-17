@@ -32,6 +32,9 @@ EXPECTED_SCAFFOLD_FILES = {
     # deny list plus a PreToolUse hook, because an instruction to a model is
     # a request and only a hook is a limit.
     ".claude/settings.json",
+    # The tool-neutral instruction body. Read directly by OpenCode and Copilot,
+    # imported by CLAUDE.md, so there is one copy rather than one per assistant.
+    "AGENTS.md",
     "CLAUDE.md",
     "README.md",
     "docs/ground_truths.md",
@@ -89,6 +92,183 @@ def test_init_writes_matching_dispatcher_pairs(project: Path) -> None:
 
     assert claude == copilot
     assert claude, "expected dispatcher agents to be installed"
+
+
+# --------------------------------------------------------------------------
+# Harness selection
+# --------------------------------------------------------------------------
+
+
+def test_init_scaffolds_for_claude_and_copilot_by_default(project: Path) -> None:
+    """The default set is what every project got before harnesses existed.
+
+    Pinned, because the whole point of making harnesses selectable was that a
+    project which says nothing must be unaffected by it.
+    """
+    config = tomllib.loads((project / "nrw.toml").read_text(encoding="utf-8"))
+
+    assert config["harness"]["kinds"] == ["claude", "copilot"]
+    assert (project / "CLAUDE.md").is_file()
+    assert (project / ".claude" / "settings.json").is_file()
+    assert (project / ".github" / "agents").is_dir()
+
+
+def test_init_for_one_harness_omits_the_others_files(
+    tmp_path: Path, context: RenderContext
+) -> None:
+    """A project that does not use an assistant must not carry its files.
+
+    Before this, every project got a `.github/agents/` tree of dispatchers
+    whether or not anyone read them.
+    """
+    from dataclasses import replace
+
+    from nr_workbench.project.scaffold import apply_scaffold
+
+    apply_scaffold(
+        tmp_path, plan_project_files(replace(context, harnesses=("claude",)))
+    )
+    installed = installed_files(tmp_path)
+
+    assert "CLAUDE.md" in installed
+    assert ".claude/settings.json" in installed
+    assert not any(path.startswith(".github/agents/") for path in installed)
+    assert ".github/copilot-instructions.md" in installed, (
+        "the shared instruction body belongs to the project, not to Copilot -- "
+        "CLAUDE.md @-imports it and it must survive deselecting Copilot"
+    )
+
+
+def test_init_for_copilot_alone_writes_no_claude_files(
+    tmp_path: Path, context: RenderContext
+) -> None:
+    from dataclasses import replace
+
+    from nr_workbench.project.scaffold import apply_scaffold
+
+    apply_scaffold(
+        tmp_path, plan_project_files(replace(context, harnesses=("copilot",)))
+    )
+    installed = installed_files(tmp_path)
+
+    assert not any(path.startswith(".claude/") for path in installed)
+    assert "CLAUDE.md" not in installed
+    assert ".github/agents/neutron-reflectometry.md" in installed
+    assert "skills/reflectometry/neutron-reflectometry/SKILL.md" in installed, (
+        "skills are tool-neutral and install for any harness"
+    )
+
+
+def test_init_keeps_a_narrowed_harness_set_on_a_later_run(tmp_path: Path) -> None:
+    """Re-running without --harness must not silently re-add what was dropped."""
+    runner = CliRunner()
+    first = runner.invoke(main, ["init", str(tmp_path), "--harness", "claude"])
+    assert first.exit_code == 0, first.output
+
+    second = runner.invoke(main, ["init", str(tmp_path), "--check"])
+
+    assert second.exit_code == 0, (
+        f"a re-run should be clean, not pending: {second.output}"
+    )
+    assert not (tmp_path / ".github" / "agents").exists()
+
+
+def test_init_adds_a_harness_without_disturbing_the_existing_one(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    runner.invoke(main, ["init", str(tmp_path), "--harness", "claude"])
+    before = (tmp_path / "CLAUDE.md").read_bytes()
+
+    result = runner.invoke(
+        main, ["init", str(tmp_path), "--harness", "claude", "--harness", "copilot"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".github" / "agents").is_dir()
+    assert (tmp_path / "CLAUDE.md").read_bytes() == before
+
+
+def test_init_never_deletes_a_deselected_harnesss_files(tmp_path: Path) -> None:
+    """Narrowing the set leaves what is already on disk alone.
+
+    `nrw init` never removes a file. A scientist who has edited a dispatcher
+    would otherwise lose it to a config change.
+    """
+    runner = CliRunner()
+    runner.invoke(main, ["init", str(tmp_path)])
+    stub = tmp_path / ".github" / "agents" / "neutron-reflectometry.md"
+    assert stub.is_file()
+
+    result = runner.invoke(main, ["init", str(tmp_path), "--harness", "claude"])
+
+    assert result.exit_code == 0, result.output
+    assert stub.is_file(), "deselecting a harness must not delete its files"
+
+
+def test_the_instruction_body_lives_in_exactly_one_file(project: Path) -> None:
+    """CLAUDE.md points at AGENTS.md rather than repeating it.
+
+    Two copies of the same instructions is the drift this project avoids for
+    skills; it would be no better one level up. The marker is a sentence from
+    the body that must appear once and be reachable from CLAUDE.md.
+    """
+    marker = "Never hand-edit a generated fit script"
+    claude = (project / "CLAUDE.md").read_text(encoding="utf-8")
+    agents = (project / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert marker in agents
+    assert marker not in claude, "the body must not be duplicated into CLAUDE.md"
+    assert "@AGENTS.md" in claude, "CLAUDE.md must import the shared body"
+    assert "@.github/copilot-instructions.md" in claude
+
+
+def test_agents_md_names_only_the_directories_this_project_has(
+    tmp_path: Path, context: RenderContext
+) -> None:
+    """Telling an assistant to look in a directory that was never written is
+    the kind of wrong that costs tool calls before it is noticed."""
+    from dataclasses import replace
+
+    from nr_workbench.project.scaffold import apply_scaffold
+
+    apply_scaffold(
+        tmp_path, plan_project_files(replace(context, harnesses=("claude",)))
+    )
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+
+    assert "`.claude/agents/`" in agents
+    assert ".github/agents" not in agents
+    assert ".opencode/agents" not in agents
+
+
+def test_every_scaffolded_text_file_ends_with_a_newline(project: Path) -> None:
+    """Jinja drops the trailing newline unless told not to.
+
+    Every `.j2`-rendered file shipped without one for months: git reports
+    "\\ No newline at end of file" on each, and a scaffolded project running
+    its own pre-commit would rewrite them on the first commit. Invisible until
+    a file that previously had one became a template.
+    """
+    offenders = [
+        path.relative_to(project).as_posix()
+        for path in project.rglob("*")
+        if path.is_file()
+        and path.suffix in {".md", ".toml", ".json", ".yaml", ".py"}
+        and ".nrw/" not in path.relative_to(project).as_posix()
+        and path.stat().st_size
+        and not path.read_bytes().endswith(b"\n")
+    ]
+
+    assert not offenders, f"no trailing newline: {offenders}"
+
+
+def test_init_rejects_an_unknown_harness(tmp_path: Path) -> None:
+    result = CliRunner().invoke(main, ["init", str(tmp_path), "--harness", "emacs"])
+
+    assert result.exit_code != 0
+    assert "emacs" in result.output
+    assert "claude" in result.output, "the error must say what is available"
 
 
 def test_init_renders_config_with_the_given_identity(project: Path) -> None:

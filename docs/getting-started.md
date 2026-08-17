@@ -30,14 +30,20 @@ cd cu-thf-expt11
 
 ```
 Scaffolded .../cu-thf-expt11
-  create   67 file(s)
+  for        Claude Code, GitHub Copilot
+  create   68 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
 to run twice — it never overwrites a file you have edited. Those files are the
 layout, the editor config, and 17 reflectometry skills with dispatcher agents
-for both Claude Code and Copilot, so an assistant opened in this folder already
-knows REF_L conventions.
+for each assistant the project is set up for, so an assistant opened in this
+folder already knows REF_L conventions.
+
+The second line says which assistants those are. Claude Code and GitHub Copilot
+are the default; `nrw init --harness opencode` adds OpenCode, and passing
+`--harness` at all narrows the set to exactly what you name. The choice is
+recorded in `nrw.toml`, so later runs keep it without the flag.
 
 One of them is `.nrw/schema/nrw-model-1.json`, the JSON Schema for a model spec,
 generated from the code rather than written by hand. `.vscode/settings.json`

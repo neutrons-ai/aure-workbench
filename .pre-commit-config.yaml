@@ -4,7 +4,14 @@ repos:
     hooks:
       - id: check-added-large-files
         args: [--maxkb=8192]
+      # The scaffolded opencode.json is JSONC, not JSON. That is not a slip:
+      # OpenCode's schema sets `allowComments`, and it also sets
+      # `additionalProperties: false` on the root object -- so the `"$comment"`
+      # array that carries the reasoning in .claude/settings.json would be
+      # *rejected* there. Comments are the only way to keep the why next to the
+      # rules in that file. tests/test_harness_opencode.py parses it.
       - id: check-json
+        exclude: "^src/nr_workbench/templates/harness/opencode/opencode\\.json$"
       - id: check-merge-conflict
       - id: check-toml
       - id: check-xml

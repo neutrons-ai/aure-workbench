@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from nr_workbench.harness import HARNESSES, resolve
 from nr_workbench.skills_install import (
-    CLAUDE_TOOLS_LINE,
     SkillError,
     bundled_skills_root,
     discover_skills,
@@ -21,6 +21,13 @@ from nr_workbench.skills_install import (
     parse_skill,
     plan_skill_files,
 )
+
+#: Every harness that reads subagent stubs, so a new one joins these tests by
+#: being registered rather than by being named here.
+DISPATCHER_HARNESSES = [h for h in HARNESSES if h.agents_dir is not None]
+
+CLAUDE = resolve(["claude"])[0]
+COPILOT = resolve(["copilot"])[0]
 
 #: The v2 anatomy from neutron-skills. Order is part of the contract: an agent
 #: reading top-to-bottom should get context before process before verification.
@@ -175,27 +182,45 @@ def test_discover_skills_raises_rather_than_skipping_a_broken_skill(
 # --------------------------------------------------------------------------
 
 
-def test_dispatcher_pairs_differ_only_by_the_tools_line() -> None:
-    """Copilot's schema rejects the tool names, so that line is Claude-only.
+def test_dispatchers_differ_only_by_their_declared_frontmatter() -> None:
+    """Strip each harness's own frontmatter and every dispatcher must match.
 
-    Everything else must be byte-identical, or the two assistants are being
-    told different things -- exactly the drift the shared skills/ folder exists
-    to prevent.
+    Anything else means the assistants are being told different things --
+    exactly the drift the shared skills/ folder exists to prevent. Stated over
+    the registry rather than over a named pair, so a harness cannot be added
+    with a quietly different body.
     """
     skill = next(s for s in discover_skills() if s.name == "nr-workbench-project")
 
-    claude = dispatcher_markdown(skill, for_claude=True).splitlines()
-    copilot = dispatcher_markdown(skill, for_claude=False).splitlines()
+    bodies = {}
+    for harness in DISPATCHER_HARNESSES:
+        lines = dispatcher_markdown(skill, harness).splitlines()
+        for declared in harness.dispatcher_frontmatter:
+            assert declared in lines, f"{harness.name} lost its own frontmatter"
+        bodies[harness.name] = [
+            line for line in lines if line not in harness.dispatcher_frontmatter
+        ]
 
-    assert CLAUDE_TOOLS_LINE in claude
-    assert CLAUDE_TOOLS_LINE not in copilot
-    assert [line for line in claude if line != CLAUDE_TOOLS_LINE] == copilot
+    distinct = {tuple(body) for body in bodies.values()}
+    assert len(distinct) == 1, f"dispatcher bodies diverged: {sorted(bodies)}"
+
+
+def test_copilot_dispatchers_carry_no_tool_names() -> None:
+    """Copilot's agent schema flags Claude's tool names as unknown.
+
+    The read-only guardrail is real and Claude-specific; emitting it for
+    Copilot produces a stub its own validator rejects.
+    """
+    skill = next(s for s in discover_skills() if s.name == "nr-workbench-project")
+
+    assert "tools:" in dispatcher_markdown(skill, CLAUDE)
+    assert "tools:" not in dispatcher_markdown(skill, COPILOT)
 
 
 def test_dispatcher_points_at_the_installed_skill_path() -> None:
     skill = next(s for s in discover_skills() if s.name == "neutron-reflectometry")
 
-    stub = dispatcher_markdown(skill, for_claude=True)
+    stub = dispatcher_markdown(skill, CLAUDE)
 
     assert "skills/reflectometry/neutron-reflectometry/SKILL.md" in stub
 
@@ -212,7 +237,7 @@ def test_dispatcher_frontmatter_survives_a_multiline_description(
     )
     skill = parse_skill(skill_md, domain="d")
 
-    stub = dispatcher_markdown(skill, for_claude=False)
+    stub = dispatcher_markdown(skill, COPILOT)
     meta = yaml.safe_load(stub.split("---")[1])
 
     assert meta["name"] == "tricky"
@@ -224,15 +249,37 @@ def test_dispatcher_frontmatter_survives_a_multiline_description(
 # --------------------------------------------------------------------------
 
 
-def test_plan_skill_files_includes_body_references_and_both_dispatchers() -> None:
+def test_plan_skill_files_includes_body_references_and_every_dispatcher() -> None:
     skill = next(s for s in discover_skills() if s.name == "neutron-reflectometry")
 
-    paths = {relpath for relpath, _ in plan_skill_files(skill)}
+    paths = {
+        relpath
+        for relpath, _ in plan_skill_files(
+            skill, harnesses=[h.name for h in DISPATCHER_HARNESSES]
+        )
+    }
 
     assert "skills/reflectometry/neutron-reflectometry/SKILL.md" in paths
     assert (
         "skills/reflectometry/neutron-reflectometry/references/refinement-strategy.md"
         in paths
     ), "references/ material must be installed alongside the skill"
+    for harness in DISPATCHER_HARNESSES:
+        assert f"{harness.agents_dir}/neutron-reflectometry.md" in paths
+
+
+def test_plan_skill_files_writes_dispatchers_only_for_selected_harnesses() -> None:
+    """A project that does not use an assistant must not carry its stubs.
+
+    Before harnesses were selectable every project got a `.github/agents/` tree
+    whether or not anyone read it.
+    """
+    skill = next(s for s in discover_skills() if s.name == "neutron-reflectometry")
+
+    paths = {relpath for relpath, _ in plan_skill_files(skill, harnesses=["claude"])}
+
     assert ".claude/agents/neutron-reflectometry.md" in paths
-    assert ".github/agents/neutron-reflectometry.md" in paths
+    assert ".github/agents/neutron-reflectometry.md" not in paths
+    assert "skills/reflectometry/neutron-reflectometry/SKILL.md" in paths, (
+        "the skill itself is tool-neutral and installs regardless"
+    )

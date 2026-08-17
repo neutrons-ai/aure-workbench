@@ -100,6 +100,12 @@ include = ["nr_workbench*"]
 # .github/copilot-instructions.md and .vscode/settings.json -- an installed
 # nr-workbench would then produce projects with no Copilot instructions and no
 # editor schema wiring, while an editable install looked perfectly fine.
+#
+# Each hidden level needs its own pattern, and the harness subtrees put one a
+# level deeper than the project tree does: `templates/project/.claude/` is
+# reached by `templates/*/.*/...`, but `templates/harness/claude/.claude/` needs
+# `templates/*/*/.*/...`. A new harness that nests deeper again needs another
+# line -- tests/test_packaging.py enumerates the tree and will say so.
 [tool.setuptools.package-data]
 nr_workbench = [
   "py.typed",
@@ -109,6 +115,9 @@ nr_workbench = [
   "templates/**/.*",
   "templates/*/.*/**/*",
   "templates/*/.*/*",
+  "templates/*/*/.*",
+  "templates/*/*/.*/*",
+  "templates/*/*/.*/**/*",
   "codegen/templates/*",
   "web/templates/*",
   "web/static/*",

@@ -1,0 +1,32 @@
+{
+  // Limits for an assistant working in this project, and where it reads its
+  // instructions from. OpenCode accepts comments here (the schema sets
+  // allowComments), so the reasons live next to the rules.
+  //
+  // AGENTS.md is picked up automatically and is not listed below; this is the
+  // shared engineering workflow that CLAUDE.md imports too, so all the
+  // assistants in this project are told the same thing.
+  "$schema": "https://opencode.ai/config.json",
+
+  "instructions": [".github/copilot-instructions.md"],
+
+  // Rules are matched by pattern and the LAST match wins, so anything added
+  // after these that also matches `nrw ...` will override them.
+  //
+  // promote: marking a fit as the answer is a person's decision, and the
+  // reason recorded with it is what a reader needs in a year.
+  //
+  // This deny list is one mechanism, not the mechanism. `nrw` refuses the same
+  // actions from the inside when NRW_AGENT=1, and the pattern below only sees
+  // the command as written -- `A=1 nrw promote x` does not match it. An
+  // instruction to a model is a request; only something that runs before the
+  // command is a limit.
+  //
+  // Edit this file if you want an assistant to have more room. It is yours.
+  "permission": {
+    "bash": {
+      "nrw promote*": "deny",
+      "nr-workbench promote*": "deny"
+    }
+  }
+}

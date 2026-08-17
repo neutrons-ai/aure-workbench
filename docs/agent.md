@@ -538,6 +538,47 @@ environment variable is the only layer left, and `nrw agent run` will still
 refuse to start without a configured hook. That refusal is deliberate; read it
 as "this harness is not yet set up safely", not as a bug.
 
+### OpenCode
+
+`nrw init --harness opencode` scaffolds a project OpenCode can work in: an
+`AGENTS.md` it reads directly, an `opencode.json` naming the shared workflow
+file and denying `nrw promote`, a dispatcher per skill in `.opencode/agents/`,
+and the guard plugin below. `nrw agent run --harness opencode` drives it.
+
+```bash
+nrw agent run Sample4 --harness opencode --timeout 7200
+nrw agent run Sample4 --harness opencode -m anthropic/claude-sonnet-4-5
+```
+
+**The limits are three, not two.** `.opencode/plugins/nrw-guard.js` hooks
+`tool.execute.before` and shells out to `nrw agent guard`, so every bash command
+is judged before it runs by the same code the Claude Code hook calls — no
+refusal logic is duplicated in JavaScript. The deny rules in `opencode.json` are
+the second, and `NRW_AGENT=1` the third. That is one more than Claude Code gets,
+because `--auto` auto-approves only what is *not* explicitly denied, whereas
+`--permission-mode bypassPermissions` drops the deny list entirely.
+
+Measured against opencode 1.18.18, not assumed: a `--force` command that the
+deny rules do **not** match was refused by the plugin under `--auto`, and with
+the plugin disabled via `--pure` the deny rules refused `nrw promote` on their
+own. `nrw agent run` refuses to start if either is missing.
+
+**`--turns` does nothing here.** `opencode run` has no `--max-turns` equivalent,
+so an OpenCode session is bounded by the clock and nothing else. `nrw agent run
+--harness opencode` therefore *requires* `--timeout`, and says so rather than
+letting `--turns` look like a limit it is not. This is a genuinely weaker
+guarantee than the Claude Code path and is worth knowing before leaving one
+running overnight.
+
+Two smaller differences. The prompt goes in on **stdin** — `opencode run` takes
+its message positionally and a composed session prompt is far past what belongs
+in argv. And `--model` wants `provider/model`, e.g.
+`anthropic/claude-sonnet-4-5`, not a bare model name.
+
+One sharp edge: **`opencode --pure` skips external plugins**, and therefore
+skips the guard. Nothing here passes it, but a site wrapping `opencode` in its
+own script should not add it.
+
 ### If you only have an endpoint
 
 Everything except `nrw agent run` and `nrw agent watch` works exactly as

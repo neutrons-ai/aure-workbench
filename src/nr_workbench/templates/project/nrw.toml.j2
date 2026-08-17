@@ -10,6 +10,16 @@ instrument = "{{ instrument }}"
 label = {% if beamtime %}"{{ beamtime }}"{% else %}""{% endif %}
 ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
 
+# Which coding assistants this project is set up for. Each one reads its
+# instructions, its subagent stubs and its limits from a different place, so
+# `nrw init` writes a different set of files for each.
+#
+# Changing this list and re-running `nrw init` adds the new harness's files.
+# Removing a name never deletes anything -- the files stay where they are and
+# `nrw doctor` reports them as no longer maintained.
+[harness]
+kinds = [{% for name in harnesses %}"{{ name }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+
 # Who reads what comes out of this project. These change how much an assistant
 # explains and in what order -- they refuse nothing. Set them with
 # `nrw audience --ask`, or edit here.

@@ -1,32 +1,34 @@
 """Install bundled skills into a project's ``skills/`` directory.
 
-Copies a skill's whole directory to ``skills/<domain>/<name>/`` and generates
-a thin dispatcher agent in *both* ``.claude/agents/`` and ``.github/agents/``.
+Copies a skill's whole directory to ``skills/<domain>/<name>/`` and generates a
+thin dispatcher agent in the agents directory of every harness the project is
+scaffolded for.
 
 Two conventions are load-bearing and deliberately preserved:
 
 * **Skills live at the repo root, not under ``.claude/skills/``.** Copilot
   cannot read the latter, so a repo-root folder is the only tool-neutral home.
-  Neither assistant auto-discovers it, which is why dispatchers exist.
+  OpenCode *can* read it, which does not change the answer: the point is one
+  location every assistant reaches, not the union of their private ones.
+  None of them auto-discovers it, which is why dispatchers exist.
 * **Thin dispatcher, fat skill.** The stub is a pointer; every substantive
   instruction lives in the ``SKILL.md``. To change a standard, edit the skill.
 
-The dispatcher pair is byte-identical except that the ``.claude`` copy carries
-a ``tools:`` line restricting the agent to read-only access -- Copilot's agent
-schema flags those tool names as unknown, so it is omitted there.
+The dispatchers are byte-identical across harnesses apart from the frontmatter
+each one's schema accepts --- see :attr:`Harness.dispatcher_frontmatter`.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
 import yaml
 
-#: Read-only tool guardrail, understood by Claude Code and ignored by Copilot.
-CLAUDE_TOOLS_LINE = "tools: Read, Grep, Glob, Bash"
+from nr_workbench.harness import DEFAULT_HARNESSES, Harness, resolve
 
 #: Frontmatter delimiter.
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -165,7 +167,7 @@ def discover_skills(root: Path | None = None) -> list[Skill]:
     return sorted(skills, key=lambda s: s.name)
 
 
-def dispatcher_markdown(skill: Skill, *, for_claude: bool) -> str:
+def dispatcher_markdown(skill: Skill, harness: Harness) -> str:
     """Render the thin dispatcher agent that loads an installed skill.
 
     The description is emitted as a YAML block scalar so that arbitrary skill
@@ -174,21 +176,22 @@ def dispatcher_markdown(skill: Skill, *, for_claude: bool) -> str:
 
     Args:
         skill: The skill the dispatcher points at.
-        for_claude: Include the read-only ``tools:`` guardrail. Set for
-            ``.claude/agents/``; Copilot's schema rejects those names.
+        harness: The harness whose agents directory this copy is for. Only its
+            :attr:`~nr_workbench.harness.Harness.dispatcher_frontmatter` varies
+            the output; the body is the same everywhere.
 
     Returns:
         The dispatcher file's contents.
     """
     lines = (skill.description or skill.name).strip().splitlines() or [skill.name]
     indented = "\n".join(f"  {line.rstrip()}" for line in lines)
-    tools = f"{CLAUDE_TOOLS_LINE}\n" if for_claude else ""
+    extra = "".join(f"{line}\n" for line in harness.dispatcher_frontmatter)
     return (
         "---\n"
         f"name: {skill.name}\n"
         "description: >\n"
         f"{indented}\n"
-        f"{tools}"
+        f"{extra}"
         "---\n\n"
         f"# {skill.name}\n\n"
         f"You apply the `{skill.name}` skill from the nr-workbench library.\n"
@@ -198,18 +201,25 @@ def dispatcher_markdown(skill: Skill, *, for_claude: bool) -> str:
     )
 
 
-def plan_skill_files(skill: Skill) -> list[tuple[str, bytes]]:
+def plan_skill_files(
+    skill: Skill, *, harnesses: Iterable[str] = DEFAULT_HARNESSES
+) -> list[tuple[str, bytes]]:
     """Enumerate every file installing one skill would write.
 
-    Returns the skill's own files plus both dispatcher stubs, so the caller can
-    feed them through the same idempotent scaffold engine as everything else
-    rather than copying blindly over a scientist's edits.
+    Returns the skill's own files plus one dispatcher stub per harness, so the
+    caller can feed them through the same idempotent scaffold engine as
+    everything else rather than copying blindly over a scientist's edits.
 
     Args:
         skill: The skill to plan.
+        harnesses: Names of the harnesses to write dispatchers for. Harnesses
+            that do not read subagent files contribute none.
 
     Returns:
         Pairs of (POSIX relpath from the project root, file contents).
+
+    Raises:
+        HarnessError: If a name is not a known harness.
     """
     planned: list[tuple[str, bytes]] = []
 
@@ -223,11 +233,13 @@ def plan_skill_files(skill: Skill) -> list[tuple[str, bytes]]:
             ((skill.relative_dir / relative).as_posix(), source.read_bytes())
         )
 
-    for agent_dir, for_claude in ((".claude/agents", True), (".github/agents", False)):
+    for harness in resolve(harnesses):
+        if harness.agents_dir is None:
+            continue
         planned.append(
             (
-                f"{agent_dir}/{skill.name}.md",
-                dispatcher_markdown(skill, for_claude=for_claude).encode("utf-8"),
+                f"{harness.agents_dir}/{skill.name}.md",
+                dispatcher_markdown(skill, harness).encode("utf-8"),
             )
         )
 

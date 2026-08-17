@@ -8,6 +8,7 @@ what this replaces.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -124,14 +125,34 @@ class ProjectLayout:
         """Path to the tool-neutral, repo-root ``skills/`` directory.
 
         Repo-root rather than ``.claude/skills/`` because GitHub Copilot cannot
-        read the latter; both assistants reach this one by ``Read``.
+        read the latter; every assistant reaches this one by ``Read``.
         """
         return self.root / "skills"
 
-    @property
-    def agent_dirs(self) -> tuple[Path, Path]:
-        """The two agent directories that receive thin dispatcher stubs."""
-        return (self.root / ".claude" / "agents", self.root / ".github" / "agents")
+    def agent_dirs(self, harnesses: Iterable[str] | None = None) -> tuple[Path, ...]:
+        """The agent directories that receive thin dispatcher stubs.
+
+        Args:
+            harnesses: Harness names to collect directories for. Read from the
+                project's ``nrw.toml`` when omitted.
+
+        Returns:
+            Absolute paths, skipping harnesses that read no subagent files.
+
+        Raises:
+            HarnessError: If a name is not a known harness.
+            ProjectConfigError: If ``harnesses`` is omitted and there is no
+                readable ``nrw.toml``.
+        """
+        from nr_workbench.harness import agent_dirs as harness_agent_dirs
+        from nr_workbench.harness import resolve
+        from nr_workbench.project.config import load_config
+
+        if harnesses is None:
+            harnesses = load_config(self.root).harnesses
+        return tuple(
+            self.root / relpath for relpath in harness_agent_dirs(resolve(harnesses))
+        )
 
     @property
     def samples_dir(self) -> Path:

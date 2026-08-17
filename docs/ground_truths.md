@@ -2123,3 +2123,191 @@ The other three — data files missing from the wheel, `init` not being
 idempotent, angle segments counted as separate measurements — all produced a
 plausible answer and no error, and all were found only by exercising the real
 path.
+
+### 2026-08-17: `.github/agents/` is still live, but the reason we strip `tools:` is not
+
+Checked while making harnesses selectable, because the 2026-08-05 entry above
+rests on a claim about Copilot's schema that is three months old and Copilot has
+moved.
+
+**The dispatcher tree is fine.** GitHub's custom-agents reference still reads
+agent profiles from `.github/agents/`, and it deduplicates on "the
+configuration file's name (minus `.md` or `.agent.md`)" — so the
+`<skill-name>.md` names we write are recognised, and the newer `.agent.md`
+convention is an alternative rather than a requirement. Nothing to change.
+
+**The stated rationale is stale.** `tools:` is now a *supported* Copilot
+frontmatter field, and the reference says "all unrecognized tool names are
+ignored, which allows product-specific tools to be specified in an agent profile
+without causing problems." So Copilot no longer rejects Claude's tool names — it
+ignores them.
+
+We still omit the line, for a different reason than the one recorded: a
+guardrail written in another product's vocabulary is not a guardrail. Emitting
+`tools: Read, Grep, Glob, Bash` into a Copilot profile would read as a read-only
+restriction to anyone opening the file while doing nothing at all. If Copilot's
+dispatchers should be constrained, that has to be written in Copilot's own tool
+names, which is a separate piece of work and not one this repo has done.
+
+The generalisable form: **a rationale ages faster than the behaviour it
+justifies.** The behaviour here was still right; the sentence explaining it had
+become false, and a future change would have been argued from the false half.
+
+### 2026-08-17: OpenCode's config rejects unknown keys but allows comments
+
+Verified against the published schema at `https://opencode.ai/config.json`, not
+inferred from the prose docs. Two facts that between them decide how the
+scaffolded `opencode.json` is written:
+
+* The root `Config` definition sets **`additionalProperties: false`**. The
+  `"$comment"` array trick used in `.claude/settings.json` would be *rejected*
+  here, not ignored.
+* The schema document sets **`allowComments: true`** (and
+  `allowTrailingCommas`), so the file is JSONC and `//` comments are the
+  supported way to keep the reasoning next to the rules.
+
+So the two config files carry their rationale differently on purpose. Anything
+reading `opencode.json` back — a test, a doctor check — must strip line comments
+before `json.loads`, or it will fail on a file that is perfectly valid.
+
+`permission.bash` takes a map of glob-ish command patterns to
+`allow`/`ask`/`deny`, and **the last matching rule wins**, which is the opposite
+of what a deny list usually implies. A rule added below the promote denials that
+also matches would silently undo them.
+
+The shipped config was validated against the fetched schema with `jsonschema`
+before being committed. That check is not in the test suite because it needs the
+network; the test asserts structure instead, and this entry records that the
+schema check was actually run and on what date.
+
+### 2026-08-17: The instruction body lives in AGENTS.md, and CLAUDE.md points at it
+
+`AGENTS.md` turned out not to be an OpenCode-private file. GitHub Copilot reads
+it too, *in addition to* `.github/copilot-instructions.md` — its docs say all
+matching instruction sets are combined. OpenCode is the opposite: first match
+wins, and an `AGENTS.md` present means `CLAUDE.md` is never read.
+
+Writing an `AGENTS.md` that mirrored `CLAUDE.md` would therefore have created
+~140 duplicated lines with three different reading rules over them. Instead:
+
+* `AGENTS.md` holds the nr-workbench body and is installed for every project.
+* `CLAUDE.md` is a wrapper that `@`-imports `.github/copilot-instructions.md`
+  and `AGENTS.md`, and says so.
+* `opencode.json` lists `.github/copilot-instructions.md` under `instructions`,
+  because OpenCode picks up `AGENTS.md` on its own but not the shared workflow.
+
+All three assistants end up with the same two documents by three different
+mechanisms, and there is one copy of each. This is the same "thin dispatcher,
+fat skill" split the skills use, applied one level up — and the reason to
+prefer it is the same: two copies of a standard become two different standards.
+
+### 2026-08-17: Each hidden directory level in `templates/` needs its own package-data glob
+
+The 2026-08-05 entry above fixed dotfiles at one level with
+`templates/*/.*/**/*`. Harness subtrees put them one level deeper —
+`templates/harness/claude/.claude/settings.json` — and that pattern does not
+reach it. `templates/*/*/.*/**/*` and friends were added.
+
+The reason this was caught rather than shipped: `tests/test_packaging.py`
+enumerates the template tree with `pathlib.rglob`, which **does** descend into
+hidden directories (unlike `glob.glob` and unlike setuptools' own matching).
+That asymmetry is what makes the test able to catch the packaging config's
+blind spot. If that enumeration is ever "tidied" to use `glob`, the test starts
+passing vacuously and the original 2026-08-05 bug becomes shippable again.
+
+### 2026-08-17: OpenCode's plugin hook fires under `--auto`, and its deny list survives it
+
+The 2026-08-10 entry established that Claude Code's `PreToolUse` hooks fire
+independently of `--permission-mode bypassPermissions`, and that this was
+*measured* rather than assumed. The same claim for OpenCode had to be measured
+before `drives_sessions` could be turned on. Against **opencode 1.18.18**:
+
+* **The plugin blocks.** `.opencode/plugins/nrw-guard.js` hooking
+  `tool.execute.before` refused `nrw model generate spec.yaml --force` under
+  `opencode run --auto`. That command is deliberately one the deny rules do
+  *not* match, so only the plugin could have stopped it. The model received the
+  guard's stderr and reported the `ESCALATIONS.md` instruction back.
+* **The deny rules also block, independently.** With `--pure` (which skips
+  external plugins), `nrw promote abc --as final` was still refused, by the
+  permission rule alone.
+
+So OpenCode has **three** independent mechanisms under `--auto` where Claude
+Code has two: the plugin, the deny rules, and `NRW_AGENT=1`. `--auto`
+auto-approves only what is *not* explicitly denied, whereas
+`bypassPermissions` drops the deny list entirely. This is the one place the
+OpenCode path is stronger than the Claude Code path.
+
+The whole-line guard earned its keep across harnesses: an unattended session
+ran `nrw promote ... 2>&1; echo "EXIT_CODE=$?"`, and the 2026-08-10 raw-string
+segmentation caught it. A guard that tokenised first would have seen `nrw`,
+`promote` wrapped in redirection and a second statement, and a JavaScript
+reimplementation in the plugin would not have had any of that logic. The plugin
+therefore contains **no refusal logic at all** -- it shells out to
+`nrw agent guard --command`.
+
+**`opencode --pure` skips external plugins, and so skips the guard.** A site
+wrapping `opencode` in its own script must not add that flag.
+
+### 2026-08-17: OpenCode has no turn cap, so `--turns` is a lie there
+
+`opencode run` (1.18.18) has no `--max-turns` equivalent -- checked against
+`opencode run --help`, not inferred. An OpenCode session is bounded by the
+wall clock and nothing else.
+
+Rather than let `--turns` silently do nothing, `nrw agent run --harness
+opencode` **requires `--timeout`** and prints that the turn cap does not apply.
+The alternative -- accepting `--turns 200` and ignoring it -- is the exact
+shape of a limit that is not one, which is the failure this package is arranged
+against.
+
+Two smaller facts from the same session, both measured:
+
+* **The prompt goes on stdin.** `opencode run` takes its message positionally;
+  a composed session prompt is far past what belongs in argv. Piping it works.
+* **`--model` wants `provider/model`**, e.g. `anthropic/claude-sonnet-4-5`.
+
+The event stream under `--format json` is one JSON object per line with a
+`part` envelope: a tool call is `{"type":"tool_use","part":{"type":"tool",
+"tool":"bash","state":{"input":{"command":...}}}}`. There is no single terminal
+`result` event as Claude Code has -- the reply is the last `text` part and cost
+accumulates over `step-finish` parts (which report `0` on a free model, so zero
+is real rather than missing).
+
+### 2026-08-17: OpenCode reads both singular and plural config directories
+
+`.opencode/agents/` and `.opencode/agent/` both load, likewise `plugins/` and
+`plugin/` -- probed directly by dropping a marker file in each and watching
+`opencode agent list --print-logs`. Plural is the current convention and is what
+`nrw init` writes; singular is kept upstream for backwards compatibility.
+
+Worth knowing because getting it wrong is silent: dispatchers in an unscanned
+directory produce an assistant that behaves as though the project shipped no
+skills at all. `opencode agent list` is the cheap way to check -- it prints each
+discovered agent and whether it resolved as `(primary)` or `(subagent)`, which
+also verifies the `mode: subagent` frontmatter took.
+
+### 2026-08-17: Jinja drops the trailing newline, so every rendered scaffold file lacked one
+
+`Template(...).render()` strips the final newline unless `keep_trailing_newline=True`.
+Every `.j2` file `nrw init` writes — `CLAUDE.md`, `README.md`, `nrw.toml`,
+`sample.md`, `sample.yaml` — had been shipping without one since the beginning.
+
+Invisible in normal use, and that is why it lasted. It shows up as git's
+`\ No newline at end of file` on every diff of those files, and a scaffolded
+project that runs the same `end-of-file-fixer` pre-commit hook this repo uses
+would rewrite all of them on its first commit — a diff the scientist did not
+make and cannot explain.
+
+It only surfaced because `.vscode/extensions.json` became a template (to list
+each harness's editor extension). That file *had* a trailing newline while it
+was copied byte-for-byte, and lost it on being rendered — so a change that
+touched one file exposed a defect in five others.
+
+Fixed at the one call site in `project/render.py`, with
+`tests/test_init.py::test_every_scaffolded_text_file_ends_with_a_newline`
+covering the whole scaffold rather than the file that happened to reveal it.
+
+The generalisable form, and a variant of this file's recurring signature:
+**converting a static file to a template changes it in ways the template does
+not mention.** Byte-comparing the rendered output against the previous static
+copy is the check; it took ten seconds and found something months old.

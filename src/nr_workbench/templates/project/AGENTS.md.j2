@@ -1,10 +1,12 @@
-# Claude Code Instructions
+# Working in this project
 
 This is an **nr-workbench** project for neutron reflectometry analysis at
-{{ facility }} {{ instrument }}. It was scaffolded by `nrw init` and follows the
-shared AI-assisted workflow below.
+{{ facility }} {{ instrument }}. It was scaffolded by `nrw init`.
 
-@.github/copilot-instructions.md
+This file is the tool-neutral one. `AGENTS.md` is read directly by OpenCode and
+by GitHub Copilot, and imported by `CLAUDE.md` for Claude Code, so there is one
+copy of what follows rather than one per assistant. The shared engineering
+workflow lives in `.github/copilot-instructions.md`.
 
 ## Read this first
 
@@ -31,10 +33,9 @@ before creating a file or running a fit.
 ## Skills
 
 Skills live in [`skills/`](skills/) at the repository root — tool-neutral, so
-both Claude Code and GitHub Copilot reach them by `Read`. Neither tool
-auto-discovers that folder, so each skill has a **thin dispatcher agent** in
-[`.claude/agents/`](.claude/agents/) and `.github/agents/` whose only job is to
-load the skill.
+every assistant reaches them by `Read`. None of them auto-discovers that folder,
+so each skill has a **thin dispatcher agent** in {{ agent_dirs_prose }} whose
+only job is to load the skill.
 
 **To change a standard, edit its `SKILL.md` — never the dispatcher.**
 

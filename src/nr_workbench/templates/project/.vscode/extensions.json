@@ -1,7 +1,0 @@
-{
-  "recommendations": [
-    "redhat.vscode-yaml",
-    "ms-python.python",
-    "anthropic.claude-code"
-  ]
-}

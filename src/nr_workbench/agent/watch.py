@@ -550,6 +550,7 @@ def watch(
     session_timeout: float | None = DEFAULT_SESSION_TIMEOUT,
     turns: int | None = None,
     model: str | None = None,
+    harness: str | None = None,
     dry_run: bool = False,
     on_event: Any = None,
 ) -> int:
@@ -572,6 +573,7 @@ def watch(
             looked at --- the failure costs the whole night, not one fit.
         turns: Cap on harness turns per session, or ``None`` for the default.
         model: Model to run, or ``None`` for the harness's own.
+        harness: Which harness to drive, or ``None`` for Claude Code.
         dry_run: Report what would start; start nothing.
         on_event: Called with each line of progress, or ``None`` for stdout.
 
@@ -594,6 +596,7 @@ def watch(
         session_timeout=session_timeout,
         turns=turns,
         model=model,
+        harness=harness,
         dry_run=dry_run,
     )
 
@@ -611,6 +614,7 @@ def _loop(
     session_timeout: float | None,
     turns: int | None,
     model: str | None,
+    harness: str | None,
     dry_run: bool,
 ) -> int:
     """The polling loop itself.
@@ -634,6 +638,7 @@ def _loop(
             session_timeout=session_timeout,
             turns=turns,
             model=model,
+            harness=harness,
             dry_run=dry_run,
             count=(counter := [0]),
         )
@@ -658,6 +663,7 @@ def _poll(
     session_timeout: float | None,
     turns: int | None,
     model: str | None,
+    harness: str | None,
     dry_run: bool,
     count: list[int],
 ) -> int:
@@ -698,6 +704,7 @@ def _poll(
                     timeout=session_timeout,
                     **({"turns": turns} if turns is not None else {}),
                     model=model,
+                    harness=harness,
                     on_progress=say,
                 )
             except SessionError as exc:

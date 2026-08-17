@@ -4,9 +4,9 @@ A project workbench for neutron reflectometry analysis at the SNS Liquids
 Reflectometer (REF_L / BL-4B).
 
 `nr-workbench init` scaffolds an analysis project: one directory layout for
-every sample, a curated `skills/` folder that Claude Code and GitHub Copilot
-read, and a provenance ledger that keeps every result linked to the script,
-data, and environment that produced it.
+every sample, a curated `skills/` folder that Claude Code, GitHub Copilot and
+OpenCode all read, and a provenance ledger that keeps every result linked to the
+script, data, and environment that produced it.
 
 ## Why
 
@@ -58,6 +58,28 @@ Then copy reduced data into `samples/Sample4/data/steady/` and
 `samples/Sample4/data/tnr/`, open the folder in VS Code, and work with Claude
 Code. `nrw init` is idempotent and safe to run on top of an existing beamtime
 folder — it never overwrites a file you have edited.
+
+### Choosing an assistant
+
+A scaffolded project carries the instructions, subagent stubs and limits for
+each assistant it is set up for. Claude Code and GitHub Copilot are the default;
+`--harness` names the set explicitly and it is remembered in `nrw.toml`:
+
+```bash
+nrw init --harness claude --harness opencode   # both
+nrw init --harness opencode                    # OpenCode alone
+```
+
+Sites that cannot install Claude Code, or that need to point an assistant at a
+locally hosted model, want OpenCode: it takes a provider and model in its own
+`opencode.json` rather than being tied to one vendor.
+
+Two things to know about the current state. **`nrw agent run` still drives
+Claude Code only** — the unattended session builds a Claude Code command line
+and verifies a Claude Code `PreToolUse` hook, and until OpenCode has both, it
+refuses to start rather than running unlimited. And **narrowing the set never
+deletes anything**: files for an assistant you drop stay on disk, because a
+scientist may have edited them.
 
 **[docs/getting-started.md](docs/getting-started.md) walks the whole thing
 through on real data**: two OCV states either side of an EIS sequence,

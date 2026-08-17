@@ -12,6 +12,7 @@ import platform
 import sys
 from dataclasses import asdict, dataclass
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 import click
@@ -189,6 +190,24 @@ def _toolpath_checks() -> list[Check]:
     return [Check("nrw on PATH", "warn", detail)]
 
 
+def _project_harnesses(root: Path) -> tuple[str, ...]:
+    """The harnesses a project records, or the default set if it cannot say.
+
+    Args:
+        root: Project root.
+
+    Returns:
+        Harness names.
+    """
+    from nr_workbench.harness import DEFAULT_HARNESSES
+    from nr_workbench.project.config import ProjectConfigError, load_config
+
+    try:
+        return load_config(root).harnesses
+    except ProjectConfigError:
+        return DEFAULT_HARNESSES
+
+
 def _agent_checks() -> list[Check]:
     """Report whether an unattended session could run here, and be limited.
 
@@ -205,6 +224,7 @@ def _agent_checks() -> list[Check]:
         HARNESS_ENV,
         resolve_harness,
     )
+    from nr_workbench.harness import resolve
     from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
     launcher = resolve_harness()
@@ -230,6 +250,49 @@ def _agent_checks() -> list[Check]:
     try:
         root = ProjectLayout.discover().root
     except ProjectNotFoundError:
+        return checks
+
+    # Which limits apply depends on what the project is scaffolded for. Telling
+    # a project to run `nrw init` for a file `nrw init` will not write there is
+    # worse than saying nothing: it sends someone to re-run a command, see no
+    # change, and conclude the check is broken.
+    configured_harnesses = _project_harnesses(root)
+    drivers = [h for h in resolve(configured_harnesses) if h.drives_sessions]
+    if not drivers:
+        checks.append(
+            Check(
+                "agent limits",
+                "warn",
+                "this project is not scaffolded for a harness that can be run "
+                "unattended, so `nrw agent run` will refuse to start here. "
+                "`nrw init --harness claude` sets one up.",
+            )
+        )
+        return checks
+
+    # Each driveable harness gets its own line: they check different files, and
+    # a project set up for two can easily have one guarded and one not.
+    from nr_workbench.harness.driver import GuardMissing
+
+    for harness in drivers:
+        if harness.name == "claude" or harness.verify_guard is None:
+            continue
+        try:
+            harness.verify_guard(root)
+        except GuardMissing as exc:
+            checks.append(
+                Check(f"{harness.name} limits", "warn", str(exc).splitlines()[0])
+            )
+        else:
+            checks.append(
+                Check(
+                    f"{harness.name} limits",
+                    _OK,
+                    "guard plugin and deny rules installed",
+                )
+            )
+
+    if not any(h.name == "claude" for h in drivers):
         return checks
 
     settings = root / ".claude" / "settings.json"

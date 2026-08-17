@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.harness import DEFAULT_HARNESSES
+
 CONFIG_FILENAME = "nrw.toml"
 
 #: Bumped when the on-disk contract changes in a way that needs migration.
@@ -50,6 +52,8 @@ class ProjectConfig:
         beamtime: Optional beamtime label, e.g. ``"june2026"``.
         ipts: Optional IPTS proposal identifier.
         conventions: Filename and instrument conventions; see DEFAULT_CONVENTIONS.
+        harnesses: Names of the coding assistants this project is scaffolded
+            for; see :mod:`nr_workbench.harness`.
         raw: The full parsed TOML document, for forward-compatible access.
     """
 
@@ -63,6 +67,7 @@ class ProjectConfig:
     conventions: dict[str, Any] = field(
         default_factory=lambda: dict(DEFAULT_CONVENTIONS)
     )
+    harnesses: tuple[str, ...] = DEFAULT_HARNESSES
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -94,6 +99,15 @@ def load_config(root: Path) -> ProjectConfig:
     conventions = dict(DEFAULT_CONVENTIONS)
     conventions.update(document.get("conventions", {}))
 
+    # A project written before harnesses were selectable has no [harness]
+    # table, and must keep getting what it already has on disk.
+    configured = document.get("harness", {}).get("kinds")
+    harnesses = (
+        tuple(str(name) for name in configured)
+        if isinstance(configured, list)
+        else DEFAULT_HARNESSES
+    )
+
     return ProjectConfig(
         root=Path(root).resolve(),
         name=project.get("name", Path(root).resolve().name),
@@ -103,5 +117,6 @@ def load_config(root: Path) -> ProjectConfig:
         beamtime=beamtime.get("label"),
         ipts=beamtime.get("ipts"),
         conventions=conventions,
+        harnesses=harnesses,
         raw=document,
     )

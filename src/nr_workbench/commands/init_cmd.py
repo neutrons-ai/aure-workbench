@@ -7,6 +7,7 @@ from pathlib import Path
 
 import click
 
+from nr_workbench.harness import DEFAULT_HARNESSES, resolve
 from nr_workbench.project.render import RenderContext, render_tree
 from nr_workbench.project.scaffold import (
     Outcome,
@@ -58,19 +59,30 @@ def plan_project_files(
 ) -> list[PlannedFile]:
     """Build the full list of files `nrw init` would install.
 
+    The harness set comes from ``context``: the shared project tree is planned
+    first, then one subtree per selected harness, so a project scaffolded for
+    two assistants gets both their instruction files and neither's is special.
+
     Args:
-        context: Template substitution values.
+        context: Template substitution values, including the harness set.
         include_skills: Install the bundled skills and their dispatchers.
         skill_names: Which bundled skills to install.
 
     Returns:
-        Planned files, project templates first, then skills.
+        Planned files: project templates, harness templates, then skills.
 
     Raises:
+        HarnessError: If the context names an unknown harness.
         SkillError: If a requested skill is not bundled.
         TemplateError: If the packaged template tree is missing.
     """
+    harnesses = resolve(context.harnesses)
+
     planned = render_tree("project", context)
+    for harness in harnesses:
+        if harness.template_subdir is None:
+            continue
+        planned.extend(render_tree(f"harness/{harness.template_subdir}", context))
     planned.append(_plan_schema())
 
     for relpath in (f"{name}/.gitkeep" for name in SEED_DIRS):
@@ -92,7 +104,9 @@ def plan_project_files(
                 raise SkillError(
                     f"Bundled skill '{name}' not found. Available: {sorted(available)}"
                 )
-            for relpath, content in plan_skill_files(skill):
+            for relpath, content in plan_skill_files(
+                skill, harnesses=context.harnesses
+            ):
                 planned.append(
                     PlannedFile(
                         relpath=relpath,
@@ -141,6 +155,7 @@ def run_init(
     force: bool = False,
     no_skills: bool = False,
     nested: bool = False,
+    harnesses: tuple[str, ...] = (),
 ) -> None:
     """Scaffold or upgrade a project, then report what changed.
 
@@ -156,6 +171,8 @@ def run_init(
         force: Overwrite user-edited files, backing them up first.
         no_skills: Skip installing the bundled skills.
         nested: Scaffold here even if an ancestor is already a project.
+        harnesses: Coding assistants to scaffold for. Empty keeps whatever the
+            project records, or the default set for a new one.
 
     Raises:
         click.ClickException: If this would nest one project inside another
@@ -167,14 +184,14 @@ def run_init(
     if not (root / "nrw.toml").is_file():
         _refuse_if_nested(root, allow=nested)
 
-    context = _build_context(
-        root,
-        project_name=project_name,
-        beamtime=beamtime,
-        ipts=ipts,
-    )
-
     try:
+        context = _build_context(
+            root,
+            project_name=project_name,
+            beamtime=beamtime,
+            ipts=ipts,
+            harnesses=harnesses,
+        )
         planned = plan_project_files(context, include_skills=not no_skills)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
@@ -196,7 +213,7 @@ def run_init(
         for diff in diffs:
             click.echo(diff, nl=False)
 
-    _report(report, root, check=check)
+    _report(report, root, check=check, harnesses=context.harnesses)
 
     if not check:
         _install_toolpath(root)
@@ -286,6 +303,7 @@ def _build_context(
     project_name: str | None,
     beamtime: str | None,
     ipts: str | None,
+    harnesses: tuple[str, ...] = (),
 ) -> RenderContext:
     """Build the render context, preserving existing project identity.
 
@@ -306,6 +324,8 @@ def _build_context(
         project_name: Explicit project name, or None to keep/derive it.
         beamtime: Explicit beamtime label, or None to keep the existing one.
         ipts: Explicit IPTS identifier, or None to keep the existing one.
+        harnesses: Explicit harness names from ``--harness``, or empty to keep
+            what the project records.
 
     Returns:
         The render context to scaffold with.
@@ -325,6 +345,12 @@ def _build_context(
     if existing is not None:
         created = str(existing.raw.get("project", {}).get("created", "") or "")
 
+    # --harness wins, then what the project already records, then the default.
+    # Resolving here rather than at the call site normalises order and case, so
+    # `--harness copilot --harness claude` and a reordered nrw.toml both plan
+    # the same files in the same sequence.
+    selected = harnesses or (existing.harnesses if existing else DEFAULT_HARNESSES)
+
     return RenderContext(
         project_name=project_name or (existing.name if existing else root.name),
         facility=existing.facility if existing else "SNS",
@@ -332,6 +358,7 @@ def _build_context(
         beamtime=beamtime or (existing.beamtime if existing else None),
         ipts=ipts or (existing.ipts if existing else None),
         created=created,
+        harnesses=tuple(h.name for h in resolve(selected)),
     )
 
 
@@ -342,7 +369,13 @@ def _plan_sample(context: RenderContext, sample_id: str) -> list[PlannedFile]:
     return plan_sample_files(context, sample_id)
 
 
-def _report(report: ScaffoldReport, root: Path, *, check: bool) -> None:
+def _report(
+    report: ScaffoldReport,
+    root: Path,
+    *,
+    check: bool,
+    harnesses: tuple[str, ...] = (),
+) -> None:
     """Print a human summary of a scaffold run."""
     created = report.count(Outcome.CREATE)
     upgraded = report.count(Outcome.UPGRADE)
@@ -352,6 +385,10 @@ def _report(report: ScaffoldReport, root: Path, *, check: bool) -> None:
 
     verb = "would " if check else ""
     click.echo(f"{'Checked' if check else 'Scaffolded'} {root}")
+
+    if harnesses:
+        titles = ", ".join(h.title for h in resolve(harnesses))
+        click.echo(f"  for        {titles}")
 
     if created:
         click.echo(f"  {verb}create   {created} file(s)")

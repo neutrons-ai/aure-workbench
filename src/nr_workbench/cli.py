@@ -103,6 +103,15 @@ def main() -> None:
 )
 @click.option("--no-skills", is_flag=True, help="Skip installing the bundled skills.")
 @click.option(
+    "--harness",
+    "harnesses",
+    multiple=True,
+    help=(
+        "Coding assistant to scaffold for (repeatable). "
+        "[default: what nrw.toml records, or claude+copilot]"
+    ),
+)
+@click.option(
     "--nested",
     is_flag=True,
     help="Scaffold here even if an ancestor directory is already a project.",
@@ -140,7 +149,16 @@ def doctor_command(as_json: bool, fix_path: bool, yes: bool) -> None:
 
 
 @main.command("check-llm")
-@click.option("--harness", is_flag=True, help="Probe only the coding harness.")
+@click.option(
+    "--harness",
+    is_flag=False,
+    flag_value="",
+    default=None,
+    help=(
+        "Probe only the coding harness. Give a name (claude, opencode) to "
+        "probe that one [default: claude]."
+    ),
+)
 @click.option("--endpoint", is_flag=True, help="Probe only the LLM_BASE_URL endpoint.")
 @click.option(
     "--model",
@@ -156,7 +174,11 @@ def doctor_command(as_json: bool, fix_path: bool, yes: bool) -> None:
 )
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def check_llm_command(
-    harness: bool, endpoint: bool, model: str | None, timeout: int | None, as_json: bool
+    harness: str | None,
+    endpoint: bool,
+    model: str | None,
+    timeout: int | None,
+    as_json: bool,
 ) -> None:
     """Make a real call to each language model and report what answered.
 
@@ -182,7 +204,11 @@ def check_llm_command(
     from nr_workbench.commands.check_llm import DEFAULT_TIMEOUT, run_check_llm
 
     run_check_llm(
-        harness=harness,
+        harness=harness is not None,
+        # `--harness` alone means "probe the harness"; `--harness opencode`
+        # also says which. One flag rather than two, because a separate
+        # --harness-name next to a boolean --harness reads as a mistake.
+        harness_name=harness or None,
         endpoint=endpoint,
         model=model,
         timeout=DEFAULT_TIMEOUT if timeout is None else timeout,
@@ -851,6 +877,11 @@ def agent_stop_command(sample: str | None) -> None:
     is_flag=True,
     help="Run even though the sample already has a written report.",
 )
+@click.option(
+    "--harness",
+    default=None,
+    help="Which harness to drive [default: claude].",
+)
 def agent_run_command(
     sample: str,
     dry_run: bool,
@@ -859,6 +890,7 @@ def agent_run_command(
     timeout: int | None,
     quiet: bool,
     again: bool,
+    harness: str | None,
 ) -> None:
     """Run one unattended analysis session over SAMPLE.
 
@@ -889,6 +921,7 @@ def agent_run_command(
             sample,
             turns=DEFAULT_TURNS if turns is None else turns,
             model=model,
+            harness=harness,
             timeout=timeout,
             on_progress=None if quiet else click.echo,
             again=again,
@@ -935,6 +968,11 @@ def agent_run_command(
 )
 @click.option("--turns", default=None, type=int, help="Cap on turns per session.")
 @click.option("--model", default=None, help="Model to run [default: the harness's].")
+@click.option(
+    "--harness",
+    default=None,
+    help="Which harness to drive [default: claude].",
+)
 def agent_watch_command(
     samples: tuple[str, ...],
     dry_run: bool,
@@ -944,6 +982,7 @@ def agent_watch_command(
     session_timeout: int | None,
     turns: int | None,
     model: str | None,
+    harness: str | None,
 ) -> None:
     """Watch SAMPLES for settled measurements and analyse each once.
 
@@ -997,6 +1036,7 @@ def agent_watch_command(
         ),
         turns=turns,
         model=model,
+        harness=harness,
         on_event=click.echo,
     )
     click.echo(f"{started} session(s) run.")

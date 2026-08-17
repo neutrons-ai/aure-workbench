@@ -35,6 +35,8 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.agent.guard import AGENT_ENV
+from nr_workbench.harness import Harness
+from nr_workbench.harness.driver import Invocation
 
 #: The heading in ``sample.md`` that states what the scientist wants fitted.
 TASK_HEADING = "Fits to perform"
@@ -855,7 +857,9 @@ PROGRESS_TARGET_CHARS = 68
 _TARGET_KEYS = ("command", "file_path", "pattern", "path", "prompt", "description")
 
 
-def describe_event(line: str, root: Path | None = None) -> str | None:
+def describe_event(
+    line: str, root: Path | None = None, *, harness: str | None = None
+) -> str | None:
     """One short status line for a harness event, or None to stay quiet.
 
     Status, not content. What the session is *doing* --- the tool and roughly
@@ -864,11 +868,18 @@ def describe_event(line: str, root: Path | None = None) -> str | None:
     shows nothing for forty minutes is indistinguishable from a hang, which is
     the actual complaint.
 
+    Every harness emits a different schema, so tool calls are read through the
+    registry. Anything unrecognised returns None rather than raising: the worst
+    an unknown event shape can do is make the progress lines go quiet, and the
+    transcript, the fits and the records all come from ``nrw`` commands rather
+    than from this.
+
     Args:
-        line: One line of ``--output-format stream-json``.
+        line: One line of the harness's event stream.
         root: Project root, so paths show relative to it. An absolute path is
             mostly its own prefix, and truncating one leaves the part every
             line has in common.
+        harness: Which harness produced the line. Defaults to Claude Code.
 
     Returns:
         The line to print, or ``None``.
@@ -884,14 +895,10 @@ def describe_event(line: str, root: Path | None = None) -> str | None:
 
     kind = event.get("type")
 
+    # Claude Code's session/result envelope. OpenCode has no equivalent pair,
+    # so these simply never match for it.
     if kind == "system" and event.get("subtype") == "init":
         return "  · session started"
-
-    if kind == "assistant":
-        for block in (event.get("message") or {}).get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                return _describe_tool(block, root)
-        return None
 
     if kind == "result":
         seconds = (event.get("duration_ms") or 0) / 1000
@@ -904,27 +911,58 @@ def describe_event(line: str, root: Path | None = None) -> str | None:
         state = "failed" if event.get("is_error") else "done"
         return f"  · {state} in {seconds:.0f}s, {turns} turns"
 
-    return None
+    read = harness_entry(harness).read_event
+    call = read(event) if read is not None else None
+    if call is None:
+        return None
+    return _describe_tool(*call, root=root)
 
 
-def _describe_tool(block: dict[str, Any], root: Path | None = None) -> str:
+def harness_entry(name: str | None) -> Harness:
+    """The registry entry for a drivable harness, defaulting to Claude Code.
+
+    Args:
+        name: Harness name, or None for :data:`DEFAULT_HARNESS`.
+
+    Returns:
+        The registry entry.
+
+    Raises:
+        SessionError: If the name is unknown, or names a harness that cannot
+            be driven unattended.
+    """
+    from nr_workbench.harness import HarnessError, resolve, session_harnesses
+
+    try:
+        harness = resolve([name or DEFAULT_HARNESS])[0]
+    except HarnessError as exc:
+        raise SessionError(str(exc)) from exc
+
+    if not harness.drives_sessions:
+        drivable = ", ".join(h.name for h in session_harnesses())
+        raise SessionError(
+            f"{harness.title} cannot be run unattended by nr-workbench. "
+            "`nrw agent run` needs a harness with a headless mode and a way "
+            f"to refuse a command before it runs; {harness.name} has neither "
+            f"here.\nHarnesses that can: {drivable}."
+        )
+    return harness
+
+
+def _describe_tool(name: str, target: str, *, root: Path | None = None) -> str:
     """A tool call as one line: what it is and what it points at."""
-    name = str(block.get("name") or "tool")
-    payload = block.get("input")
-    target = ""
-    if isinstance(payload, dict):
-        for key in _TARGET_KEYS:
-            value = payload.get(key)
-            if isinstance(value, str) and value.strip():
-                target = " ".join(_shorten(value, root).split())
-                break
+    target = " ".join(_shorten(target, root).split()) if target.strip() else ""
     if len(target) > PROGRESS_TARGET_CHARS:
         target = target[: PROGRESS_TARGET_CHARS - 1] + "\u2026"
     return f"  · {name:<9} {target}".rstrip()
 
 
-def resolve_harness() -> list[str] | None:
+def resolve_harness(harness: str | None = None) -> list[str] | None:
     """The command that starts a harness, or None if there is none.
+
+    Args:
+        harness: Which harness to look for. Defaults to
+            :data:`DEFAULT_HARNESS`.
 
     Returns:
         argv for the launcher --- one element for a bare binary, more when
@@ -932,9 +970,14 @@ def resolve_harness() -> list[str] | None:
     """
     import shlex as _shlex
 
+    # NRW_HARNESS names a binary, so it overrides whichever harness was asked
+    # for -- a site pointing it at a wrapper script means that wrapper, not
+    # "claude if the caller said claude". The flag chooses the *contract*; the
+    # variable chooses what implements it.
     configured = (os.environ.get(HARNESS_ENV) or "").strip()
     if not configured:
-        found = shutil.which(DEFAULT_HARNESS)
+        wanted = harness_entry(harness).binary or DEFAULT_HARNESS
+        found = shutil.which(wanted)
         return [found] if found else None
 
     try:
@@ -955,63 +998,79 @@ def _shorten(text: str, root: Path | None) -> str:
     return text.replace(prefix + "/", "").replace(prefix, ".")
 
 
-def harness_command(
-    prompt_file: Path, *, turns: int = DEFAULT_TURNS, model: str | None = None
-) -> list[str]:
-    """The headless harness invocation.
+def harness_invocation(
+    prompt_file: Path,
+    *,
+    turns: int = DEFAULT_TURNS,
+    model: str | None = None,
+    harness: str | None = None,
+) -> Invocation:
+    """The headless invocation for one harness, launcher included.
 
     Args:
         prompt_file: File holding the composed prompt.
-        turns: Cap on agent turns.
+        turns: Cap on agent turns, where the harness has one.
         model: Model name to pass through, or ``None`` for the default.
+        harness: Which harness to build for. Defaults to Claude Code.
 
     Returns:
-        The argv for ``claude -p``.
+        The invocation, with the resolved launcher already at the front of
+        ``argv``.
 
     Raises:
-        SessionError: If the harness is not installed.
+        SessionError: If the harness is not installed or cannot be driven.
     """
-    launcher = resolve_harness()
+    entry = harness_entry(harness)
+    launcher = resolve_harness(harness)
     if not launcher:
-        wanted = os.environ.get(HARNESS_ENV) or DEFAULT_HARNESS
+        wanted = os.environ.get(HARNESS_ENV) or entry.binary or DEFAULT_HARNESS
         raise SessionError(
             f"No harness to run: {wanted!r} is not on PATH.\n"
             "`nrw agent run` needs a tool-using coding harness, not a "
             "completions endpoint -- something that can read a file, run "
             "`nrw fit run`, and decide what to do with the result.\n"
-            f"Install Claude Code, or set {HARNESS_ENV} to your own command "
+            f"Install {entry.title}, or set {HARNESS_ENV} to your own command "
             "(a wrapper script is fine). --dry-run shows the composed prompt "
             "without running anything."
         )
 
-    argv = [
-        *launcher,
-        "-p",
-        f"@{prompt_file}",
-        "--max-turns",
-        str(turns),
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        # Headless has nobody to approve a prompt, so without this every Bash
-        # call comes back "This command requires approval" and the session
-        # accomplishes nothing -- measured, not assumed: a 45-turn run spent
-        # all of it being refused and then tried to write itself a
-        # settings.local.json to get out.
-        #
-        # This turns off Claude Code's permission layer, including the `deny`
-        # list in .claude/settings.json. It does NOT turn off the two
-        # mechanisms this package relies on: a PreToolUse hook still fires
-        # (verified against `nrw promote` under this exact flag), and
-        # NRW_AGENT=1 still refuses from inside nrw. The deny list was always
-        # the weakest of the three and the only one that needed a human at a
-        # keyboard to mean anything.
-        "--permission-mode",
-        "bypassPermissions",
-    ]
-    if model:
-        argv += ["--model", model]
-    return argv
+    assert entry.build_argv is not None  # guaranteed by drives_sessions
+    built = entry.build_argv(prompt_file, turns=turns, model=model)
+    return Invocation(
+        argv=[*launcher, *built.argv],
+        prompt_on_stdin=built.prompt_on_stdin,
+        turn_cap=built.turn_cap,
+    )
+
+
+def harness_command(
+    prompt_file: Path,
+    *,
+    turns: int = DEFAULT_TURNS,
+    model: str | None = None,
+    harness: str | None = None,
+) -> list[str]:
+    """The headless harness invocation as a bare argv.
+
+    Kept because `nrw check-llm` probes through exactly the command line
+    `nrw agent run` uses --- a probe with different flags could pass while the
+    real thing failed.
+
+    Args:
+        prompt_file: File holding the composed prompt.
+        turns: Cap on agent turns.
+        model: Model name to pass through, or ``None`` for the default.
+        harness: Which harness to build for. Defaults to Claude Code.
+
+    Returns:
+        The command line.
+
+    Raises:
+        SessionError: If the harness is not installed or cannot be driven.
+    """
+    return harness_invocation(
+        prompt_file, turns=turns, model=model, harness=harness
+    ).argv
 
 
 def run(
@@ -1023,6 +1082,7 @@ def run(
     timeout: int | None = None,
     on_progress: Any = None,
     again: bool = False,
+    harness: str | None = None,
 ) -> Session:
     """Compose and run one unattended session.
 
@@ -1030,11 +1090,12 @@ def run(
         root: Project root.
         sample: Sample identifier.
         again: Proceed even when the sample already has a written report.
-        turns: Cap on harness turns.
+        turns: Cap on harness turns, where the harness enforces one.
         model: Model to run, or ``None`` for the harness default.
         timeout: Seconds before the session is killed, or ``None``.
         on_progress: Called with each short status line, or ``None`` for a
             silent run.
+        harness: Which harness to drive. Defaults to Claude Code.
 
     Returns:
         The session, with its transcript path and exit status.
@@ -1045,9 +1106,26 @@ def run(
     """
     from nr_workbench.provenance.record import utc_now
 
+    entry = harness_entry(harness)
     session = compose(Path(root), sample, again=again)
-    _require_guard(Path(root))
+    _require_guard(Path(root), harness=harness)
     _require_not_already_running(Path(root), sample)
+
+    # A harness with no turn cap is bounded only by the clock, and a session
+    # nobody bounded is one that can run all night. Said once, plainly, rather
+    # than left for someone to infer from --turns having no effect.
+    if not entry.build_argv(Path(), turns=turns, model=model).turn_cap:
+        if timeout is None:
+            raise SessionError(
+                f"{entry.title} has no turn cap, so --turns does nothing here "
+                "and only the clock would stop this session.\n"
+                "Pass --timeout <seconds> to bound it."
+            )
+        if on_progress:
+            on_progress(
+                f"  · {entry.title} has no turn cap; bounded by "
+                f"--timeout {timeout}s only"
+            )
 
     # The same compact form fit ids use. `format_timestamp` is ISO-8601 with
     # colons, which is fine in a record and wrong in a filename.
@@ -1064,15 +1142,19 @@ def run(
     environment = dict(os.environ)
     environment[AGENT_ENV] = "1"
 
-    argv = harness_command(prompt_file, turns=turns, model=model)
+    invocation = harness_invocation(
+        prompt_file, turns=turns, model=model, harness=harness
+    )
     returncode, timed_out = _stream(
-        argv,
+        invocation.argv,
         root=Path(root),
         environment=environment,
         transcript=transcript,
         timeout=timeout,
         on_progress=on_progress,
         sample=sample,
+        harness=entry.name,
+        stdin_text=session.prompt if invocation.prompt_on_stdin else None,
     )
     if timed_out:
         raise SessionError(
@@ -1111,38 +1193,31 @@ def _require_not_already_running(root: Path, sample: str) -> None:
         )
 
 
-def _require_guard(root: Path) -> None:
-    """Refuse to start when the hook that limits the session is missing.
+def _require_guard(root: Path, *, harness: str | None = None) -> None:
+    """Refuse to start when the limit this harness needs is missing.
 
-    Checked per session, not once, because a session can edit
-    ``.claude/settings.json`` and the next one would start without the limit
-    that was verified for the first. Since the harness runs with its
-    permission layer bypassed, the hook is doing real work and its absence is
-    not a warning.
+    Checked per session, not once, because a session can edit the file that
+    configures its own limit and the next one would start without what was
+    verified for the first. Each harness checks its own thing --- Claude Code a
+    ``PreToolUse`` hook, OpenCode a plugin plus deny rules --- because there is
+    no shared mechanism to check.
+
+    Args:
+        root: Project root.
+        harness: Which harness is about to run.
 
     Raises:
-        SessionError: If no PreToolUse hook runs ``nrw agent guard``.
+        SessionError: If the harness's limit is not installed.
     """
-    from nr_workbench.commands.doctor import guard_hook_event
+    from nr_workbench.harness.driver import GuardMissing
 
-    settings = root / ".claude" / "settings.json"
-    configured: dict[str, Any] = {}
-    if settings.is_file():
-        import json
-
-        try:
-            loaded = json.loads(settings.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            loaded = None
-        configured = loaded if isinstance(loaded, dict) else {}
-
-    if guard_hook_event(configured) != "PreToolUse":
-        raise SessionError(
-            f"No `nrw agent guard` PreToolUse hook in {settings}, so nothing "
-            "would stop this session promoting a fit or publishing it.\n"
-            "Run `nrw init` to restore it. If a previous session removed it, "
-            "that is worth knowing before you trust what it wrote."
-        )
+    verify = harness_entry(harness).verify_guard
+    if verify is None:
+        return
+    try:
+        verify(root)
+    except GuardMissing as exc:
+        raise SessionError(str(exc)) from exc
 
 
 def _stream(
@@ -1154,6 +1229,8 @@ def _stream(
     timeout: float | None,
     on_progress: Any,
     sample: str | None = None,
+    harness: str | None = None,
+    stdin_text: str | None = None,
 ) -> tuple[int, bool]:
     """Run the harness, tee its events to the transcript, report progress.
 
@@ -1163,6 +1240,11 @@ def _stream(
     ``subprocess.run``'s own timeout only fires when the call returns --- so a
     harness that wedges *silently*, which is the case a timeout exists for,
     would never hit it. A timer kills the process group instead.
+
+    Args:
+        stdin_text: Prompt to write to the process's stdin, for a harness that
+            takes it there. ``opencode run`` reads its message positionally,
+            and a composed session prompt is far past what belongs in argv.
 
     Returns:
         The exit status, and whether it was stopped for running too long.
@@ -1174,6 +1256,7 @@ def _stream(
         argv,
         cwd=str(root),
         env=environment,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -1183,6 +1266,15 @@ def _stream(
         # into the project after the session is over.
         start_new_session=True,
     )
+
+    if stdin_text is not None and process.stdin is not None:
+        # Closed immediately: the harness reads the whole message before it
+        # starts, and an open stdin would leave it waiting for more.
+        try:
+            process.stdin.write(stdin_text)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
 
     def stop() -> None:
         stopped.set()
@@ -1226,6 +1318,7 @@ def _stream(
             stopped=stopped,
             on_progress=on_progress,
             sample=sample,
+            harness=harness,
         )
     except BaseException:
         # Includes KeyboardInterrupt: a Ctrl-C at the terminal must not leave an
@@ -1247,6 +1340,7 @@ def _pump(
     stopped: Any,
     on_progress: Any,
     sample: str | None,
+    harness: str | None = None,
 ) -> tuple[int, bool]:
     """Tee the harness's events to the transcript until it ends.
 
@@ -1260,7 +1354,10 @@ def _pump(
                 # Flushed per line so a killed session still leaves a readable
                 # transcript, which is the only thing left to look at.
                 handle.flush()
-                if on_progress and (status := describe_event(line, root)):
+                status = (
+                    describe_event(line, root, harness=harness) if on_progress else None
+                )
+                if status:
                     on_progress(status)
     finally:
         if timer:

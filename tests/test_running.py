@@ -146,7 +146,7 @@ def test_the_pidfile_is_written_by_the_real_call_site(
             return 0
 
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProcess())
-    monkeypatch.setattr(session_mod, "resolve_harness", lambda: ["true"])
+    monkeypatch.setattr(session_mod, "resolve_harness", lambda *_: ["true"])
 
     session_mod.run(project, "Sample1")
 
@@ -195,7 +195,7 @@ def test_a_failure_after_spawning_does_not_leak_the_harness(
             return 0
 
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProcess())
-    monkeypatch.setattr(session_mod, "resolve_harness", lambda: ["true"])
+    monkeypatch.setattr(session_mod, "resolve_harness", lambda *_: ["true"])
     monkeypatch.setattr(session_mod, "_kill_group", killed.append)
 
     with pytest.raises(RuntimeError):
@@ -242,7 +242,7 @@ def test_a_pidfile_that_cannot_be_written_does_not_kill_the_session(
         raise OSError("read-only filesystem")
 
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProcess())
-    monkeypatch.setattr(session_mod, "resolve_harness", lambda: ["true"])
+    monkeypatch.setattr(session_mod, "resolve_harness", lambda *_: ["true"])
     monkeypatch.setattr(running_mod, "record", explode)
 
     result = session_mod.run(project, "Sample1")  # must not raise

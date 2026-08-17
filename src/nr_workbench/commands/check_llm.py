@@ -250,7 +250,12 @@ def provider_settings(environment: dict[str, str] | None = None) -> dict[str, st
 # --------------------------------------------------------------------------
 
 
-def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> Probe:
+def probe_harness(
+    *,
+    model: str | None = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    harness: str | None = None,
+) -> Probe:
     """Run one turn of the harness and report what answered.
 
     Deliberately invoked through :func:`nr_workbench.agent.session.harness_command`
@@ -266,6 +271,7 @@ def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
         model: Model or deployment name to test, or ``None`` for whatever the
             environment's pinning resolves to.
         timeout: Seconds before giving up.
+        harness: Which harness to probe, or ``None`` for Claude Code.
 
     Returns:
         The probe result. Never raises for a failed call -- a diagnostic that
@@ -276,7 +282,7 @@ def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
     import time
 
     from nr_workbench.agent.guard import AGENT_ENV, agent_is_driving
-    from nr_workbench.agent.session import SessionError, harness_command
+    from nr_workbench.agent.session import SessionError, harness_invocation
 
     if agent_is_driving():
         return Probe(
@@ -291,9 +297,12 @@ def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
         prompt_file = Path(scratch) / "probe.md"
         prompt_file.write_text(PROBE_PROMPT, encoding="utf-8")
         try:
-            argv = harness_command(prompt_file, turns=1, model=model)
+            invocation = harness_invocation(
+                prompt_file, turns=1, model=model, harness=harness
+            )
+            argv = invocation.argv
         except SessionError as exc:
-            # A missing harness reported as itself: `harness_command` already
+            # A missing harness reported as itself: `harness_invocation` already
             # explains what to install and how to point at your own.
             return Probe("harness", "error", str(exc))
 
@@ -302,6 +311,9 @@ def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
             completed = subprocess.run(  # noqa: S603 - argv built from resolve_harness
                 argv,
                 cwd=scratch,
+                # The prompt goes on stdin for a harness that takes it there
+                # (OpenCode); the others already name the file in argv.
+                input=PROBE_PROMPT if invocation.prompt_on_stdin else None,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -324,12 +336,21 @@ def probe_harness(*, model: str | None = None, timeout: int = DEFAULT_TIMEOUT) -
         # stderr is where a provider misconfiguration says what it is; the
         # events go to stdout, so both are needed and neither replaces the other.
         return _read_harness_output(
-            completed.stdout, completed.stderr, completed.returncode, seconds
+            completed.stdout,
+            completed.stderr,
+            completed.returncode,
+            seconds,
+            harness=harness,
         )
 
 
 def _read_harness_output(
-    stdout: str, stderr: str, returncode: int, seconds: float
+    stdout: str,
+    stderr: str,
+    returncode: int,
+    seconds: float,
+    *,
+    harness: str | None = None,
 ) -> Probe:
     """Turn a finished harness run into a probe result.
 
@@ -337,17 +358,22 @@ def _read_harness_output(
     it, and the part a test can drive without spending a real API call.
 
     Args:
-        stdout: The harness's ``stream-json`` events.
+        stdout: The harness's event stream.
         stderr: Anything it wrote to standard error.
         returncode: Its exit status.
         seconds: Wall-clock time for the call.
+        harness: Which harness produced it, since each reports its answer
+            differently. Defaults to Claude Code.
 
     Returns:
         The probe result.
     """
-    event = _result_event(stdout)
+    from nr_workbench.agent.session import harness_entry
 
-    if event is None:
+    read = harness_entry(harness).read_outcome
+    outcome = read(stdout) if read is not None else None
+
+    if outcome is None or not outcome.answered:
         # No result event at all: the harness died before it reached the model,
         # which is what a bad provider configuration usually looks like.
         detail = _tail(stderr) or _tail(stdout) or "it printed nothing"
@@ -358,12 +384,11 @@ def _read_harness_output(
             seconds=seconds,
         )
 
-    reply = str(event.get("result") or "").strip()
-    model = ", ".join(sorted(event.get("modelUsage") or {}))
-    cost = event.get("total_cost_usd")
-    cost_usd = float(cost) if isinstance(cost, int | float) else None
+    reply = outcome.reply
+    model = outcome.model
+    cost_usd = outcome.cost_usd
 
-    if event.get("is_error") or returncode != 0:
+    if outcome.failed or returncode != 0:
         return Probe(
             "harness",
             "error",
@@ -398,26 +423,6 @@ def _read_harness_output(
         cost_usd=cost_usd,
         reply=reply,
     )
-
-
-def _result_event(stdout: str) -> dict[str, Any] | None:
-    """The final ``result`` event out of a ``stream-json`` stream, or None.
-
-    The last one, not the first: the stream carries a line per event and only
-    the terminal one reports cost, model usage and whether it errored.
-    """
-    found: dict[str, Any] | None = None
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            event = json.loads(line)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(event, dict) and event.get("type") == "result":
-            found = event
-    return found
 
 
 #: How much of a failure message to quote. Enough for a stack trace's last
@@ -522,11 +527,13 @@ def collect(
     explicit: bool,
     model: str | None,
     timeout: int,
+    harness_name: str | None = None,
 ) -> Report:
     """Run the requested probes.
 
     Args:
         harness: Probe the coding harness.
+        harness_name: Which harness to probe, or None for Claude Code.
         endpoint: Probe the AuRE completions endpoint.
         explicit: Whether the caller named which probes to run, which makes an
             unconfigured one a failure rather than a normal absence.
@@ -538,7 +545,9 @@ def collect(
     """
     report = Report(provider=selected_provider(), settings=provider_settings())
     if harness:
-        report.probes.append(probe_harness(model=model, timeout=timeout))
+        report.probes.append(
+            probe_harness(model=model, timeout=timeout, harness=harness_name)
+        )
     if endpoint:
         report.probes.append(probe_endpoint(required=explicit))
     return report
@@ -551,11 +560,13 @@ def run_check_llm(
     model: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     as_json: bool = False,
+    harness_name: str | None = None,
 ) -> None:
     """Print the results of the live calls.
 
     Args:
         harness: Probe only the harness.
+        harness_name: Which harness to probe, or None for Claude Code.
         endpoint: Probe only the endpoint.
         model: Model or deployment name for the harness probe.
         timeout: Seconds allowed for the harness probe.
@@ -571,6 +582,7 @@ def run_check_llm(
         explicit=explicit,
         model=model,
         timeout=timeout,
+        harness_name=harness_name,
     )
 
     if as_json:

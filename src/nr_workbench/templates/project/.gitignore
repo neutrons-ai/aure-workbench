@@ -23,11 +23,16 @@ samples/*/results/*/output/
 .nrw/backups/
 .nrw/lock
 
-# Where `nrw` lives on *this* machine. Both files name an absolute path, which
+# Where `nrw` lives on *this* machine. These files name an absolute path, which
 # is exactly what must not be committed -- and the right answer differs per
 # machine anyway, so a shared copy would be wrong for everyone but its author.
+#
+# Listed for every harness this package knows, not just the ones this project
+# uses: ignoring a path that is never written costs nothing, and a line that
+# only appears once someone adds a harness is a line that gets forgotten.
 .nrw/bin/
 .claude/settings.local.json
+.opencode/local.json
 
 # Unattended-session prompts and transcripts. A transcript is the whole tool
 # stream of a session -- every file it read and every command output it saw --

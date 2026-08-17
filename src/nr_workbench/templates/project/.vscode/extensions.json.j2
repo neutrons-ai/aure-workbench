@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "redhat.vscode-yaml",
+    "ms-python.python"{% for extension in vscode_extensions %},
+    "{{ extension }}"{% endfor %}
+  ]
+}
