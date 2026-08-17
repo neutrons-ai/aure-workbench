@@ -2082,3 +2082,44 @@ Two rules came out of it:
    the next `nrw init`, `--check` reports it pending, and a hand-edited copy is
    left alone. `nrw doctor` now reports it as missing or stale, because the
    failure was otherwise silent by construction.
+
+### 2026-08-17: reporting a configuration is not testing a connection
+
+`nrw doctor` reported the harness binary it found on PATH and the endpoint
+variables that were set, and both lines could be green while nothing could
+answer a question. Every failure mode of a third-party provider is invisible to
+a configuration check by construction:
+
+* a Foundry deployment name that was never created — Claude Code has no startup
+  model check, so an unpinned or wrong `ANTHROPIC_DEFAULT_*_MODEL` fails at the
+  *first request*;
+* an expired key, which is a valid-looking string;
+* a gateway that resolves and refuses;
+* a daemon whose unit file is missing the provider variables that are in the
+  operator's `.zshrc`.
+
+All four present identically from the outside: an agent session that starts and
+achieves nothing. During a beamtime that is discovered in the morning.
+
+`nrw check-llm` makes the calls. Three decisions in it are worth keeping:
+
+1. **It goes through `session.harness_command()`, not a hand-written argv.** A
+   probe that used different flags could pass while `nrw agent run` failed,
+   which is worse than no probe. This also means it exercises `NRW_HARNESS` and
+   the flag contract a site's own wrapper has to meet.
+2. **It probes the default model, and costs what that model costs** (a few
+   cents). Probing something cheap was the obvious optimisation and it defeats
+   the purpose — an undeployed model pin is the specific failure being looked
+   for. The measured cost is printed instead of being hidden.
+3. **A reply that comes back but is not the token asked for is a `warn`, not a
+   pass.** A gateway that rewrites or summarises replies is a real
+   configuration, it will mangle a session's tool calls, and it is
+   indistinguishable from a healthy setup in any check that stops at "did bytes
+   come back".
+
+The generalisable form, and the fourth entry in this file with the same
+signature: **a check that reads settings cannot fail the way the system fails.**
+The other three — data files missing from the wheel, `init` not being
+idempotent, angle segments counted as separate measurements — all produced a
+plausible answer and no error, and all were found only by exercising the real
+path.

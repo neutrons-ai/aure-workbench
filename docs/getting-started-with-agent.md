@@ -37,9 +37,12 @@ export ANTHROPIC_FOUNDRY_API_KEY=your-azure-api-key
 ```
 
 `nrw agent run` passes the whole environment through, so nothing needs
-configuring on this side. What will *not* work is substituting an
-`LLM_BASE_URL` completions endpoint — that is a text API, and the agent needs
-a tool-using loop.
+configuring on this side. Check it with `nrw check-llm`, which makes one real
+call and names the provider, the model that answered and what it cost — a
+deployment that was never created looks exactly like a working setup until
+something asks it a question, and you would rather that happened now than at
+2am. What will *not* work is substituting an `LLM_BASE_URL` completions
+endpoint — that is a text API, and the agent needs a tool-using loop.
 [docs/agent.md](agent.md#you-may-not-need-a-subscription) has Bedrock, Vertex,
 gateways, model pinning, and the reason a daemon needs these set somewhere
 other than your shell profile.

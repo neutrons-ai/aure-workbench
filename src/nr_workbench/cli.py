@@ -123,7 +123,11 @@ def init_command(**kwargs: object) -> None:
 )
 @click.option("--yes", is_flag=True, help="Skip the --fix-path confirmation.")
 def doctor_command(as_json: bool, fix_path: bool, yes: bool) -> None:
-    """Check the environment: versions, optional extras, project integrity."""
+    """Check the environment: versions, optional extras, project integrity.
+
+    Reports what is *configured*. `nrw check-llm` makes a real call and
+    reports what actually answered.
+    """
     from nr_workbench.commands.doctor import run_doctor
 
     if fix_path:
@@ -133,6 +137,57 @@ def doctor_command(as_json: bool, fix_path: bool, yes: bool) -> None:
         return
 
     run_doctor(as_json=as_json)
+
+
+@main.command("check-llm")
+@click.option("--harness", is_flag=True, help="Probe only the coding harness.")
+@click.option("--endpoint", is_flag=True, help="Probe only the LLM_BASE_URL endpoint.")
+@click.option(
+    "--model",
+    default=None,
+    help="Model to test [default: whatever the harness resolves to]. On a "
+    "third-party provider this is a deployment name.",
+)
+@click.option(
+    "--timeout",
+    type=int,
+    default=None,
+    help="Seconds to wait for the harness [default: 180].",
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def check_llm_command(
+    harness: bool, endpoint: bool, model: str | None, timeout: int | None, as_json: bool
+) -> None:
+    """Make a real call to each language model and report what answered.
+
+    `nrw doctor` reports what is configured; a deployment name that was never
+    created, an expired key or a gateway that refuses all look configured. This
+    calls them. With neither flag it probes both:
+
+    \b
+    - the harness (`claude`, or $NRW_HARNESS) that `nrw agent run` drives.
+      This is what a Microsoft Foundry, Bedrock or Vertex setup applies to.
+    - the LLM_BASE_URL endpoint used by `nrw assess`, `nrw model new
+      --from-notes` and `nrw isaac export`.
+
+    Having only one of the two is normal, so an unconfigured endpoint is
+    reported rather than failed. Exits non-zero when something that was asked
+    for did not answer.
+
+    The harness probe is one real turn against your default model, so it costs
+    what that model costs -- of the order of ten cents. The measured cost is
+    printed. Probing something cheaper would not catch the failure this exists
+    to find: a pinned model that is not deployed in your account.
+    """
+    from nr_workbench.commands.check_llm import DEFAULT_TIMEOUT, run_check_llm
+
+    run_check_llm(
+        harness=harness,
+        endpoint=endpoint,
+        model=model,
+        timeout=DEFAULT_TIMEOUT if timeout is None else timeout,
+        as_json=as_json,
+    )
 
 
 @main.command("handoff")

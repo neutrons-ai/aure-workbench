@@ -32,6 +32,10 @@ _PACKAGES = (
 _OK = "ok"
 _MISSING = "missing"
 
+#: How each status prints. Shared with `nrw check-llm`, which reports the same
+#: four states about a live call rather than about configuration.
+STATUS_MARKERS = {"ok": "✓", "missing": "·", "warn": "!", "error": "✗"}
+
 
 @dataclass
 class Check:
@@ -514,9 +518,7 @@ def run_doctor(*, as_json: bool = False) -> None:
     else:
         width = max(len(c.name) for c in checks)
         for check in checks:
-            marker = {"ok": "✓", "missing": "·", "warn": "!", "error": "✗"}.get(
-                check.status, "?"
-            )
+            marker = STATUS_MARKERS.get(check.status, "?")
             click.echo(f"  {marker} {check.name:<{width}}  {check.detail}")
 
     if any(c.status == "error" for c in checks):

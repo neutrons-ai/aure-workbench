@@ -140,12 +140,24 @@ def describe() -> dict[str, str]:
         value = os.environ.get(name)
         if not value:
             continue
-        report[name] = _redact(value) if name in SECRET_VARS else value
+        report[name] = redact(value) if name in SECRET_VARS else value
     return report
 
 
-def _redact(value: str) -> str:
-    """Render a secret as a shape rather than a value."""
+def redact(value: str) -> str:
+    """Render a secret as a shape rather than a value.
+
+    Public because the harness-provider variables reported by ``nrw check-llm``
+    are a different set from :data:`KNOWN_VARS` but need the same treatment,
+    and two redaction functions is one too many.
+
+    Args:
+        value: The secret.
+
+    Returns:
+        Its length and last four characters -- enough to tell two keys apart,
+        not enough to use one.
+    """
     if len(value) <= 4:
         return "set (short)"
     return f"set ({len(value)} chars, ...{value[-4:]})"

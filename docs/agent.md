@@ -434,9 +434,50 @@ Vertex, add `CLAUDE_CODE_SKIP_BEDROCK_AUTH=1` or
 
 #### Check it before the beam does
 
-Run `claude` interactively once and type `/status`. It names the provider and
-the resource or base URL it resolved. Do that before an overnight run; a
-provider misconfiguration looks exactly like a broken agent from the outside.
+```bash
+nrw check-llm
+```
+
+This makes a real call. `nrw doctor` reports what is *configured* — the
+binary it found, the variables that are set — and a deployment name that was
+never created, an expired key and a gateway that resolves but refuses all look
+configured. `check-llm` runs one turn through exactly the invocation `nrw
+agent run` uses, and reports the provider it selected, the model that actually
+answered, and what the call cost:
+
+```
+  provider  microsoft foundry
+            CLAUDE_CODE_USE_FOUNDRY=1
+            ANTHROPIC_FOUNDRY_RESOURCE=your-resource-name
+            ANTHROPIC_FOUNDRY_API_KEY=set (32 chars, ...9f2c)
+            ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-8
+
+  ✓ harness   answered
+              model    claude-opus-4-8
+              took     3.6s, $0.0333
+  · endpoint  no endpoint configured. Set LLM_PROVIDER and LLM_API_KEY, or
+              LLM_BASE_URL for an OpenAI-compatible one. Nothing an unattended
+              session does needs this.
+```
+
+Keys are never printed, only their length and last four characters — enough to
+tell two apart, not enough to use one. It exits non-zero when something it was
+asked for did not answer, so it belongs in whatever script you run before a
+beamtime.
+
+It probes both language models this package talks to, and `--harness` or
+`--endpoint` narrows it to one. The endpoint being absent is not a failure:
+that is the distinction the top of this section is about. `--model NAME` tests
+a specific deployment, which is the way to verify each of your
+`ANTHROPIC_DEFAULT_*_MODEL` pins actually exists before an overnight run finds
+out for you.
+
+The harness probe is a real turn against your default model, so it costs what
+that model costs — a few cents. Probing something cheap would defeat the
+purpose: an undeployed model pin is precisely the failure being looked for.
+
+Claude Code's own `/status`, typed in an interactive session, reports the same
+provider and resource without making a call.
 
 > **A daemon has no shell profile.** `nrw agent watch` started from systemd,
 > launchd or cron does not read `.bashrc` or `.zshrc`, so provider variables
