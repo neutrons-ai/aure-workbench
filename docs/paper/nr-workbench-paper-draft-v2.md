@@ -1,13 +1,13 @@
-# A bounded agent for neutron reflectometry: provenance as the mechanism that makes an LLM analyst work
+# Two agents for neutron reflectometry: a targeted analyst for the loop, a general one for the collaboration
 
-**Draft 1 — seed for circulation. Not submitted.**
+**Draft 2 — seed for circulation. Not submitted.**
 Target venue: *Journal of Applied Crystallography* (methods / computer programs).
 
 **Alternative titles**
 
-1. *An instruction is not a mechanism: constraining a general coding agent for neutron reflectometry analysis*
-2. *Every fit, and why: provenance-driven AI assistance for operando reflectometry at a neutron user facility*
-3. *nr-workbench: a bounded harness that lets a general-purpose coding agent do reflectometry analysis*
+1. *Ten calls or a hundred: matching agent architecture to the operating regime in reflectometry analysis*
+2. *An instruction is not a mechanism: two designs for LLM-assisted neutron reflectometry, and what each is for*
+3. *In the loop and out of it: a targeted workflow agent and a general coding agent, measured against the same benchmark*
 
 ---
 
@@ -19,15 +19,18 @@ parameterised layer model — and the expensive, expert part is not the optimisa
 *which model to try, and what its result means*. At a user facility this creates a bottleneck: data
 are collected in days and interpreted over months.
 
-We describe **nr-workbench**, a software harness that lets a general-purpose LLM coding agent carry
-out reflectometry analysis from three inputs — the reduced data, a prose description of the sample,
-and the hypothesis under test. The system is deliberately not an autonomous fitting loop. It
-supplies a *bounding box* (a typed model specification that generates a standalone refl1d script, an
-instrument model for SNS BL-4B, and two hard limits the agent cannot talk past), a *method* (21
-domain skills whose structure includes an explicit catalogue of the rationalisations an analyst
-makes to themselves), and above all a *provenance ledger* in which every fit is an immutable record
-carrying its inputs' hashes, its environment, its convergence flag, and — as a mandatory field — the
-reason it was run.
+We describe two systems built by the same group for this problem, and argue that the choice between
+them is a choice of *operating regime* rather than of quality. **AuRE** is a targeted agent: a
+prescribed workflow in which an LLM makes a fixed set of decisions at predetermined points, and
+which writes the model specification itself. **nr-workbench** is the opposite bet — a harness that
+lets a general-purpose LLM coding agent carry out the analysis conversationally from three inputs
+(the reduced data, a prose description of the sample, and the hypothesis under test), supplying a
+*bounding box* (a typed model specification that generates a standalone refl1d script, an instrument
+model for SNS BL-4B, and two hard limits the agent cannot talk past), a *method* (21 domain skills
+whose structure includes an explicit catalogue of the rationalisations an analyst makes to
+themselves), and a *provenance ledger* in which every fit is an immutable record carrying its
+inputs' hashes, its environment, its convergence flag, and — as a mandatory field — the reason it
+was run. Neither is an autonomous fitting loop.
 
 Several groups have recently built governed agents for scattering analysis, and we do not claim
 priority for that design. We contribute two things it currently lacks. First, a **scoring method
@@ -39,12 +42,18 @@ Second, a **required** statement of why each run was worth making: measured on a
 same analyst filled an optional per-fit note 0 times in 23 and a required promotion reason 2 times
 in 2.
 
-We report a case study in which two operando Cu-electrode datasets were analysed in separate
-sessions and then synthesised, and in which the ledger enabled the reversal of two previously
-circulated headline findings *without refitting anything*. We contrast the design with fixed-graph
-pipelines that embed LLM calls as components — the architecture the field has converged on, and the
-one we ourselves built first — and we set out what transfers to other scattering techniques and what
-deploying such a system at a user facility would require.
+We measure both against a benchmark of seven expert-analysed reflectivity curves, in five
+configurations: the targeted agent on a frontier model and on a self-hosted 120B open-weight model,
+and the general agent under two coding harnesses and two frontier models. **The targeted agent
+matches the best general-agent arm on pass rate using 10 LLM calls per curve against 78–100, at
+$0.07 against $12.30, and with no uninterpretable runs against 9 of 21** — and it holds that result
+on open weights running on facility hardware. The general agent's strengths are real and lie
+elsewhere: it escalates what it cannot decide with the evidence attached, and it reaches analyses
+nobody specified in advance. We therefore argue for deploying both — **the targeted agent in the
+experimental loop, where latency, cost and completeness decide, and the general agent for the curves
+that do not resolve**, where judgement is required and 11 of 17 findings in a curated week of expert
+analysis needed judgement no artefact could supply. We set out what transfers to other scattering
+techniques and what deploying such systems at a user facility would require.
 
 **Keywords:** neutron reflectometry; data analysis; provenance; large language models; agents;
 reproducibility; user facilities
@@ -74,7 +83,8 @@ Two properties of reflectometry make this acute.
 thin layer mainly through the *product* `Δρ·t`, not through `ρ` and `t` separately. Many `(ρ,t)`
 pairs along a constant-`Δρ·t` ridge fit essentially equally well, and which one an optimiser reports
 is an accident of its starting point. A fitted thickness quoted from such a ridge is a coordinate,
-not a measurement. §6 of this paper shows a published headline finding that was exactly this error.
+not a measurement, and §6.4.3 shows two frontier models making a structurally similar error together
+— quoting a solvent contrast that was an artefact of an under-specified stack.
 
 **Goodness-of-fit ranks candidate models badly.** In a curated corpus of one week of expert analysis
 of an operando Cu/THF experiment (25 fits, 17 findings recorded as they were made), *both* of the
@@ -113,7 +123,10 @@ than a matter of model capability:
 
 ### 1.4 Contribution
 
-We present nr-workbench and make four claims.
+We present two systems built by the same group for the same science — **AuRE**, a targeted agent
+that drives a prescribed analysis workflow, and **nr-workbench**, a bounding box and skill library
+that lets a general coding agent do the work conversationally — measure them against a common
+benchmark, and make four claims.
 
 1. **A scoring method for agent-produced reflectometry models that survives parameter
    degeneracy** (§5.5), and the finding it produces: on a published 51-curve benchmark,
@@ -123,20 +136,27 @@ We present nr-workbench and make four claims.
 2. **Mandatory-reason provenance**, and the measurement that motivates it: the same analyst filled
    an optional per-fit note 0 times in 23 and a required promotion reason 2 times in 2 (§5.2).
    Execution provenance is now common; a *required* statement of why a run was worth making is not,
-   and it is the field that makes the record readable months later (§6).
+   and it is the field that makes the record readable months later.
 3. **Two negative results that bound what any such system can claim.** On a curated week of expert
    analysis, 11 of 17 findings needed judgement no artifact could supply, and χ² ranked that corpus
-   *backwards* — both promoted fits are worse in χ² than the best in their arm (§7.1).
-4. **A bounded general coding agent reaches analyses a fixed-graph pipeline structurally cannot**
-   (§2.6). We argue this from architecture and from having built both; we have not run a
-   head-to-head benchmark, and §7.5 says what one would look like.
+   *backwards* — both promoted fits are worse in χ² than the best in their arm (§6.1).
+4. **The head-to-head benchmark, and a result that is regime-dependent rather than a winner.**
+   Five configurations analysed the same seven expert-analysed curves: a targeted workflow agent
+   (AuRE) on a frontier model and on self-hosted open weights, and a general coding agent
+   (nr-workbench) under two harnesses and two frontier models (§6.4). The targeted agent matches
+   the best general-agent arm on pass rate using **10 LLM calls per curve against 78–100**, at
+   **$0.07 against $12.30**, with **no unscoreable runs against 9 of 21**, and it holds that result
+   on a 120B open-weight model running on facility hardware. The general agent's advantages are
+   real but lie elsewhere — it escalates what it cannot decide, writes the reports, and reaches
+   analyses nobody specified in advance. **Neither design dominates; they suit different operating
+   regimes**, and §6.7 states which for which.
 
 We do **not** claim priority for the governed-agent-with-audit-trail design in scattering, which
 several groups arrived at concurrently (§2.5.1), nor for the harness-plus-skill-library
 architecture, which is prior art.
 
 We are explicit throughout about what is measured and what is asserted. The system is roughly six
-months old in its current form; the evaluation in §7 is real but preliminary, and §7.5 proposes the
+months old in its current form; the evaluation in §6 is real but preliminary, and §6.5 proposes the
 controlled study we have not yet run.
 
 ---
@@ -158,8 +178,7 @@ alternative to any of these. It generates refl1d scripts and records what happen
 
 ### 2.2 Machine learning for reflectometry
 
-Neural-network approaches invert or initialise reflectivity curves directly, notably the work of
-Greco, Hinderhofer, Schreiber and co-workers and the `mlreflect` package [VERIFY]. These learn a map
+Neural-network approaches invert or initialise reflectivity curves directly. These learn a map
 from curve to parameters for a *fixed structural family*, which is precisely the assumption that
 fails when the structural question is the open one. They are complementary to this work: a
 well-trained initialiser would be a good tool for the agent to call.
@@ -175,18 +194,6 @@ explains them and whether the answer is trustworthy.
 
 ### 2.4 Provenance and reproducibility
 
-W3C PROV [VERIFY] and RO-Crate [VERIFY] standardise provenance description; workflow engines such as
-Snakemake, Nextflow and CWL [VERIFY] capture execution provenance for pipelines. Provenance for
-*agent* actions specifically is an active area: PROV-AGENT [VERIFY] extends W3C PROV to capture
-agent prompts, responses and decisions alongside workflow context and downstream outcomes.
-
-Our contribution is not the schema but the **enforcement**, and the distinction is narrow enough to
-state precisely. A provenance system records what an agent did, faithfully and automatically. It
-cannot record what was never said. The reason a fit was attempted exists only in the analyst's head
-at the moment of launching it, and §5.2 measures what happens to it when the field is optional: it
-is lost, every time, even by an analyst who writes hundreds of lines of notes elsewhere. The ledger
-described here is therefore closer to a laboratory notebook with a required field than to a workflow
-trace, and the requiredness is the mechanism.
 
 ### 2.5 Agentic coding harnesses, memory, and skill libraries
 
@@ -247,8 +254,8 @@ than ours — but because the paper you are reading argues that **an instruction
 and that argument applies to claims about mechanisms too.
 
 We therefore propose a norm rather than a boast: *a governance claim should be checkable in the
-released artifact.* Every quantitative claim in §5 and §7 of this paper is traceable to a record in a
-public repository, and §7.3 lists the defects that audit turned up in our own work. We would ask to
+released artifact.* Every quantitative claim in §5 and §6 of this paper is traceable to a record in a
+public repository, and §6.3 lists the defects that audit turned up in our own work. We would ask to
 be held to the same standard.
 
 ### 2.6 Pipeline orchestration, and the class of system it defines
@@ -279,14 +286,29 @@ architecture rather than from any implementation choice:
    these inputs*. It does not naturally record *why this attempt was worth making*, because the
    pipeline, not the reasoner, decided to make it.
 
+**These are three costs, and each is the same fact as a benefit.** We stated them as limitations
+because they were the limitations that made us build the second system, but the benchmark of §6.4
+prices the other side and the price is not small. A graph that can only perform anticipated analyses
+is a graph that performs them the same way every time, in a known number of calls, for a known cost:
+ten LLM calls and $0.07 per curve against 78–100 and $12.30, at the same pass rate. Outputs
+constrained to a stage's schema cannot express an open-ended finding, but neither can they omit a
+required one — the general agent failed to declare the probe geometry in 9 of 21 runs, across two
+harnesses and two frontier models, where the fixed graph declares it because a node always runs
+(§9.10). And per-stage state, whatever it lacks as a scientific record, is what makes the run
+resumable from any node and reproducible from its checkpoints.
+
+So property (1) is disqualifying for open-ended analysis and close to a requirement for
+in-the-loop operation, and which of those the reader is doing decides which architecture is
+correct. §6.7 makes that argument on the measurements.
+
 The alternative — a general agent driving a toolbox, with the ordering emergent — trades
 reliability for reach, and is only safe if something else supplies the bounds. That trade is the
-subject of this paper: §4 describes the bounds, and §5 argues that the ledger is what makes the
+subject of §4, which describes the bounds, and §5, which argues that the ledger is what makes the
 emergent ordering auditable after the fact.
 
 ---
 
-## 3. Our own pipeline system, and the principle we reversed
+## 3. The targeted agent, and the principle we reversed in building the second system
 
 The authors also develop **AuRE** (*Automated Reflectivity Evaluator*), a fixed-graph pipeline for
 the same scientific task. nr-workbench grew out of it, still depends on it, and is in several places
@@ -305,7 +327,7 @@ AuRE takes reduced data plus a prose sample description and produces a fitted re
 autonomously. Orchestration is a state machine over a fixed node order — *intake, analysis,
 modeling, fitting, evaluation, finalize* — with routing functions choosing edges and a single
 refinement cycle `evaluation → modeling → fitting → evaluation`, terminating on an `acceptable`
-verdict or at a bounded iteration count. It is ~25,800 lines of Python with 635 tests over 156
+verdict or at a bounded iteration count. It is 26,054 lines of Python with 655 tests over 158
 commits (February–August 2026).
 
 It is worth noting explicitly that AuRE originally used LangGraph and now uses a hand-written state
@@ -333,22 +355,73 @@ It is a serious system and not a strawman. Several of its design decisions were 
 nr-workbench still depends on AuRE for 12 functions across 4 modules, principally probe construction
 and feature extraction, reached through a single adapter module.
 
-### 3.2 Where it ran out of road
+### 3.2 The design, and where the LLM actually sits
 
-**The LLM is a component inside a fixed order, not a driver.** AuRE has ~10 distinct LLM call sites
-[VERIFY exact count at the pinned commit], each a hand-written prompt template whose JSON reply is
-scraped with a regular expression and validated, with a deterministic fallback behind it. The LLM
+Because §6 measures AuRE as a peer rather than a predecessor, its architecture is worth stating
+precisely rather than by contrast.
+
+**Seven nodes, one loop, one terminal step.** `NODE_ORDER` is a literal list — *intake, analysis,
+modeling, fitting, evaluation, finalize* — and each node has a routing function that chooses the next
+edge. `finalize` deliberately has no router, which is what makes it terminal: the loop breaks when a
+node has nowhere to route. The refinement cycle is
+`evaluation → modeling → fitting → evaluation`, ending on an `acceptable` verdict or a bounded
+iteration count. An eighth node, `final_fit`, is intentionally absent from both registries and is
+invoked once, explicitly, after `finalize`: it re-fits the selected model with DREAM so the reported
+parameters carry a posterior rather than an optimiser's endpoint.
+
+**The LLM is consulted at three nodes out of seven.** Intake, modeling and evaluation hold every
+call site — nine in total across the package. `analysis`, `fitting`, `finalize`, `final_fit`,
+`refinement`, `routing`, `model_builder` and `hypotheses` contain no LLM call at all. What that
+means concretely: the model is *constructed* deterministically from a structured `ModelDefinition`
+(JSON, not a generated script) by `model_builder`, fitted through bumps, selected by `finalize`
+against explicit tier rules, and polished by DREAM — with a language model contributing only the
+sample parse, the ranked structural hypotheses, the refinement proposal, and the verdict on a
+completed fit. Six prompt templates cover all of it.
+
+**Every call passes one chokepoint.** `llm/timeout.py::invoke_with_timeout` wraps the provider call
+with a timeout and bounded retries, which is where the per-call ledger of §6.4 is hooked; the run's
+`llm_calls.jsonl` therefore records node, model, duration, token counts and failures for every call
+including the ones that errored. This is the symmetric artefact to nr-workbench's session record,
+and it is what makes the two systems comparable at all.
+
+**The record is a checkpoint tree, not a ledger.** Each completed node writes
+`checkpoints/NNN_<node>.json` under the run directory, beside `run_info.json`, the `refl1d_output/`
+export and a terminal `final_state.json`. A run is resumable from any checkpoint, and thresholds
+that terminate the loop are pinned into the state on the first pass — a resumed run keeps the χ²
+ceiling it was launched with rather than inheriting the resuming shell's. This is genuine execution
+provenance. What it is not is a *cross-run* record: there is no fit registry and no index, so two
+runs of one sample are compared by reading two directories (§3.3).
+
+**Deterministic guardrails sit above the model, not inside the prompt.** Boundary hits widen bounds
+automatically; a χ² regression beyond 5% reverts to the best model; a BIC regression reverts; an
+outer-roughness ceiling and a χ² acceptance floor are read from the environment and pinned. These
+are mechanisms in the sense §10 means — they hold whether or not the model agrees with them, and
+they are the reason a prescribed workflow can be run unattended a hundred times a day.
+
+Eight `SKILL.md` files (1,213 lines) are injected into the prompts, the idea nr-workbench inherited
+and expanded to 21. AuRE also ships `aure mcp-server`, exposing `start_analysis_session`, `run_fit`,
+`evaluate_fit`, `modify_model` — the agent-driving-a-toolbox arrangement nr-workbench adopted. At
+the pinned commit that path is stale and partly non-functional, so **AuRE contemplated the toolbox
+and shipped the pipeline** — a decision about where to spend effort rather than a failure of
+imagination, and on the evidence of §6.4 the more useful of the two for the in-the-loop regime.
+
+### 3.3 Where it ran out of road
+
+**The LLM is a component inside a fixed order, not a driver.** AuRE has nine LLM call sites across
+three nodes (§3.2), each a hand-written prompt template whose JSON reply is scraped with a regular
+expression and validated, with a deterministic fallback behind it. The LLM
 never chooses *which* of these runs — the node order does. It does not even build the first model:
 that step is deterministic, as AuRE's own architecture diagram states. The consequence is
 §2.6(1): AuRE can only do analyses its designer anticipated, and reflectometry analysis of a novel
 sample is exactly the case where the next step was not anticipated.
 
-Tellingly, AuRE *did* build the other shape: `aure mcp-server` exposes a tool interface
-(`start_analysis_session`, `run_fit`, `evaluate_fit`, `modify_model`, …) — the
-agent-driving-a-toolbox arrangement nr-workbench adopted. At the pinned commit that path was stale
-and partly non-functional. The honest statement is that **AuRE contemplated the toolbox and shipped
-the pipeline**, which is a decision about where to spend effort rather than a failure of
-imagination.
+**What the fixed order buys, stated here because §6.4 measures it.** Everything above is written as
+a limitation, and in the regime nr-workbench was built for it is one. It is also the reason the same
+system analyses a curve in ten LLM calls for seven cents, reaches the same pass rate as the general
+agent on the benchmark of §6.4, produces no run whose specification cannot be read back, and holds
+that result on a self-hosted open-weight model. A node that always runs is a node that never forgets
+to declare the probe geometry. We reversed the principle for the collaborative regime and would
+reverse it back for the in-the-loop one; §6.7 sets out which is which.
 
 **Nothing records why a fit was run.** AuRE's `FitResult` has 16 fields. **None of them names a
 reason, motivation, or hypothesis.** Persistence is one JSON checkpoint per completed node under a
@@ -379,7 +452,7 @@ endpoint in three places. When a coding harness is driving, all three hand the w
 harness instead, because the harness is the better model on this task, and a plausible second opinion
 re-enters the harness's own context as *evidence*. That is worse than no verdict at all.
 
-### 3.3 Evidence discipline, in both directions
+### 3.4 Evidence discipline, in both directions
 
 AuRE carries a validation harness — batch runner, comparator, inventory and report, six tracked
 source files — and it is maintained: the most recent change to it *"score[s] the fit the run
@@ -387,9 +460,9 @@ reported, and flag[s] a vetoed one"* (2026-07-28). What it does **not** carry is
 The scoring machinery exists; the scores are not in the repository, so an outside reader cannot
 learn from the archive how well the system performs.
 
-We record this about our own work for two reasons. It is the specific failure §7 of this paper is
+We record this about our own work for two reasons. It is the specific failure this paper is
 written to avoid — and, less comfortably, it is a failure nr-workbench has only partly escaped. The
-measurements in §7.1 and §5.2 are committed, in a ground-truths file; the timing figures in §7.2
+measurements in §6.1 and §5.2 are committed, in a ground-truths file; the timing figures in §6.2
 were reconstructed for this paper rather than recorded as they happened. A system that tracks every
 fit still did not track its own evaluation, which is worth stating plainly in a paper whose thesis
 is that tracking is the mechanism.
@@ -586,7 +659,7 @@ line, artefacts) four deserve comment:
   opinion, and recording that as `True` asserts something nobody checked. An earlier version
   hard-coded `converged: True`, which meant the assessment was handed a false value on the exact axis
   that disqualified a fit — on the reference corpus, the one non-converged fit had a *better* χ²
-  (1.264) than the published answer (1.285). §6 shows this field reversing a scientific conclusion.
+  (1.264) than the published answer (1.285), so the field decides which of the two a reader trusts.
 - **`stack`** — the layer structure as `THF|Cu|Ti|Si` — is stored rather than derived, because the
   index outlives the result directory, and the structure is the one thing that makes a listing row
   mean anything after the artefacts are gone.
@@ -629,7 +702,7 @@ reason a run happened must be a required argument of the thing that runs it.*
 
 ### 5.3 Context economics: why the ledger is a capability, not bookkeeping
 
-An LLM agent's binding constraint is its context window. Measured on the aqueous project of §6
+An LLM agent's binding constraint is its context window. Measured on an operando Cu/D₂O project
 (`jen-jun2026`, 52 recorded fits), a full result directory has a median size of 7.67 MB across 46
 files — dominated by the DREAM posterior chain. Three progressively compressed views exist:
 
@@ -659,8 +732,8 @@ can answer "have we tested this?" without a human remembering. The compression i
 knowledge affordable, and the *mandatory reason* is what makes the compressed line worth reading.
 
 We are careful about the strength of this claim. The compression ratios are measured. The claim that
-they *change agent behaviour* is supported by the design history (§5.4) and by the case study (§6),
-not by a controlled ablation. §7.5 proposes that ablation.
+they *change agent behaviour* is supported by the design history (§5.4), not by a controlled
+ablation. §6.5 proposes that ablation.
 
 ### 5.4 A behavioural failure the ledger made visible
 
@@ -697,7 +770,7 @@ failures**, while a fit whose product is wrong can pass both bounds by sitting n
 each coordinate separately. The failure is not hypothetical: on the corpus below the thin native
 oxide shows 188% mean roughness error and 31% thickness error where thick copper shows 12%.
 
-Goodness-of-fit is no better as a gate, for the reason §7.1 gives — on a curated corpus it ranks the
+Goodness-of-fit is no better as a gate, for the reason §6.1 gives — on a curated corpus it ranks the
 expert's own promoted answers backwards.
 
 ### 5.5.2 Two invariants
@@ -734,7 +807,7 @@ reference is equally affected the check abstains rather than passing.
 
 ### 5.5.3 What it finds
 
-Applied to a published autonomous system's output on this corpus (9 scored cases; see §7.6 for the
+Applied to a published autonomous system's output on this corpus (9 scored cases; see §6.6 for the
 corpus and the caveats):
 
 | criterion | passes |
@@ -754,99 +827,13 @@ its true position than the technique can resolve — while reporting χ² near u
 
 We offer this as the evaluation instrument the field currently lacks, and note that it is
 technique-agnostic in form: any scattering method with a degenerate forward model has an analogous
-invariant (§8.1).
+invariant (§7.1).
 
 ---
 
-## 6. Case study: two operando datasets, one synthesis, two reversed findings
+## 6. Evaluation
 
-### 6.1 The work
-
-Two operando neutron reflectometry experiments on Cu/Ti/Si electrodes were analysed: one in aqueous
-D₂O bicarbonate (project `jen-jun2026`, sample `sample1`), one in non-aqueous d8-THF (project
-`cu-thf-expt11`, sample `expt11`, data originally taken April 2025). Each was analysed in its own
-nr-workbench project and its own agent sessions. A third, separate repository then synthesised the
-two, testing whether the native copper oxide survives cathodic polarisation.
-
-It does, in both: **55 ± 12% surviving in water, 79 ± 3% in THF.**
-
-The synthesis is a self-contained package — report, provenance map, re-analysis script, figures —
-whose `PROVENANCE.md` maps every claim in the report to the fit id, the specification, and the
-reduced data files that produced it, and which lists its own known gaps in a section titled *"stated
-so that nobody has to discover them under review."*
-
-### 6.2 The first reversal: a coordinate mistaken for a measurement
-
-The THF analysis's original headline finding was that the oxide **grows** irreversibly and densifies:
-fitted slab thickness 42.4 → 55.7 → 57.9 Å at rising SLD across three states.
-
-Reading the same three states through a ridge-invariant statistic — the areal deficit
-`Γ = t·Δρ`, converted to a Cu₂O-equivalent thickness `t_eq` — the areal amount **falls by half, at
-12.9σ**, over the same three states, *in the same fit, from the same chain*. Fitted thickness and SLD
-are the two coordinates of a ridge the dataset cannot break (r = +0.937 in that project's own
-diagnostics), so their product is determined and neither is measured. The product is what fell. The
-region occupies more space while containing less oxide: the oxide is consumed and simultaneously
-diluted by solvent.
-
-**Nothing was refitted.** The correction came from reading a different quantity off the recorded
-posterior chains. That is only possible because the chains, the frozen generated script, and the
-input hashes were all still on disk and still linked to the claim — and because the re-analysis
-script imports each fit's *generated* `model.py`, so the profile it integrates is byte-for-byte the
-one the fit used.
-
-A compounding error was found in the same pass: the THF supplementary information used Cu₂O = 4.1
-and CuO = 4.5 × 10⁻⁶ Å⁻², where the correct values from CRC densities are **5.363** and **6.459**.
-(The check that the arithmetic is right is that the same calculation reproduces Cu = 6.554 and
-Si = 2.072, both independently known.) The two errors pull in opposite directions and do not cancel.
-
-### 6.3 The second reversal: an unconverged fit presenting as a null result
-
-The four-state aqueous fit carrying the −1 V replicate was **machine-recorded as not converged**.
-Re-running it with the same script and the same twelve data files at 6.3× the chain length gave
-χ² = 1.122 against 1.286 — it had not merely failed a convergence test, it had been sitting in a
-materially worse minimum.
-
-The oxide conclusions strengthened sharply (the reduction went from 4.5σ and 4.0σ to **14.3σ and
-15.5σ**). But a second claim **inverted**: the buried titanium adhesion layer, previously reported as
-constant through the electrochemistry, is taking up deuterium at **7.2σ** and is still doing so
-eighty minutes into the hold. The old fit's intervals on ρ(Ti) were four times too wide to see it.
-
-The synthesis states the lesson more precisely than "unconverged fits are unreliable":
-
-> **An unconverged fit's inflated intervals present as a null result, and a null result attracts far
-> less scrutiny than a positive one.**
-
-The companion audit is equally instructive. A second unconverged fit, re-run, turned out to be
-*purely* a chain-length problem — it kept only 83 generations after burn-in against 5,208 — and
-reproduced the same minimum with every absolute SLD unchanged. So "unconverged" was diagnostic of two
-quite different problems, and only inspection told them apart.
-
-**The older THF project records no convergence flag at all** — the field postdates that beamtime — so
-its convergence claims are not checkable from its archive. The synthesis says so, in print, about the
-authors' own work.
-
-### 6.4 What this case study does and does not demonstrate
-
-It demonstrates that the ledger did the specific job it was built for: a claim was traceable to a fit,
-the fit carried a machine-recorded flag contradicting the claim's confidence, the posterior was still
-on disk, and the correction was therefore cheap. Both corrections were propagated back into the
-source project (commit `3352d5d`), with the superseded text kept struck through in place *because the
-error is instructive*, and both were recorded in that project's ground-truths file.
-
-It does **not** demonstrate that an agent found these errors unaided. The re-analysis that produced
-the reversal was a human-directed cross-experiment comparison — the human supplied the idea of
-running both datasets through one ridge-invariant code path. What the system supplied was the
-conditions under which that idea was cheap to test: 15 minutes of compute rather than a re-fit
-campaign, and an audit trail that identified precisely which claims were affected.
-
-That division — human supplies the idea, system makes testing it cheap — is the honest description of
-the whole collaboration, and it is what §7.2's timing numbers should be read as measuring.
-
----
-
-## 7. Evaluation
-
-### 7.1 How much of expert analysis is automatable? A measurement
+### 6.1 How much of expert analysis is automatable? A measurement
 
 A curated corpus — one week of expert analysis of the Cu/THF experiment, 25 fits, 17 findings written
 down as they were made — was replayed against every automatic check in the package:
@@ -867,7 +854,7 @@ This measurement is why nr-workbench contains no decision policy. It is also the
 like other groups to reproduce for their own techniques, because it sets the ceiling on what any
 automation of this kind can claim.
 
-### 7.2 Time to interpretation, measured from the ledger
+### 6.2 Time to interpretation, measured from the ledger
 
 Because every fit id is a UTC timestamp, the ledger reports on the system's own throughput. Sessions
 below are wall-clock spans from first to last fit on a day.
@@ -876,7 +863,7 @@ below are wall-clock spans from first to last fit on a day.
 |---|---|---|---|---|
 | Cu/THF (`cu-thf-expt11`), re-analysis of April 2025 data | 23 | 2 (6–7 Aug 2026) | 5 h 09 m + 3 h 09 m = **8 h 18 m** | SI-grade analysis document |
 | Cu/D₂O (`jen-jun2026`), **new** data | 50 | 1 (12 Aug 2026) | **3 h 16 m** | three reports, publishable finding |
-| Cross-experiment synthesis | (2 correction re-runs) | 14–15 Aug 2026 | — | joint report; two findings reversed |
+| Cross-experiment synthesis | (2 correction re-runs) | 14–15 Aug 2026 | — | joint report |
 
 Spans are first fit *start* to last fit *start* on a day, consistently. (An earlier draft of this
 table mixed start-to-start and start-to-finish conventions and understated the first row by nearly
@@ -891,17 +878,19 @@ human effort — some fits ran unattended, and time spent thinking between sessi
 week" is the analyst's own characterisation of the original campaign, not a stopwatch measurement.
 The two analyses are not independent: the second had the benefit of the first's conclusions. And the
 analyst is the same person and the tool's author. **We therefore claim these as an existence proof
-and an upper bound on elapsed time, not as a controlled speedup measurement.** §7.5 says what the
+and an upper bound on elapsed time, not as a controlled speedup measurement.** §6.5 says what the
 controlled version would look like.
 
 What we do claim without hedging: the numbers were *computable at all*, by a script, from the
 provenance record, months after the fact. That is not true of any prior workflow in this group.
 
-### 7.3 Correction rate and audit outcomes
+### 6.3 Correction rate and audit outcomes
 
-From §6: two headline findings reversed, both traced to a specific mechanism (a ridge coordinate
-read as a measurement; an unconverged fit's wide intervals read as a null). Both propagated to
-source. One further discrepancy self-reported (χ² values in a background comparison table quoted as
+From the benchmark sweeps: a wrong answer reached independently by two frontier models under the
+same harness, traced to a specific mechanism (a missing pair of layers absorbed into the solvent
+contrast; §6.4.3). It was caught against the expert reference rather than by the system itself, but
+the escalation the system wrote states its own evidence, so the error is legible enough to refute.
+One further discrepancy self-reported (χ² values in a background comparison table quoted as
 1.330/1.528 where the records hold 1.355/1.556) and one bookkeeping defect self-reported (a generator
 bug meant `fixed: true` was unusable, so pinned parameters were declared as `value ± tiny` and still
 count as free; the effective parameter count is 37 against 40 recorded, and that BIC was computed by
@@ -910,7 +899,7 @@ hand).
 We report the self-reported defects deliberately. A system whose audit section is empty has not been
 audited.
 
-### 7.4 System scale
+### 6.4 System scale
 
 | | nr-workbench | AuRE (`7ae487a`) |
 |---|---|---|
@@ -936,7 +925,7 @@ recorded findings. The development methodology and the product methodology are t
 methodology. We offer this as suggestive, not as evidence, and we would not object to a referee
 asking for it to be cut.
 
-#### 7.4.1 Cost per analysis — LLM calls and tokens
+#### 6.4.1 Cost per analysis — LLM calls and tokens
 
 **[⚠ PROVISIONAL — 7 matched curves of 51. Figures update when the full sweeps close.]**
 
@@ -965,15 +954,15 @@ of times: ~10 calls, ~1.7k fresh tokens each. nr-workbench sends a small increme
 on top of an enormous cached context: ~100 calls against 13.3M cached tokens. The cleanest single
 statistic is **output, at 76×** — it is the one figure confounded by neither caching strategy nor
 prompt architecture, and it measures how much each system *thinks out loud* to reach an answer.
-That is §10.10's design contrast priced: an agent that authors and revises its own specs converses
+That is §9.10's design contrast priced: an agent that authors and revises its own specs converses
 its way to a result; a prescribed workflow spends a fixed, small number of calls at predetermined
 decision points. Neither is a defect. They price two different products, and a reader choosing
 between the designs needs both.
 
 **Cost per *scoreable* analysis.** Two of the seven nr-workbench runs (`201136`, `201290`) at first
-produced no scoreable fit at all — the `probe.back_reflection` omission of §10.10 — which put the
+produced no scoreable fit at all — the `probe.back_reflection` omission of §9.10 — which put the
 cost per *usable* result 40% above the raw figure. Both are now scored, because the omission was
-answered on the measuring side rather than in the system under test (§10.10), so the raw and usable
+answered on the measuring side rather than in the system under test (§9.10), so the raw and usable
 figures coincide at **$12.70 per curve**. The episode is still worth recording: a premium of that
 size, arriving only at extraction after a full session, is what an unscoreable rate costs a
 facility, whether or not this particular instance was recoverable.
@@ -1007,7 +996,7 @@ them holds the model constant across three configurations — AuRE and an agenti
 which is what the pre-registered proxy arms exist for. Only then does a difference in calls or
 tokens attribute to the architecture rather than to the model behind it.
 
-#### 7.4.2 Holding the model constant: the caching strategy does not port
+#### 6.4.2 Holding the model constant: the caching strategy does not port
 
 **[⚠ PROVISIONAL — 7 matched curves, one sweep per configuration.]**
 
@@ -1079,7 +1068,7 @@ cache writes at all. Currency is list price: any committed-use discount would mo
 arms together, and the self-hosted arm's "~$0" is a marginal cost that excludes the capital and
 power behind the facility's own GPUs.
 
-#### 7.4.3 One run, four systems: what the harness fixes and what it does not
+#### 6.4.3 One run, four systems: what the harness fixes and what it does not
 
 **[⚠ PROVISIONAL — one worked case, offered as an existence proof, not a rate.]**
 
@@ -1148,11 +1137,11 @@ fit the agent had not put forward. The harness now selects, in order: the fit id
 named in the sample's own reports; failing that the lowest-BIC fit, which is the
 criterion the agents themselves select on and which reproduces their explicit
 designation in 4 of the 5 sessions that recorded one; failing that the newest fit.
-The general lesson is the one §7.4.1 already reports for token accounting —
+The general lesson is the one §6.4.1 already reports for token accounting —
 **an agentic system must be scored on what it reports, not on what it last did**,
 and the two are not the same artefact.
 
-#### 7.4.4 The frontier model is not doing the work
+#### 6.4.4 The frontier model is not doing the work
 
 **[⚠ PROVISIONAL — 7 curves, one sweep each.]**
 
@@ -1200,7 +1189,7 @@ stored snapshots by a harness defect, so both wall-clock figures are derived fro
 timestamp in each run's LLM ledger — a like-for-like span, but one that excludes setup and any
 fitting after the final call.
 
-### 7.5 What we have not done, and the study that would settle it
+### 6.5 What we have not done, and the study that would settle it
 
 The evaluation above is observational, and weaker in protocol than the neighbouring work: NeuDiff
 Agent reports repeated end-to-end runs with error bars across two LLM backends and a fixed prompt
@@ -1208,7 +1197,7 @@ protocol, partitioning user time from machine time, for an effect size (4.6–5.
 adopt that protocol below rather than defend ours. A referee is entitled to ask for the following,
 and we agree:
 
-0. **The 51-curve benchmark, run end to end** (§7.6). The corpus, its calibrated references with
+0. **The 51-curve benchmark, run end to end** (§6.6). The corpus, its calibrated references with
    per-parameter MCMC uncertainties, and the scoring instrument of §5.5 all exist; what is missing
    is nr-workbench's own arm. Reported with repeated runs and error bars, and with the *unassisted*
    agent separated from the human-assisted completion, so the assisted number cannot absorb the
@@ -1226,7 +1215,7 @@ and we agree:
 4. **Cross-operator generalisation.** Every result in this paper comes from one analyst, who is the
    tool's author. Until other people at other instruments use it, the external validity is unknown.
 
-### 7.6 The benchmark corpus
+### 6.6 The benchmark corpus
 
 The evaluation instrument of §5.5 is applied to a corpus of 51 reflectivity curves with expert
 reference fits, previously used in two published studies [PLACEHOLDER: cite both]. Because the raw
@@ -1248,7 +1237,55 @@ a round number. [AUTHOR: both are tracked in the harness configuration and flagg
 
 ---
 
-## 8. Transfer to other scattering techniques
+### 6.7 Which design for which regime
+
+The measurements above do not name a winner, and reading them as if they did would be the wrong
+lesson. They separate two operating regimes that this field has mostly treated as one.
+
+**In the loop — during the experiment.** Beamtime decisions are made between measurements: is this
+film the thickness we asked for, has the layer started to grow, is the next contrast worth the shift.
+The requirements are latency, cost, determinism, and completeness — the same analysis, run the same
+way, on every curve as it lands, without a person waiting on it. **The targeted agent is the better
+instrument here, and by a margin that is not close.** Ten LLM calls per curve against 78–100; $0.07
+against $12.30; a prescribed order that reaches the same pass rate; and, because that order writes
+the model specification itself, no run that cannot be interpreted afterwards — against 9 of 21 for
+the general agent (§9.10). It also runs unchanged on a 120B open-weight model on facility hardware
+at the same pass rate (§6.4.4), which for a user facility settles procurement, export control and
+data residency in one move. A prescribed workflow is cheap to run a hundred times a day; a
+conversational one is not.
+
+**Out of the loop — the collaboration.** Afterwards, the questions are the ones nobody specified in
+advance: why does this residual survive every model we can write, is the solvent what the notes say,
+does the oxide survive polarisation. Here the fixed order is the binding constraint, and the general
+agent's freedom is the point. It installs the skills the sample turns out to need, tests hypotheses
+in an order it chooses, escalates what it cannot decide with the evidence attached, and writes the
+report tiers a collaborator reads. §6.1's negative result is what makes this regime irreducible:
+11 of 17 findings needed judgement no artefact could supply. Judgement needs a collaborator, and a
+collaborator needs a system that can be argued with.
+
+**The two failure modes are the mirror of the two strengths.** The targeted agent fails by not
+considering what its designer did not: on 206915 it reported the oxide-only structure and never
+tested a plated layer, because no node exists that would. The general agent fails by omitting a
+premise nothing forces it to state: the same run's specifications never declared
+`probe.back_reflection`, across two harnesses and two frontier models (§9.10). One design cannot
+leave its rails; the other has none to leave.
+
+Two observations from §6.4 sharpen the choice. First, **the model matters far less than the
+architecture**: swapping a frontier model for open weights inside the targeted agent changed the
+pass rate not at all, and swapping the frontier model inside the general agent produced sessions so
+alike they invented the same five model names in the same order (§6.4.3). Second, **cost is
+architectural, not incidental** — the general agent's bill is dominated by re-reading a conversation
+that grows every turn, and on a backend without the caching primitive its harness was designed
+against it rises to $17.56 per curve (§6.4.2). Neither number is a tuning failure; both follow from
+what each design is.
+
+The practical recommendation is therefore not "use this one". It is: **run the targeted agent on
+every curve as it arrives, and bring in the general agent for the curves that do not resolve.** The
+first is an instrument; the second is a colleague. A facility that deploys only the first will
+automate the easy cases and stall on exactly the ones that matter; one that deploys only the second
+will pay a hundred times over for answers it could have had in ten calls.
+
+## 7. Transfer to other scattering techniques
 
 The reflectometry specifics are replaceable. What we believe generalises is a set of seven components
 and the relations between them.
@@ -1263,7 +1300,7 @@ and the relations between them.
 | Tiered reporting | Mixed teams need several altitudes of the same finding | Which concepts need explaining |
 | Never-overwrite scaffolding | The tool runs on live working directories | Nothing |
 
-### 8.1 Worked analogues
+### 7.1 Worked analogues
 
 **Small-angle scattering (SANS/SAXS).** Two systems already do the agent part — SasAgent drives
 SasView tools, EQSANS-CLI exposes reduction on a stable contract for an external agent (§2.5.1) — so
@@ -1295,7 +1332,7 @@ and contested.
 isotopic contrast variation. It is the natural first port because the physics module is the only part
 that changes.
 
-### 8.2 Preconditions
+### 7.2 Preconditions
 
 The approach needs: a **fast forward model** (seconds to minutes, so a session can afford tens of
 fits); an **existing scriptable fitting engine** (do not write one); **standard file formats** with
@@ -1319,7 +1356,7 @@ where the analysis is dominated by data reduction rather than modelling, or wher
 engine exists and the community works through a GUI. In the last case, build the scriptable path
 first; it is worth doing on its own merits.
 
-### 8.3 How to start
+### 7.3 How to start
 
 The smallest useful first milestone is **not** an agent. In order:
 
@@ -1339,9 +1376,9 @@ useful thing in this paper for another group to take away.
 
 ---
 
-## 9. Deployment at a user facility
+## 8. Deployment at a user facility
 
-### 9.1 What changes for the user
+### 8.1 What changes for the user
 
 Beamtime decisions ("should I keep counting? change contrast?") and post-experiment interpretation
 are different problems with different tolerances. nr-workbench currently targets the second, with a
@@ -1350,7 +1387,7 @@ the user *during* the beamtime, when the sample is still mounted and a follow-up
 possible. That is the change with the highest scientific value, and also the one with the highest
 risk of over-trust.
 
-### 9.2 Topologies
+### 8.2 Topologies
 
 The code today supports a per-user install (`pip install`, `nrw init` in a directory) and a local
 Flask UI. A facility deployment would plausibly want: a shared analysis host with per-user projects
@@ -1359,7 +1396,7 @@ web service for read-only sharing with collaborators who will never install anyt
 ORNL's ISAAC data pipeline already exists, deliberately written against a *file contract* rather than
 against another package's internals.
 
-### 9.3 Hard constraints
+### 8.3 Hard constraints
 
 **LLM access.** The harness requires a commercial model API reachable from the analysis host. This is
 the single largest deployment obstacle at a DOE facility: network egress, export-control review of
@@ -1380,7 +1417,7 @@ the whole approach raises.
 project was 298 MB. A facility retention policy must distinguish the record (keep indefinitely) from
 the chain (keep for a defined window, regenerable from the record).
 
-### 9.4 Trust and accountability
+### 8.4 Trust and accountability
 
 Who signs off on an agent-produced fit? Our answer is mechanical: the agent cannot promote a result,
 by two independent mechanisms, so **promotion is a human act by construction**. For that signature to
@@ -1398,12 +1435,12 @@ facility as its acceptance criterion — is:
 All three defects found in an autonomy survey of this codebase were of that kind, and none would have
 been visible to an unattended daemon.
 
-### 9.5 Staged rollout
+### 8.5 Staged rollout
 
 1. **Provenance only, no agent.** Deploy `nrw init` / `fit run` / `ls` / `whence` / `check` to willing
    users. Success: results traceable, users prefer it. Risk: near zero.
 2. **Assisted, interactive, expert users.** Agent on, human driving, promotion by hand. Success:
-   time-to-first-model down; no incorrect promoted results. Collect the §7.5 data.
+   time-to-first-model down; no incorrect promoted results. Collect the §6.5 data.
 3. **Unattended overnight during beamtime**, declared fits only, escalations reviewed each morning.
 4. **General user offering**, with training and an explicit statement of what the system does not do.
 
@@ -1411,7 +1448,7 @@ Metrics to collect from stage 1, because they are the follow-up paper: fits per 
 with a stated reason, fraction promoted, time from last measurement to first report, corrections
 after promotion, and user-reported trust.
 
-### 9.6 Support
+### 8.6 Support
 
 The unglamorous determinant of success. A facility must answer who fixes it at 03:00 on day two of a
 beamtime. Our mitigation is that the offline checks, the generator, and the provenance layer all work
@@ -1420,11 +1457,11 @@ than breaking it.
 
 ---
 
-## 10. Limitations and failure modes
+## 9. Limitations and failure modes
 
 1. **Single operator, single instrument, single technique.** Every result here comes from one analyst
    at one beamline, who wrote the software. This is the dominant threat to validity.
-2. **No controlled comparison.** §7.2 is an existence proof; §7.5 is what would settle it.
+2. **No controlled comparison.** §6.2 is an existence proof; §6.5 is what would settle it.
 3. **The agent's contribution is not reproducible** in the sense the fits are. Model version and
    sampling temperature are not captured; only the transcript is.
 4. **Provenance covers fits, not reasoning.** The ledger records that a fit ran and why the analyst
@@ -1439,11 +1476,11 @@ than breaking it.
 8. **Degeneracy is mitigated, not solved.** The system is better at *reporting* that a result sits on
    a ridge than at breaking the ridge. Breaking it needs contrast variation, which is an experimental
    decision.
-9. **Over-trust remains the principal residual risk**, and no mechanism in §9.4 is a proof against a
+9. **Over-trust remains the principal residual risk**, and no mechanism in §8.4 is a proof against a
    user who reads only the summary tier.
 10. **[The system under test is deliberately NOT changed in response; see below.]
     Agent-authored specs can omit a premise the downstream interpretation cannot do without.**
-    On the benchmark corpus of §7.6, **9 of 21 nr-workbench runs** initially could not be scored
+    On the benchmark corpus of §6.6, **9 of 21 nr-workbench runs** initially could not be scored
     *at all* because no model spec in the session declared `probe.back_reflection`. Without it the
     stack orientation is unresolvable, and the extractor refused to guess rather than silently score
     a mirrored structure — the correct call, but the refusal lands only at extraction, after a full
@@ -1483,8 +1520,8 @@ than breaking it.
     line we are holding is that a benchmark may fix its own scoring, and may not fix the thing it
     is scoring. That is moving the goalposts, and the tweak surface is unbounded: it grows with every
     harness and every model we put behind it, so there is no principled place to stop. A system
-    repaired against its own benchmark measures the repairs. This is the same discipline §7.6's
-    calibration and the pre-registered task text exist to enforce, and the same failure mode §11
+    repaired against its own benchmark measures the repairs. This is the same discipline §6.6's
+    calibration and the pre-registered task text exist to enforce, and the same failure mode §10
     names in the field at large.
 
     One technical note worth keeping for whenever this *is* revisited: the obvious fix is the wrong
@@ -1507,7 +1544,7 @@ than breaking it.
     to one question but different trades: freer authoring buys exploration and costs guarantees;
     prescribed construction buys guarantees and costs reach. Neither dominates, and an either/or
     framing of the two is a mistake we should not make in this paper.**
-    [AUTHOR: that last point sits in tension with §11's current framing, which reads as AuRE having
+    [AUTHOR: that last point sits in tension with §10's current framing, which reads as AuRE having
     got the principle backwards. Reconcile the two before submission — the honest claim is probably
     that AuRE's error was believing prompts alone were sufficient, not that prescription is wrong.]
 
@@ -1516,7 +1553,7 @@ than breaking it.
     arm alongside, as a measured property of the freer design rather than as a bug.
 ---
 
-## 11. Conclusion
+## 10. Conclusion
 
 Reflectometry analysis resists automation for a specific and instructive reason: the quantity that an
 automated loop would optimise ranks the candidate answers backwards, and the decisions that matter are
@@ -1528,8 +1565,9 @@ nr-workbench supplies a general coding agent with a bounding box it cannot talk 
 encoded as skills that pre-refute the analyst's own rationalisations, and a ledger in which every fit
 is immutable, hashed, and carries a mandatory statement of why it was run. The ledger is the
 mechanism: it compresses a fit history by more than two orders of magnitude so the agent can afford
-to know its own past, and it makes claims auditable months later — as demonstrated by two headline
-findings reversed from recorded posteriors without refitting anything.
+to know its own past, and it makes claims auditable months later. AuRE automates the same work
+along a prescribed path, and gives up the ability to go anywhere its designer did not put a node —
+which is precisely why it costs ten calls and always produces a record that can be read back.
 
 Several groups built governed agents for scattering analysis while this one was being written, and
 that convergence is the useful signal in it: the architecture is not the hard part. The hard part is
@@ -1538,9 +1576,14 @@ scored on certifies 78% of an autonomous system's answers where the physics cert
 one of its fitted profiles is physically admissible. A field that automates faster than it learns to
 evaluate will produce a great deal of work that looks checked.
 
-The design lesson we would most like to pass on is the one our own earlier system got backwards. AuRE
-committed to the principle that all decision-making should live in the LLM's prompts and skills. Two
-systems' worth of experience says otherwise:
+The design lesson we would most like to pass on is not that one of our two systems won. Measured
+against the same curves, the targeted agent reached the same pass rate as the general one for a
+hundredth of the cost and ten times fewer calls, and never produced a run that could not be
+interpreted; the general agent reached the analyses nobody had specified, said what it could not
+decide, and wrote the reports a collaborator reads. Each failed in the shape of its own strength —
+one could not leave its rails, the other had none to leave. The lesson is to know which regime you
+are in, and to stop expecting a single architecture to serve both. What does generalise across both
+systems is narrower and harder:
 
 > **An instruction is not a mechanism, and one mechanism is not two.**
 
@@ -1553,9 +1596,9 @@ and be clear at every point in the system about which one you have.
 
 nr-workbench: `https://github.com/neutrons-ai/nr-workbench` [VERIFY — confirm public release, license
 BSD 3-Clause, and archive a tagged release with a DOI]. AuRE: `https://github.com/neutrons-ai/aure`
-[VERIFY]. The synthesis package for §6, including the report, the claim→fit→data provenance map, and
-the re-analysis script, is available at [PLACEHOLDER — deposit and cite]. The two beamtime projects
-are available on request pending [PLACEHOLDER: IPTS data-release status; the aqueous IPTS is 36897,
+[VERIFY]. The benchmark corpus of §6.6, the five sweep result sets, and the per-call LLM ledgers
+behind §6.4 are available at [PLACEHOLDER — deposit and cite]. The two beamtime projects that the
+scale and timing figures of §5.3 and §6.2 are measured on are available on request pending [PLACEHOLDER: IPTS data-release status; the aqueous IPTS is 36897,
 the non-aqueous IPTS-34347].
 
 ## Author contributions
@@ -1577,7 +1620,7 @@ beamtime allocations; funding.]
 > capable of the same failure until checked.
 >
 > **Self-citations to disclose:** M. Doucet is an author of Mantid [19] and SasView [21], and of the
-> two studies the §7.6 corpus comes from. Journal policy requires these be declared.
+> two studies the §6.6 corpus comes from. Journal policy requires these be declared.
 
 **Governed agents for scattering analysis** — the §2.5.1 neighbours. All ⚠️: verify every one, and
 add any that appeared after this draft.
@@ -1622,7 +1665,7 @@ add any that appeared after this draft.
 8a. Leeman, J., Liu, Y., Stiles, J., Lee, S. B., Bhatt, P., Schoop, L. M. & Palgrave, R. G. (2024).
    Challenges in high-throughput inorganic materials prediction and autonomous synthesis.
    *PRX Energy* **3**, 011002. DOI 10.1103/PRXEnergy.3.011002 ✅
-   *Cite this **supportively** in §9.4: it critiques A-Lab's automated phase identification, which is
+   *Cite this **supportively** in §8.4: it critiques A-Lab's automated phase identification, which is
    precisely the "wrong answer that looks like a checked one" failure mode this paper is about.*
 9. Noack, M. M. *et al.* **gpCAM** / Gaussian-process-driven autonomous experimentation at scattering
    beamlines. [VERIFY]
@@ -1666,7 +1709,7 @@ add any that appeared after this draft.
 **Numbers to supply or verify**
 
 - [ ] Total skill line count (§4.2 shows `4,5xx` — measure exactly).
-- [ ] Regenerate the background-comparison ΔBIC figure noted as unverified in the synthesis §8.
+- [ ] Regenerate the background-comparison ΔBIC figure noted as unverified in the synthesis §7.
 - [ ] Re-run the convergence diagnostic on the stored THF chains (cheap; closes the §6.3 gap).
 - [ ] Confirm "one week" for the original April 2025 analysis — is there a better-documented figure?
 - [ ] Reference electrode and potential scale (aqueous); supporting electrolyte (THF). Both are
@@ -1675,12 +1718,16 @@ add any that appeared after this draft.
 
 **Decisions**
 
-- [ ] Is §7.4's development-speed comparison (69 commits/9 days vs 112/5.5 months) in or out? It is
+- [ ] Is §6.4's development-speed comparison (69 commits/9 days vs 112/5.5 months) in or out? It is
       striking and honest but invites a "you are marking your own homework" response. My
-      recommendation: keep it, in §7.4 exactly as hedged, because a referee who finds it in the
+      recommendation: keep it, in §6.4 exactly as hedged, because a referee who finds it in the
       repository and not in the paper draws a worse conclusion.
-- [ ] Does §6 name the collaborators whose experiments these are? They need to agree to the framing,
-      particularly the "two reversed findings" framing, before this is circulated.
+- [ ] The operando Cu case study was cut in v2. Its two reversed findings are no longer claimed
+      anywhere; confirm nothing downstream still relies on them, and decide whether the collaborators
+      whose experiments they were should still be acknowledged.
+- [ ] §5.3 and §6.2 still measure on `jen-jun2026` and `cu-thf-expt11`, which v2 no longer
+      introduces. Either add one sentence of provenance where they first appear, or move those
+      figures onto the benchmark corpus.
 - [ ] **AuRE's role (§2.6 / §3).** Now framed as a *concurrent* sibling system cited by commit hash,
       not a superseded predecessor — its most recent commit postdates nr-workbench's. Confirm this
       framing is one AuRE's maintainers accept. If anyone else has contributed to AuRE they should
@@ -1691,7 +1738,7 @@ add any that appeared after this draft.
       predecessor reads far worse than a discussed one.
 - [ ] Verify the pinned SHAs (`3021fee`, `7ae487a`) are the right ones to cite, and re-verify §3's
       claims against whichever is chosen. AuRE is actively developed; anything unpinned will rot.
-- [ ] Whether to split §8 (transfer) into a companion paper. It is the section most likely to be cut
+- [ ] Whether to split §7 (transfer) into a companion paper. It is the section most likely to be cut
       by a *J. Appl. Cryst.* editor for length and the one most useful to other communities.
 
 **Figures to make**
@@ -1701,4 +1748,4 @@ add any that appeared after this draft.
    constant-`Γ` contours over it, and the two "thickness" readings marked. **This is the paper's
    money figure**; it makes §6.2 visual in one image.
 3. Context compression (§5.3) — the three views to scale.
-4. The 1/5/11 finding split (§7.1) as a simple stacked bar with the three worked examples annotated.
+4. The 1/5/11 finding split (§6.1) as a simple stacked bar with the three worked examples annotated.
