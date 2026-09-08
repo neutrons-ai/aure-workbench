@@ -627,10 +627,12 @@ rather than bulk-dense -- Cu2O at 80% of bulk density is 4.29 -- so a fitted
 CuOx in **4.2-5.5** is an ordinary cuprous oxide and the width of that range is
 porosity.
 
-Also: `aure_adapter.sld("Cu2O")` raises. AuRE's density table covers elements
-and common compounds but not these oxides, so a density must be passed
-explicitly. The skill's example says so now; the first version claimed it
-worked and did not.
+Also: `sld("Cu2O")` raises. Densities come from `periodictable`, which has
+them for elements only, plus a short table in `nr_workbench.materials` for the
+solvents and substrates this repo names -- not for these oxides, so a density
+must be passed explicitly. The skill's example says so now; the first version
+claimed it worked and did not. (Until 2026-09-08 the table was AuRE's; it
+retired `aure.database.materials` and the arithmetic moved here.)
 
 ### 2026-08-06: the incident angle is in the file header, in radians
 

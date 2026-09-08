@@ -30,6 +30,9 @@ from typing import Any
 
 import numpy as np
 
+# Re-exported at the bottom of this module's public surface; see "Materials".
+from .materials import contrast_match_ratio, mixture_sld, sld  # noqa: F401
+
 #: The AuRE callables this package depends on, as ``module: (name, ...)``.
 #: :func:`contract` checks these resolve; a contract test asserts it, so an
 #: upstream rename surfaces in CI rather than mid-fit.
@@ -45,11 +48,6 @@ REQUIRED: dict[str, tuple[str, ...]] = {
     "aure.tools.data_tools": (
         "validate_reflectivity_data",
         "load_reflectivity_data",
-    ),
-    "aure.database.materials": (
-        "get_sld",
-        "get_contrast_match_ratio",
-        "lookup_material",
     ),
     # The only `aure.nodes` entry. That module's header pulls langchain, the
     # AuRE skill registry and the whole node graph, so it is imported inside
@@ -405,59 +403,14 @@ def load_data(path: Path) -> dict[str, np.ndarray]:
 # --------------------------------------------------------------------------
 # Materials
 # --------------------------------------------------------------------------
-
-
-def sld(name_or_formula: str, density: float | None = None) -> float:
-    """Look up or compute a scattering length density.
-
-    Args:
-        name_or_formula: A common name (``"D2O"``) or chemical formula.
-        density: Mass density in g/cm3, when the built-in table lacks it.
-
-    Returns:
-        SLD in 1e-6 per square angstrom.
-
-    Raises:
-        AureUnavailableError: If AuRE is not importable.
-        ValueError: If the material cannot be resolved.
-    """
-    from aure.database import materials
-
-    try:
-        return float(materials.get_sld(name_or_formula, density))
-    except Exception as exc:
-        raise ValueError(f"Cannot resolve SLD for {name_or_formula!r}: {exc}") from exc
-
-
-def contrast_match_ratio(
-    target_sld: float,
-    *,
-    protiated: str = "H2O",
-    deuterated: str = "D2O",
-) -> float:
-    """Fraction of deuterated solvent that matches a target SLD.
-
-    Args:
-        target_sld: The SLD to match, in 1e-6 per square angstrom.
-        protiated: The protiated solvent.
-        deuterated: The deuterated solvent.
-
-    Returns:
-        The deuterated volume fraction, between 0 and 1.
-
-    Raises:
-        AureUnavailableError: If AuRE is not importable.
-    """
-    from aure.database import materials
-
-    return float(
-        materials.get_contrast_match_ratio(
-            float(target_sld),
-            protiated_solvent=protiated,
-            deuterated_solvent=deuterated,
-        )
-    )
-
+#
+# Re-exported, not implemented here. AuRE retired `aure.database.materials`
+# -- the SLDs in its fitted models come from its intake LLM, so the table had
+# no consumer there -- and `nr_workbench.materials` now computes these from
+# `periodictable`. They stay importable from this module because five SKILL.md
+# files document `from nr_workbench.aure_adapter import sld`, which is an
+# agent-facing contract. Nothing in them touches AuRE. The import itself sits
+# in the block at the top of this file, where isort wants it.
 
 # --------------------------------------------------------------------------
 # Language models
