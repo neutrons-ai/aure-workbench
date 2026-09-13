@@ -36,11 +36,15 @@ classifiers = [
 # them in -- we import them directly, and an undeclared transitive dependency
 # is a trap.
 #
-# AuRE is pinned by SHA, not tag: its v0.1.0 and v0.1.1 tags point at the same
-# commit, v0.1.3 trails main by months, and every build reports version
-# "0.1.0", so pip's resolver cannot tell them apart. Because this is a PEP 508
-# direct reference, nr-workbench is install-from-git (not PyPI) until aure
-# publishes -- see docs/ground_truths.md.
+# AuRE is pinned by SHA, not tag or version. Through v0.1.x every build
+# reported version "0.1.0" regardless of the commit, and v0.1.0/v0.1.1 pointed
+# at the same commit, so pip's resolver could not tell them apart. v1.0.0
+# finally reports a real number, but the pin stays a SHA because main moves
+# between releases and we track it. Because this is a PEP 508 direct
+# reference, nr-workbench is install-from-git, not PyPI -- and it will stay
+# that way: the PyPI name `aure` is taken by an unrelated project, so there is
+# no version of this that ends in `pip install nr-workbench`. See
+# docs/ground_truths.md.
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.11",
@@ -55,7 +59,7 @@ dependencies = [
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
-  "aure @ git+https://github.com/neutrons-ai/aure.git@3021fee37294b938134d052e16dac4f9c282e97f",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@9ec300da2004e7ef22f64dab6faddc8a652c8fdf",
 ]
 
 [project.optional-dependencies]

@@ -120,7 +120,7 @@ def test_env_digest_changes_with_a_package_version() -> None:
 
 
 def test_env_digest_changes_with_the_aure_commit() -> None:
-    """aure reports version 0.1.0 for every build, so the commit is the identity."""
+    """We pin a SHA on aure's main, so the commit -- not the version -- is the identity."""
     base = Environment(python="3.12.0", platform="x", executable="y", aure_commit="aaa")
     other = Environment(
         python="3.12.0", platform="x", executable="y", aure_commit="bbb"

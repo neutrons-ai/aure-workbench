@@ -16,7 +16,8 @@ seconds is the fit.
 
 > **Prerequisite.** `pip install -e .` from the nr-workbench checkout. Run
 > `nrw doctor` afterwards — it reports every dependency plus the resolved AuRE
-> commit, which matters because AuRE's version metadata always says `0.1.0`.
+> commit, which matters because we pin a SHA on AuRE's `main`: two installs
+> can report the same version and be different code.
 
 ---
 
@@ -31,12 +32,12 @@ cd cu-thf-expt11
 ```
 Scaffolded .../cu-thf-expt11
   for        Claude Code, GitHub Copilot
-  create   68 file(s)
+  create   71 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
 to run twice — it never overwrites a file you have edited. Those files are the
-layout, the editor config, and 17 reflectometry skills with dispatcher agents
+layout, the editor config, and 18 reflectometry skills with dispatcher agents
 for each assistant the project is set up for, so an assistant opened in this
 folder already knows REF_L conventions.
 
@@ -61,7 +62,7 @@ nrw doctor
 ```
   ✓ refl1d        1.0.1
   ✓ bumps         1.0.4
-  ✓ aure          0.1.0 @ 3021fee37294
+  ✓ aure          1.0.0 @ 9ec300da2004
   ✓ instrument    SNS REF_L
   ! samples       none yet; run `nrw sample new <ID>`
   ✓ skills        17 installed: analysis-provenance, analyst-handoff, ...
@@ -712,8 +713,8 @@ nrw whence samples/Sample6/results/20260805-191540Z-732f4286/fit/cu-thf-218389.p
   script     model.py  sha256 dbb85fa736a2
   fit        amoeba, 2000 steps, seed 1
   chisq      1.83   free 21
-  versions   python 3.14.5rc1, aure 0.1.0, bumps 1.0.4, ... refl1d 1.0.1
-  aure       3021fee37294
+  versions   python 3.14.5rc1, aure 1.0.0, bumps 1.0.4, ... refl1d 1.0.1
+  aure       9ec300da2004
   inputs     22 file(s), fresh
 ```
 

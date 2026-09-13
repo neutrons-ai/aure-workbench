@@ -27,6 +27,7 @@ from nr_workbench.skills_install import discover_skills, plan_skill_files
 #: them matters depends on the sample.
 SEED_SKILLS = (
     "nr-workbench-project",
+    "aure-first-fit",
     "analyst-handoff",
     "analysis-provenance",
     "neutron-reflectometry",

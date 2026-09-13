@@ -49,6 +49,11 @@ REQUIRED: dict[str, tuple[str, ...]] = {
         "validate_reflectivity_data",
         "load_reflectivity_data",
     ),
+    # Driving a run. `setup` parses and validates the per-run YAML; the
+    # runner executes it. Both are listed so an upstream rename surfaces in
+    # CI rather than when a scientist is waiting on a first fit.
+    "aure.setup": ("load_setup", "dump_setup"),
+    "aure.workflow.runner": ("run_analysis",),
     # The only `aure.nodes` entry. That module's header pulls langchain, the
     # AuRE skill registry and the whole node graph, so it is imported inside
     # `judge_fit` alone and never for the arithmetic next to it -- AuRE's
@@ -83,9 +88,10 @@ def is_available() -> bool:
 def resolved_commit() -> str | None:
     """Return the git commit AuRE was installed from, if recorded.
 
-    AuRE's metadata always reports ``version = "0.1.0"`` regardless of which
-    commit is installed, so the version number cannot identify the code. The
-    direct-reference URL recorded by pip at install time can.
+    Through v0.1.x AuRE reported ``version = "0.1.0"`` regardless of which
+    commit was installed; v1.0.0 reports a real number. Either way the version
+    cannot identify the code, because we track ``main`` and it moves between
+    releases. The direct-reference URL pip records at install time can.
 
     Returns:
         The 40-character commit, or ``None`` if it cannot be determined.
@@ -325,6 +331,129 @@ def profile_artifacts(
         list(layer_rhos),
     )
     return dict(result) if isinstance(result, dict) else {}
+
+
+# --------------------------------------------------------------------------
+# Runs
+# --------------------------------------------------------------------------
+
+
+#: Knobs that change what model comes out of a run and have **no setup-YAML
+#: key and no CLI flag** -- AuRE reads them from the environment only. Its own
+#: `docs/launching.md` states the consequence: "a setup file therefore does not
+#: fully record the physics policy its run used." We therefore set every one of
+#: them explicitly and record what we set, rather than inheriting whatever the
+#: shell happened to hold.
+#:
+#: This mapping is the single source of both the defaults and the record --
+#: `commands/aure_cmd.py` builds the run environment from it and a test asserts
+#: the two agree, because a knob listed here but not set is a reproducibility
+#: hole that nothing else would report. Re-read `docs/launching.md` on every
+#: pin bump: a knob added upstream that we do not know about goes unrecorded
+#: and nothing fails.
+ENVIRONMENT_ONLY_KNOBS: dict[str, str] = {
+    # Thin-layer SLD basin search. Off by default because it is slow; it is
+    # the deliberate retry when a first pass puts a thin layer in the wrong
+    # basin. This single knob decides whether a thin layer is found at all.
+    "MODE_ENUMERATION": "0",
+    "THIN_LAYER_MODE_K": "1.0",
+    "THIN_LAYER_MODE_SEEDS": "3",
+    # Upstream's own default is "each layer's declared roughness_max", which
+    # no number can express -- so the empty string means "leave it unset", and
+    # the recorded file says so rather than omitting the key.
+    "ROUGHNESS_MAX_OUTER": "",
+    "FINAL_SELECTION_TOL": "0.02",
+    "FINAL_TIER_CHI2_FACTOR": "3.0",
+    "USE_RUN_TITLE": "0",
+}
+
+#: Setup keys that choose the language-model endpoint or carry its credential.
+#: AuRE accepts all of these and applies them as environment overrides for the
+#: duration of a run, so a setup file can silently re-point the run at another
+#: host -- taking the caller's own ``LLM_API_KEY`` with it, because AuRE reads
+#: the key from the ambient environment while taking the URL from the file.
+#:
+#: A setup is a *tracked, shareable* file here, which is exactly why this
+#: matters: one arriving from a collaborator, or from an archived beamtime,
+#: must not be able to decide where this machine's credentials are sent. The
+#: endpoint comes from ``.env``, which is gitignored for the same reason.
+CREDENTIAL_SETUP_KEYS: tuple[str, ...] = (
+    "llm_api_key",
+    "llm_base_url",
+    "llm_provider",
+    "llm_model",
+    "llm_temperature",
+    "llm_timeout",
+)
+
+
+class SetupInvalidError(Exception):
+    """Raised when a setup document is rejected -- by AuRE, or by us.
+
+    Distinct from :class:`AureUnavailableError` on purpose. "AuRE is not
+    importable" is our problem and warrants a bug report; "this setup names a
+    data file that is not there" is the scientist's, and takes ten seconds to
+    fix. Reporting the second as the first sends a fixable data problem to an
+    issue tracker.
+    """
+
+
+def credential_keys_in(document: dict[str, Any]) -> list[str]:
+    """Return any endpoint- or credential-choosing keys the document sets.
+
+    Args:
+        document: A parsed setup mapping.
+
+    Returns:
+        The offending key names, in declaration order.
+    """
+    return [key for key in CREDENTIAL_SETUP_KEYS if document.get(key) not in (None, "")]
+
+
+def validate_setup(path: Path) -> dict[str, Any]:
+    """Parse a setup YAML through AuRE's own loader.
+
+    Worth doing the moment a setup is written rather than when it is run.
+    AuRE rejects unknown top-level keys, resolves every ``data_files`` entry
+    against the search path, and validates a state against the instrument its
+    filenames imply -- the combined/partial mixing rule and the shared-set-id
+    rule both live here. A typo caught now costs a second; the same typo caught
+    at run time costs whatever the intake LLM calls cost before it.
+
+    Args:
+        path: The setup YAML.
+
+    Returns:
+        The parsed setup, with data-file paths resolved to absolute.
+
+    Raises:
+        AureUnavailableError: If AuRE is not importable.
+        SetupInvalidError: If the setup is rejected -- by AuRE's own loader, or
+            because it tries to choose the language-model endpoint.
+    """
+    try:
+        from aure.setup import load_setup
+    except ImportError as exc:
+        raise AureUnavailableError(f"Cannot import aure.setup: {exc}") from exc
+
+    try:
+        document = dict(load_setup(str(path)))
+    except Exception as exc:
+        raise SetupInvalidError(f"{path}: {exc}") from exc
+
+    # Checked after parsing so synonyms and coercion have been applied, and
+    # before the caller can act on the document. See CREDENTIAL_SETUP_KEYS.
+    offending = credential_keys_in(document)
+    if offending:
+        raise SetupInvalidError(
+            f"{path} sets {', '.join(offending)}. A setup file may not choose "
+            "the language-model endpoint or carry a key: it is committed and "
+            "shared, and AuRE would apply those to the run while still using "
+            "the API key from your environment. Remove them -- the endpoint "
+            "comes from .env, which is gitignored. If this file came from "
+            "somebody else, rotate any key you have configured."
+        )
+    return document
 
 
 # --------------------------------------------------------------------------

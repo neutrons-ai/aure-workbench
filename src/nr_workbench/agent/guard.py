@@ -60,6 +60,13 @@ _REASONS = {
         "person is meant to see. Record what was refused and why you think it "
         "should be overridden in ESCALATIONS.md."
     ),
+    "aure-run": (
+        "An AuRE run makes billed language-model calls for as long as it takes "
+        "-- and under a harness it would be a model handing the judgement you "
+        "wanted to a second, weaker one. Write the setup with `nrw aure new`, "
+        "say in ESCALATIONS.md that it is ready to run, and stop. "
+        "`nrw aure run --dry-run` is allowed and validates it."
+    ),
     "nested": (
         "`nrw init --nested` was refused because an ancestor directory is "
         "already a project -- this would create a second nrw.toml, a second "
@@ -226,6 +233,11 @@ def _judge_one(tokens: list[str]) -> Verdict:
     if "init" in subcommands and "--nested" in flags:
         return Verdict(allowed=False, rule="nested", reason=_REASONS["nested"])
 
+    # `--dry-run` validates the setup and calls no endpoint, so it stays
+    # allowed: an agent that can check its own work and report is the point.
+    if "aure" in subcommands and "run" in subcommands and "--dry-run" not in flags:
+        return Verdict(allowed=False, rule="aure-run", reason=_REASONS["aure-run"])
+
     return Verdict(allowed=True)
 
 
@@ -336,7 +348,8 @@ def refuse_if_agent(action: str) -> None:
     configured is still protected and a hook that was bypassed still is.
 
     Args:
-        action: ``promote``, ``upload``, ``force`` or ``nested``.
+        action: ``promote``, ``upload``, ``force``, ``nested`` or
+            ``aure-run``.
 
     Raises:
         click.ClickException: When ``NRW_AGENT`` is set.

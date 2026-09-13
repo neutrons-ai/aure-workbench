@@ -62,6 +62,7 @@ resolved relative to it — never write an absolute path into a committed file.
 | Reduced steady-state data | `samples/<id>/data/steady/` | Instrument. Committed. |
 | Reduced tNR slices | `samples/<id>/data/tnr/<run>_<binning>/` | Instrument. Committed. |
 | Raw NeXus | `samples/<id>/data/raw/` | Instrument. **Gitignored** (large). |
+| AuRE scouting run | `samples/<id>/aure/<name>/` | Machine. Setup and `run-env.json` committed; its `output/` payload is not. |
 | Model spec | `samples/<id>/models/<name>.yaml` | You. **Source of truth.** Committed. |
 | Generated fit script | `samples/<id>/models/<name>.py` | Machine. Derived, hash-guarded. Committed. |
 | tNR assessment output | `samples/<id>/assessments/<label>/` | Machine. |

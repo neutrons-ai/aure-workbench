@@ -226,7 +226,7 @@ def test_validate_flags_unnormalised_data() -> None:
 
 @pytest.mark.integration
 def test_resolved_commit_identifies_the_pin() -> None:
-    """AuRE's metadata always says 0.1.0, so the commit is the only identity."""
+    """We pin a SHA on AuRE's main, so the commit is the only identity."""
     pytest.importorskip("aure")
     from nr_workbench.aure_adapter import resolved_commit
 

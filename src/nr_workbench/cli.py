@@ -451,6 +451,77 @@ def model_forms_command() -> None:
     run_forms()
 
 
+@main.group("aure")
+def aure_group() -> None:
+    """Get a first fit from AuRE, then bring it back under provenance."""
+
+
+@aure_group.command("new")
+@click.argument("sample")
+@click.option("--run", type=int, default=None, help="Which steady run to fit.")
+@click.option(
+    "--name", default=None, help="Name for this run [default: <sample>-<run>]."
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing setup.")
+def aure_new_command(**kwargs: object) -> None:
+    """Write the AuRE setup for SAMPLE from its data and its notes.
+
+    The run and its segment files are read from disk and are exact. The
+    sample description and the hypothesis come from `sample.md`, which is
+    where they belong -- AuRE builds the whole model from that prose, so it
+    is worth writing once, in the file, rather than into a prompt.
+    """
+    from nr_workbench.commands.aure_cmd import run_aure_new
+
+    run_aure_new(**kwargs)  # type: ignore[arg-type]
+
+
+@aure_group.command("run")
+@click.argument("setup", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--budget",
+    type=click.Choice(["quick", "standard"]),
+    default="quick",
+    show_default=True,
+    help="quick: de, few steps, one refinement. standard: AuRE's defaults.",
+)
+@click.option(
+    "--mode-enumeration",
+    is_flag=True,
+    help="Enumerate SLD seeds for thin layers. Slower; the answer to a first "
+    "pass that landed a thin layer in the wrong basin.",
+)
+@click.option("--dry-run", is_flag=True, help="Validate and print the plan only.")
+def aure_run_command(**kwargs: object) -> None:
+    """Run the analysis described by SETUP, in the foreground.
+
+    Needs a language-model endpoint: AuRE is LLM-driven and will not fit
+    without one. The environment-only knobs it does not record for itself are
+    written beside the setup as `run-env.json`.
+    """
+    from nr_workbench.commands.aure_cmd import run_aure_run
+
+    run_aure_run(**kwargs)  # type: ignore[arg-type]
+
+
+@aure_group.command("import")
+@click.argument("output_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--sample", required=True, help="Sample the spec belongs to.")
+@click.option("--name", required=True, help="Model name; also the filename.")
+@click.option("--run", type=int, default=None, help="Which steady run it fitted.")
+@click.option("--force", is_flag=True, help="Overwrite an existing spec.")
+def aure_import_command(**kwargs: object) -> None:
+    """Turn the fitted model in OUTPUT_DIR into a model spec.
+
+    This is where an AuRE run stops being reconnaissance: everything after it
+    -- generate, fit run, assess, promote -- is the normal path, and the fit
+    that counts is the one `nrw fit run` records.
+    """
+    from nr_workbench.commands.aure_cmd import run_aure_import
+
+    run_aure_import(**kwargs)  # type: ignore[arg-type]
+
+
 @main.group("fit")
 def fit_group() -> None:
     """Run fits and record what produced every result."""

@@ -110,6 +110,24 @@ Read the `assessment.json` verdict before choosing a constraint form — it
 reports whether anything is changing, whether one reaction coordinate explains
 it, and whether the change looks like a thickness or a contrast.
 
+**A first fit, when there is no model yet**
+
+`nrw aure` hands the sample to AuRE, which proposes a layer stack from a
+plain-English description and iterates it against the data. Read
+`skills/reflectometry/aure-first-fit/SKILL.md` first — it is mostly about the
+six questions to ask the scientist, because AuRE builds the whole model from
+their answers and nothing in the data supplies them.
+
+| Task | Command |
+|---|---|
+| Write the setup from the data and `sample.md` | `nrw aure new <ID> --run <run>` |
+| Run it (needs an LLM endpoint) | `nrw aure run <setup.yaml>` |
+| ...and retry a thin layer in the wrong basin | `nrw aure run <setup.yaml> --mode-enumeration` |
+| Turn the fitted model into a model spec | `nrw aure import <output> --sample <ID> --name <name>` |
+
+**An AuRE run is reconnaissance, not a result.** It carries no fit record, so
+the run that counts is the `nrw fit run` on the imported spec.
+
 **Modelling**
 
 `nrw model new` fills in the facts — runs, files, and each segment's incident

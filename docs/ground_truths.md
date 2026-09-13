@@ -101,7 +101,7 @@ fails if `aure` (or refl1d, bumps, matplotlib, scipy, langchain_core) reaches
 To locate aure's package directory without executing its `__init__.py`, use
 `importlib.util.find_spec("aure")`.
 
-### 2026-08-05: Pin aure by commit SHA, never by tag or `@main`
+### 2026-08-05: Pin aure by commit SHA, never by tag or `@main` — AMENDED 2026-09-13
 
 Its `pyproject.toml` has said `version = "0.1.0"` across every release, while
 tags reach `v0.1.3` — and `v0.1.0` and `v0.1.1` point at the *same* commit. pip
@@ -116,6 +116,11 @@ Also note aure declares `requires-python = ">=3.9"`, which is wrong:
 `model_builder.py` uses `int | None` in an evaluated annotation with no
 `from __future__ import annotations`, so `import aure` raises on 3.9. We
 require >= 3.11 independently.
+
+AuRE v1.0.0 finally reports a real version, so the "every build says 0.1.0"
+half of this is history. **The conclusion is unchanged**: we pin a SHA on
+`main`, which moves between releases, so two installs can report `1.0.0` and be
+different code. The commit is still the identifier. See the 2026-09-13 entry.
 
 ### 2026-08-05: `nrw init` must preserve project identity on re-run
 
@@ -2313,3 +2318,150 @@ The generalisable form, and a variant of this file's recurring signature:
 **converting a static file to a template changes it in ways the template does
 not mention.** Byte-comparing the rendered output against the previous static
 copy is the check; it took ten seconds and found something months old.
+
+### 2026-09-13: pinned aure at v1.0.0, and the PyPI name is not ours to take
+
+Bumped from `3021fee` (2026-08-05) to `9ec300d` (**v1.0.0**), 55 commits. The
+whole `aure_adapter.REQUIRED` contract still resolves — all six
+`feature_tools` functions, both `data_tools` functions, and
+`nodes.evaluation.analyze_fit_quality_with_llm` — as do `llm.config` and
+`llm.providers.get_llm`. The full suite passed on the new pin with no code
+changes, only stale prose to fix. `aure evaluate` was removed upstream in
+1.0.0; we never used the CLI, only the function, so it cost nothing.
+
+**The PyPI name `aure` is taken by an unrelated project** — "util for auto
+reload failed shell command", v0.0.2, `shidenggui/aure`. So `pyproject.toml`'s
+note that nr-workbench is install-from-git "until aure publishes" described a
+future that cannot arrive under that name. The direct reference is permanent
+unless upstream renames, and `test_wheel_declares_only_the_expected_direct_references`
+is guarding a property, not a temporary state.
+
+### 2026-09-13: an aure setup file does not fully record its own run
+
+`MODE_ENUMERATION` — the thin-layer SLD basin search that decides whether a
+thin layer is found at all — has **no setup-YAML key and no CLI flag**. It is
+read from the environment, and so are `THIN_LAYER_MODE_K`,
+`THIN_LAYER_MODE_SEEDS`, `ROUGHNESS_MAX_OUTER`, `FINAL_SELECTION_TOL`,
+`FINAL_TIER_CHI2_FACTOR` and `USE_RUN_TITLE`. AuRE's own `docs/launching.md`
+states the consequence: *"a setup file therefore does not fully record the
+physics policy its run used."*
+
+Two runs from a byte-identical `setup.yaml` can therefore produce different
+models with nothing on disk explaining the difference — which is the exact
+failure this package exists to prevent. So `nrw aure run` sets these
+explicitly in the child environment and writes them beside the setup as
+`run-env.json`, rather than inheriting whatever the shell happened to hold.
+
+Mitigation, not a fix: a knob added upstream that we do not know about goes
+unrecorded, and nothing fails. Worth re-reading `docs/launching.md` §"Where the
+run controls come from" on each pin bump.
+
+### 2026-09-13: "through the substrate" does not match "through the silicon substrate"
+
+`commands/model.py::_BACK_REFLECTION_HINTS` was a tuple of literal substrings,
+and the geometry test was `any(h in lowered for h in HINTS)`. The most natural
+sentence a scientist writes — *"measured through the silicon substrate"*, which
+names the material — contains none of them. It was found by writing a test
+fixture in the phrasing the reference notes actually use, not by reading the
+list.
+
+It never surfaced because the consequence is silent twice over. The hint list
+only gated a critical-edge *correction* in the `--from-notes` prompt, so a miss
+produced a worse proposed stack rather than an error; and back reflection
+itself fits, converges, and reports a chi-squared in the hundreds with nothing
+naming the cause.
+
+Now `aure_setup.BACK_REFLECTION_PATTERNS`, one copy shared with `model.py`, as
+regexes: an optional material word before "substrate", the substrate materials
+by name, "through the wafer", and "from the substrate side". The materials are
+enumerated rather than matched as any word — `through the \w+` would make
+"the solvent diffuses through the polymer film" a claim about geometry.
+
+The generalisable form: **a substring list is a guess about phrasing, and the
+phrasing it misses is usually the more specific one** — because the writer who
+adds detail adds it in the middle.
+
+### 2026-09-13: a model spec needs a state, so an imported model needs the files
+
+`ModelSpec` rejects a document with neither a state nor a series ("a model needs
+at least one state or series"). So `aure_import.to_spec` cannot translate an
+AuRE run on its own: AuRE reports layers, and a spec additionally needs to know
+which files those layers were fitted to and at what incident angles — which
+AuRE does not report back in a reusable form.
+
+The states therefore have to be rebuilt from disk at import time, by the same
+code path `nrw model new` uses. That is why `commands/model.py::state_for_run`
+exists as a shared function rather than staying inline in `_scaffold_document`:
+the angles come from each file's `# Meta:` header, and a second implementation
+would be a second chance to fall back to the nominal 0.45/1.2/3.5 instead of the
+measured 0.4500/1.2010/3.5003.
+
+Found by writing the end-to-end test first — `to_spec` had a documented
+`states: ... | None = None` parameter and a docstring claiming a stateless spec
+"still validates". It does not, and nothing else would have said so.
+
+### 2026-09-13: an aure setup file can choose the endpoint your key is sent to
+
+`aure.setup._KNOWN_TOP_LEVEL` accepts `llm_provider`, `llm_model`,
+`llm_api_key`, `llm_base_url`, `llm_temperature` and `llm_timeout`, and
+`aure analyze` applies them as environment overrides for the duration of the
+run. `aure.llm.config` then resolves the **api key from the ambient
+environment** while taking the **base URL from the file** — so a setup that
+sets only `llm_base_url` sends the caller's own `LLM_API_KEY` to whatever host
+it names, and nothing in the banner says so.
+
+That matters here because a setup is a *tracked, shareable* file by design: it
+is committed, and beamtime directories get handed to collaborators and
+archived. `nrw aure run` therefore refuses any setup that sets one of those
+keys, names it, and says to rotate the key if the file came from somebody else.
+The endpoint comes from `.env`, which is gitignored precisely so it cannot
+travel with the project.
+
+### 2026-09-13: a stub placed one level too high tests nothing
+
+The first `nrw aure run` tests stubbed `commands.aure_cmd._invoke` and asserted
+on the `overrides` dict handed to it. Every test passed with the environment
+merge written **backwards** — `{**overrides, **os.environ}` — which lets any
+knob the scientist exported in `.bashrc` beat the value recorded in
+`run-env.json`, silently producing a different model from the one the record
+claims.
+
+Lowering the stub to `subprocess.run` and asserting on the environment the
+child would actually receive catches it; verified by making the mutation and
+watching the test fail. The general form: **stub at the process or network
+boundary, not at the last function before it** — a stub above the code that
+does the work makes that code untestable while the suite still looks green.
+
+### 2026-09-13: AuRE's `interfaces` block silently invalidates a positional roughness map
+
+`ModelDefinition.layers[i].roughness` describes that layer's boundary with
+whatever sits **above it in the refl1d stack**, so which physical interface it
+means depends on the geometry — upstream documents this and says it must not be
+"corrected", because it is the convention the reference fits were built with.
+
+`ModelDefinition.interfaces` is the escape hatch: it names a boundary by the two
+materials it separates, is geometry-independent, and **overrides** the
+positional map. So a translation that reproduces the positional mapping (as
+`aure_import.ordered_stack` does) is only correct while `interfaces` is empty.
+Honouring the positions anyway would move every buried interface one place, and
+the resulting spec would validate, generate and fit.
+
+`nrw aure import` therefore refuses a run that used `interfaces` and points at
+`nrw model new --print-prompt` instead. Refusing is right here: the failure is
+invisible, and a partly-correct stack is worse than no stack.
+
+### 2026-09-13: `$` is not end-of-string, and it reached a code generator
+
+`spec/models.py::_NAME_RE` was `^[A-Za-z_][\w-]*$`. In Python `$` also matches
+*before a trailing newline*, so `"Cu\n"` passed validation — and
+`codegen/generator.py` interpolated the name into Python source as
+`SLD("{name}", ...)`, emitting an unterminated string literal. The `SyntaxError`
+surfaces at `nrw fit run`, two commands later, blamed on a name nobody typed.
+
+Harmless while every layer name was typed by a person. `nrw aure import` makes
+layer names **language-model output**, so the margin became load-bearing.
+Fixed twice over: `\Z` instead of `$`, and `repr` instead of interpolation, so
+the generator is correct whatever the regex happens to allow. The lesson is the
+second fix: **do not let a validator's strictness be the only thing keeping a
+code generator safe** — quote properly and the regex becomes defence in depth
+rather than the defence.

@@ -498,22 +498,7 @@ def run_new(
             "        fitting both would count the same neutrons twice. The summed\n"
             "        file is where the series' incident angle was read from."
         )
-    if assumed:
-        click.echo(
-            f"  ! {len(assumed)} file(s) record no incident angle, so a default\n"
-            "    was written. Check `thetas:` against the logbook before fitting --\n"
-            "    theta sets the resolution and a wrong one is absorbed silently:\n"
-            + "".join(f"      {n}\n" for n in assumed[:6])
-            + ("      ...\n" if len(assumed) > 6 else "")
-        )
-    if assumed:
-        click.echo(
-            f"  ! {len(assumed)} file(s) record no incident angle, so a default\n"
-            "    was written. Check `thetas:` against the logbook before fitting --\n"
-            "    theta sets the resolution and a wrong one is absorbed silently:\n"
-            + "".join(f"      {n}\n" for n in assumed[:6])
-            + ("      ...\n" if len(assumed) > 6 else "")
-        )
+    warn_assumed_angles(assumed)
 
     click.echo(
         f"  {len(document.get('states', []))} state(s), "
@@ -662,6 +647,84 @@ def _series_theta(root: Path, found_series, unknown: list[str]) -> float:
     return TNR_FALLBACK_THETA
 
 
+def warn_assumed_angles(assumed: list[str]) -> None:
+    """Report files whose incident angle had to be assumed.
+
+    Shared by `nrw model new` and `nrw aure import`. Both had a reason to print
+    this and only one of them explained it -- a bare filename in yellow does not
+    tell anybody that a resolution-setting number was guessed, which is the one
+    thing the warning is for.
+
+    Args:
+        assumed: Names of files with no angle in their header.
+    """
+    if not assumed:
+        return
+    click.secho(
+        "  !  no incident angle in the header of: "
+        + ", ".join(assumed[:6])
+        + ("" if len(assumed) <= 6 else f" (+{len(assumed) - 6} more)"),
+        fg="yellow",
+    )
+    click.secho(
+        "     The standard angles were used instead. Theta sets the resolution\n"
+        "     through dT = dq/q * tan(theta), so a wrong one is absorbed into\n"
+        "     roughness rather than reported. Check them before fitting.",
+        fg="yellow",
+    )
+
+
+def state_for_run(
+    root: Path, measurement: Any
+) -> tuple[dict[str, Any], list[Path], list[str]]:
+    """Build one spec ``states`` entry from a steady run on disk.
+
+    Shared by ``nrw model new`` and ``nrw aure import`` -- both need the same
+    thing (which files, and the incident angle each one was measured at), and
+    the angles are read from the files' own ``# Meta:`` headers rather than
+    assumed, so a second implementation would be a second chance to get them
+    wrong.
+
+    Args:
+        root: The project root, which the recorded paths are relative to.
+        measurement: A :class:`~nr_workbench.project.scan.SteadyMeasurement`.
+
+    Returns:
+        ``(state, files, assumed_angles)`` -- the spec block, the data files it
+        names, and any file whose angle had to be assumed rather than read.
+
+    Raises:
+        ValueError: If the run has no files on disk.
+    """
+    run = measurement.run
+    if measurement.partials:
+        paths = [root / measurement.partials[k] for k in sorted(measurement.partials)]
+        thetas, missing = _thetas_from_headers(paths)
+        block = {
+            "name": f"run{run}",
+            "run": run,
+            "segments": "auto",
+            "thetas": thetas,
+            "data_dir": str(Path(next(iter(measurement.partials.values()))).parent),
+        }
+        return block, paths, missing
+
+    if measurement.combined:
+        path = root / measurement.combined
+        thetas, missing = _thetas_from_headers([path])
+        block = {
+            "name": f"run{run}",
+            "run": run,
+            "kind": "combined",
+            "segments": "auto",
+            "thetas": thetas,
+            "data_dir": str(Path(measurement.combined).parent),
+        }
+        return block, [path], missing
+
+    raise ValueError(f"run {run} has no reduced files on disk")
+
+
 def _scaffold_document(
     sample: str, name: str, found, root: Path | None = None
 ) -> dict[str, Any]:
@@ -692,34 +755,13 @@ def _scaffold_document(
             summed_series.append(run)
             continue
         entry = found.steady[run]
-        if entry.partials:
-            paths = [root / entry.partials[k] for k in sorted(entry.partials)]
-            steady_files.extend(paths)
-            thetas, missing = _thetas_from_headers(paths)
-            unknown_angles.extend(missing)
-            states.append(
-                {
-                    "name": f"run{run}",
-                    "run": run,
-                    "segments": "auto",
-                    "thetas": thetas,
-                    "data_dir": str(Path(next(iter(entry.partials.values()))).parent),
-                }
-            )
-        elif entry.combined:
-            steady_files.append(root / entry.combined)
-            thetas, missing = _thetas_from_headers([root / entry.combined])
-            unknown_angles.extend(missing)
-            states.append(
-                {
-                    "name": f"run{run}",
-                    "run": run,
-                    "kind": "combined",
-                    "segments": "auto",
-                    "thetas": thetas,
-                    "data_dir": str(Path(entry.combined).parent),
-                }
-            )
+        try:
+            block, paths, missing = state_for_run(root, entry)
+        except ValueError:
+            continue
+        states.append(block)
+        steady_files.extend(paths)
+        unknown_angles.extend(missing)
 
     series = []
     for found_series in found.series:
@@ -1332,16 +1374,6 @@ def _assessment_facts(layout: ProjectLayout, document: dict[str, Any]) -> list[s
     return lines
 
 
-#: Phrases in the notes that mean the beam enters through the substrate.
-_BACK_REFLECTION_HINTS = (
-    "back reflection",
-    "back-reflection",
-    "through the substrate",
-    "back of sample",
-    "back of the sample",
-)
-
-
 def _back_reflection_substrate(document: dict[str, Any], notes: str) -> float | None:
     """Return the substrate SLD when the geometry is back reflection.
 
@@ -1357,12 +1389,10 @@ def _back_reflection_substrate(document: dict[str, Any], notes: str) -> float | 
     The geometry is read from the notes rather than the spec because this runs
     while building the prompt, before the model has proposed anything.
     """
-    lowered = (notes or "").lower()
+    from nr_workbench.aure_setup import reads_as_back_reflection
+
     probe = document.get("probe") or {}
-    if not (
-        probe.get("back_reflection")
-        or any(h in lowered for h in _BACK_REFLECTION_HINTS)
-    ):
+    if not (probe.get("back_reflection") or reads_as_back_reflection(notes)):
         return None
 
     stack = document.get("stack") or []

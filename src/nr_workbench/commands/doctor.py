@@ -64,9 +64,10 @@ def _package_version(name: str) -> str | None:
 def _aure_commit() -> str | None:
     """Recover the git commit aure was installed from, if recorded.
 
-    aure's ``pyproject.toml`` has reported version ``0.1.0`` across every tag,
-    so the version string cannot identify a build. pip records the actual
-    source in ``direct_url.json`` for a VCS install, which is the only reliable
+    Through v0.1.x aure's ``pyproject.toml`` reported ``0.1.0`` across every
+    tag. v1.0.0 reports a real version, but we pin a SHA on ``main``, so the
+    version string still cannot identify a build. pip records the actual source
+    in ``direct_url.json`` for a VCS install, which is the only reliable
     identifier -- and it is what belongs in a provenance record.
 
     Returns:
@@ -117,8 +118,9 @@ def collect_checks() -> list[Check]:
         detail = version
         if name == "aure":
             commit = _aure_commit()
-            # The declared version is the same for every aure build, so show
-            # the commit -- it is the only thing that identifies what is here.
+            # We pin a SHA on aure's main, so two installs can share a
+            # declared version and be different code. Show the commit; it is
+            # the only thing that identifies what is actually here.
             detail = (
                 f"{version} @ {commit[:12]}"
                 if commit and len(commit) >= 12

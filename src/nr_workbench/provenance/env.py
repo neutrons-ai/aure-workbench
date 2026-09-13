@@ -5,9 +5,10 @@ versions, the full resolved dependency set, and the git state of the project --
 including a patch when the tree was dirty -- is what makes it checkable two
 years later.
 
-The aure commit gets special handling: its metadata reports version ``0.1.0``
-for every build, so the version string identifies nothing. The commit pip
-resolved is the only real identifier.
+The aure commit gets special handling: through v0.1.x its metadata reported
+``0.1.0`` for every build, and even now that it reports a real version we pin
+and track ``main``, so the version string does not identify a build. The commit
+pip resolved is the only real identifier.
 """
 
 from __future__ import annotations
@@ -120,10 +121,11 @@ def package_version(name: str) -> str | None:
 def aure_commit() -> str | None:
     """Recover the git commit aure was installed from.
 
-    aure's ``pyproject.toml`` has reported ``0.1.0`` for every release, and its
-    ``v0.1.0`` and ``v0.1.1`` tags point at the same commit, so the version
-    string cannot identify a build. pip records the real source in
-    ``direct_url.json`` for a VCS install.
+    Through v0.1.x aure's ``pyproject.toml`` reported ``0.1.0`` for every
+    release, and its ``v0.1.0`` and ``v0.1.1`` tags point at the same commit.
+    v1.0.0 reports a real version, but we pin a SHA on ``main``, which moves
+    between releases -- so the version string still cannot identify a build.
+    pip records the real source in ``direct_url.json`` for a VCS install.
 
     Returns:
         The resolved commit sha, the URL if no commit was recorded, or ``None``.

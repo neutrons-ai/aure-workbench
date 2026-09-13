@@ -409,3 +409,30 @@ def test_the_generated_probe_refuses_a_trim_that_keeps_nothing() -> None:
 
     assert "the trim bounds keep no points" in source
     assert "raise ValueError" in source
+
+
+def test_a_layer_name_is_emitted_as_a_literal_not_interpolated() -> None:
+    """Layer names now reach the generator from a language model, via
+    `nrw aure import`.
+
+    `_NAME_RE` is the only thing keeping quotes and backslashes out, and `$`
+    used to let a trailing newline through -- which emitted an unterminated
+    string literal and a SyntaxError three commands later, blamed on a name
+    the scientist never typed. `repr` is correct whatever the regex allows.
+    """
+    from nr_workbench.spec.models import _NAME_RE
+
+    assert not _NAME_RE.match("Cu\n"), "a trailing newline must not pass validation"
+
+
+def test_a_layer_name_is_written_as_a_python_literal() -> None:
+    """Not interpolated into a quoted string.
+
+    Interpolation was safe only for as long as `_NAME_RE` stayed strict, and
+    it already had one hole. `repr` is correct whatever the regex allows, and
+    the generated file has to parse before anything else about it matters.
+    """
+    source = generate(table_from(BASE, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    assert "SLD('" in source or 'SLD("' in source
+    ast.parse(source)

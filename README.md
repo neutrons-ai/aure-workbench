@@ -81,6 +81,30 @@ refuses to start rather than running unlimited. And **narrowing the set never
 deletes anything**: files for an assistant you drop stay on disk, because a
 scientist may have edited them.
 
+### Your first fit
+
+If you have data and no model yet, the stack is the hard part — and it is the
+one thing the tooling cannot read off the files. `nrw aure` hands that to
+[AuRE](https://github.com/neutrons-ai/aure), which proposes a layer stack from a
+plain-English description and iterates it against the data:
+
+```bash
+# answer six questions in samples/Cu4/sample.md first -- what the layers are,
+# what it sits in, and which side the beam enters
+nrw aure new Cu4
+nrw aure run samples/Cu4/aure/Cu4-218386/setup.yaml
+nrw aure import samples/Cu4/aure/Cu4-218386/output --sample Cu4 --name first
+```
+
+That leaves an ordinary `models/first.yaml`, and everything after it is the
+normal path. **An AuRE run is reconnaissance**: it carries no fit record, so the
+fit that counts is the `nrw fit run` on the imported spec. It needs a
+language-model endpoint; without one, `nrw model new --print-prompt` gives your
+coding assistant the same job with the facts already filled in.
+
+**[docs/first-fit.md](docs/first-fit.md) walks it through**, and
+`skills/reflectometry/aure-first-fit/SKILL.md` is what an assistant follows.
+
 **[docs/getting-started.md](docs/getting-started.md) walks the whole thing
 through on real data**: two OCV states either side of an EIS sequence,
 co-refined with the 15 time-resolved slices measured during it, from an empty

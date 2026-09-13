@@ -6,6 +6,7 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
 from click.testing import CliRunner
 
 from nr_workbench import __version__
@@ -67,11 +68,46 @@ def test_help_does_not_import_heavy_modules() -> None:
     )
 
 
+@pytest.mark.parametrize("group", ["aure", "model", "fit", "sample", "data"])
+def test_group_help_does_not_import_heavy_modules(group: str) -> None:
+    """A group's own `--help` must stay as cheap as the top-level one.
+
+    `nrw --help` only reaches the group callbacks, so a module-scope import in
+    a *command* module can hide from it and still cost seconds on the help the
+    user actually types. `nrw aure --help` is the case that made this worth
+    parameterising: everything it does ends in AuRE.
+    """
+    script = textwrap.dedent(
+        f"""
+        import sys
+        from click.testing import CliRunner
+        from nr_workbench.cli import main
+
+        result = CliRunner().invoke(main, [{group!r}, "--help"])
+        assert result.exit_code == 0, result.output
+
+        leaked = [m for m in {FORBIDDEN_ON_HELP!r} if m in sys.modules]
+        if leaked:
+            print("LEAKED:" + ",".join(leaked))
+            sys.exit(1)
+        """
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
+
+    assert result.returncode == 0, (
+        f"`nrw {group} --help` imported heavy modules: {result.stdout.strip()}\n"
+        "Move the import inside the command callback that needs it."
+    )
+
+
 def test_subcommands_have_help_text() -> None:
     """Each command needs a usable one-liner; the CLI is the primary UI."""
     runner = CliRunner()
 
-    for command in ("init", "doctor", "sample", "skills"):
+    for command in ("init", "doctor", "sample", "skills", "aure"):
         result = runner.invoke(main, [command, "--help"])
         assert result.exit_code == 0, f"{command}: {result.output}"
         assert result.output.strip()

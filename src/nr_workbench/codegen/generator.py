@@ -286,7 +286,11 @@ def _stack(table: ParameterTable) -> str:
                 f"which is not defined under `materials`"
             )
         irho = f", irho={material.irho!r}" if material.irho else ""
-        lines.append(f'    {_ident(name)} = SLD("{name}", rho={material.rho!r}{irho})')
+        # `!r`, not an interpolated literal: a layer name reaching here from
+        # `nrw aure import` was chosen by a language model, and repr is correct
+        # whatever `_NAME_RE` happens to allow rather than only while it stays
+        # strict.
+        lines.append(f"    {_ident(name)} = SLD({name!r}, rho={material.rho!r}{irho})")
 
     lines.append("")
     parts = []

@@ -92,7 +92,11 @@ _PATH_RE = re.compile(
 )
 
 #: Identifiers become Python names and filenames in the generated script.
-_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*$")
+# `\Z`, not `$`: `$` also matches before a trailing newline, so "Cu\n" passed
+# this check and reached the code generator, which emitted an unterminated
+# string literal. Names now reach it from a language model via
+# `nrw aure import`, so the margin here is load-bearing.
+_NAME_RE = re.compile(r"^[A-Za-z_][\w-]*\Z")
 
 
 class SpecError(ValueError):

@@ -18,6 +18,18 @@ samples/*/results/*/fit/*.chain
 samples/*/results/*/output/
 *.png
 
+# AuRE scouting runs. The setup and the physics knobs it ran under ARE tracked
+# -- they are small, and together they say what was asked for. Everything under
+# output/ is not, for two reasons beyond size: AuRE resolves data files to
+# ABSOLUTE paths and writes them into final_state.json, and that file also
+# carries the full prompt/response transcript of the run. Both are exactly what
+# the rules above keep out of a directory that gets shared and archived.
+#
+# Nothing is lost. The durable record of an AuRE run is the model spec
+# `nrw aure import` writes, which IS committed and names the AuRE version and
+# commit that proposed it.
+samples/*/aure/*/output/
+
 # --- Machine-local state ---------------------------------------------------
 .nrw/cache/
 .nrw/backups/
