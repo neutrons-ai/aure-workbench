@@ -1403,9 +1403,6 @@ def _back_reflection_substrate(document: dict[str, Any], notes: str) -> float | 
     if isinstance(material, dict) and material.get("rho") is not None:
         return float(material["rho"])
 
-    from nr_workbench.aure_adapter import sld
+    from nr_workbench.aure_adapter import substrate_sld
 
-    try:
-        return float(sld(str(substrate.get("material"))))
-    except Exception:
-        return None
+    return substrate_sld(str(substrate.get("material")))

@@ -83,6 +83,16 @@ class Report:
     """
 
     checked: int = 0
+    #: Entries whose bytes were compared against a recorded sha256. An entry
+    #: without one is visited and not verified, and saying "no drift" over those
+    #: reads as a guarantee nobody made -- five of six skills were unregistered
+    #: here while the report said it had checked everything.
+    hash_verified: int = 0
+    #: Entries whose upstream commit was compared against the recorded one.
+    #: Zero unless --remote, which is the only check an adapted file can have:
+    #: its content is deliberately different, so a hash would assert the wrong
+    #: thing.
+    commit_verified: int = 0
     findings: list[Finding] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
 
@@ -96,6 +106,8 @@ class Report:
         return {
             "schema": "nrw-upstream-drift/1",
             "checked": self.checked,
+            "hash_verified": self.hash_verified,
+            "commit_verified": self.commit_verified,
             "ok": self.ok,
             "findings": [f.as_dict() for f in self.findings],
             "skipped": self.skipped,
@@ -250,6 +262,7 @@ def check(*, remote: bool = False, manifest_path: Path | None = None) -> Report:
                 )
                 continue
             elif recorded := entry.get("sha256"):
+                report.hash_verified += 1
                 actual = sha256(target)
                 if actual != recorded:
                     report.findings.append(
@@ -286,7 +299,9 @@ def check(*, remote: bool = False, manifest_path: Path | None = None) -> Report:
                 upstream = latest_commit(repo, path)
                 if upstream is None:
                     report.skipped.append(f"{dest} <- {repo} (unreachable)")
-                elif upstream != recorded_commit:
+                    continue
+                report.commit_verified += 1
+                if upstream != recorded_commit:
                     report.findings.append(
                         Finding(
                             dest,
@@ -324,11 +339,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if report.ok else 1
 
-    print(f"  checked {report.checked} vendored entr(ies)")
+    unverified = report.checked - report.hash_verified
+    print(f"  {report.checked} vendored entr(ies) registered")
+    print(f"    {report.hash_verified} verified by content hash")
+    if unverified:
+        print(
+            f"    {unverified} recorded for provenance only -- adapted files are"
+        )
+        print(
+            "      deliberately different from upstream, so a hash would assert"
+        )
+        print("      the wrong thing. Use --remote to check the commit instead.")
+    if args.remote:
+        print(f"    {report.commit_verified} checked against upstream's commit")
     for note in report.skipped:
         print(f"    - skipped {note}")
     if report.ok:
-        print("  no drift")
+        print(
+            "  no drift"
+            if report.hash_verified or report.commit_verified
+            else "  nothing to compare -- provenance recorded, no content checked"
+        )
         return 0
 
     print()

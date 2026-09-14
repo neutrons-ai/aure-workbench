@@ -48,24 +48,53 @@ its solvent content**, and that is the number to report.
 
 ### 1. Know the dry numbers
 
-| Polymer | SLD (10⁻⁶ Å⁻²) | Deuterated |
-|---|---|---|
-| Polystyrene (hPS) | 1.41 | d8-PS 6.47 |
-| PMMA | 1.06 | d8-PMMA 7.22 |
-| Nafion / PFSA ionomer | 4.1–4.3 | — (fluorinated, already high) |
-| PEO | 0.64 | d4-PEO 6.33 |
-| Polyethylene | −0.33 | d4-PE 8.24 |
-| PDMS | 0.06 | — |
+**These are starting points, not reference values.** The SLD is fitted; what you
+write in the spec only seeds it. Quoting them to two decimals would be false
+precision, because the density they assume is not known that well.
 
-Fluoropolymers are the useful exception: fluorine gives a high SLD without
-deuteration, so a PFSA ionomer at ~4.2 already contrasts strongly against both
-H₂O and most metals.
+| Polymer | h-form | d-form | shift |
+|---|---|---|---|
+| Polyethylene | −0.3 | d4-PE 8.1 | 8.4 |
+| PEO | 0.6 | d4-PEO 7.1 | 6.4 |
+| PMMA | 1.1 | d8-PMMA 6.8 | 5.8 |
+| Polystyrene | 1.4 | d8-PS 6.4 | 5.0 |
+| PDMS | 0.1 | — | |
+| Nafion / PFSA ionomer | 4.1–4.3 | — (fluorinated, already high) | |
+
+**The rule is more useful than the table.** Protiated organics cluster near
+**0.4** (−0.6 to 2.4 across 18 common species); their deuterated counterparts
+near **5.5** (3.1 to 7.1); and essentially nothing real sits between. That gap
+is not a coincidence:
+
+```
+b_c(D) − b_c(H) = 10.409 fm
+```
+
+so deuterating adds (hydrogen number density) × 10.409 fm — **5 to 8 for any
+organic**. The shift column above is that product, and it reproduces all four
+measured differences: PEO and PE exactly, PS and PMMA within 0.14.
+
+Polyethylene is the extreme because it has the most hydrogen per unit volume,
+which is why d4-PE at 8.1 sits above the deuterated cluster rather than in it.
+
+**Spend your care on protiation, not on density.** With the formula known, ±1 in
+SLD needs the density to about 15% for a deuterated species and is essentially
+unconstrained for anything protiated. A 15% density slip costs 1; a missed H/D
+swap costs 5 to 8. Only one of those is worth checking twice.
+
+Fluoropolymers are the useful exception to the clusters: fluorine gives a high
+SLD without deuteration, so a PFSA ionomer at ~4.2 sits *between* the two — it
+already contrasts strongly against both H₂O and most metals.
 
 ```python
-from nr_workbench.aure_adapter import sld
+from periodictable import formula, neutron_sld
 
-sld("C8H8", density=1.05)  # polystyrene from formula and density
+neutron_sld(formula("Cu2O"), density=6.0)[0]   # 5.36
 ```
+
+`periodictable` ships with refl1d and does the physics; you supply the density.
+It has densities for elements only, so any compound needs one stated — which is
+the honest situation, since the density is what you are assuming.
 
 ### 2. Turn a fitted SLD into a solvent fraction
 
@@ -123,7 +152,7 @@ collapse or rail.
 
 The point of deuteration is to make one component stand out:
 
-- **Label the polymer** (d8-PS at 6.47) against H₂O (−0.56) for maximum contrast
+- **Label the polymer** (d8-PS at 6.40) against H₂O (−0.56) for maximum contrast
   against the solvent.
 - **Match the solvent to the polymer** to make the film invisible and isolate
   what is under it.

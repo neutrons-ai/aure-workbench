@@ -1,89 +1,82 @@
-"""SLDs computed from periodictable, replacing AuRE's retired table.
+"""Contrast-match arithmetic, and the substrates prompts may need an SLD for.
 
-The values asserted here are the ones five SKILL.md files quote to agents, so
-they are a contract rather than a sample: if `sld("Cu")` stops being 6.55, the
-skills are wrong and nothing else notices.
+What used to be here was a name-to-density table with an `sld()` wrapper over
+`periodictable`. It is gone. AuRE retired its equivalent because the SLDs in a
+fitted model come from its intake LLM rather than a table, and the same applies
+here with one more reason on top: the models this repository is used with supply
+a compound density on request, and `periodictable` does the physics. The table
+in between drifted -- six SLDs quoted in the skills had diverged from it, two of
+them disagreeing with the table sitting beside them in the package.
+
+`tests/test_skill_slds.py` is what replaced it: the numbers the skills quote are
+checked against the physics directly, which is where the error actually was.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from nr_workbench.materials import contrast_match_ratio, mixture_sld, sld
-
-
-@pytest.mark.parametrize(
-    "query,kwargs,expected",
-    [
-        ("Cu", {}, 6.55),  # element: periodictable has the density
-        ("D2O", {}, 6.37),  # compound: from this module's table
-        ("H2O", {}, -0.56),
-        ("quartz", {}, 3.47),  # alias -> SiO2
-        ("silicon", {}, 2.07),  # alias -> Si
-        ("heavy water", {}, 6.37),
-        ("Cu2O", {"density": 6.0}, 5.36),  # explicit density
-        ("C8H8", {"density": 1.05}, 1.41),  # polystyrene from formula
-        ("C4H8O", {"density": 0.889}, 0.18),  # THF
-    ],
+from nr_workbench.aure_adapter import (
+    D2O_SLD,
+    H2O_SLD,
+    contrast_match_ratio,
+    mixture_sld,
+    substrate_sld,
 )
-def test_documented_slds(query, kwargs, expected) -> None:
-    assert sld(query, **kwargs) == pytest.approx(expected, abs=0.01)
 
 
-def test_a_compound_without_a_density_says_so() -> None:
-    """periodictable returns None rather than raising, which would otherwise
-    surface as a confusing TypeError deep inside neutron_sld."""
-    with pytest.raises(ValueError, match="No density known"):
-        sld("Cu2O")
-
-
-def test_an_unparseable_formula_says_so() -> None:
-    with pytest.raises(ValueError, match="Cannot parse"):
-        sld("not a material")
-
-
-def test_contrast_match_is_the_documented_ratio() -> None:
-    """`contrast_match_ratio(2.07)  # 0.38 -> 38% D2O matches silicon`, from
-    solvent-contrast-matching/SKILL.md."""
+def test_silicon_is_matched_at_38_percent_d2o() -> None:
+    """`contrast_match_ratio(2.07)  # 0.38`, quoted in solvent-contrast-matching."""
     assert contrast_match_ratio(2.07) == pytest.approx(0.38, abs=0.01)
 
 
-def test_contrast_match_clamps_outside_the_reachable_span() -> None:
-    """A target no mixture can reach returns the nearer end, not an error --
-    the caller asked which mixture is closest."""
-    assert contrast_match_ratio(-5.0) == 0.0
-    assert contrast_match_ratio(9.9) == 1.0
+def test_the_ends_of_the_series_are_the_pure_solvents() -> None:
+    assert mixture_sld(0.0) == pytest.approx(H2O_SLD)
+    assert mixture_sld(1.0) == pytest.approx(D2O_SLD)
 
 
-def test_mixture_and_match_are_inverses() -> None:
-    for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
-        assert contrast_match_ratio(mixture_sld(fraction)) == pytest.approx(
-            fraction, abs=1e-9
-        )
+@pytest.mark.parametrize("target,expected", [(-5.0, 0.0), (9.9, 1.0)])
+def test_an_unreachable_target_clamps_rather_than_raising(
+    target: float, expected: float
+) -> None:
+    """The caller asked which mixture is closest, not for an error."""
+    assert contrast_match_ratio(target) == expected
 
 
-def test_the_adapter_still_exports_the_agent_facing_names() -> None:
-    """Five SKILL.md files say `from nr_workbench.aure_adapter import sld`."""
-    from nr_workbench import aure_adapter
-
-    assert aure_adapter.sld is sld
-    assert aure_adapter.contrast_match_ratio is contrast_match_ratio
+@pytest.mark.parametrize("fraction", [0.0, 0.25, 0.38, 0.5, 0.75, 1.0])
+def test_the_two_are_inverses(fraction: float) -> None:
+    assert contrast_match_ratio(mixture_sld(fraction)) == pytest.approx(fraction)
 
 
-def test_materials_does_not_import_aure() -> None:
-    """The point of the move: this arithmetic no longer costs an AuRE import."""
+def test_identical_ends_cannot_be_matched() -> None:
+    with pytest.raises(ValueError, match="same SLD"):
+        contrast_match_ratio(1.0, low=2.07, high=2.07)
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [("Si", 2.07), ("silicon", 2.07), ("SiO2", 3.47), ("quartz", 3.47),
+     ("sapphire", 5.67), ("Al2O3", 5.67)],
+)
+def test_known_substrates_resolve(name: str, expected: float) -> None:
+    assert substrate_sld(name) == pytest.approx(expected)
+
+
+def test_a_material_that_is_not_a_substrate_returns_none() -> None:
+    """None means "leave it out of the prompt", not "guess"."""
+    assert substrate_sld("Cu") is None
+    assert substrate_sld("polystyrene") is None
+
+
+def test_the_arithmetic_does_not_import_aure() -> None:
+    """nr-workbench carries these six lines itself; AuRE retired its table."""
     import subprocess
     import sys
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import sys; from nr_workbench.materials import sld; sld('D2O'); "
-            "assert 'aure' not in sys.modules, 'materials imported aure'",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
+    subprocess.run(
+        [sys.executable, "-c",
+         "import sys; from nr_workbench.aure_adapter import contrast_match_ratio; "
+         "contrast_match_ratio(2.07); "
+         "assert 'aure' not in sys.modules, 'contrast arithmetic imported aure'"],
+        check=True,
     )
-    assert result.returncode == 0, result.stderr

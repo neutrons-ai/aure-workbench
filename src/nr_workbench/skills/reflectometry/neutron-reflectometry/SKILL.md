@@ -130,11 +130,14 @@ Compute anything not in that table rather than copying a quick-reference one —
 several published tables disagree, badly, for the oxides:
 
 ```python
-from nr_workbench.aure_adapter import sld
+from periodictable import formula, neutron_sld
 
-sld("Cu")  # 6.55, bulk density from the built-in table
-sld("Cu2O", density=6.00)  # 5.36 -- an oxide needs an explicit density
+neutron_sld(formula("Cu2O"), density=6.0)[0]   # 5.36
 ```
+
+`periodictable` ships with refl1d and does the physics; you supply the density.
+It has densities for elements only, so any compound needs one stated — which is
+the honest situation, since the density is what you are assuming.
 
 Bounds rules:
 

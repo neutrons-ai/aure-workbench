@@ -31,7 +31,6 @@ from typing import Any
 import numpy as np
 
 # Re-exported at the bottom of this module's public surface; see "Materials".
-from .materials import contrast_match_ratio, mixture_sld, sld  # noqa: F401
 
 #: The AuRE callables this package depends on, as ``module: (name, ...)``.
 #: :func:`contract` checks these resolve; a contract test asserts it, so an
@@ -533,13 +532,92 @@ def load_data(path: Path) -> dict[str, np.ndarray]:
 # Materials
 # --------------------------------------------------------------------------
 #
-# Re-exported, not implemented here. AuRE retired `aure.database.materials`
-# -- the SLDs in its fitted models come from its intake LLM, so the table had
-# no consumer there -- and `nr_workbench.materials` now computes these from
-# `periodictable`. They stay importable from this module because five SKILL.md
-# files document `from nr_workbench.aure_adapter import sld`, which is an
-# agent-facing contract. Nothing in them touches AuRE. The import itself sits
-# in the block at the top of this file, where isort wants it.
+# AuRE retired `aure.database.materials` -- the SLDs in its fitted models come
+# from its intake LLM, so the table had no consumer there -- and
+# `nr_workbench.materials` followed it for the same reason plus one more: the
+# frontier models this repository is used with supply a compound density on
+# request, and `periodictable` (a refl1d dependency) does the physics. A
+# name-to-density table in between was a third copy of something neither end
+# needed, and it drifted: six SLDs quoted in these skills had diverged from it,
+# two of them disagreeing with the table sitting beside them in this package.
+#
+# What does not come free is the contrast-match arithmetic, so it lives here
+# over two constants of nature -- the same shape as AuRE keeping
+# `_SILICON_SLD = 2.07` when it retired the rest.
+
+#: H2O and D2O at 20 C, in 1e-6 per square angstrom. Constants, not a table:
+#: `periodictable` has densities for elements only, and these two are the ends
+#: of every water contrast series.
+H2O_SLD = -0.56
+D2O_SLD = 6.37
+
+
+#: The substrates this repository actually measures through, and nothing else.
+#: Back-reflection prompts need the substrate SLD when a spec has not declared
+#: one, and that is the only surviving caller of a name-to-SLD lookup here.
+#: Three constants of nature, deliberately not a materials table -- anything
+#: else states its `rho` in the spec, where a reader can see it.
+_SUBSTRATE_SLD: dict[str, float] = {
+    "si": 2.07,
+    "silicon": 2.07,
+    "sio2": 3.47,
+    "quartz": 3.47,
+    "fused silica": 3.47,
+    "silica": 3.47,
+    "al2o3": 5.67,
+    "sapphire": 5.67,
+    "alumina": 5.67,
+}
+
+
+def substrate_sld(name: str) -> float | None:
+    """SLD of a known substrate, or None if it is not one of the three.
+
+    Args:
+        name: Substrate material name, as written in the spec.
+
+    Returns:
+        The SLD in 1e-6 per square angstrom, or None when the name is not a
+        substrate this repository knows. None is the signal to leave the
+        prompt without one rather than to guess.
+    """
+    return _SUBSTRATE_SLD.get(name.strip().lower())
+
+
+def contrast_match_ratio(
+    target_sld: float, *, low: float = H2O_SLD, high: float = D2O_SLD
+) -> float:
+    """Deuterated volume fraction whose mixture SLD matches *target_sld*.
+
+    A two-solvent mixture interpolates linearly in SLD, so this inverts that
+    line and clamps to the physically reachable range.
+
+    Args:
+        target_sld: The SLD to match, in 1e-6 per square angstrom.
+        low: SLD of the protiated end. Defaults to H2O.
+        high: SLD of the deuterated end. Defaults to D2O.
+
+    Returns:
+        The deuterated volume fraction, between 0 and 1. A target outside the
+        span the pair can reach clamps to the nearer end rather than raising --
+        the caller asked which mixture is closest.
+
+    Raises:
+        ValueError: If the two ends have the same SLD, so no mixture varies.
+    """
+    if high == low:
+        raise ValueError(
+            "the protiated and deuterated ends have the same SLD; no mixture "
+            "can be matched against them."
+        )
+    return max(0.0, min(1.0, (target_sld - low) / (high - low)))
+
+
+def mixture_sld(
+    fraction_deuterated: float, *, low: float = H2O_SLD, high: float = D2O_SLD
+) -> float:
+    """SLD of a two-solvent mixture. The inverse of contrast_match_ratio."""
+    return low + float(fraction_deuterated) * (high - low)
 
 # --------------------------------------------------------------------------
 # Language models

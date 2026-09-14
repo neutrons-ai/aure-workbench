@@ -54,18 +54,21 @@ THF" and the fit wants an ambient near 6.3, it was d8-THF.
 | Water | −0.56 (H₂O) | 6.36 (D₂O) | D₂O |
 | THF | 0.18 | 6.35 | d8-THF |
 | Toluene | 0.94 | 5.66 | d-toluene |
-| Cyclohexane | −0.28 | 6.70 | d12-cyclohexane |
-| Ethanol | −0.34 | 6.20 | d6-ethanol |
+| Cyclohexane | −0.28 | 6.68 | d12-cyclohexane |
+| Ethanol | −0.34 | 6.00 | d6-ethanol |
 | Methanol | −0.37 | 5.80 | d4-methanol |
 
 Units are 10⁻⁶ Å⁻². For anything not in the table:
 
 ```python
-from nr_workbench.aure_adapter import sld
+from periodictable import formula, neutron_sld
 
-sld("D2O")  # 6.37
-sld("C4H8O", density=0.889)  # THF from formula and density
+neutron_sld(formula("Cu2O"), density=6.0)[0]   # 5.36
 ```
+
+`periodictable` ships with refl1d and does the physics; you supply the density.
+It has densities for elements only, so any compound needs one stated — which is
+the honest situation, since the density is what you are assuming.
 
 ### 2. Check the ambient against the data, not the label
 

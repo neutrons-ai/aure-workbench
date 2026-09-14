@@ -39,15 +39,40 @@ def manifest(tmp_path: Path, body: str) -> Path:
 
 
 def test_the_repos_own_manifest_is_clean() -> None:
-    """Every file this repo vendored is present and unmodified.
+    """Every file this repo vendored is present, and every hashed one matches.
 
-    Runs offline. This is the half of the check that catches an accidental
-    edit to a file that is supposed to be a byte-identical copy.
+    Runs offline. Counted from the manifest rather than pinned to a literal:
+    this assertion read `== 1` while five of the six skills adapted from AuRE
+    were unregistered, so it passed on a manifest describing a sixth of the
+    relationships it was supposed to cover.
     """
     report = sync_upstream.check(remote=False)
+    document = sync_upstream.load_manifest()
+    registered = len(document.get("adapted", [])) + len(document.get("verbatim", []))
 
     assert report.ok, [f.as_dict() for f in report.findings]
-    assert report.checked == 1
+    assert report.checked == registered
+
+
+def test_the_report_does_not_claim_more_than_it_verified() -> None:
+    """A clean report over entries nothing compared is not a guarantee.
+
+    Adapted files are deliberately unlike their upstream, so they carry no
+    sha256 and there is nothing offline to compare. The report has to say that
+    rather than print "no drift", which reads as content having been checked.
+    """
+    report = sync_upstream.check(remote=False)
+    document = sync_upstream.load_manifest()
+    hashed = sum(
+        1
+        for kind in ("adapted", "verbatim")
+        for entry in document.get(kind, [])
+        if entry.get("sha256")
+    )
+
+    assert report.hash_verified == hashed
+    assert report.commit_verified == 0, "offline runs compare no commits"
+    assert report.hash_verified <= report.checked
 
 
 def test_every_manifest_entry_names_a_commit() -> None:

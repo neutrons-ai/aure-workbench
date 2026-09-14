@@ -13,6 +13,35 @@
 #
 # AuRE is the only genuine upstream dependency tracked here.
 
+# THE SIX SKILLS ADAPTED FROM AuRE
+#
+# All six were adapted from AuRE at `3021fee`, which was its tip on the day they
+# landed here: `neutron-reflectometry` on 2026-08-05 (b7e3155) and the other five
+# together on 2026-08-06 (f11a4b5), with no AuRE commit in between. Five of them
+# were previously unregistered, so this manifest described one relationship out
+# of six while its report read as full coverage.
+#
+# **They are not drifting copies, and they are not meant to converge.** AuRE is an
+# autonomous fitter: it needs facts, bounds and what to do next. nr-workbench is a
+# co-scientist tool: a person judges and reports, so these carry uncertainty
+# discipline, rationalizations, red flags and pre-report checklists that would be
+# prompt-budget cost to an agent that cannot act on them. The consumer differs, so
+# the content differs on purpose.
+#
+# An earlier note here said the remaining pure-AuRE skills "should be READ from
+# the installed package rather than copied". That was the right instinct about
+# duplication aimed at the wrong target. What must not diverge is the **numbers** --
+# six SLDs quoted in these skills had drifted, two of them disagreeing with a
+# density table sitting in this same package. That is now enforced by
+# `tests/test_skill_slds.py`, which checks every quoted SLD against the physics.
+# The prose is free to differ; the facts are not.
+#
+# So `sha256` is deliberately absent on all six: a hash would assert these files
+# should match upstream, which is the opposite of the policy. What the entries
+# record is provenance -- what this was adapted from, and when -- so
+# `--remote` can report when AuRE has moved past the recorded commit and a review
+# is worth doing.
+
 [[adapted]]
 dest = "src/nr_workbench/skills/reflectometry/neutron-reflectometry/SKILL.md"
 repo = "neutrons-ai/aure"
@@ -21,8 +50,72 @@ commit = "3021fee37294b938134d052e16dac4f9c282e97f"
 synced = "2026-08-05"
 adaptation = """
 Narrowed to REF_L/BL-4B and restructured into the neutron-skills v2 anatomy.
+Adds the uncertainty discipline a reporting scientist needs and an autonomous
+fitter does not: chi2_red inflation of credible intervals, the division of
+labour between a local optimizer and sampling, and a pre-report checklist.
+"""
 
-Now that neutrons-ai/aure#20 has merged, aure ships its SKILL.md files in the
-wheel -- so the remaining pure-AuRE skills should be READ from the installed
-package rather than copied here. See docs/ground_truths.md.
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/thin-layer-degeneracy/SKILL.md"
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/thin-layer-degeneracy/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
+synced = "2026-08-06"
+adaptation = """
+Restructured into the v2 anatomy and pointed at nrw commands. The physics is
+unchanged. Adds the Gamma = t * delta_rho invariant for comparing states, the
+profile worked example, and red flags -- all judgement a person applies when
+deciding what to report.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/metal-oxide-interfaces/SKILL.md"
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/metal-oxide-interfaces/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
+synced = "2026-08-06"
+adaptation = """
+Restructured into the v2 anatomy. Adds the electrochemical-series section: the
+Cu/CuOx work on this beamline is mostly about watching an oxide change under
+potential, which a static framing misses.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/polymer-films/SKILL.md"
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/polymer-films/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
+synced = "2026-08-06"
+adaptation = """
+Restructured into the v2 anatomy. The swelling arithmetic is written out, and
+the graded-profile section points at the specific failure it prevents -- a slab
+model absorbing a concentration gradient into roughness. The SLD table is stated
+as starting points with the deuteration-shift rule behind it, rather than as
+reference values.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/solvent-contrast-matching/SKILL.md"
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/solvent-contrast-matching/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
+synced = "2026-08-06"
+adaptation = """
+Restructured into the v2 anatomy. Adds the rule that an ambient other than air
+is fitted rather than pinned to a book value, because purity, H/D exchange and
+temperature move the real value by a few tenths -- an error that otherwise lands
+in a layer thickness where it is much harder to see.
+"""
+
+[[adapted]]
+dest = "src/nr_workbench/skills/reflectometry/structural-hypothesis-ranking/SKILL.md"
+repo = "neutrons-ai/aure"
+path = "src/aure/skills/structural-hypothesis-ranking/SKILL.md"
+commit = "3021fee37294b938134d052e16dac4f9c282e97f"
+synced = "2026-08-06"
+adaptation = """
+Restructured into the v2 anatomy: the list is written before fitting, recorded
+where it will be read, and one spec is committed per candidate so the comparison
+is on more than chi2. AuRE ranks hypotheses inside one run; here the list is an
+artifact a person revises as evidence arrives.
 """
