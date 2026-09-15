@@ -62,7 +62,7 @@ nrw doctor
 ```
   ✓ refl1d        1.0.1
   ✓ bumps         1.0.4
-  ✓ aure          1.0.0 @ 9ec300da2004
+  ✓ aure          1.0.1 @ d6e38e481fcf
   ✓ instrument    SNS REF_L
   ! samples       none yet; run `nrw sample new <ID>`
   ✓ skills        17 installed: analysis-provenance, analyst-handoff, ...
@@ -713,8 +713,8 @@ nrw whence samples/Sample6/results/20260805-191540Z-732f4286/fit/cu-thf-218389.p
   script     model.py  sha256 dbb85fa736a2
   fit        amoeba, 2000 steps, seed 1
   chisq      1.83   free 21
-  versions   python 3.14.5rc1, aure 1.0.0, bumps 1.0.4, ... refl1d 1.0.1
-  aure       9ec300da2004
+  versions   python 3.14.5rc1, aure 1.0.1, bumps 1.0.4, ... refl1d 1.0.1
+  aure       d6e38e481fcf
   inputs     22 file(s), fresh
 ```
 

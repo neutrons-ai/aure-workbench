@@ -150,7 +150,7 @@ something is wrong and it is worth finding out which of the two before fitting.
 The written spec says at the top who proposed it:
 
 ```yaml
-# The stack below was PROPOSED by AuRE 1.0.0 @ 9ec300da2004,
+# The stack below was PROPOSED by AuRE 1.0.1 @ d6e38e481fcf,
 # from sample.md and the data. It is a starting point, not a
 # measurement -- check every layer and range before fitting.
 # States, angles and data_dir were read from the files' own headers

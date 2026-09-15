@@ -45,6 +45,12 @@ classifiers = [
 # that way: the PyPI name `aure` is taken by an unrelated project, so there is
 # no version of this that ends in `pip install nr-workbench`. See
 # docs/ground_truths.md.
+#
+# Currently d6e38e4 (reports 1.0.1). Moved from 9ec300d on 2026-09-15 for the
+# `claude_code` provider, which lets a person whose only model is Claude Code
+# run `nrw aure run` without configuring a second one -- see the 2026-09-15
+# entry in docs/ground_truths.md. It also brings AuRE's call ledger (per-call
+# cost, and an opt-in trace of the exchange) and its skill revisions.
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.11",
@@ -59,7 +65,7 @@ dependencies = [
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
-  "aure @ git+https://github.com/neutrons-ai/aure.git@9ec300da2004e7ef22f64dab6faddc8a652c8fdf",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@d6e38e481fcfdcf658811b54d7337ffde357712a",
 ]
 
 [project.optional-dependencies]
@@ -142,7 +148,6 @@ addopts = [
   "--strict-config",
   "--cov=src/nr_workbench",
   "--cov-report=term-missing",
-  "--cov-report=html",
 ]
 markers = [
   "slow: marks tests as slow (deselect with '-m \"not slow\"')",
