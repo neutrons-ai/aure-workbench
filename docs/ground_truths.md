@@ -2465,3 +2465,51 @@ the generator is correct whatever the regex happens to allow. The lesson is the
 second fix: **do not let a validator's strictness be the only thing keeping a
 code generator safe** — quote properly and the regex becomes defence in depth
 rather than the defence.
+
+---
+
+### 2026-09-15: the harness can be the endpoint, and that does not reopen the gate
+
+The [2026-08-10 entry](#2026-08-10-a-second-weaker-model-is-not-a-fallback)
+records why `nrw assess`, `nrw model new --from-notes` and `nrw isaac export`
+stand down under `NRW_AGENT=1`: sending the question to a second, weaker model
+and handing the answer back replaces the judgement we wanted with a worse one,
+which the harness then reads as evidence.
+
+AuRE now has a `claude_code` provider — its endpoint driven by `claude -p` as
+a subprocess — so the endpoint can be the *same* model as the harness. That
+looks like it invalidates the entry. It does not, and the reason is worth
+writing down because the original wording made model strength carry the whole
+argument when it was only ever carrying half.
+
+The two halves:
+
+1. **The second model was weaker.** `claude_code` answers this one.
+2. **The second model has no context.** A harness verdict is formed with the
+   files it has read, the fits it has run and the hypotheses it has already
+   ruled out. A fresh `claude -p` starts from an empty session and gets only
+   what the prompt template happens to include. Its answer then arrives back
+   inside the harness's context as evidence — produced with strictly less to
+   go on, and costing a second inference to produce.
+
+Half 2 is untouched, so the gate stays. The generalisable form is the sharper
+version of the original: **what makes the caller's judgement better is not only
+which model it is, it is what that model has already seen.** A tool that hands
+work back to its caller is not choosing a bigger model; it is choosing the one
+holding the context.
+
+Where it does change something: `nrw aure run` drives AuRE's own state machine,
+which consults a model at every node and refuses to start without an endpoint.
+There is no harness in that loop to hand anything back to — the loop *is* the
+consumer. Before `claude_code`, a person whose only model was Claude Code had
+to configure a second, weaker one purely to satisfy that check, which is this
+entry's own failure mode arriving through an install detail rather than a
+design decision. Now `LLM_PROVIDER=claude_code` is enough, and every "no
+endpoint configured" message says so when the installed AuRE is new enough to
+have it (`aure_adapter.claude_code_supported`, checked on disk so the advice
+cannot outrun the pin).
+
+It is not free: ~12k input tokens of Claude Code preamble per call, ~$0.2–0.4
+per analysed curve of overhead, and ~1s of process startup. A plain endpoint is
+cheaper. This one is already configured, which for a beamtime is often the
+property that matters.

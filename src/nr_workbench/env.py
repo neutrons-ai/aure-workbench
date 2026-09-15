@@ -44,6 +44,10 @@ KNOWN_VARS = (
     "GEMINI_API_KEY",
     "ALCF_ACCESS_TOKEN",
     "ALCF_CLUSTER",
+    # Only read by AuRE's claude_code provider, and only when the CLI is not
+    # on PATH. Reported because an endpoint that resolves to the wrong binary
+    # looks exactly like one that is not configured.
+    "AURE_CLAUDE_BIN",
 )
 
 #: Variables whose value must never be printed.

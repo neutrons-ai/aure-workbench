@@ -911,3 +911,38 @@ def test_a_stray_comment_is_not_hoisted_into_the_header(
 
     assert result.exit_code != 0
     assert "ask Bob" in result.output
+
+
+# Advice, not capability: the provider lives in AuRE. What this command owes
+# the user is naming it when their AuRE has it, and not when it does not.
+def test_aure_run_refusal_offers_the_harness_as_the_endpoint(
+    sample: Path, monkeypatch
+) -> None:
+    """`nrw aure run` is the command that genuinely needs an endpoint, so it is
+    the one where the advice matters most."""
+    monkeypatch.setattr("nr_workbench.aure_adapter.llm_available", lambda: False)
+    monkeypatch.setattr("nr_workbench.aure_adapter.claude_code_supported", lambda: True)
+    CliRunner().invoke(main, ["aure", "new", "Sample1"])
+
+    result = CliRunner().invoke(
+        main, ["aure", "run", "samples/Sample1/aure/Sample1-218386/setup.yaml"]
+    )
+
+    assert result.exit_code != 0
+    assert "claude_code" in result.output
+
+
+def test_aure_run_refusal_omits_it_on_an_older_aure(sample: Path, monkeypatch) -> None:
+    monkeypatch.setattr("nr_workbench.aure_adapter.llm_available", lambda: False)
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.claude_code_supported", lambda: False
+    )
+    CliRunner().invoke(main, ["aure", "new", "Sample1"])
+
+    result = CliRunner().invoke(
+        main, ["aure", "run", "samples/Sample1/aure/Sample1-218386/setup.yaml"]
+    )
+
+    assert result.exit_code != 0
+    assert "claude_code" not in result.output
+    assert "nrw check-llm" in result.output

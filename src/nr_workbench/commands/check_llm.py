@@ -473,15 +473,20 @@ def probe_endpoint(*, required: bool = False) -> Probe:
         return Probe(
             "endpoint",
             "error" if required else "missing",
-            "no endpoint configured. Set LLM_PROVIDER and LLM_API_KEY, or "
-            "LLM_BASE_URL for an OpenAI-compatible one. Nothing an unattended "
-            "session does needs this.",
+            "no endpoint configured. "
+            f"{aure_adapter.endpoint_hint()} "
+            "Nothing an unattended session does needs this.",
         )
 
     info = aure_adapter.llm_info()
-    where = f"{info.get('provider')}/{info.get('model')}"
+    # claude_code reports no model when the CLI resolves its own, and no base
+    # URL ever -- what identifies that endpoint is which binary answered.
+    model = info.get("model") or "(the CLI's default)"
+    where = f"{info.get('provider')}/{model}"
     if info.get("base_url"):
         where += f" @ {info['base_url']}"
+    elif info.get("binary"):
+        where += f" @ {info['binary']}"
 
     started = time.monotonic()
     try:

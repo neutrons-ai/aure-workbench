@@ -1194,11 +1194,22 @@ def _author_from_notes(
 
     info = llm_info()
     if not info.get("available"):
+        from nr_workbench.aure_adapter import claude_code_supported
+
+        get_one = (
+            "    a placeholder. Either set LLM_PROVIDER=claude_code to use the\n"
+            "    Claude Code CLI you already have (no key needed), or set\n"
+            "    LLM_PROVIDER and LLM_API_KEY, or run:\n"
+            if claude_code_supported()
+            else (
+                "    a placeholder. Either set LLM_PROVIDER and LLM_API_KEY (or\n"
+                "    LLM_BASE_URL for a local endpoint), or run:\n"
+            )
+        )
         click.echo(
             "  ! No language-model endpoint is configured, so the stack is still\n"
-            "    a placeholder. Either set LLM_PROVIDER and LLM_API_KEY (or\n"
-            "    LLM_BASE_URL for a local endpoint), or run:\n"
-            f"      nrw model new {document['sample']} --name {document['name']} "
+            + get_one
+            + f"      nrw model new {document['sample']} --name {document['name']} "
             "--print-prompt\n"
             "    and hand that to the coding assistant already open on this repo.",
             err=True,

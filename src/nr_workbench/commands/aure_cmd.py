@@ -300,10 +300,13 @@ def run_aure_run(
     refuse_if_agent("aure-run")
 
     if not llm_available():
+        from nr_workbench.aure_adapter import endpoint_hint
+
         raise click.ClickException(
             "AuRE is language-model driven and no endpoint is configured, so "
-            "there is nothing to run. `nrw check-llm --endpoint` makes a real "
-            "call and says what it found; `.env.example` lists the variables."
+            f"there is nothing to run. {endpoint_hint()} "
+            "`nrw check-llm --endpoint` makes a real call and says what it "
+            "found; `.env.example` lists the variables."
         )
     info = llm_info()
     click.echo(f"  llm       {info.get('provider')}/{info.get('model')}")

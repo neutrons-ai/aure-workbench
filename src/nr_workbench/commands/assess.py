@@ -156,10 +156,12 @@ def _add_judgement(
         return
 
     if not llm_available():
+        from nr_workbench.aure_adapter import endpoint_hint
+
         assessment.problems.append(
             "No language-model endpoint configured, so nothing judged whether "
-            "these values are physically sensible. Set LLM_PROVIDER and "
-            "LLM_API_KEY in .env; `nrw doctor` reports what it sees."
+            "these values are physically sensible. "
+            f"{endpoint_hint()} `nrw doctor` reports what it sees."
         )
         return
 

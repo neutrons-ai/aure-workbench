@@ -344,6 +344,15 @@ configured to run the agent.** The three commands above work; they simply
 route the judgement to the thing already doing the judging. An endpoint is
 still useful when nobody has a harness open.
 
+This does not change when the endpoint happens to be Claude Code itself (see
+[The harness can be the endpoint](#the-harness-can-be-the-endpoint)). The
+argument above has two halves, and being the same model only answers one of
+them. The other is that the harness has *this conversation* — the files it has
+read, the fits it has run, what it already ruled out — and a fresh `claude -p`
+subprocess has none of it. Its verdict still arrives back inside the harness's
+own context as evidence, and it is now evidence produced with less to go on,
+at the cost of a second inference. So the gate stays where it is.
+
 ---
 
 ## Without a Claude Code subscription
@@ -364,6 +373,44 @@ one we would write.
 So `nrw agent run` needs a harness. `LLM_BASE_URL` will not stand in for it,
 and the error says so rather than leaving you to conclude the install is
 broken.
+
+### The harness can be the endpoint
+
+The substitution fails in one direction and works in the other. A completions
+API cannot be a harness, because the loop is missing. But a harness can answer
+a completions call — you just ask it one question and take the text back,
+using none of the loop.
+
+AuRE does exactly that with its `claude_code` provider, which runs
+`claude -p` as a subprocess:
+
+```bash
+LLM_PROVIDER=claude_code
+```
+
+No key, no base URL. Whatever `claude` is already authenticated with — a
+subscription, `ANTHROPIC_API_KEY`, or the Foundry / Bedrock / Vertex variables
+below — is what the endpoint uses, so a machine set up for `nrw agent run`
+needs nothing further.
+
+**What this is for.** `nrw aure run` drives AuRE's own state machine, which
+consults a model at every node and therefore refuses to start without an
+endpoint. Until this existed, a person whose only model was Claude Code had to
+configure a second, weaker one purely to get past that check — which is the
+exact trade the section above argues against, made unavoidable by an install
+detail.
+
+**What it costs.** Each call carries Claude Code's own system prompt and tool
+definitions: about 12k input tokens AuRE did not send. Measured on Sonnet 5,
+roughly $0.08 for a run's first call and $0.017 for each one after, since the
+prompt cache is reused across processes for an hour. Expect $0.2–0.4 per
+analysed curve of pure overhead, plus about a second of process startup per
+call. A plain endpoint is cheaper and faster; this one is simply already
+configured.
+
+**What it does not change.** `nrw assess`, `nrw model new --from-notes` and
+`nrw isaac export` still stand down under `NRW_AGENT=1`, for the reason given
+above: same model, less context, and a second inference to produce it.
 
 ### You may not need a subscription
 
@@ -580,6 +627,9 @@ skips the guard. Nothing here passes it, but a site wrapping `opencode` in its
 own script should not add it.
 
 ### If you only have an endpoint
+
+(If what you have is Claude Code and no endpoint, the reverse also works —
+see [The harness can be the endpoint](#the-harness-can-be-the-endpoint).)
 
 Everything except `nrw agent run` and `nrw agent watch` works exactly as
 documented, by hand — and the endpoint powers `nrw assess`'s judgement,

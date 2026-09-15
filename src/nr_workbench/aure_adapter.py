@@ -84,6 +84,52 @@ def is_available() -> bool:
         return False
 
 
+def claude_code_supported() -> bool:
+    """Whether the installed AuRE can use the Claude Code CLI as its endpoint.
+
+    AuRE is pinned by SHA and tracks ``main``, so an installed copy may predate
+    the ``claude_code`` provider. Telling somebody to set a provider their AuRE
+    does not have is worse than telling them nothing, so every message that
+    offers it asks this first.
+
+    Checked on disk rather than by importing: ``aure.llm.providers`` pulls in
+    langchain, and this is called from error paths and from ``nrw doctor``.
+
+    Returns:
+        Whether the provider module is present.
+    """
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec("aure")
+    except (ImportError, ValueError):
+        return False
+    if spec is None or not spec.submodule_search_locations:
+        return False
+    for location in spec.submodule_search_locations:
+        if (Path(location) / "llm" / "providers" / "claude_code.py").is_file():
+            return True
+    return False
+
+
+def endpoint_hint() -> str:
+    """One sentence on how to get an endpoint, tailored to what is installed.
+
+    Shared by every "no endpoint configured" message so the advice cannot
+    drift between them.
+    """
+    base = (
+        "Set LLM_PROVIDER and LLM_API_KEY (or LLM_BASE_URL for an "
+        "OpenAI-compatible endpoint)"
+    )
+    if claude_code_supported():
+        return (
+            base + ", or set LLM_PROVIDER=claude_code to use the Claude Code "
+            "CLI you already have — that one needs no key."
+        )
+    return base + "."
+
+
 def resolved_commit() -> str | None:
     """Return the git commit AuRE was installed from, if recorded.
 
@@ -619,6 +665,7 @@ def mixture_sld(
     """SLD of a two-solvent mixture. The inverse of contrast_match_ratio."""
     return low + float(fraction_deuterated) * (high - low)
 
+
 # --------------------------------------------------------------------------
 # Language models
 # --------------------------------------------------------------------------
@@ -674,6 +721,17 @@ def llm_info() -> dict[str, Any]:
     except Exception:
         return info
 
+    # The claude_code provider has no base URL and no key; what identifies it
+    # is which binary answered. AuRE reports that, so pass it through.
+    try:
+        from aure.llm.config import get_llm_info as _aure_info
+
+        binary = _aure_info().get("binary")
+    except Exception:
+        binary = None
+    if binary:
+        info["binary"] = binary
+
     info.update(
         {
             "available": bool(_available()),
@@ -703,9 +761,8 @@ def complete(system: str, user: str, *, temperature: float = 0.0) -> str:
     """
     if not llm_available():
         raise AureUnavailableError(
-            "No language-model endpoint is configured. Set LLM_PROVIDER and "
-            "LLM_API_KEY (or LLM_BASE_URL for a local endpoint). "
-            "`nrw doctor` reports what it sees."
+            "No language-model endpoint is configured. "
+            f"{endpoint_hint()} `nrw doctor` reports what it sees."
         )
 
     try:
@@ -779,9 +836,8 @@ def judge_fit(
     """
     if not llm_available():
         raise AureUnavailableError(
-            "No language-model endpoint is configured. Set LLM_PROVIDER and "
-            "LLM_API_KEY (or LLM_BASE_URL for a local endpoint). "
-            "`nrw doctor` reports what it sees."
+            "No language-model endpoint is configured. "
+            f"{endpoint_hint()} `nrw doctor` reports what it sees."
         )
 
     try:
