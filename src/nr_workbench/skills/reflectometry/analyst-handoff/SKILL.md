@@ -72,6 +72,48 @@ invocation to use.** Do not go hunting through `~/.venv`, `~/.pixi` or
 `~/.zshrc` for the binary — that search is the single most expensive
 non-event ever measured in one of these sessions.
 
+### 1a. If you just cloned this project, set yourself up first
+
+Everything above assumes the project directory already works. A **fresh clone
+is different**, and `nrw handoff` cannot help until one step is done — because
+that step is what makes `nrw` runnable at all.
+
+A clone deliberately arrives *without* the two files that say where `nrw`
+lives. `.nrw/bin/nrw` and `.claude/settings.local.json` hold absolute paths, so
+they are gitignored and belong to whoever ran `init`, not to the project. So:
+
+```bash
+# 1. Install nr-workbench itself. `nrw init` cannot bootstrap the tool that
+#    provides it, so this is genuinely first. Skip if `nrw` is already on PATH.
+git clone <nr-workbench-url> && cd nr-workbench && pip install -e .
+
+# 2. In your clone of the *analysis* project:
+nrw init --check     # what a real init would change, before it changes it
+nrw init             # writes .nrw/bin/nrw and NRW_BIN for THIS machine
+nrw doctor           # confirm what it found
+cp .env.example .env # only for `nrw model new --from-notes` / AuRE
+```
+
+`nrw init` on an existing project is an upgrade, not a re-scaffold: it keeps
+the project's identity and reports every templated file as `unchanged`. What it
+always redoes is the machine-local part, which is exactly what you need.
+
+Two things to watch:
+
+- **Version skew.** `init` replans every skill and agent file from *your*
+  installed nr-workbench. If that differs from the version which scaffolded the
+  project, those files come back as `upgrade` and you get a diff nobody asked
+  for. Run `nrw init --check` first; if it is not clean, agree a version with
+  the other analyst before applying.
+- **A `PATH` that is not yours.** If `init` warns that
+  `.claude/settings.local.json` sets a `PATH` starting somewhere unfamiliar, it
+  was committed from someone else's machine. `init` refuses to rewrite a `PATH`
+  you may have set deliberately, so clear it yourself: `nrw doctor --fix-path`
+  to replace it, or delete the entry.
+
+Then run `nrw check`. It enforces provenance rule 3, so it is also how you find
+out whether the project you just cloned has absolute paths committed in it.
+
 ### 2. Read the escalations before you write a spec
 
 Not after a fit disagrees with you. `ESCALATIONS.md` is where an unattended

@@ -2513,3 +2513,76 @@ It is not free: ~12k input tokens of Claude Code preamble per call, ~$0.2–0.4
 per analysed curve of overhead, and ~1s of process startup. A plain endpoint is
 cheaper. This one is already configured, which for a beamtime is often the
 property that matters.
+
+### 2026-09-16: `UNTRACKED` was the wrong policy for exactly one template
+
+A project scaffolded by one analyst was cloned by a second and arrived with
+`.nrw/bin/nrw` and `.claude/settings.local.json` in it — both of which hold the
+absolute path of `nrw` on the first analyst's machine, and both of whose own
+header comments say they are gitignored and must not be committed.
+
+The chain, every link of which was separately defensible:
+
+1. The repository was created on GitHub, so it already had a Python
+   `.gitignore`.
+2. `classify()` therefore returned `UNTRACKED` for our own `.gitignore` — "on
+   disk but absent from the lock, treat as the user's" — which writes nothing,
+   writes no `.nrw-new` either, and reports `left alone 1 pre-existing file(s)`
+   without naming the file.
+3. The rules it withheld are precisely the ones that ignore the two
+   machine-local files.
+4. `_install_toolpath()` then wrote both. Nothing complained; both work
+   perfectly on the machine that wrote them.
+
+**The generalisable point: a scaffold that declines to install a file is making
+a policy decision, and the decision is only safe if nothing else the scaffold
+does depends on that file.** `UNTRACKED` is right for instruction files,
+editor settings and READMEs, all of which are inert. It was wrong for
+`.gitignore`, which is the only template that *enforces* something — provenance
+rule 3 — for code that runs later in the same command.
+
+So `.gitignore` is now planned with `PlannedFile.merge` set and installed as a
+marked block (`nr_workbench.project.ignore`), leaving everything outside the
+markers alone. A merged file deliberately does not consult the scaffold lock:
+the file is partly the user's, so a whole-file hash cannot say whether *our*
+part is current, whereas the markers travel with the file and survive a lock
+loss or a fresh clone.
+
+Three further things this turned up, each worth its own line:
+
+**`git check-ignore` reports an already-tracked path as NOT ignored, and that
+is correct.** Git applies no ignore rule to a path in the index. So adding the
+rule to `.gitignore` — which the merge now does — leaves an already-committed
+machine-local file exactly as committable as before, and advice that says only
+"add it to .gitignore" looks broken to whoever follows it. Every warning here
+has to offer `git rm --cached` when the path is tracked. This also means the
+check is strictly better than intended: it catches "the rule exists but the
+file was committed before it did".
+
+**`install()` refreshes `NRW_BIN` but leaves an existing `PATH` alone, which is
+right in isolation and wrong after a clone.** Not writing a `PATH` is a
+deliberate choice (see `path_override` — harness settings do not interpolate,
+so any value is a full override). But a *committed* `PATH` survives a clone
+intact and silently wins, so the second analyst's sessions ran with the first
+analyst's virtualenv at the front of `PATH`. On a shared filesystem that
+resolves rather than failing, which is the worse outcome — there is no error to
+notice. Hence `stale_path_entry()`: the fix stays additive, but the condition is
+now reported instead of being silent.
+
+**An unconditional `write_lock()` made every `nrw init` dirty a tracked file.**
+The document carries an `updated` timestamp, so a run that changed nothing
+still rewrote `.nrw/scaffold.lock.json`. One person discards the diff; two
+sharing a project get a merge conflict on a file neither edited, every time
+either runs `init`. The write is now conditional on an entry actually moving —
+*and* on the lock on disk being parseable, because a corrupt lock loads as
+empty and would otherwise compare equal to a no-op run and never be repaired.
+
+Rule 3 also had nothing enforcing it, which is why this reached a shared
+remote at all. `nrw check` now runs `check_committed_paths()`: tracked
+machine-local files, plus any tracked file naming a home directory. It matches
+home directories (`/home/x/`, `/Users/x/`, `/SNS/users/x/`) rather than
+absolute paths in general — `/SNS/REF_L/IPTS-1234/...` is where the data was
+and is true for everyone, and flagging it would make the check noisy enough to
+be ignored. Files listed in the scaffold lock are skipped: a path in one of
+those is this package's bug, not the project's, and `refl1d-script-review`
+quotes one deliberately as its example of what not to do.

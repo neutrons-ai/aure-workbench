@@ -39,6 +39,12 @@ samples/*/aure/*/output/
 # is exactly what must not be committed -- and the right answer differs per
 # machine anyway, so a shared copy would be wrong for everyone but its author.
 #
+# What happens when these are committed, observed on a project shared between
+# two analysts: the second one's `nrw init` refreshes NRW_BIN for them but
+# deliberately leaves an existing PATH entry alone, so their assistant sessions
+# run with the first analyst's virtualenv at the front of PATH. On a shared
+# filesystem that resolves instead of failing, which is the worse outcome.
+#
 # Listed for every harness this package knows, not just the ones this project
 # uses: ignoring a path that is never written costs nothing, and a line that
 # only appears once someone adds a harness is a line that gets forgotten.
