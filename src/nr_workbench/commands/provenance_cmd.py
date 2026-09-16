@@ -541,7 +541,103 @@ def collect_problems(
     problems.extend(check_generated_scripts(layout))
     problems.extend(check_reported_finality(layout, index))
     problems.extend(check_report_tiers(layout))
+    problems.extend(check_committed_paths(layout))
     return (checked, problems)
+
+
+#: Home directories, which is what makes a path specific to one person.
+#:
+#: Deliberately not "any absolute path": a note recording where the raw data
+#: sat at the facility (`/SNS/REF_L/IPTS-1234/...`) is true for everyone and
+#: worth writing down, whereas `/SNS/users/abc/...` is true for one account.
+#: Flagging the first would teach people to ignore this check.
+_HOME_PATH_PATTERN = r"(/home/|/Users/|/SNS/users/)[A-Za-z0-9._-]+/"
+
+
+def check_committed_paths(layout: ProjectLayout) -> list[dict[str, str]]:
+    """Enforce provenance rule 3: no absolute paths in committed files.
+
+    Rule 3 was the only provenance rule with nothing behind it, and it is the
+    one whose violation is invisible to whoever commits it -- an absolute path
+    works perfectly on the machine that wrote it. It surfaces when a second
+    analyst clones the project, which is the most expensive moment to diagnose
+    it and the furthest from the commit that caused it.
+
+    Two findings, most concrete first:
+
+    ``machine-local-tracked``
+        One of the files nr-workbench writes with this machine's paths in it is
+        tracked. No false positive is possible; these are machine-local by
+        construction.
+    ``absolute-path``
+        A tracked file mentions a home directory. Files nr-workbench installed
+        are skipped: a path in one of those is this package's bug rather than
+        the project's, and one bundled skill quotes such a path on purpose, as
+        its example of what not to do.
+
+    Args:
+        layout: The project layout.
+
+    Returns:
+        Problems in the shape `nrw check` reports. Empty when this is not a git
+        repository or git cannot be run -- nothing can be committed then, and a
+        finding we did not observe is worse than no finding.
+    """
+    import re
+
+    from nr_workbench.project import toolpath, vcs
+
+    root = layout.root
+    if not vcs.is_repository(root):
+        return []
+
+    problems: list[dict[str, str]] = []
+    tracked = set(vcs.tracked_files(root))
+
+    for relpath in toolpath.MACHINE_LOCAL_ALL:
+        if relpath in tracked:
+            problems.append(
+                {
+                    "fit_id": "-",
+                    "kind": "machine-local-tracked",
+                    "detail": (
+                        f"{relpath} holds this machine's absolute paths and is "
+                        "tracked; `git rm --cached` it, then ignore it"
+                    ),
+                }
+            )
+
+    ours = _scaffolded_relpaths(root)
+    pattern = re.compile(_HOME_PATH_PATTERN)
+    for relpath, line_no, text in vcs.grep(root, _HOME_PATH_PATTERN):
+        if relpath in ours or relpath in toolpath.MACHINE_LOCAL_ALL:
+            continue
+        found = pattern.search(text)
+        quoted = f" ({found.group(0)}...)" if found else ""
+        problems.append(
+            {
+                "fit_id": "-",
+                "kind": "absolute-path",
+                "detail": f"{relpath}:{line_no} names a home directory{quoted}",
+            }
+        )
+
+    return problems
+
+
+def _scaffolded_relpaths(root: Path) -> frozenset[str]:
+    """Paths nr-workbench installed, per the scaffold lock.
+
+    Args:
+        root: Project root.
+
+    Returns:
+        The lock's file paths, or an empty set when it is absent or unreadable
+        -- which only makes the check stricter, never quieter.
+    """
+    from nr_workbench.project.scaffold import load_lock
+
+    return frozenset(load_lock(root / ".nrw" / "scaffold.lock.json"))
 
 
 def check_report_tiers(layout: ProjectLayout) -> list[dict[str, str]]:

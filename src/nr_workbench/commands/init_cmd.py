@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
@@ -16,6 +18,9 @@ from nr_workbench.project.scaffold import (
     apply_scaffold,
 )
 from nr_workbench.skills_install import discover_skills, plan_skill_files
+
+if TYPE_CHECKING:
+    from nr_workbench.project.toolpath import ToolPathReport
 
 #: Skills installed by default.
 #:
@@ -51,6 +56,33 @@ SEED_SKILLS = (
 #: -- ground_truths.md already creates it.
 SEED_DIRS = ("samples",)
 
+#: Project templates installed as a marked block inside a file the user also
+#: owns, instead of as the whole file.
+#:
+#: Only `.gitignore`, and it is not a stylistic choice. A repository created on
+#: GitHub arrives with a language `.gitignore` already in it, which made ours
+#: `UNTRACKED` and silently skipped -- and the rules it withheld are the ones
+#: that keep `.nrw/bin/nrw` and `.claude/settings.local.json`, both of which
+#: hold this machine's absolute paths, out of a shared repository. See
+#: `nr_workbench.project.ignore` for the incident that established this.
+MERGED_TEMPLATES = frozenset({".gitignore"})
+
+
+def _as_merged_block(planned: PlannedFile) -> PlannedFile:
+    """Re-plan a template as a marked block rather than a whole file.
+
+    Args:
+        planned: The rendered template, whose content becomes the block body.
+
+    Returns:
+        The same file with its content wrapped in the managed markers and
+        ``merge`` set, so the scaffold engine splices it in.
+    """
+    from nr_workbench.project.ignore import wrap
+
+    body = planned.content.decode("utf-8")
+    return replace(planned, content=wrap(body).encode("utf-8"), merge=True)
+
 
 def plan_project_files(
     context: RenderContext,
@@ -79,7 +111,10 @@ def plan_project_files(
     """
     harnesses = resolve(context.harnesses)
 
-    planned = render_tree("project", context)
+    planned = [
+        _as_merged_block(file) if file.relpath in MERGED_TEMPLATES else file
+        for file in render_tree("project", context)
+    ]
     for harness in harnesses:
         if harness.template_subdir is None:
             continue
@@ -241,6 +276,9 @@ def _install_toolpath(root: Path) -> None:
     if report.settings_note:
         click.secho(f"  ! {report.settings_note}", fg="yellow")
 
+    _warn_if_committable(report)
+    _warn_if_path_is_someone_elses(report)
+
     if toolpath.resolvable_in_fresh_shell():
         return
 
@@ -254,6 +292,86 @@ def _install_toolpath(root: Path) -> None:
         f"    Written for them: {toolpath.SHIM_RELPATH} and "
         f"${toolpath.NRW_BIN_ENV} in {toolpath.LOCAL_SETTINGS}.\n"
         "    To make bare `nrw` work in those sessions too: `nrw doctor --fix-path`."
+    )
+
+
+def _warn_if_committable(report: ToolPathReport) -> None:
+    """Say so when the files we just wrote could be committed.
+
+    Belt and braces beside the merged `.gitignore`, which covers the common
+    case but not every one: the managed block can be deleted, a global ignore
+    file can contradict it, and -- the state the field failure was actually in
+    -- the files can already be *tracked*, which no ignore rule affects.
+
+    Without this the failure is invisible. The files work perfectly for the
+    person who wrote them and break only for whoever clones next.
+
+    Args:
+        report: The :class:`~nr_workbench.project.toolpath.ToolPathReport`.
+    """
+    if not report.unignored:
+        return
+
+    click.echo()
+    click.secho(
+        "  ! These hold this machine's absolute paths, and git would let them "
+        "be committed:",
+        fg="red",
+    )
+    for path in report.unignored:
+        suffix = "  (already tracked)" if path in report.tracked else ""
+        click.echo(f"      {path}{suffix}")
+
+    click.echo(
+        "    Committing them breaks the next person to clone this project: "
+        "their sessions\n"
+        "    get this machine's paths, and on a shared filesystem that "
+        "resolves instead\n"
+        "    of failing."
+    )
+    if report.tracked:
+        # An ignore rule has no effect on a path already in the index, so
+        # "add it to .gitignore" is advice that appears not to work. Say the
+        # other half of it.
+        click.echo("    Already tracked, so an ignore rule alone will not help:")
+        click.echo(f"      git rm --cached {' '.join(report.tracked)}")
+    rest = [path for path in report.unignored if path not in report.tracked]
+    if rest:
+        click.echo("    Add to .gitignore, inside the nr-workbench managed block:")
+        for path in rest:
+            click.echo(f"      {path}")
+
+
+def _warn_if_path_is_someone_elses(report: ToolPathReport) -> None:
+    """Say so when the settings ``PATH`` leads with another machine's install.
+
+    `install` refreshes ``NRW_BIN`` but leaves an existing ``PATH`` alone by
+    design, so a committed ``PATH`` survives a clone intact and silently wins
+    over the new machine's environment.
+
+    Args:
+        report: The :class:`~nr_workbench.project.toolpath.ToolPathReport`.
+    """
+    stale = report.stale_path
+    if not stale:
+        return
+
+    from nr_workbench.project import toolpath
+
+    click.echo()
+    click.secho(
+        f"  ! {toolpath.LOCAL_SETTINGS} sets a PATH that starts with:", fg="yellow"
+    )
+    click.echo(f"      {stale}")
+    click.echo(
+        "    That is not where this machine's `nrw` lives, which usually means "
+        "the file\n"
+        "    was committed on someone else's machine and cloned here. `nrw "
+        "init` does not\n"
+        "    rewrite a PATH you may have set deliberately.\n"
+        "    To replace it with this machine's: `nrw doctor --fix-path`. To drop "
+        "it, delete\n"
+        f"    the PATH entry from {toolpath.LOCAL_SETTINGS}."
     )
 
 
@@ -382,7 +500,8 @@ def _report(
     upgraded = report.count(Outcome.UPGRADE)
     unchanged = report.count(Outcome.UNCHANGED)
     drifted = report.drifted
-    untracked = report.count(Outcome.UNTRACKED)
+    untracked = [f for f in report.files if f.outcome is Outcome.UNTRACKED]
+    merged = [f for f in report.files if f.outcome is Outcome.MERGE]
 
     verb = "would " if check else ""
     click.echo(f"{'Checked' if check else 'Scaffolded'} {root}")
@@ -395,12 +514,19 @@ def _report(
         click.echo(f"  {verb}create   {created} file(s)")
     if upgraded:
         click.echo(f"  {verb}upgrade  {upgraded} file(s)")
+    if merged:
+        names = ", ".join(f.relpath for f in merged)
+        click.echo(f"  {verb}merge    {names} (the nr-workbench block only)")
     if unchanged:
         click.echo(f"  unchanged  {unchanged} file(s)")
     if untracked:
-        click.echo(
-            f"  left alone {untracked} pre-existing file(s) not installed by nrw"
-        )
+        # Named, not merely counted. The bare count was the whole problem: with
+        # `.gitignore` in this list the run said "left alone 1 pre-existing
+        # file(s)", and nothing told the reader that the file keeping
+        # machine-local absolute paths out of the repository was the one being
+        # skipped.
+        names = ", ".join(f.relpath for f in untracked)
+        click.echo(f"  left alone {names} (yours, not installed by nrw)")
 
     if drifted:
         click.echo()

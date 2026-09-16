@@ -15,7 +15,17 @@ Outcomes, one per templated file:
 `DRIFTED`        On disk, differs from what we installed. Never overwrite --
                  write ``<path>.nrw-new`` beside it and report.
 `UNTRACKED`      On disk but absent from the lock. Treat as the user's.
+`MERGE`          Only for a ``PlannedFile`` with ``merge`` set. The file holds
+                 a marked block we own inside content the user owns; insert or
+                 refresh just that block.
 ===============  =========================================================
+
+``UNTRACKED`` -- "the user brought their own, hands off" -- is the right answer
+for every template here except ``.gitignore``, where it silently withheld the
+rules that keep machine-local absolute paths out of a shared repository. That
+one is planned with ``merge`` set instead; see
+:mod:`nr_workbench.project.ignore` for what went wrong and why merging is the
+fix rather than a louder warning.
 """
 
 from __future__ import annotations
@@ -45,10 +55,13 @@ class Outcome(StrEnum):
     UPGRADE = "upgrade"
     DRIFTED = "drifted"
     UNTRACKED = "untracked"
+    MERGE = "merge"
 
 
 #: Outcomes that represent a change to the working tree.
-CHANGING_OUTCOMES = frozenset({Outcome.CREATE, Outcome.UPGRADE, Outcome.DRIFTED})
+CHANGING_OUTCOMES = frozenset(
+    {Outcome.CREATE, Outcome.UPGRADE, Outcome.DRIFTED, Outcome.MERGE}
+)
 
 
 @dataclass(frozen=True)
@@ -60,12 +73,17 @@ class PlannedFile:
         content: The rendered bytes to install.
         template_id: Stable identity of the source template.
         template_version: Bumped by us when a template's content changes.
+        merge: Install ``content`` as a marked block inside a file the user
+            also owns, rather than as the whole file. Changes how this file is
+            classified and applied -- see :data:`Outcome.MERGE`. Only
+            ``.gitignore`` uses it.
     """
 
     relpath: str
     content: bytes
     template_id: str
     template_version: int = 1
+    merge: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,6 +175,27 @@ def load_lock(lock_path: Path) -> dict[str, dict[str, Any]]:
     return entries
 
 
+def _lock_is_healthy(lock_path: Path) -> bool:
+    """Report whether the lock on disk is a lock we could have written.
+
+    Distinguishes "absent or damaged" from "valid and says nothing", which
+    :func:`load_lock` deliberately flattens into the same empty mapping.
+
+    Args:
+        lock_path: Path to ``.nrw/scaffold.lock.json``.
+
+    Returns:
+        True only if the file parses and carries a ``files`` object.
+    """
+    if not lock_path.is_file():
+        return False
+    try:
+        document = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+        return False
+    return isinstance(document, dict) and isinstance(document.get("files"), dict)
+
+
 def write_lock(lock_path: Path, entries: Mapping[str, dict[str, Any]]) -> None:
     """Write the scaffold lock atomically.
 
@@ -190,6 +229,9 @@ def classify(
     Returns:
         The outcome for this file.
     """
+    if planned.merge:
+        return _classify_merge(planned, target)
+
     if not target.exists():
         return Outcome.CREATE
 
@@ -207,6 +249,92 @@ def classify(
 
     # Unmodified since we installed it, but the template has changed.
     return Outcome.UPGRADE
+
+
+def _classify_merge(planned: PlannedFile, target: Path) -> Outcome:
+    """Decide what should happen to a merge-managed file.
+
+    The scaffold lock is deliberately not consulted. A merged file is partly
+    the user's, so a whole-file hash cannot say whether *our* part is current
+    -- the markers can, and they travel with the file, so this stays correct
+    through a lock loss, a fresh clone, or a hand-moved block.
+
+    Args:
+        planned: The file the scaffold wants to install, ``merge`` set.
+        target: Absolute path where it would go.
+
+    Returns:
+        CREATE if the file is absent, UNCHANGED if the block is already
+        current, MERGE if it needs inserting or refreshing, or DRIFTED if the
+        existing block is unterminated and cannot be repaired safely.
+    """
+    from nr_workbench.project import ignore
+
+    if not target.exists():
+        return Outcome.CREATE
+
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Unreadable or not text. Refusing is the conservative answer: this is
+        # the user's file and we would be guessing at its encoding.
+        return Outcome.DRIFTED
+
+    try:
+        if ignore.is_current(existing, planned.content.decode("utf-8")):
+            return Outcome.UNCHANGED
+    except ignore.DamagedBlockError:
+        return Outcome.DRIFTED
+    return Outcome.MERGE
+
+
+def merged_content(planned: PlannedFile, target: Path) -> bytes:
+    """Compute what a merge-managed file should contain.
+
+    Args:
+        planned: The file the scaffold wants to install, ``merge`` set.
+        target: Absolute path where it would go.
+
+    Returns:
+        The file's full new contents, with the managed block inserted or
+        refreshed and everything outside it preserved.
+
+    Raises:
+        DamagedBlockError: If the existing block is unterminated. Callers
+            reach this only after :func:`classify` returned MERGE, which
+            already excludes that case.
+    """
+    from nr_workbench.project import ignore
+
+    block = planned.content.decode("utf-8")
+    if not target.exists():
+        return block.encode("utf-8")
+    existing = target.read_text(encoding="utf-8")
+    return ignore.merge(existing, block).encode("utf-8")
+
+
+def _forced_content(planned: PlannedFile, target: Path) -> bytes:
+    """What ``--force`` should write over a DRIFTED file.
+
+    Args:
+        planned: The file the scaffold wants to install.
+        target: Absolute path where it would go.
+
+    Returns:
+        The template bytes for an ordinary file. For a merge-managed one, the
+        file with its damaged block resolved and the user's own rules kept.
+    """
+    if not planned.merge:
+        return planned.content
+
+    from nr_workbench.project import ignore
+
+    try:
+        existing = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Not text, so there is nothing to preserve and nothing to merge into.
+        return planned.content
+    return ignore.force_merge(existing, planned.content.decode("utf-8")).encode("utf-8")
 
 
 def apply_scaffold(
@@ -255,13 +383,22 @@ def apply_scaffold(
         alongside: str | None = None
 
         if not dry_run:
-            if outcome is Outcome.CREATE or outcome is Outcome.UPGRADE:
+            if outcome is Outcome.MERGE:
+                _write(target, merged_content(planned, target))
+                updated_lock[planned.relpath] = _lock_entry(planned)
+            elif outcome is Outcome.CREATE or outcome is Outcome.UPGRADE:
                 _write(target, planned.content)
                 updated_lock[planned.relpath] = _lock_entry(planned)
             elif outcome is Outcome.DRIFTED:
                 if force:
                     _backup(target, root, backup_root)
-                    _write(target, planned.content)
+                    # A merge-managed file is only ever DRIFTED because its
+                    # block is damaged, so `--force` must resolve the block
+                    # rather than overwrite the file -- writing
+                    # `planned.content` here would replace the user's whole
+                    # `.gitignore` with the block and drop every rule they
+                    # wrote. See `ignore.force_merge`.
+                    _write(target, _forced_content(planned, target))
                     updated_lock[planned.relpath] = _lock_entry(planned)
                     outcome = Outcome.UPGRADE
                 else:
@@ -275,7 +412,20 @@ def apply_scaffold(
 
         results.append(FileResult(planned.relpath, outcome, alongside))
 
-    if not dry_run:
+    # Only write the lock when an entry actually moved, or when what is on disk
+    # is not a usable lock. The document carries an `updated` timestamp, so an
+    # unconditional write made every `nrw init` -- including one that changed
+    # nothing at all -- dirty a *tracked* file. For one person that is a
+    # one-line diff to discard; for two sharing a project it is a merge
+    # conflict on a file neither of them edited, arriving whenever either runs
+    # `init`. Skipping the write also keeps `updated` meaning "when the
+    # scaffold last changed" rather than "when init last ran".
+    #
+    # The health test is not redundant with the comparison: a corrupt lock
+    # loads as empty, so a run in which every file reads as UNTRACKED would
+    # compare equal and leave the corruption in place. Replacing it is how a
+    # project recovers.
+    if not dry_run and (updated_lock != lock or not _lock_is_healthy(lock_path)):
         write_lock(lock_path, updated_lock)
 
     return ScaffoldReport(root=root, files=results, dry_run=dry_run)
@@ -324,13 +474,25 @@ def _render_diff(planned: PlannedFile, target: Path) -> str:
 
     Binary content is reported as a one-line summary rather than mangled into
     the diff.
+
+    For a merge-managed file the comparison is against the *merged* result, not
+    against the block on its own -- otherwise `nrw init --diff` would show the
+    user's entire ``.gitignore`` being replaced, which is the opposite of what
+    is about to happen.
     """
     old_bytes = target.read_bytes() if target.exists() else b""
-    if _is_binary(planned.content) or _is_binary(old_bytes):
-        return f"# {planned.relpath}: binary file, {len(planned.content)} bytes\n"
+    new_bytes = planned.content
+    if planned.merge:
+        try:
+            new_bytes = merged_content(planned, target)
+        except Exception:  # noqa: BLE001 - a damaged block is never applied
+            new_bytes = planned.content
+
+    if _is_binary(new_bytes) or _is_binary(old_bytes):
+        return f"# {planned.relpath}: binary file, {len(new_bytes)} bytes\n"
 
     try:
-        new_text = planned.content.decode("utf-8")
+        new_text = new_bytes.decode("utf-8")
         old_text = old_bytes.decode("utf-8")
     except UnicodeDecodeError:  # pragma: no cover - guarded by _is_binary
         return f"# {planned.relpath}: binary file, {len(planned.content)} bytes\n"

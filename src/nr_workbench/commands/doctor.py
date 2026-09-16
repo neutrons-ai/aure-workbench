@@ -132,7 +132,100 @@ def collect_checks() -> list[Check]:
     checks.extend(_project_checks())
     checks.extend(_agent_checks())
     checks.extend(_toolpath_checks())
+    checks.extend(_sharing_checks())
     return checks
+
+
+def _sharing_checks() -> list[Check]:
+    """Report whether this project is safe for a second person to clone.
+
+    `nrw doctor` is what the handoff skill tells a new analyst to run, so it is
+    where the answer belongs. Two questions, both invisible to the person who
+    caused them because both work perfectly on the machine that did:
+
+    * are the machine-local files -- which hold absolute paths -- committable?
+    * does the local settings `PATH` lead somewhere that is not this machine's
+      `nrw`, i.e. did it arrive with a clone?
+    """
+    from nr_workbench.project import toolpath
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError:
+        return []
+
+    checks: list[Check] = []
+    committable = toolpath.unignored_paths(root, toolpath.MACHINE_LOCAL)
+    if committable:
+        tracked = set(toolpath.MACHINE_LOCAL) & set(
+            _tracked(root, toolpath.MACHINE_LOCAL)
+        )
+        listed = ", ".join(committable)
+        remedy = (
+            f"`git rm --cached {' '.join(sorted(tracked))}`"
+            if tracked
+            else "add them to .gitignore"
+        )
+        checks.append(
+            Check(
+                "sharing",
+                "warn",
+                f"{listed} hold this machine's absolute paths and could be "
+                f"committed; {remedy}",
+            )
+        )
+    else:
+        checks.append(Check("sharing", _OK, "machine-local paths cannot be committed"))
+
+    stale = _foreign_path(root)
+    if stale:
+        checks.append(
+            Check(
+                "settings PATH",
+                "warn",
+                f"starts with {stale}, which is not this machine's `nrw`; it "
+                "was probably committed elsewhere and cloned here -- "
+                "`nrw doctor --fix-path`, or delete the entry",
+            )
+        )
+    return checks
+
+
+def _tracked(root: Path, relpaths: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of ``relpaths`` git is tracking in ``root``."""
+    from nr_workbench.project import vcs
+
+    known = set(vcs.tracked_files(root))
+    return tuple(path for path in relpaths if path in known)
+
+
+def _foreign_path(root: Path) -> str:
+    """The local settings `PATH`'s first entry, if it is not ours.
+
+    Args:
+        root: Project root.
+
+    Returns:
+        The offending entry, or an empty string when `PATH` is absent, already
+        correct, or `nrw` cannot be resolved to compare against.
+    """
+    from nr_workbench.project import toolpath
+
+    resolved = toolpath.nrw_executable()
+    if resolved is None:
+        return ""
+    settings = root / toolpath.LOCAL_SETTINGS
+    if not settings.is_file():
+        return ""
+    try:
+        document = json.loads(settings.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    environment = document.get("env") if isinstance(document, dict) else None
+    if not isinstance(environment, dict):
+        return ""
+    return toolpath.stale_path_entry(environment, resolved)
 
 
 def _toolpath_checks() -> list[Check]:
