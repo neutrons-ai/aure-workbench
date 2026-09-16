@@ -147,3 +147,75 @@ def test_model_new_uses_the_register_not_the_disk(
     )
     assert [state["run"] for state in spec["states"]] == [100001]
     assert "does not list run(s) 100010, 100020" in result.output
+
+
+# --------------------------------------------------------------------------
+# The `_autoreduction.dat` dialect
+# --------------------------------------------------------------------------
+
+# REF_L's `new_reduction` pipeline writes `_autoreduction.dat` instead of
+# `_partial.txt`. The scan missed them twice over: the extension filter dropped
+# `.dat` before the pattern ever ran, and the pattern only knew `_partial.txt`.
+#
+# The failure mode is what makes these worth pinning. A directory of three
+# valid files reported "no data found", the files did not appear in
+# `unreadable` either, and `nrw.toml`'s `partial_glob` -- which looks like the
+# setting that governs this -- is documentation that nothing reads. So the
+# obvious fix silently did nothing.
+
+
+def write_autoreduction_run(steady: Path, run: int, segments: int = 3) -> None:
+    """Write per-angle files in the `new_reduction` dialect."""
+    q = np.linspace(0.01, 0.2, 20)
+    r = 1e-3 * (0.01 / q) ** 4
+    rows = "\n".join(
+        f"{a:.6e} {b:.6e} {c:.6e} {d:.6e}"
+        for a, b, c, d in zip(q, r, 0.05 * r, 0.02 * q, strict=True)
+    )
+    # The real header states sigma here, where the old one stated FWHM.
+    body = "# columns = Q, R, dR, dQ (sigma)\n" + rows
+    for segment in range(1, segments + 1):
+        name = f"REFL_{run}_{segment}_{run + segment - 1}_autoreduction.dat"
+        (steady / name).write_text(body)
+
+
+def test_scan_finds_autoreduction_segments(project: Path) -> None:
+    steady = project / "samples" / "Sample1" / "data" / "steady"
+    steady.mkdir(parents=True, exist_ok=True)
+    write_autoreduction_run(steady, 234277)
+
+    found = scan_sample(project, "Sample1")
+
+    assert set(found.steady) == {234277}
+    assert sorted(found.steady[234277].partials) == [1, 2, 3]
+    assert found.unreadable == []
+
+
+def test_scan_finds_both_dialects_side_by_side(project: Path) -> None:
+    """A beamtime mid-migration has both, and neither may hide the other."""
+    steady = project / "samples" / "Sample1" / "data" / "steady"
+    steady.mkdir(parents=True, exist_ok=True)
+    write_run(steady, 100001)
+    write_autoreduction_run(steady, 234277)
+
+    found = scan_sample(project, "Sample1")
+
+    assert set(found.steady) == {100001, 234277}
+    assert len(found.steady[100001].partials) == 2
+    assert len(found.steady[234277].partials) == 3
+
+
+def test_an_unrecognised_dat_file_is_reported_not_swallowed(project: Path) -> None:
+    """The extension filter used to drop `.dat` before anything could report it.
+
+    Being listed as unreadable is the whole point: a file the scan cannot place
+    must be visible, or a typo in a filename looks like an empty directory.
+    """
+    steady = project / "samples" / "Sample1" / "data" / "steady"
+    steady.mkdir(parents=True, exist_ok=True)
+    (steady / "REFL_234277_1_234277_autoreducton.dat").write_text("0.01 1.0 0.1 0.001")
+
+    found = scan_sample(project, "Sample1")
+
+    assert found.steady == {}
+    assert any("autoreducton" in p for p in found.unreadable)

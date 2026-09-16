@@ -16,11 +16,36 @@ from typing import Any
 
 #: REF_L reduced-file conventions. Kept here rather than read from nrw.toml
 #: because they are compiled patterns, not user preferences; nrw.toml records
-#: them for humans and downstream tools.
+#: them for humans and downstream tools -- and, be warned, records them
+#: *inertly*: editing `partial_glob` there changes nothing here, which is the
+#: first thing anyone tries when a new format is not found.
+#:
+#: These duplicate patterns in `instrument/header.py` and in AuRE's own
+#: `instruments/ref_l.py`. See `docs/plan-reduced-format-registry.md` for the
+#: single-registry design that would remove the duplication.
 COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
+
+#: Per-segment files, in both reduction dialects.
+#:
+#: ``_partial.txt`` is the established reduction; ``_autoreduction.dat`` comes
+#: from the ``new_reduction`` pipeline. Same ``run / seg / subrun`` scheme,
+#: different suffix *and* extension -- and the two disagree about what the
+#: fourth column means (FWHM vs sigma), which is why that is read from each
+#: file's header and never inferred from its name.
 PARTIAL_RE = re.compile(
-    r"^REFL_(?P<run>\d+)_(?P<seg>\d+)_(?P<subrun>\d+)_partial\.txt$"
+    r"^REFL_(?P<run>\d+)_(?P<seg>\d+)_(?P<subrun>\d+)"
+    r"_(?:partial\.txt|autoreduction\.dat)$"
 )
+
+#: Extensions a reduced steady-state file may have.
+#:
+#: Checked before the patterns, so anything else is skipped without reaching
+#: them and without being reported as unreadable. That is how a directory of
+#: three valid ``.dat`` files came to look like an empty one: the extension
+#: filter dropped them silently and the scan said "no data found", naming
+#: neither the files nor the extension as the reason.
+STEADY_SUFFIXES = frozenset({".txt", ".dat"})
+
 SLICE_RE = re.compile(r"^r(?P<run>\d+)_t(?P<t>\d+)\.txt$")
 REDUCTION_RE = re.compile(r"^r?(?P<run>\d+)?_?.*reduction\.json$")
 
@@ -190,7 +215,7 @@ def _scan_steady(directory: Path, root: Path, result: ScanResult) -> None:
     if not directory.is_dir():
         return
     for path in sorted(directory.iterdir()):
-        if not path.is_file() or path.suffix != ".txt":
+        if not path.is_file() or path.suffix not in STEADY_SUFFIXES:
             continue
         relative = path.relative_to(root).as_posix()
 

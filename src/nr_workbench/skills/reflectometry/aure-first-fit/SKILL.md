@@ -88,9 +88,15 @@ chi-squared.
    adsorbed film. AuRE ranks these as candidate structures and tests them.
 6. **How long can this take?** Minutes, or can it run properly?
 
-### 3. Write the answers into `sample.md` — not into a prompt
+### 3. Get the answers into `sample.md` — but do not write them yourself
 
-Questions 1–3 go under `## Description` and `## Details`; question 5 under
+**`sample.md` is the scientist's file. An assistant must not edit it.** It is
+the live record of an experiment in progress, and something you add can
+silently overwrite something they added a minute ago. Hand them the answers in
+a form they can paste, or just tell them which section is empty, and let them
+write it.
+
+Questions 1–3 belong under `## Description` and `## Details`; question 5 under
 `## Fits to perform`. The template already has these sections.
 
 This is not bookkeeping. It is the step that makes the rest work:

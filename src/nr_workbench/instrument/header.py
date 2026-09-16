@@ -24,6 +24,12 @@ one itself -- see the ``refl-reduced-headers`` skill.
 
 Time-resolved slices carry no header at all. Nothing invents one; the caller is
 told the angle is unknown and must declare it.
+
+**Two dialects are live.** ``_partial.txt`` writes the ``# Meta:`` block above;
+``_autoreduction.dat`` writes ``# Key = value`` lines and, crucially, a fourth
+column in **sigma** rather than FWHM. Which one a file is in is decided here,
+and the filename patterns that decide it are also duplicated in
+``project/scan.py`` and in AuRE -- see ``docs/plan-reduced-format-registry.md``.
 """
 
 from __future__ import annotations
@@ -51,9 +57,18 @@ _TABLE_RE = re.compile(
 #: This is the only place on disk that says whether ``dQ`` is a full width or a
 #: standard deviation, and the two differ by 2.355 -- a factor that broadens or
 #: sharpens every fringe and that a fit absorbs into roughness rather than
-#: reporting. The reduction writes FWHM today and there is an intention to move
-#: to sigma, so the convention is read per file and never assumed.
+#: reporting. ``_partial.txt`` writes FWHM here; ``_autoreduction.dat`` writes
+#: sigma on a different line. Both are in use, so the convention is read per
+#: file and never assumed.
 _DQ_COLUMN_RE = re.compile(r"^#.*\bdQ\b\s*\[\s*(?P<label>[^\]]*?)\s*\]", re.IGNORECASE)
+
+#: The same statement in the ``new_reduction`` dialect: parentheses rather than
+#: brackets, on a ``columns =`` line.
+#:
+#:     # columns = Q, R, dR, dQ (sigma)
+_DQ_COLUMNS_RE = re.compile(
+    r"^#\s*columns\s*=.*\bdQ\b\s*\(\s*(?P<label>[^)]*?)\s*\)", re.IGNORECASE
+)
 
 #: Column labels meaning a full width at half maximum.
 _FWHM_LABELS = frozenset({"fwhm", "full width", "full width at half maximum"})
@@ -62,6 +77,34 @@ _FWHM_LABELS = frozenset({"fwhm", "full width", "full width at half maximum"})
 _SIGMA_LABELS = frozenset(
     {"sigma", "σ", "1-sigma", "1 sigma", "one sigma", "std", "stdev", "std dev"}
 )
+
+#: ``# Key = value`` and ``# Key: value``, the ``new_reduction`` header's shape.
+_AUTORED_KV_RE = re.compile(
+    r"^#\s*(?P<key>[A-Za-z][A-Za-z0-9 _]*?)\s*[:=]\s*(?P<value>\S.*)$"
+)
+
+#: A file in the ``new_reduction`` dialect, and its segment number.
+#:
+#: The segment must come from the *filename*, because the header does not say
+#: which segment it describes: it is the whole run's header, byte-identical in
+#: every one of that run's files.
+_AUTORED_NAME_RE = re.compile(
+    r"^REFL_(?P<run>\d+)_(?P<seg>\d+)_(?P<subrun>\d+)_autoreduction\.dat$",
+    re.IGNORECASE,
+)
+
+#: The trailing segment index in a run title, e.g. ``Sample1_air-234277-2.``
+#:
+#: This is how a file finds its own entry in the header's parallel arrays, and
+#: the reason it is not simply ``array[seg - 1]``: a segment measured in two
+#: pieces gets two entries, so ``THS`` is routinely longer than the segment
+#: count and positional indexing is off by one after the duplicate. On run
+#: 234277 that gives segment 3 an angle of 1.251 deg instead of 3.5 -- a factor
+#: of ~2.8 in Q, which fits cleanly to a wrong thickness.
+_TITLE_SEGMENT_RE = re.compile(r"-(?P<seg>\d+)\.?\s*$")
+
+#: Lines whose presence identifies the dialect.
+_AUTORED_MARKERS = ("# Angles:", "# Config:")
 
 #: How many leading lines to scan. The header is a dozen lines; reading the
 #: whole of a 250-row file to find it would still be cheap, but a malformed
@@ -82,7 +125,13 @@ class ReducedHeader:
         theta: Incident angle in **degrees**, converted from the radians the
             file stores. ``None`` when the file carries no header.
         run: The run that produced this segment.
-        norm_run: The direct-beam run it was divided by.
+        norm_run: The direct-beam run it was divided by. ``None`` in the
+            ``new_reduction`` dialect, which records a filename instead -- see
+            ``norm_source``.
+        norm_source: The direct beam as named by the ``new_reduction`` header,
+            e.g. ``"A2_Si.txt"``. A filename rather than a run number, so it
+            does not say *when* that direct beam was measured -- which is the
+            question a disagreeing pair of segments sends you here to answer.
         sequence_number: Which angle segment this is, 1-based.
         sequence_id: The run number of the measurement as a whole.
         dq_over_q: Fractional resolution as reduced.
@@ -99,8 +148,9 @@ class ReducedHeader:
         start_time: ISO-8601 start, usable for a geometry lookup.
         experiment: The IPTS identifier.
         theta_offset: Any offset already applied by the reduction.
-        source: ``meta`` when read from the JSON block, ``table`` from the
-            fixed-width summary, ``none`` when there was no header.
+        source: ``meta`` when read from the ``# Meta:`` JSON block,
+            ``autoreduction`` from the ``new_reduction`` dialect, ``table``
+            from the fixed-width summary, ``none`` when there was no header.
         raw: The full JSON object, for anything not surfaced above.
     """
 
@@ -108,6 +158,7 @@ class ReducedHeader:
     theta: float | None = None
     run: int | None = None
     norm_run: int | None = None
+    norm_source: str | None = None
     sequence_number: int | None = None
     sequence_id: int | None = None
     dq_over_q: float | None = None
@@ -147,6 +198,7 @@ class ReducedHeader:
             "theta_deg": self.theta,
             "run": self.run,
             "norm_run": self.norm_run,
+            "norm_source": self.norm_source,
             "sequence_number": self.sequence_number,
             "sequence_id": self.sequence_id,
             "dq_over_q": self.dq_over_q,
@@ -198,6 +250,10 @@ def read_header(path: Path) -> ReducedHeader:
             _apply_meta(header, line[len(META_PREFIX) :], path)
             return header
 
+    if any(line.startswith(marker) for line in lines for marker in _AUTORED_MARKERS):
+        _apply_autoreduction(header, lines, path)
+        return header
+
     # No JSON block. The fixed-width table still carries TwoTheta.
     for line in lines:
         match = _TABLE_RE.match(line)
@@ -223,7 +279,7 @@ def _apply_dq_convention(header: ReducedHeader, lines: list[str], path: Path) ->
             unknown label has to stop the caller rather than default to FWHM.
     """
     for line in lines:
-        match = _DQ_COLUMN_RE.match(line)
+        match = _DQ_COLUMN_RE.match(line) or _DQ_COLUMNS_RE.match(line)
         if match is None:
             continue
         label = match.group("label")
@@ -243,6 +299,169 @@ def _apply_dq_convention(header: ReducedHeader, lines: list[str], path: Path) ->
                 "reduction meant."
             )
         return
+
+
+def _autoreduction_fields(lines: list[str]) -> dict[str, Any]:
+    """Parse the ``# Key = value`` lines of the ``new_reduction`` header.
+
+    **The writer mixes two notations, line by line**, so both are tried:
+
+    ==============================  =========================================
+    ``# Config: {"a": null, ...}``  JSON -- ``null``, ``false`` are not Python
+    ``# NR_runs = [None, None, 3]`` Python -- ``None`` is not JSON
+    ``# DB = ['A1_Si.txt']``        Python -- single quotes are not JSON
+    ``# Angles: {"THS": [-0.45]}``  either, being only numbers
+    ``# Lambda Range = 2.65Å to …`` neither; kept as its raw string
+    ==============================  =========================================
+
+    Parsing with only one of them looks like it works: ``Angles`` succeeds
+    under both, so the angle -- the field most likely to be checked -- comes
+    out right while ``Config`` silently degrades to a string and every field
+    under it goes ``None``.
+
+    :func:`ast.literal_eval` executes nothing, so neither path evaluates code
+    from a data file.
+
+    Args:
+        lines: The file's leading comment lines.
+
+    Returns:
+        Mapping of key to parsed value. Later lines win, which matters only for
+        a malformed file that repeats a key.
+    """
+    import ast
+
+    fields: dict[str, Any] = {}
+    for line in lines:
+        match = _AUTORED_KV_RE.match(line)
+        if match is None:
+            continue
+        raw = match.group("value").strip()
+        value: Any = raw
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            try:
+                value = ast.literal_eval(raw)
+            except (ValueError, SyntaxError, MemoryError, RecursionError):
+                value = raw
+        fields[match.group("key").strip()] = value
+    return fields
+
+
+def _segment_index(titles: list[Any], segment: int) -> int | None:
+    """Find this segment's slot in the header's parallel arrays.
+
+    The arrays are per *acquisition*, not per segment: a segment measured in
+    two pieces appears twice, so ``THS`` can be longer than the segment count
+    and ``array[segment - 1]`` silently mis-assigns everything after the
+    duplicate. The run titles end in ``-<segment>.``, so they are what ties a
+    slot to a segment.
+
+    Args:
+        titles: The ``Run Title.title`` array.
+        segment: 1-based segment number, from the filename.
+
+    Returns:
+        Index of the first slot belonging to ``segment``, or None if no title
+        names it. Duplicates agree with each other, so the first is enough.
+    """
+    for index, title in enumerate(titles):
+        match = _TITLE_SEGMENT_RE.search(str(title))
+        if match and int(match.group("seg")) == segment:
+            return index
+    return None
+
+
+def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) -> None:
+    """Populate a header from the ``new_reduction`` dialect.
+
+    Unlike ``# Meta:``, this header describes the whole run and is identical in
+    every one of its files, so the file's own segment comes from its name and
+    every per-segment value is looked up rather than read.
+
+    Nothing here raises on a missing field. The dialect is new and the writer
+    may drop keys; a ``None`` that callers must handle is already the contract,
+    whereas refusing to parse a file over an absent ``Lambda Range`` would be
+    worse than the gap it reports.
+
+    Args:
+        header: The header to populate, modified in place.
+        lines: The file's leading comment lines.
+        path: The file, used for its segment number.
+    """
+    fields = _autoreduction_fields(lines)
+    header.raw = fields
+    header.source = "autoreduction"
+
+    name_match = _AUTORED_NAME_RE.match(path.name)
+    segment = int(name_match.group("seg")) if name_match else None
+    if name_match:
+        header.sequence_number = segment
+        header.sequence_id = int(name_match.group("run"))
+        header.run = int(name_match.group("subrun"))
+
+    config = fields.get("Config")
+    config = config if isinstance(config, dict) else {}
+    header.experiment = _as_str(config.get("experiment_id"))
+
+    titles = fields.get("Run Title")
+    titles = titles.get("title") if isinstance(titles, dict) else None
+    titles = titles if isinstance(titles, list) else []
+
+    slot = _segment_index(titles, segment) if segment is not None else None
+    if slot is not None:
+        header.run_title = _as_str(titles[slot])
+
+    angles = fields.get("Angles")
+    angles = angles if isinstance(angles, dict) else {}
+    # THS is the sample angle and the one that carries the setting; ThCen
+    # repeats it. Both are signed -- negative on this project's back-reflection
+    # run -- and the probe wants the magnitude.
+    series = angles.get("THS") or angles.get("ThCen")
+    if isinstance(series, list) and slot is not None and slot < len(series):
+        theta = _as_float(series[slot])
+        header.theta = abs(theta) if theta is not None else None
+
+    if segment is not None:
+        header.norm_source = _as_str(_by_segment(fields.get("DB"), segment))
+        scaling = fields.get("Scaling factors")
+        if isinstance(scaling, dict):
+            header.scaling_factor = _as_float(
+                _by_segment(scaling.get("scale_factor"), segment)
+            )
+        header.theta_offset = _as_float(_by_segment(config.get("ThetaShift"), segment))
+
+    header.wavelength_range = (
+        _as_float(config.get("LambdaMinUse")),
+        _as_float(config.get("LambdaMaxUse")),
+    )
+
+    # `q_range` and `dq_over_q` are deliberately left None. `Config` carries
+    # `qmin`/`qmax`/`dqbin`, but those are the limits and binning the reduction
+    # was *asked* for, not the range it produced or the resolution it achieved
+    # -- on run 234277, qmax is 0.5 against data reaching 0.278, and dqbin is
+    # 0.015 against a median dQ/Q of 0.011. Reporting a request as a
+    # measurement is the error this module exists to prevent.
+
+
+def _by_segment(series: Any, segment: int) -> Any:
+    """Take a per-segment entry from an array indexed 1-based by segment.
+
+    Only for arrays that genuinely have one entry per segment -- ``DB``,
+    ``scale_factor``, ``ThetaShift``. The angle and title arrays are per
+    acquisition and must go through :func:`_segment_index` instead.
+
+    Args:
+        series: The candidate array.
+        segment: 1-based segment number.
+
+    Returns:
+        The entry, or None if ``series`` is not a long enough list.
+    """
+    if not isinstance(series, list) or segment < 1 or segment > len(series):
+        return None
+    return series[segment - 1]
 
 
 def _apply_meta(header: ReducedHeader, payload: str, path: Path) -> None:
@@ -309,8 +528,10 @@ def theta_for_run(steady_dir: Path, run: int) -> tuple[float | None, str | None]
     # Prefer a per-angle partial: it names its own sequence number, so a
     # measurement with several angles is unambiguous. The combined file is a
     # fine fallback and carries the same theta for a single-angle run.
-    candidates = sorted(steady_dir.glob(f"REFL_{run}_*_partial.txt")) + sorted(
-        steady_dir.glob(f"REFL_{run}_combined*.txt")
+    candidates = (
+        sorted(steady_dir.glob(f"REFL_{run}_*_partial.txt"))
+        + sorted(steady_dir.glob(f"REFL_{run}_*_autoreduction.dat"))
+        + sorted(steady_dir.glob(f"REFL_{run}_combined*.txt"))
     )
     for candidate in candidates:
         try:

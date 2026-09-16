@@ -1013,7 +1013,7 @@ _SECTIONS: tuple[tuple[str, str], ...] = (
     ),
     ("stack", "# ambient -> substrate"),
     ("probe", ""),
-    ("states", "# Angles were read from each file's `# Meta:` header."),
+    ("states", "# Angles were read from each file's header. Do not round them."),
     ("series", ""),
     (
         "parameters",
@@ -1300,7 +1300,13 @@ def _measured_facts(
     for state in document.get("states", []):
         data_dir = layout.root / str(state.get("data_dir", ""))
         run = state.get("run")
-        candidates = sorted(data_dir.glob(f"REFL_{run}_*_partial.txt"))[:1]
+        # Both reduction dialects; see docs/plan-reduced-format-registry.md.
+        candidates = sorted(
+            [
+                *data_dir.glob(f"REFL_{run}_*_partial.txt"),
+                *data_dir.glob(f"REFL_{run}_*_autoreduction.dat"),
+            ]
+        )[:1]
         for path in candidates:
             try:
                 import numpy as np

@@ -74,6 +74,26 @@ it is about:
 to `docs/ground_truths.md`, which is for what is true regardless of which
 sample you are looking at.
 
+### `sample.md` is the scientist's file. Do not write to it.
+
+`samples/<id>/sample.md` is the one file in this project an assistant must not
+edit. It is the live record of an experiment in progress, updated by hand as
+measurements happen, and it is the *input* to everything else — `nrw aure new`
+and `nrw model new --from-notes` both build the model from it.
+
+Read it, quote it, build specs from it. Do not write to it. An assistant
+editing it is competing with the person who holds the knowledge, and can
+silently overwrite something they added a minute ago.
+
+That includes the sections that look like invitations. If `## Description` is
+empty and `nrw aure new` refuses, or the six questions in
+`skills/reflectometry/aure-first-fit/SKILL.md` have no answers in there, that
+is **a blocker to raise, not a gap to fill.** Ask, and say exactly what is
+missing.
+
+Everything an assistant learns has somewhere else to go — the three rows of the
+table above. Use them.
+
 Cite fit ids in the prose. That is the whole linking mechanism: `nrw ls`, the
 fit page and `nrw pack` all find a report by the ids it mentions.
 
