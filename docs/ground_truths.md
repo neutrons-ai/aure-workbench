@@ -2580,9 +2580,10 @@ empty and would otherwise compare equal to a no-op run and never be repaired.
 Rule 3 also had nothing enforcing it, which is why this reached a shared
 remote at all. `nrw check` now runs `check_committed_paths()`: tracked
 machine-local files, plus any tracked file naming a home directory. It matches
-home directories (`/home/x/`, `/Users/x/`, `/SNS/users/x/`) rather than
-absolute paths in general — `/SNS/REF_L/IPTS-1234/...` is where the data was
-and is true for everyone, and flagging it would make the check noisy enough to
-be ignored. Files listed in the scaffold lock are skipped: a path in one of
-those is this package's bug, not the project's, and `refl1d-script-review`
-quotes one deliberately as its example of what not to do.
+home directories — `/home/<user>/` and the `/Users/` and `/SNS/users/` forms —
+rather than absolute paths in general, because `/SNS/REF_L/IPTS-1234/...` is
+where the data was and is true for everyone. Flagging that would make the
+check noisy enough to be ignored. Files listed in the scaffold lock are
+skipped: a path in one of those is this package's bug, not the project's, and
+`refl1d-script-review` quotes one deliberately as its example of what not to
+do.
