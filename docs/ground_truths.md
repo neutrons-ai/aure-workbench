@@ -2587,3 +2587,63 @@ check noisy enough to be ignored. Files listed in the scaffold lock are
 skipped: a path in one of those is this package's bug, not the project's, and
 `refl1d-script-review` quotes one deliberately as its example of what not to
 do.
+
+---
+
+### 2026-09-16: the suite read the developer's home directory, and was 18% of itself
+
+Two findings from asking why 1,360 tests took 176s. The count turned out not to
+be the problem — 21,047 test LOC against 39,327 source LOC is lean, the
+parametrization factor is 1.23, and 70% of tests carry a docstring saying why
+they exist. Nothing to delete.
+
+**Where the time was.** 244 tests (18%) accounted for 92% of the runtime; the
+other ~1,116 cost under 5ms each. **Setup was 62% of measured time**, not test
+bodies, and five files were 123s of the 162s measured:
+
+| file | setup | call |
+|---|---|---|
+| `test_isaac.py` | 22.0s | 6.9s |
+| `test_web.py` | 18.3s | 10.5s |
+| `test_lifecycle.py` | 16.4s | 5.0s |
+| `test_pack.py` | 15.3s | 3.9s |
+| `test_fit_e2e.py` | 2.2s | **22.4s** |
+
+Fixture chains rebuild expensive artifacts per test — `test_lifecycle`'s
+`two_fits` runs two real refl1d fits for each of the tests below it.
+`test_fit_e2e` is the exception, doing its work in the test bodies.
+
+A measurement that killed the obvious fix: caching the *scaffold* buys nothing.
+`conftest`'s `project` costs 64ms, `nrw init` through the CLI 59ms, and a
+`copytree` of a finished one 42ms. The 1.8s is what gets layered on top, so
+caching has to target the fits, not the directory. **Averages hid this
+completely** — "0.13s per test" reads as a uniformly slow suite and points at
+restructuring everything; the distribution points at four fixtures.
+
+**Fixed now: parallelism.** `-n auto --dist loadscope` in `addopts` takes the
+suite to ~43s. `loadscope` is load-bearing — the expensive fixtures are
+module-shaped, and splitting a module across workers rebuilds them per worker
+and gives the time back. The cost is that a single small file goes from 0.85s
+to 3.9s, because 20 workers each import the world; `-n0` is the escape hatch
+and is also required for `-s` and `pdb`.
+
+**Fixed now: isolation, which the above depended on.** Only `test_env.py`
+stubbed `USER_ENV_PATH` and `AURE_ENV_PATH`. Every other test that reached
+`load_env` — which is almost every command — read the developer's real
+`~/.nrw` and `~/.aure`. Observed, not theorised: a real `~/.aure` carrying
+`LLM_MODEL=gpt-5.4` changed what `nrw check-llm` reported mid-run. So a green
+suite on one laptop said nothing about another, or about CI. An autouse fixture
+in `conftest.py` now points both paths at an empty directory, clears
+`KNOWN_VARS`, and resets the `_loaded` latch — which was itself a bug in
+waiting, since whichever test called `load_env` first decided for every test
+after it. `test_env.py` carries a guard that fails if the fixture is removed.
+
+The generalisable form: **a suite that reads `$HOME` is not a suite, it is a
+measurement of one machine** — and it cannot be parallelised with any
+confidence, because the thing you would be trusting was never isolated to
+begin with.
+
+**Still open** (measured, not done): the four module-shaped fixtures should
+cache their built artifacts per module, and `test_fit_e2e` should either share
+one fit or carry the `slow` marker — which only 2 tests use today, so
+`-m "not slow"` buys nothing.

@@ -81,6 +81,7 @@ isaac = [
 dev = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
+  "pytest-xdist>=3.5",
   "ruff>=0.15",
   "pre-commit>=3.4",
   "pip-audit>=2.7",
@@ -142,10 +143,22 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+# Parallel by default. Measured on this suite: 176s serial -> 44s at -n 8,
+# 40s at -n 16, and the remainder is one module's own setup, so more workers
+# buy little. `--dist loadscope` keeps a module on one worker, which matters
+# because the expensive fixtures are module-shaped -- splitting a module
+# across workers would rebuild them per worker and give the time back.
+#
+# To debug, turn it off: `pytest -n0 -s tests/test_x.py::test_y`. Under xdist
+# there is no stdout to attach to, so -s and pdb need -n0.
 addopts = [
   "-ra",
   "--strict-markers",
   "--strict-config",
+  "-n",
+  "auto",
+  "--dist",
+  "loadscope",
   "--cov=src/nr_workbench",
   "--cov-report=term-missing",
 ]

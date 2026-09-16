@@ -6,7 +6,36 @@ from pathlib import Path
 
 import pytest
 
+from nr_workbench import env as env_module
 from nr_workbench.project.render import RenderContext
+
+#: Variables the per-user files can set. Cleared per test alongside the paths,
+#: because `load_dotenv(override=False)` leaves whatever a previous test (or
+#: the developer's own shell) already put in `os.environ`.
+_USER_ENV_VARS = env_module.KNOWN_VARS
+
+
+@pytest.fixture(autouse=True)
+def isolate_user_env(tmp_path_factory, monkeypatch) -> None:
+    """Keep the developer's own ``~/.nrw`` and ``~/.aure`` out of every test.
+
+    `load_env` reads those two files, and `nrw` reaches it from almost every
+    command, so without this a test's behaviour depends on the home directory
+    it happens to run in. That is not hypothetical: a real `~/.aure` carrying
+    `LLM_MODEL` was observed changing what `nrw check-llm` reported during a
+    test run, which means CI and a laptop can legitimately disagree about a
+    green suite.
+
+    `_loaded` is reset too. It is a module-level latch, so the first test to
+    call `load_env` would otherwise decide for every test after it.
+    """
+    empty = tmp_path_factory.mktemp("home")
+    monkeypatch.setattr(env_module, "USER_ENV_PATH", empty / ".nrw")
+    monkeypatch.setattr(env_module, "AURE_ENV_PATH", empty / ".aure")
+    monkeypatch.setattr(env_module, "_loaded", False)
+    for name in _USER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
 
 #: A fixed timestamp, so rendered templates are byte-stable across test runs.
 FIXED_CREATED = "2026-01-02T03:04:05Z"

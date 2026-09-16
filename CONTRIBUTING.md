@@ -17,6 +17,11 @@ pre-commit install        # enable the lint / format / secret-scan hooks
 
 - `pre-commit run --all-files` — runs the exact checks CI runs (ruff lint + format, secret scan, ...).
 - `pytest` — all tests must pass and stay above the coverage floor in `pyproject.toml`.
+  It runs in parallel by default (`-n auto --dist loadscope`), which takes the
+  suite from ~176s to ~43s. **To debug one test, turn that off:**
+  `pytest -n0 -s tests/test_x.py::test_y` — under xdist there is no stdout to
+  attach to, so `-s` and `pdb` need `-n0`. A single small file is also faster
+  serially (0.85s against 3.9s), since 20 workers each import the world.
 - Add or update tests for any behavior change. Favor real, integration-style tests
   over heavy mocking — see the standard in [skills/review-test/SKILL.md](skills/review-test/SKILL.md).
 - Record non-obvious decisions, API quirks, or constraints in
