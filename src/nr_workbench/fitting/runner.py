@@ -318,8 +318,10 @@ def run_fit(
     Args:
         problem: A bumps ``FitProblem``.
         output_dir: Directory to write the bumps export into.
-        method: Which fitter: ``amoeba`` to explore, ``dream`` to quote. Those
-            are the only two; see :mod:`nr_workbench.fitters`.
+        method: Which fitter: ``amoeba`` to explore locally, ``de`` to explore
+            globally when the starting point is what amoeba is failing on,
+            ``dream`` to quote. Those are the only three; see
+            :mod:`nr_workbench.fitters`.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
@@ -328,8 +330,8 @@ def run_fit(
         alpha: Bumps convergence parameter.
         plots: Let bumps render its PNGs. Off by default; see :func:`_export`.
         parallel: CPUs to use. ``0`` means all of them, ``1`` forces serial.
-            dream evaluates its whole population each generation and scales
-            well; amoeba is sequential and gains nothing.
+            dream and de both evaluate a whole population each generation
+            and scale well; amoeba is sequential and gains nothing.
         quiet: Suppress the fitter's own progress output.
 
     Returns:

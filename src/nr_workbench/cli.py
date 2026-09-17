@@ -25,7 +25,7 @@ def _fitter(ctx: click.Context, param: click.Parameter, value: str) -> str:
     """Accept only the fitters on the menu, and say why when refusing.
 
     A `click.Choice` would refuse just as firmly and print `'de' is not one of
-    'amoeba', 'dream'`, which reads as an arbitrary restriction. The reason is
+    'amoeba', 'de', 'dream'`, which reads as an arbitrary restriction. The reason is
     the substance of this limit --- the alternative to a different fitter is
     looking at the model --- so the refusal carries it.
     """
@@ -536,11 +536,15 @@ def fit_group() -> None:
 )
 @click.option(
     "--method",
-    metavar="[amoeba|dream]",
+    metavar="[amoeba|de|dream]",
     callback=_fitter,
     default="amoeba",
     show_default=True,
-    help="amoeba while you are still changing the model, dream to quote a number.",
+    help=(
+        "amoeba while you are still changing the model, de when amoeba is "
+        "stalling on the starting point rather than the model, dream to quote "
+        "a number."
+    ),
 )
 @click.option("--steps", type=int, default=None, help="Maximum optimizer steps.")
 @click.option("--samples", type=int, default=None, help="DREAM sample count.")

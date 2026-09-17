@@ -888,11 +888,11 @@ def test_a_spec_cannot_ask_for_an_off_menu_fitter() -> None:
     schema refuses it as firmly as the CLI does.
     """
     with pytest.raises(Exception, match="amoeba"):
-        spec_from(fit={"method": "de", "steps": 3000})
+        spec_from(fit={"method": "lm", "steps": 3000})
 
 
-def test_a_spec_may_name_either_fitter_on_the_menu() -> None:
-    for method in ("amoeba", "dream"):
+def test_a_spec_may_name_any_fitter_on_the_menu() -> None:
+    for method in ("amoeba", "de", "dream"):
         assert spec_from(fit={"method": method}).fit.method == method
 
 

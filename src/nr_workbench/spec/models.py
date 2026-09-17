@@ -594,11 +594,17 @@ class FitSettings(_Base):
     """Default fit settings recorded with the model.
 
     Attributes:
-        method: Which fitter, ``amoeba`` or ``dream``. See
-            :mod:`nr_workbench.fitters` for why those are the only two.
+        method: Which fitter, ``amoeba``, ``de`` or ``dream``. See
+            :mod:`nr_workbench.fitters` for why those are the only three.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
+        pop: Population size, as a multiplier on the number of free
+            parameters. Used by ``de`` and ``dream``; ignored by ``amoeba``,
+            which has no population. It belongs in the spec rather than only
+            on the command line because it changes what the search covers, so
+            two runs of the same spec at different populations are two
+            different searches and the record should say which was which.
         seed: Random seed.
     """
 
@@ -606,6 +612,7 @@ class FitSettings(_Base):
     steps: int | None = None
     samples: int | None = None
     burn: int | None = None
+    pop: int | None = None
     seed: int | None = None
 
     @field_validator("method")
