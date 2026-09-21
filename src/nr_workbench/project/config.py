@@ -20,18 +20,27 @@ CONFIG_FILENAME = "nrw.toml"
 #: Bumped when the on-disk contract changes in a way that needs migration.
 CONTRACT_VERSION = 1
 
-#: BL-4B conventions. These are facts about the instrument and its reduction
-#: pipeline, not preferences -- see skills/reflectometry/refl-bl4b-instrument.
+#: BL-4B conventions -- see skills/reflectometry/refl-bl4b-instrument.
+#:
+#: **The glob and dq entries are descriptive; nothing reads them.** The
+#: patterns that actually decide what a file is live in
+#: :mod:`nr_workbench.instrument.reduced`, which is also what asks AuRE.
+#: Editing a glob here changes nothing, which is the trap this comment exists
+#: to spring: it is the first place anyone looks when a new filename is not
+#: found. ``standard_thetas`` and ``tnr_theta`` *are* read, by ``nrw
+#: reconcile``.
 DEFAULT_CONVENTIONS: dict[str, Any] = {
     "steady_state_glob": "REFL_{run}_combined_data_auto.txt",
-    "partial_glob": "REFL_{run}_{seg}_{subrun}_partial.txt",
+    "partial_glob": "REFL_{run}_{seg}_{subrun}_partial.txt or _autoreduction.dat",
     "tnr_slice_glob": "r{run}_t{t_s:06d}.txt",
     "tnr_intervals_glob": "r{run}_*reduction.json",
     "standard_thetas": [0.45, 1.2, 3.5],
     "tnr_theta": 0.6,
-    # The 4th column of every REF_L reduced file is FWHM, not sigma. Getting
-    # this wrong scales every resolution by 2.355 and quietly ruins a fit.
-    "dq_convention": "FWHM",
+    # No longer one value. `_partial.txt` writes the 4th column as FWHM and
+    # `_autoreduction.dat` writes it as sigma; the two differ by 2.355 and a
+    # fit hides the difference in roughness, so it is read per file from the
+    # header and never assumed.
+    "dq_convention": "per-file, read from the header",
 }
 
 

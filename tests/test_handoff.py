@@ -202,7 +202,11 @@ def test_writing_the_block_keeps_the_comments(project: Path, monkeypatch) -> Non
     run(project, monkeypatch, "audience", "--set", "domain=newcomer")
 
     after = (project / "nrw.toml").read_text(encoding="utf-8")
-    assert "the 4th column of every reduced file is FWHM" in after
+    # A sentence from the block that only a preserved comment can supply. It
+    # used to be "the 4th column of every reduced file is FWHM"; that stopped
+    # being true when REF_L's second reduction started writing sigma, and the
+    # comment now says the convention is read per file.
+    assert "read from each file's header" in after
     assert "dq_convention" in after
     assert 'domain = "newcomer"' in after
 

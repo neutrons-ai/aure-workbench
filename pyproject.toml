@@ -46,11 +46,20 @@ classifiers = [
 # no version of this that ends in `pip install nr-workbench`. See
 # docs/ground_truths.md.
 #
-# Currently d6e38e4 (reports 1.0.1). Moved from 9ec300d on 2026-09-15 for the
-# `claude_code` provider, which lets a person whose only model is Claude Code
-# run `nrw aure run` without configuring a second one -- see the 2026-09-15
-# entry in docs/ground_truths.md. It also brings AuRE's call ledger (per-call
-# cost, and an opt-in trace of the exchange) and its skill revisions.
+# Currently 747027e (reports 1.0.1). Moved from d6e38e4 on 2026-09-21 because
+# AuRE now READS `_autoreduction.dat` ITSELF. Until this bump, nrw and AuRE
+# disagreed about the same files: nrw's `PARTIAL_RE` matches both reduction
+# dialects, so `nrw sample scan` called them per-angle segments, while AuRE saw
+# no instrument claiming them and read each as a complete curve with dQ as FWHM
+# and no incident angle -- a 2.355x resolution error on a file whose header
+# says `sigma`, plus the loss of every per-angle nuisance parameter. That
+# mismatch is why IPTS-37740 was fitted through hand-written model specs
+# instead of `nrw aure run`.
+#
+# The bump also brings: `theta` / `dq_is_fwhm` declarable per file in a setup
+# (the escape hatch for a format AuRE does not read yet), `aure formats` for
+# asking what it does read, and REF_L split into `REF_L_v1` / `REF_L_v2` with
+# the old names kept as aliases. See AuRE's docs/plan-new-reduction-format.md.
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.11",
@@ -65,7 +74,7 @@ dependencies = [
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
-  "aure @ git+https://github.com/neutrons-ai/aure.git@d6e38e481fcfdcf658811b54d7337ffde357712a",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@747027e44e4adcf1a85929110f0356798d3bc1cd",
 ]
 
 [project.optional-dependencies]

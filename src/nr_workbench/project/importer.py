@@ -31,7 +31,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from nr_workbench.project.scan import COMBINED_RE, PARTIAL_RE, SLICE_RE
+from nr_workbench.instrument.reduced import (
+    parse_combined_name,
+    parse_segment_name,
+)
+from nr_workbench.project.scan import SLICE_RE
 
 #: A per-sample directory, e.g. ``Sample4``.
 SAMPLE_DIR_RE = re.compile(r"^Sample[_-]?(\w+)$", re.IGNORECASE)
@@ -350,7 +354,7 @@ def _classify(path: Path, sample: str) -> PlannedImport | None:
 
     # Reduced steady-state data, by filename rather than by directory: the
     # conventions are reliable and the directory names are not.
-    if COMBINED_RE.match(name) or PARTIAL_RE.match(name):
+    if parse_combined_name(name) is not None or parse_segment_name(name) is not None:
         return PlannedImport(path, f"{base}/data/steady/{name}", Action.LINK, sample)
 
     # Time-resolved slices and their sidecar.

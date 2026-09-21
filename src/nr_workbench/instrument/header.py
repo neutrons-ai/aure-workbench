@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .reduced import find_segments, parse_segment_name
+
 #: The line carrying the JSON metadata block.
 META_PREFIX = "# Meta:"
 
@@ -83,24 +85,26 @@ _AUTORED_KV_RE = re.compile(
     r"^#\s*(?P<key>[A-Za-z][A-Za-z0-9 _]*?)\s*[:=]\s*(?P<value>\S.*)$"
 )
 
-#: A file in the ``new_reduction`` dialect, and its segment number.
-#:
-#: The segment must come from the *filename*, because the header does not say
-#: which segment it describes: it is the whole run's header, byte-identical in
-#: every one of that run's files.
-_AUTORED_NAME_RE = re.compile(
-    r"^REFL_(?P<run>\d+)_(?P<seg>\d+)_(?P<subrun>\d+)_autoreduction\.dat$",
-    re.IGNORECASE,
-)
-
 #: The trailing segment index in a run title, e.g. ``Sample1_air-234277-2.``
 #:
 #: This is how a file finds its own entry in the header's parallel arrays, and
-#: the reason it is not simply ``array[seg - 1]``: a segment measured in two
-#: pieces gets two entries, so ``THS`` is routinely longer than the segment
-#: count and positional indexing is off by one after the duplicate. On run
-#: 234277 that gives segment 3 an angle of 1.251 deg instead of 3.5 -- a factor
-#: of ~2.8 in Q, which fits cleanly to a wrong thickness.
+#: the reason it is not simply ``array[seg - 1]``.
+#:
+#: **The reduction appends to these arrays on reprocess instead of replacing
+#: them.** Reduce a run twice and ``Run Title.title`` and ``Angles.*`` carry
+#: two complete passes -- ``[1, 2, 3, 1, 2, 3]`` -- while the arrays under
+#: ``Config`` come from the reduction template and stay at the segment count.
+#: A partial reprocess leaves a ragged mixture: run 234277 reads
+#: ``[1, 2, 2, 3]``, where positional indexing gives segment 3 an angle of
+#: 1.251 deg instead of 3.5 -- a factor of ~2.8 in Q, which fits cleanly to a
+#: wrong thickness.
+#:
+#: An earlier version of this comment explained the over-length arrays as "a
+#: segment measured in two pieces gets two entries". That is wrong, and the
+#: way it is wrong matters: splitting one segment cannot produce
+#: ``[1, 2, 3, 1, 2, 3]``, which is what four of the five runs in IPTS-37740
+#: actually carry. Under the correct explanation the *last* matching slot is
+#: the current one and the first is superseded -- see :func:`_segment_slots`.
 _TITLE_SEGMENT_RE = re.compile(r"-(?P<seg>\d+)\.?\s*$")
 
 #: Lines whose presence identifies the dialect.
@@ -152,6 +156,11 @@ class ReducedHeader:
             ``autoreduction`` from the ``new_reduction`` dialect, ``table``
             from the fixed-width summary, ``none`` when there was no header.
         raw: The full JSON object, for anything not surfaced above.
+        warnings: What the header says that is self-contradictory. Empty on
+            every healthy file, so a caller may surface these unconditionally.
+            These are not read errors -- a malformed header raises -- but
+            statements the file makes that disagree with each other, which are
+            survivable and must not be survived quietly.
     """
 
     path: Path
@@ -173,6 +182,7 @@ class ReducedHeader:
     theta_offset: float | None = None
     source: str = "none"
     raw: dict[str, Any] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def has_theta(self) -> bool:
@@ -212,6 +222,7 @@ class ReducedHeader:
             "experiment": self.experiment,
             "theta_offset": self.theta_offset,
             "source": self.source,
+            "warnings": list(self.warnings),
         }
 
 
@@ -349,28 +360,32 @@ def _autoreduction_fields(lines: list[str]) -> dict[str, Any]:
     return fields
 
 
-def _segment_index(titles: list[Any], segment: int) -> int | None:
-    """Find this segment's slot in the header's parallel arrays.
+def _segment_slots(titles: list[Any], segment: int) -> list[int]:
+    """Every slot in the header's parallel arrays belonging to *segment*.
 
-    The arrays are per *acquisition*, not per segment: a segment measured in
-    two pieces appears twice, so ``THS`` can be longer than the segment count
-    and ``array[segment - 1]`` silently mis-assigns everything after the
-    duplicate. The run titles end in ``-<segment>.``, so they are what ties a
-    slot to a segment.
+    The arrays are per *acquisition*, not per segment, and the reduction
+    appends to them on reprocess -- so a run reduced twice has two complete
+    passes and ``array[segment - 1]`` silently mis-assigns everything after
+    the first repeat. The run titles end in ``-<segment>.``, so they are what
+    ties a slot to a segment.
+
+    All matches are returned, most recent last, because which one to believe
+    is the caller's decision and a disagreement between them is worth
+    reporting rather than resolving quietly.
 
     Args:
         titles: The ``Run Title.title`` array.
         segment: 1-based segment number, from the filename.
 
     Returns:
-        Index of the first slot belonging to ``segment``, or None if no title
-        names it. Duplicates agree with each other, so the first is enough.
+        Slot indices in file order; empty if no title names this segment.
     """
+    slots = []
     for index, title in enumerate(titles):
         match = _TITLE_SEGMENT_RE.search(str(title))
         if match and int(match.group("seg")) == segment:
-            return index
-    return None
+            slots.append(index)
+    return slots
 
 
 def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) -> None:
@@ -394,12 +409,16 @@ def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) ->
     header.raw = fields
     header.source = "autoreduction"
 
-    name_match = _AUTORED_NAME_RE.match(path.name)
-    segment = int(name_match.group("seg")) if name_match else None
-    if name_match:
-        header.sequence_number = segment
-        header.sequence_id = int(name_match.group("run"))
-        header.run = int(name_match.group("subrun"))
+    # The segment comes from the *filename*: this header describes the whole
+    # run and is byte-identical in every one of that run's files, so it cannot
+    # say which segment it is attached to. `instrument/reduced.py` owns the
+    # name pattern.
+    parsed = parse_segment_name(path.name)
+    segment = parsed.segment if parsed else None
+    if parsed:
+        header.sequence_number = parsed.segment
+        header.sequence_id = parsed.run
+        header.run = parsed.subrun
 
     config = fields.get("Config")
     config = config if isinstance(config, dict) else {}
@@ -409,7 +428,12 @@ def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) ->
     titles = titles.get("title") if isinstance(titles, dict) else None
     titles = titles if isinstance(titles, list) else []
 
-    slot = _segment_index(titles, segment) if segment is not None else None
+    slots = _segment_slots(titles, segment) if segment is not None else []
+    # The LAST matching slot, not the first. Because the arrays are appended
+    # to on reprocess, the first slot naming this segment is the *oldest*
+    # reduction pass -- stale by construction, and silently so if a reprocess
+    # corrected `ThetaShift` or switched `useCalcTheta`.
+    slot = slots[-1] if slots else None
     if slot is not None:
         header.run_title = _as_str(titles[slot])
 
@@ -419,6 +443,24 @@ def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) ->
     # repeats it. Both are signed -- negative on this project's back-reflection
     # run -- and the probe wants the magnitude.
     series = angles.get("THS") or angles.get("ThCen")
+    if isinstance(series, list) and slots:
+        # Every pass that recorded this segment should agree about its angle.
+        # They do on IPTS-37740, so this is quiet in practice -- but a
+        # disagreement means a reprocess changed the answer, and taking one
+        # value without saying so is how the wrong one would be used.
+        recorded = [
+            _as_float(series[i])
+            for i in slots
+            if i < len(series) and _as_float(series[i]) is not None
+        ]
+        if len(set(recorded)) > 1:
+            header.warnings.append(
+                f"segment {segment} is recorded at "
+                f"{', '.join(f'{v:g}' for v in recorded)} deg by different "
+                f"reduction passes; using the most recent ({recorded[-1]:g}). "
+                f"The reduction appends to these arrays rather than replacing "
+                f"them, so the earlier value is superseded, not an alternative"
+            )
     if isinstance(series, list) and slot is not None and slot < len(series):
         theta = _as_float(series[slot])
         header.theta = abs(theta) if theta is not None else None
@@ -450,7 +492,7 @@ def _by_segment(series: Any, segment: int) -> Any:
 
     Only for arrays that genuinely have one entry per segment -- ``DB``,
     ``scale_factor``, ``ThetaShift``. The angle and title arrays are per
-    acquisition and must go through :func:`_segment_index` instead.
+    acquisition and must go through :func:`_segment_slots` instead.
 
     Args:
         series: The candidate array.
@@ -528,10 +570,8 @@ def theta_for_run(steady_dir: Path, run: int) -> tuple[float | None, str | None]
     # Prefer a per-angle partial: it names its own sequence number, so a
     # measurement with several angles is unambiguous. The combined file is a
     # fine fallback and carries the same theta for a single-angle run.
-    candidates = (
-        sorted(steady_dir.glob(f"REFL_{run}_*_partial.txt"))
-        + sorted(steady_dir.glob(f"REFL_{run}_*_autoreduction.dat"))
-        + sorted(steady_dir.glob(f"REFL_{run}_combined*.txt"))
+    candidates = find_segments(steady_dir, run) + sorted(
+        steady_dir.glob(f"REFL_{run}_combined*.txt")
     )
     for candidate in candidates:
         try:

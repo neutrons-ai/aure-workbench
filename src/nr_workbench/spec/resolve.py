@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.instrument.reduced import find_segments, segment_globs
 from nr_workbench.spec.constraints import FORMS, ConstraintError, FormContext
 from nr_workbench.spec.models import (
     Constraint,
@@ -227,22 +228,16 @@ def _discover_state(state: State, root: Path) -> list[Measurement]:
             Measurement(state.name, 0, (directory / name).as_posix(), state.thetas[0])
         ]
 
-    # Per-segment files are REFL_<run>_<segment>_<subrun>_partial.txt, or
-    # _autoreduction.dat from the `new_reduction` pipeline. The subrun usually
-    # but not always runs consecutively from the run number, so glob on the
-    # segment rather than assuming run+i.
-    #
-    # Both dialects are matched, because a beamtime mid-migration has both --
-    # and the error has to name both, or it sends someone looking for a file
-    # under a name their reduction never writes. This is the fifth place these
-    # patterns are spelled out; see docs/plan-reduced-format-registry.md.
+    # The subrun usually but not always runs consecutively from the run
+    # number, so glob on the segment rather than assuming run+i. Both
+    # reduction dialects are matched -- a beamtime mid-migration has both --
+    # and the error names both, or it sends someone looking for a file under a
+    # name their reduction never writes. The patterns come from
+    # `instrument/reduced.py`, which is the only place that knows them.
     measurements: list[Measurement] = []
     for i, theta in enumerate(state.thetas, start=1):
-        patterns = [
-            f"REFL_{state.run}_{i}_*_partial.txt",
-            f"REFL_{state.run}_{i}_*_autoreduction.dat",
-        ]
-        matches = sorted(match for p in patterns for match in absolute.glob(p))
+        patterns = segment_globs(state.run, i)
+        matches = find_segments(absolute, state.run, i)
         if not matches:
             raise SpecError(
                 f"state {state.name!r}: no file matching "

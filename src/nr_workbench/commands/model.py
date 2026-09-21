@@ -9,6 +9,7 @@ from typing import Any
 
 import click
 
+from nr_workbench.instrument.reduced import find_segments
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
 
@@ -1300,13 +1301,8 @@ def _measured_facts(
     for state in document.get("states", []):
         data_dir = layout.root / str(state.get("data_dir", ""))
         run = state.get("run")
-        # Both reduction dialects; see docs/plan-reduced-format-registry.md.
-        candidates = sorted(
-            [
-                *data_dir.glob(f"REFL_{run}_*_partial.txt"),
-                *data_dir.glob(f"REFL_{run}_*_autoreduction.dat"),
-            ]
-        )[:1]
+        # Both reduction dialects, via the one module that knows their names.
+        candidates = find_segments(data_dir, run)[:1]
         for path in candidates:
             try:
                 import numpy as np

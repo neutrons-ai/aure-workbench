@@ -37,15 +37,30 @@ domain = "practitioner"
 role = "collaborates"
 notes = ""
 
-# Filename and instrument conventions for REF_L / BL-4B. These are facts about
-# the instrument and its reduction pipeline, not preferences. dq_convention in
-# particular: the 4th column of every reduced file is FWHM, and treating it as
-# sigma silently scales all resolution by 2.355.
+# Filename and instrument conventions for REF_L / BL-4B.
+#
+# READ THIS BEFORE EDITING: the glob and dq keys below are DESCRIPTIVE. Nothing
+# reads them. Changing `partial_glob` to match a file sitting right there will
+# not make `nrw sample scan` find it -- the patterns that decide that are
+# compiled in `instrument/reduced.py`, and teaching nrw a new filename is a
+# code change there. This block was the first thing edited when
+# `_autoreduction.dat` arrived, and editing it eliminated the filename as a
+# suspect while changing nothing at all.
+#
+# `standard_thetas` and `tnr_theta` ARE read (by `nrw reconcile`, to flag a
+# segment measured at an unexpected angle).
+#
+# dq_convention is DESCRIPTIVE and no longer a single value. REF_L now has two
+# live reductions and they disagree: `_partial.txt` writes the 4th column as
+# FWHM, `_autoreduction.dat` writes it as sigma. The two differ by 2.355, and a
+# fit absorbs the difference into roughness rather than reporting it -- so it is
+# read from each file's header, per file, every time, and never assumed. Run
+# `aure formats <file>` to see what a given file declares.
 [conventions]
 steady_state_glob = "REFL_{run}_combined_data_auto.txt"
-partial_glob = "REFL_{run}_{seg}_{subrun}_partial.txt"
+partial_glob = "REFL_{run}_{seg}_{subrun}_partial.txt or _autoreduction.dat"
 tnr_slice_glob = "r{run}_t{t_s:06d}.txt"
 tnr_intervals_glob = "r{run}_*reduction.json"
 standard_thetas = [0.45, 1.2, 3.5]
 tnr_theta = 0.6
-dq_convention = "FWHM"
+dq_convention = "per-file, read from the header"

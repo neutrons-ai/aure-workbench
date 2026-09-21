@@ -277,7 +277,9 @@ def test_init_renders_config_with_the_given_identity(project: Path) -> None:
     assert config["project"]["name"] == "test-project"
     assert config["project"]["instrument"] == "REF_L"
     assert config["beamtime"]["label"] == "june2026"
-    assert config["conventions"]["dq_convention"] == "FWHM"
+    # Descriptive, and no longer one value: REF_L's two live reductions
+    # disagree about the 4th column, so it is read per file from the header.
+    assert config["conventions"]["dq_convention"] == "per-file, read from the header"
 
 
 def test_init_leaves_no_unrendered_jinja_markers(project: Path) -> None:
