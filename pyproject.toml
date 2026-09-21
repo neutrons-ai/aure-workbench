@@ -46,7 +46,10 @@ classifiers = [
 # no version of this that ends in `pip install nr-workbench`. See
 # docs/ground_truths.md.
 #
-# Currently 747027e (reports 1.0.1). Moved from d6e38e4 on 2026-09-21 because
+# Currently 487a31d, which is the v1.0.2 release (reports 1.0.2). A SHA
+# rather than the tag, for the reason above -- main moves between releases
+# and we track it, so a tag would only be accurate until the next commit.
+# Moved from d6e38e4 on 2026-09-21 because
 # AuRE now READS `_autoreduction.dat` ITSELF. Until this bump, nrw and AuRE
 # disagreed about the same files: nrw's `PARTIAL_RE` matches both reduction
 # dialects, so `nrw sample scan` called them per-angle segments, while AuRE saw
@@ -60,6 +63,12 @@ classifiers = [
 # (the escape hatch for a format AuRE does not read yet), `aure formats` for
 # asking what it does read, and REF_L split into `REF_L_v1` / `REF_L_v2` with
 # the old names kept as aliases. See AuRE's docs/plan-new-reduction-format.md.
+#
+# Advanced to 487a31d for `aure --version`, which had reported 0.1.0 since
+# 0.1 because `cli.py` carried the number as a literal. That is the bug
+# `provenance/env.py` works around by recording the commit instead, and it
+# is why that workaround stays: the version is now truthful, but a SHA on
+# main still identifies a build and a version string still does not.
 dependencies = [
   "numpy>=1.24",
   "scipy>=1.11",
@@ -74,7 +83,7 @@ dependencies = [
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
-  "aure @ git+https://github.com/neutrons-ai/aure.git@747027e44e4adcf1a85929110f0356798d3bc1cd",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@487a31dcc3d3c65580b6c6c880c1c47a195055a0",
 ]
 
 [project.optional-dependencies]
