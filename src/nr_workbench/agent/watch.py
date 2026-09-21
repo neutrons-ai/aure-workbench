@@ -146,14 +146,14 @@ def _subrun_mismatches(measurement: Any) -> list[tuple[int, int, int]]:
     Returns:
         ``(segment, found_subrun, expected_subrun)`` for each mismatch.
     """
-    from nr_workbench.project.scan import PARTIAL_RE
+    from nr_workbench.instrument.reduced import parse_segment_name
 
     found: list[tuple[int, int, int]] = []
     for segment, path in sorted(measurement.partials.items()):
-        match = PARTIAL_RE.match(Path(path).name)
-        if not match:
+        parsed = parse_segment_name(Path(path).name)
+        if parsed is None:
             continue
-        subrun = int(match.group("subrun"))
+        subrun = parsed.subrun
         expected = measurement.run + segment - 1
         if subrun != expected:
             found.append((segment, subrun, expected))
@@ -440,7 +440,11 @@ def _runs_already_fitted(
     consecutively --- as already analysed, and the daemon then skips it in
     silence. That is the worst shape a bug can take here.
     """
-    from nr_workbench.project.scan import COMBINED_RE, PARTIAL_RE, SLICE_RE
+    from nr_workbench.instrument.reduced import (
+        parse_combined_name,
+        parse_segment_name,
+    )
+    from nr_workbench.project.scan import SLICE_RE
     from nr_workbench.provenance.lookup import fit_dir
     from nr_workbench.provenance.record import FitDirectory
 
@@ -456,10 +460,16 @@ def _runs_already_fitted(
             continue
         for item in inputs:
             name = Path(str(item.get("path", ""))).name
-            for pattern in (COMBINED_RE, PARTIAL_RE, SLICE_RE):
-                if match := pattern.match(name):
-                    runs.add(int(match.group("run")))
-                    break
+            # The run only, never the subrun -- see this function's docstring.
+            combined = parse_combined_name(name)
+            segment = parse_segment_name(name)
+            slice_match = SLICE_RE.match(name)
+            if combined is not None:
+                runs.add(combined)
+            elif segment is not None:
+                runs.add(segment.run)
+            elif slice_match:
+                runs.add(int(slice_match.group("run")))
     return runs
 
 

@@ -373,3 +373,88 @@ def test_an_unknown_dq_label_still_raises_in_the_new_dialect(tmp_path: Path) -> 
 
     with pytest.raises(HeaderError, match="halfwidth"):
         read_header(path)
+
+
+# --------------------------------------------------------------------------
+# Append-on-reprocess: the arrays grow, so the LAST slot is the current one
+# --------------------------------------------------------------------------
+
+# Four of the five runs in IPTS-37740 carry whole repeated `[1,2,3]` blocks and
+# one carries `[1,2,3,1,2,3,3]`. Splitting a single segment cannot produce
+# either, so the over-length arrays are not "a segment measured in two pieces",
+# which is how this was first read. The reduction appends to them on reprocess
+# instead of replacing them -- and every `Config` array stays at the segment
+# count, which is what makes the two families need different indexing rules.
+
+DOUBLED = (
+    '# Run Title: {"title": ["S1-234283-1.", "S1-234283-2.", "S1-234283-3.", '
+    '"S1-234283-1.", "S1-234283-2.", "S1-234283-3."]}\n'
+    '# Angles: {"THS": [-0.45, -1.251, -3.5, -0.45, -1.251, -3.5]}\n'
+    '# Config: {"experiment_id": "IPTS-37740", "ThetaShift": [0, 0, 0]}\n'
+    "# columns = Q, R, dR, dQ (sigma)\n"
+)
+
+
+def test_a_whole_repeated_block_still_finds_the_right_angle(tmp_path: Path) -> None:
+    """`[1,2,3,1,2,3]` -- two complete reduction passes, not a split segment."""
+    path = tmp_path / "REFL_234283_3_234285_autoreduction.dat"
+    write(path, DOUBLED)
+
+    assert read_header(path).theta == pytest.approx(3.5)
+
+
+def test_the_most_recent_pass_wins(tmp_path: Path) -> None:
+    """The first slot naming a segment is the OLDEST, and stale by construction.
+
+    Every duplicate agrees on IPTS-37740, so nothing is wrong today -- but a
+    reprocess that corrected `ThetaShift` or switched `useCalcTheta` would be
+    silently discarded by taking the first.
+    """
+    path = tmp_path / "REFL_234277_1_234277_autoreduction.dat"
+    write(
+        path,
+        '# Run Title: {"title": ["S-234277-1.", "S-234277-1."]}\n'
+        '# Angles: {"THS": [-0.45, -0.46]}\n'
+        "# columns = Q, R, dR, dQ (sigma)\n",
+    )
+
+    assert read_header(path).theta == pytest.approx(0.46)
+
+
+def test_disagreeing_passes_are_reported(tmp_path: Path) -> None:
+    """Taking one value without saying so is how the wrong one gets used."""
+    path = tmp_path / "REFL_234277_1_234277_autoreduction.dat"
+    write(
+        path,
+        '# Run Title: {"title": ["S-234277-1.", "S-234277-1."]}\n'
+        '# Angles: {"THS": [-0.45, -0.46]}\n'
+        "# columns = Q, R, dR, dQ (sigma)\n",
+    )
+
+    header = read_header(path)
+
+    assert header.warnings
+    assert "superseded" in header.warnings[0]
+
+
+def test_agreeing_passes_are_silent(tmp_path: Path) -> None:
+    """Every real file in the beamtime has duplicates; warning would be noise."""
+    path = tmp_path / "REFL_234283_2_234284_autoreduction.dat"
+    write(path, DOUBLED)
+
+    assert read_header(path).warnings == []
+
+
+def test_the_run_title_is_the_most_recent_one_too(tmp_path: Path) -> None:
+    path = tmp_path / "REFL_234283_1_234283_autoreduction.dat"
+    write(path, DOUBLED)
+
+    assert read_header(path).run_title == "S1-234283-1."
+
+
+def test_warnings_reach_as_dict(tmp_path: Path) -> None:
+    """So a caller serialising a header carries them rather than dropping them."""
+    path = tmp_path / "REFL_234283_1_234283_autoreduction.dat"
+    write(path, DOUBLED)
+
+    assert read_header(path).as_dict()["warnings"] == []

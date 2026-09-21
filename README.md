@@ -1,7 +1,8 @@
-# nr-workbench
-
+# AuRE Workbench
 A project workbench for neutron reflectometry analysis at the SNS Liquids
 Reflectometer (REF_L / BL-4B).
+
+This project is a companion to the AuRE - Automated Reflectivity Evaluator repository.
 
 `nr-workbench init` scaffolds an analysis project: one directory layout for
 every sample, a curated `skills/` folder that Claude Code, GitHub Copilot and

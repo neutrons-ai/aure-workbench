@@ -14,38 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-#: REF_L reduced-file conventions. Kept here rather than read from nrw.toml
-#: because they are compiled patterns, not user preferences; nrw.toml records
-#: them for humans and downstream tools -- and, be warned, records them
-#: *inertly*: editing `partial_glob` there changes nothing here, which is the
-#: first thing anyone tries when a new format is not found.
-#:
-#: These duplicate patterns in `instrument/header.py` and in AuRE's own
-#: `instruments/ref_l.py`. See `docs/plan-reduced-format-registry.md` for the
-#: single-registry design that would remove the duplication.
-COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
-
-#: Per-segment files, in both reduction dialects.
-#:
-#: ``_partial.txt`` is the established reduction; ``_autoreduction.dat`` comes
-#: from the ``new_reduction`` pipeline. Same ``run / seg / subrun`` scheme,
-#: different suffix *and* extension -- and the two disagree about what the
-#: fourth column means (FWHM vs sigma), which is why that is read from each
-#: file's header and never inferred from its name.
-PARTIAL_RE = re.compile(
-    r"^REFL_(?P<run>\d+)_(?P<seg>\d+)_(?P<subrun>\d+)"
-    r"_(?:partial\.txt|autoreduction\.dat)$"
+from ..instrument.reduced import (
+    STEADY_SUFFIXES,
+    parse_combined_name,
+    parse_segment_name,
 )
 
-#: Extensions a reduced steady-state file may have.
-#:
-#: Checked before the patterns, so anything else is skipped without reaching
-#: them and without being reported as unreadable. That is how a directory of
-#: three valid ``.dat`` files came to look like an empty one: the extension
-#: filter dropped them silently and the scan said "no data found", naming
-#: neither the files nor the extension as the reason.
-STEADY_SUFFIXES = frozenset({".txt", ".dat"})
-
+#: REF_L reduced-file conventions live in ``instrument/reduced.py`` -- one
+#: module that knows what these files are called, and that asks AuRE what they
+#: *are*. They used to be spelled out here as well, which is how a scan taught
+#: about a new dialect could hand files to an AuRE that had not been.
 SLICE_RE = re.compile(r"^r(?P<run>\d+)_t(?P<t>\d+)\.txt$")
 REDUCTION_RE = re.compile(r"^r?(?P<run>\d+)?_?.*reduction\.json$")
 
@@ -223,19 +201,18 @@ def _scan_steady(directory: Path, root: Path, result: ScanResult) -> None:
             continue
         relative = path.relative_to(root).as_posix()
 
-        combined = COMBINED_RE.match(path.name)
-        if combined:
-            run = int(combined.group("run"))
-            result.steady.setdefault(run, SteadyMeasurement(run)).combined = relative
+        combined_run = parse_combined_name(path.name)
+        if combined_run is not None:
+            result.steady.setdefault(
+                combined_run, SteadyMeasurement(combined_run)
+            ).combined = relative
             continue
 
-        partial = PARTIAL_RE.match(path.name)
-        if partial:
-            run = int(partial.group("run"))
-            segment = int(partial.group("seg"))
-            result.steady.setdefault(run, SteadyMeasurement(run)).partials[segment] = (
-                relative
-            )
+        segment = parse_segment_name(path.name)
+        if segment is not None:
+            result.steady.setdefault(
+                segment.run, SteadyMeasurement(segment.run)
+            ).partials[segment.segment] = relative
             continue
 
         result.unreadable.append(relative)
