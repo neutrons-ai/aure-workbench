@@ -83,7 +83,7 @@ def run_reconcile(
     layout = _layout(root)
     directory = layout.sample(sample)
     if not directory.is_dir():
-        raise click.ClickException(f"No sample {sample!r} in {layout.root}.")
+        raise click.ClickException(layout.missing_sample_message(sample))
 
     scan = scan_sample(layout.root, sample)
     headers = []

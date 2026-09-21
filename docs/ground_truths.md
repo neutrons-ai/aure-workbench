@@ -2647,3 +2647,126 @@ begin with.
 cache their built artifacts per module, and `test_fit_e2e` should either share
 one fit or carry the `slow` marker — which only 2 tests use today, so
 `-m "not slow"` buys nothing.
+
+### 2026-09-21: the one-liner installer, and what it had to work around
+
+`curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh | sh` (and
+`irm .../install.ps1 | iex` on Windows) is now the documented way in. Four
+things about it are not derivable from the scripts.
+
+**uv accepts our transitive direct reference; pip-style fears were unfounded.**
+uv's documented rule is that a URL dependency reached from a *registry* package
+is rejected ("URL dependencies must be expressed as direct requirements or
+constraints"), which would have killed this outright, since every install of
+nr-workbench drags `aure @ git+https://...@SHA` behind it. Measured: because
+nr-workbench is itself a direct URL requirement, `uv tool install
+"nr-workbench @ git+<repo>"` resolves the AuRE pin without complaint and
+`nrw doctor` reports the right commit. 9.5 s from cold on a laptop. There is
+therefore no need for the venv-plus-pip fallback that was planned.
+
+**uv, not pipx, because of the Python floor.** We require >= 3.11 and stock
+macOS ships 3.9.6, so any pipx or `python -m venv` route begins with "first
+obtain a Python", which is the step that actually stops a beamline scientist.
+uv is a single dependency-free binary that downloads its own CPython, so the
+one-liner works on a machine with no usable Python at all.
+
+**A TLS-inspecting proxy breaks uv specifically, and silently.** uv ships its
+own certificate bundle rather than using the system trust store, so on a
+network that re-signs TLS — ORNL, most campuses, this sandbox — it fails with
+`invalid peer certificate: UnknownIssuer` while `curl` and `git` on the same
+machine are fine. The fix is `UV_SYSTEM_CERTS=1` (older uv: `UV_NATIVE_TLS=1`,
+now deprecated but still worth setting, since the user may have an older uv).
+The installer detects the certificate error and retries automatically; without
+that, the error names nothing a user could act on. This is the single most
+likely reason an install fails at a lab, and it is invisible in CI.
+
+**`--force` alone does not upgrade.** `uv tool install --force` overwrites the
+executables but can still satisfy `@main` from uv's cached checkout of that
+ref, so re-running the installer would report success and install yesterday's
+commit. The scripts pass `--reinstall-package nr-workbench`, which implies
+`--refresh-package` for just that package and leaves the heavy scientific
+dependencies cached.
+
+**Windows installs, but nr-workbench is not Windows-ready.** `install.ps1` is
+a faithful port and puts a working `nrw.exe` on PATH, but the runtime still has
+POSIX assumptions: `nrw init` writes a `#!/bin/sh` shim, `toolpath.py`'s PATH
+probe shells out to `/bin/sh -lc` and treats the resulting `OSError` as a pass,
+`agent/session.py` uses `os.killpg`, and `importer.py` links with
+`symlink_to`. CI is ubuntu and macOS only. `docs/install.md` says so plainly
+rather than letting a user discover it; fixing the runtime needs a
+`windows-latest` job, or it will regress as fast as it is fixed.
+
+**Three bugs the reviewers found that a shell script hides well.** Worth
+recording because each is a shape, not a typo. (1) `{ if cmd; then echo 0;
+else echo 1; fi >"$RC"; } | tee` puts the redirect on the whole `if`, so the
+command's *stdout* lands in the status file ahead of the marker and a
+successful install reads as a failure — latent only because uv writes progress
+to stderr. Redirect the `echo`, not the compound. (2) The "is `nrw` on your
+PATH?" check was asked of the PATH the script had just prepended to, so the
+branch that runs `uv tool update-shell` was unreachable in exactly the
+fresh-machine case it exists for. This is the trap `toolpath.py:151-164`
+already documents for `resolvable_in_fresh_shell`, rediscovered in another
+language: snapshot the caller's PATH first. (3) Windows PowerShell 5.1 wraps a
+native command's captured stderr in a `NativeCommandError`, and
+`$ErrorActionPreference = 'Stop'` promotes it to terminating — uv writes all
+its progress to stderr, so `install.ps1` would have aborted on uv's first
+normal line. Relax the preference around the native call and check exit codes.
+PowerShell 7.1+ does not do this, so a pwsh test would never have caught it.
+
+**The installer validates its own environment variables.** `NRW_EXTRAS` and
+friends are interpolated into a PEP 508 requirement, and `]` plus `@ git+...#`
+rewrites which repository `uv tool install` builds — arbitrary code execution
+from one environment variable on a shared machine, while the banner still
+named the right repo. They are now character-checked, the requirement actually
+being installed is what gets printed, and any credentials in the URL are
+stripped from the output.
+
+Two mechanical notes. The one-liner fetches the script straight from
+`raw.githubusercontent.com`, so the file a reader inspects in the repository
+and the file `curl` executes are literally the same object -- a GitHub Pages
+site was built first and then dropped, because it added a deployment workflow
+and a second place for the URL to go stale without making the command any
+shorter. And both scripts take their configuration from environment variables,
+not arguments, because neither `curl | sh` nor `irm | iex` can pass any —
+`NRW_INSTALL_DRY_RUN=1` is what lets `tests/test_install_scripts.py` run the
+real script in CI without installing anything.
+
+### 2026-09-21: the setup guardrail is a skill plus better refusals, not a command
+
+A request arrives — "fit my data" — before the machinery exists: no project in
+this directory, or a sample named something that is not on disk. The danger is
+not the error. It is that improvising around it **looks like progress**: a
+`samples/` directory made with `mkdir` that `nrw scan` does not recognise, data
+copied somewhere plausible, a refl1d script written by hand whose result
+carries no provenance. The tool cannot tell that apart from real work.
+
+The obvious fix was a `nrw preflight <task>` command emitting a machine-
+readable state plus the question to ask. It was **not** taken, and the reason
+generalises: a fourth command that reports on the project would overlap
+`doctor` (is the environment sound?) and `handoff` (where did the last session
+leave off?) without owning a distinct question, and every harness would still
+need prose telling it to run the thing. What was missing was never a *state
+reader*; it was that the state readers already there gave answers an agent
+could not act on.
+
+So: `skills/reflectometry/nrw-preflight` carries the contract (establish the
+project, then the sample, ask before creating either), and it is first in
+`SEED_SKILLS` because it applies before the agent knows anything else —
+including whether there is a project. `AGENTS.md` names it above the handoff,
+because a skill nobody is told to read is inert: none of the three assistants
+auto-discovers `skills/`. `tests/test_preflight.py` asserts that ordering.
+
+**The refusal has to name the samples that exist.** This is the whole of the
+in-command half. Nine call sites phrased "no such sample" nine ways, and not
+one listed the alternatives, so `No sample 'S9'` was a dead end — an agent
+could not tell a typo from a sample that genuinely needs creating, and would
+guess. `ProjectLayout.missing_sample_message` now answers all three questions
+at once (what is missing, what is there, what to run), and every call site uses
+it. The pattern is worth reusing: **an error an agent will act on must carry
+the alternatives, not just the fact of the failure.**
+
+Two things deliberately left out. Data and model readiness are not gated —
+`nrw data check` and `nrw model` already say enough, and gating them means
+guessing at intent. And nothing hard-blocks: a `PreToolUse` hook would cover
+Claude Code only, while the refusals cover every harness, including a
+scientist typing the command themselves.

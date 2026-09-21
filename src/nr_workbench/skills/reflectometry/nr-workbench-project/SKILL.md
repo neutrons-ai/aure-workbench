@@ -38,6 +38,10 @@ Two rules fix that, and everything below follows from them:
 Read this at the start of any task in a workbench project — before creating a
 file, running a fit, or answering "where should this go?". It is the map.
 
+It assumes you already know *which* project and *which* sample. If either is
+still open — a directory that may not be a project, a sample name that may not
+exist — [`nrw-preflight`](../nrw-preflight/SKILL.md) comes first.
+
 Do not use it for physics or for interpreting data; it describes the machinery
 only.
 

@@ -302,7 +302,7 @@ def run_sample_reset(
         raise click.ClickException(str(exc)) from exc
     directory = layout.sample(sample_id)
     if not directory.is_dir():
-        raise click.ClickException(f"No sample {sample_id!r} in {layout.root}.")
+        raise click.ClickException(layout.missing_sample_message(sample_id))
 
     index = FitIndex(layout.index_file)
     entries = index.fits(sample=sample_id)

@@ -153,9 +153,7 @@ def _sample_note(
     """Create or append to a report under ``samples/<id>/reports/``."""
     directory = layout.sample(sample)
     if not directory.is_dir():
-        raise click.ClickException(
-            f"No sample {sample!r}. `nrw sample new {sample}` creates one."
-        )
+        raise click.ClickException(layout.missing_sample_message(sample))
     reports = directory / "reports"
     reports.mkdir(parents=True, exist_ok=True)
 

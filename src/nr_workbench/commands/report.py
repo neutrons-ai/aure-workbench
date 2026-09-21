@@ -424,9 +424,7 @@ def run_report(
     layout = _layout(root)
     directory = layout.sample(sample)
     if not directory.is_dir():
-        raise click.ClickException(
-            f"No sample {sample!r}. `nrw sample new {sample}` creates one."
-        )
+        raise click.ClickException(layout.missing_sample_message(sample))
 
     for slug in concept:
         if slug not in concepts_mod.library():

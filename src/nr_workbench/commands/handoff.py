@@ -489,9 +489,7 @@ def run_handoff(
         return
 
     if not layout.sample(sample).is_dir():
-        raise click.ClickException(
-            f"No sample {sample!r}. `nrw handoff` with no argument lists them."
-        )
+        raise click.ClickException(layout.missing_sample_message(sample))
 
     text = handoff_markdown(layout, sample, brief=brief)
 

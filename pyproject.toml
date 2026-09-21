@@ -90,9 +90,9 @@ docs = ["mkdocs-material>=9.5", "sphinx>=7.2", "myst-parser>=2.0"]
 all = ["nr-workbench[nexus,isaac,dev,docs]"]
 
 [project.urls]
-Homepage = "https://github.com/neutrons-ai/nr-workbench"
-Repository = "https://github.com/neutrons-ai/nr-workbench"
-Issues = "https://github.com/neutrons-ai/nr-workbench/issues"
+Homepage = "https://github.com/neutrons-ai/aure-workbench"
+Repository = "https://github.com/neutrons-ai/aure-workbench"
+Issues = "https://github.com/neutrons-ai/aure-workbench/issues"
 
 [project.scripts]
 nr-workbench = "nr_workbench.cli:main"

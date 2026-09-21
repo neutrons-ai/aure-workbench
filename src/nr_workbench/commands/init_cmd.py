@@ -31,6 +31,9 @@ if TYPE_CHECKING:
 #: strategy one are bundled but left to `nrw skills sync`, because which of
 #: them matters depends on the sample.
 SEED_SKILLS = (
+    # First deliberately: it is the one skill that applies before the agent
+    # knows anything else about the project, including whether there is one.
+    "nrw-preflight",
     "nr-workbench-project",
     "aure-first-fit",
     "analyst-handoff",

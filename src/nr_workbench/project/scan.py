@@ -201,7 +201,11 @@ def scan_sample(root: Path, sample: str) -> ScanResult:
     """
     sample_dir = Path(root) / "samples" / sample
     if not sample_dir.is_dir():
-        raise FileNotFoundError(f"No sample {sample!r} at {sample_dir}")
+        from nr_workbench.project.layout import ProjectLayout
+
+        raise FileNotFoundError(
+            ProjectLayout(root=Path(root)).missing_sample_message(sample)
+        )
 
     result = ScanResult(sample=sample)
     _scan_steady(sample_dir / "data" / "steady", root, result)

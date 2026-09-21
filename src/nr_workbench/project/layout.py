@@ -170,6 +170,33 @@ class ProjectLayout:
         """
         return self.samples_dir / sample_id
 
+    def missing_sample_message(self, sample_id: str) -> str:
+        """Explain an unresolvable sample id, and say what to do about it.
+
+        Nine call sites used to phrase this nine different ways and none of
+        them named the samples that *do* exist -- which is the one fact that
+        turns a dead end into a decision: a typo to correct, or a sample to
+        create. An assistant asked to "fit S9" in a project holding S1 and S4
+        cannot ask the scientist a sensible question without it.
+
+        Args:
+            sample_id: The identifier that did not resolve.
+
+        Returns:
+            A message naming the problem, the samples present, and the fix.
+        """
+        existing = self.list_samples()
+        if not existing:
+            return (
+                f"No sample {sample_id!r} in {self.root}. This project has no "
+                f"samples yet -- `nrw sample new {sample_id}` creates one."
+            )
+        return (
+            f"No sample {sample_id!r} in {self.root}. "
+            f"Existing samples: {', '.join(existing)}. "
+            f"Use one of those, or create it with `nrw sample new {sample_id}`."
+        )
+
     def list_samples(self) -> list[str]:
         """List sample IDs present on disk, sorted.
 

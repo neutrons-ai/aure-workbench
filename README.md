@@ -8,6 +8,35 @@ every sample, a curated `skills/` folder that Claude Code, GitHub Copilot and
 OpenCode all read, and a provenance ledger that keeps every result linked to the
 script, data, and environment that produced it.
 
+## Install
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.ps1 | iex
+```
+
+That installs [uv](https://github.com/astral-sh/uv) if you do not already have
+it, then nr-workbench as an isolated tool with its own private Python 3.13 — so
+`nrw` is on your PATH with no virtual environment to activate, and a machine
+whose only Python is the 3.9 that ships with macOS is fine. It needs `git` (and
+`curl`, to fetch uv the first time), and nothing else. Then:
+
+```bash
+nrw doctor
+```
+
+[docs/install.md](docs/install.md) explains what the script does line by line,
+how to pin a version or add an extra, how to upgrade, how to uninstall, and how
+to install manually if you would rather not pipe a script into a shell.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the development setup.
+
 ## Why
 
 The previous way of working was a directory per beamtime, each with its own
@@ -26,24 +55,6 @@ nr-workbench replaces that with:
   series with functional constraints in one schema, generating a readable,
   standalone refl1d script.
 - **Skills the agent actually reads**, in the tool-neutral repo-root layout.
-
-## Install
-
-Install from git. nr-workbench depends on
-[AuRE](https://github.com/neutrons-ai/aure), which is not published to PyPI, so
-neither is this package.
-
-```bash
-python -m venv venv && source venv/bin/activate
-pip install git+https://github.com/neutrons-ai/nr-workbench.git
-```
-
-For development:
-
-```bash
-pip install -e ".[dev]"
-pre-commit install
-```
 
 ## Use
 

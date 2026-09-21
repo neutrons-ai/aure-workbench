@@ -14,10 +14,12 @@ Every command and every number below was produced by running it. Timings are
 from a laptop; the whole thing takes about five minutes, of which fifteen
 seconds is the fit.
 
-> **Prerequisite.** `pip install -e .` from the nr-workbench checkout. Run
-> `nrw doctor` afterwards — it reports every dependency plus the resolved AuRE
-> commit, which matters because we pin a SHA on AuRE's `main`: two installs
-> can report the same version and be different code.
+> **Prerequisite.** `curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh | sh`
+> (Windows: `irm https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.ps1 | iex`;
+> from a checkout: `pip install -e .`). Run `nrw doctor` afterwards — it reports
+> every dependency plus the resolved AuRE commit, which matters because we pin a
+> SHA on AuRE's `main`: two installs can report the same version and be different
+> code.
 
 ---
 
@@ -32,12 +34,12 @@ cd cu-thf-expt11
 ```
 Scaffolded .../cu-thf-expt11
   for        Claude Code, GitHub Copilot
-  create   71 file(s)
+  create   74 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
 to run twice — it never overwrites a file you have edited. Those files are the
-layout, the editor config, and 18 reflectometry skills with dispatcher agents
+layout, the editor config, and 19 reflectometry skills with dispatcher agents
 for each assistant the project is set up for, so an assistant opened in this
 folder already knows REF_L conventions.
 

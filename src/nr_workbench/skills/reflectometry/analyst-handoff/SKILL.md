@@ -85,7 +85,8 @@ they are gitignored and belong to whoever ran `init`, not to the project. So:
 ```bash
 # 1. Install nr-workbench itself. `nrw init` cannot bootstrap the tool that
 #    provides it, so this is genuinely first. Skip if `nrw` is already on PATH.
-git clone <nr-workbench-url> && cd nr-workbench && pip install -e .
+#    On Windows: irm https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.ps1 | iex
+curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh | sh
 
 # 2. In your clone of the *analysis* project:
 nrw init --check     # what a real init would change, before it changes it

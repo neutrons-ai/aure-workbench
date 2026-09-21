@@ -72,9 +72,7 @@ def resolve_target(
     if sample is not None:
         sample_dir = layout.sample(sample)
         if not sample_dir.is_dir():
-            raise click.ClickException(
-                f"No sample '{sample}'. Create it with `nrw sample new {sample}`."
-            )
+            raise click.ClickException(layout.missing_sample_message(sample))
         return ResolvedTarget(sample=sample, results_dir=sample_dir / "results")
 
     # Infer from the script's path: samples/<id>/... anywhere above it.

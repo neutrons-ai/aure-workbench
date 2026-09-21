@@ -10,6 +10,16 @@ workflow lives in `.github/copilot-instructions.md`.
 
 ## Read this first
 
+**Before acting on a request that touches data, models, fits or reports,
+establish two things: which project, and which sample.** Both come from a
+command's output, never from an assumption, and neither
+`nrw init` nor `nrw sample new` is yours to run without asking — `init` writes
+about seventy files into whatever directory you are standing in, and a sample
+created under the wrong id becomes the directory name in every later result
+path. `skills/reflectometry/nrw-preflight/SKILL.md` is the standard; it is
+short, and it exists because improvising around a missing project or a
+misspelt sample produces work that looks fine and carries no provenance.
+
 **If this project already has fits in it, start with one command:**
 
 ```bash

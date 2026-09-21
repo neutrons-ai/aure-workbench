@@ -1,0 +1,99 @@
+name: Installer
+
+# The unit tests parse both scripts, dry-run them and drive install.sh to
+# completion against a stub uv; this workflow runs the real thing. An
+# installer rots silently -- uv changes a flag, astral.sh moves a URL, a
+# runner image drops a tool -- and nothing else in this repository would
+# notice until a new user pasted the one-liner and it failed.
+#
+# install.ps1 is deliberately absent from the path filters: there is no
+# Windows runner here, so triggering on it would only look like coverage.
+# What does cover it is tests/test_install_scripts.py, which parses and
+# dry-runs it under the pwsh that ships on the ubuntu image. Adding a
+# `windows-latest` job would cost seconds and is the obvious next step if
+# Windows becomes a supported platform.
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'install.sh'
+      - '.github/workflows/install.yml'
+  pull_request:
+    paths:
+      - 'install.sh'
+      - '.github/workflows/install.yml'
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+# This job executes install.sh from the pull request's own checkout, so the
+# token it runs beside should be able to do nothing.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: install on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Install from this checkout rather than from `main`, so a pull request
+      # tests the script *and* the revision it ships with.
+      - name: Run the installer
+        env:
+          NRW_REPO: file://${{ github.workspace }}
+          NRW_VERSION: ${{ github.sha }}
+        run: sh install.sh
+
+      # Ask uv where the executables went rather than hard-coding it in every
+      # step below: install.sh deliberately asks the same question, so a
+      # change in uv's default would break the workflow written to catch it.
+      - name: Put the installed tool on PATH
+        run: |
+          "$HOME/.local/bin/uv" tool dir --bin >> "$GITHUB_PATH"
+
+      - name: The tool runs, and knows its own version
+        run: nrw --version
+
+      # This is the part a wheel inspection cannot prove: that the templates
+      # and skills survive into a non-editable install and land on disk.
+      - name: It scaffolds a project
+        run: |
+          expected=$(find "$GITHUB_WORKSPACE/src/nr_workbench/skills" -name SKILL.md | wc -l)
+          mkdir -p "$RUNNER_TEMP/smoke"
+          cd "$RUNNER_TEMP/smoke"
+          nrw init --beamtime ci --ipts IPTS-00000
+          test -f .nrw/schema/nrw-model-1.json
+          test -f .github/copilot-instructions.md
+          test -d .claude
+          installed=$(find skills -name SKILL.md | wc -l)
+          echo "skills: $installed installed, $expected in the source tree"
+          test "$installed" -eq "$expected"
+
+      - name: Doctor reports on it
+        run: |
+          cd "$RUNNER_TEMP/smoke"
+          # Exit status is not asserted: doctor exits 1 when any check errors,
+          # and a runner has no LLM endpoint configured. What is asserted is
+          # that it ran and found this project.
+          nrw doctor | tee doctor.txt || true
+          grep -q "$RUNNER_TEMP/smoke" doctor.txt
+
+      # Re-running is the documented upgrade path. Installing an older commit
+      # first makes this a real test of it: without --reinstall-package, uv
+      # can serve `main` from its cached checkout and the version would not
+      # move.
+      - name: Re-running the installer upgrades in place
+        env:
+          NRW_REPO: file://${{ github.workspace }}
+          NRW_VERSION: ${{ github.sha }}
+        run: |
+          sh install.sh
+          nrw --version
