@@ -4,12 +4,10 @@
 # This file is authoritative for files -- what is actually here. `nrw sample
 # scan` maintains it and reports where the two disagree.
 schema: nrw-sample/1
-id: {{ sample_id }}
-{# `tojson` is a valid YAML double-quoted scalar: a title with a quote in it
-   must not produce a register `yaml.safe_load` cannot read. -#}
-title: {{ title|tojson }}
-{% if beamtime %}beamtime: {{ beamtime|tojson }}
-{% endif %}created: {{ created|tojson }}
+id: Sample1
+title: "Sample1"
+beamtime: "june2026"
+created: "2026-01-02T03:04:05Z"
 
 # Steady-state measurements. Populated by `nrw sample scan`.
 steady: []

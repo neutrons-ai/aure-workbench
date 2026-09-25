@@ -11,7 +11,10 @@ from nr_workbench.project.render import RenderContext
 # `plan_sample_files` and `validate_sample_id` live in project/samples.py so the
 # experiment catalog can plan samples without importing a command module. They
 # stay importable from here, where tests and older callers look for them.
-from nr_workbench.project.samples import plan_sample_files, validate_sample_id
+from nr_workbench.project.samples import (
+    plan_sample_files as plan_sample_files,  # re-exported
+)
+from nr_workbench.project.samples import validate_sample_id
 from nr_workbench.project.scaffold import Outcome, apply_scaffold
 
 
@@ -50,7 +53,14 @@ def run_sample_new(
         ipts=config.ipts,
     )
 
-    planned = plan_sample_files(context, sample_id, title=title)
+    # Through the one entry point that consults the experiment catalog: a
+    # sample.md the catalog rendered must not be planned as the blank template.
+    from nr_workbench.experiment.render import SampleRenderError, plan_sample
+
+    try:
+        planned = plan_sample(layout.root, context, sample_id, title=title)
+    except SampleRenderError as exc:
+        raise click.ClickException(str(exc)) from exc
     report = apply_scaffold(layout.root, planned)
 
     created = report.count(Outcome.CREATE)

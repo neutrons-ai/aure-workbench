@@ -1,24 +1,15 @@
-# {{ title }}
-{% if managed %}
-<!-- Written from the experiment catalog (`nrw serve`, Experiment page).
-     Edit it there. Hand edits here are kept, never overwritten -- but from
-     then on the catalog's version is written beside this file as
-     sample.md.nrw-new, and the page offers to pull your edits in. -->
-{% endif %}
+# Sample1
+
 ## Description
 
 <!-- One or two sentences: what the sample is, what it is in, what you expect.
      e.g. "~30 nm ionomer deposited on 20 nm copper with a Cr adhesion layer in D2O" -->
-{% if description %}
-{{ description }}
-{% endif %}
+
 ## Details
 
 <!-- Composition, electrolyte, environment, anything that constrains the model.
      e.g. "20 nm Cu, ionomer (piperION), 0.1 M KHCO3, sparged with CO2, D2O, pH 6.8" -->
-{% if details %}
-{{ details }}
-{% endif %}
+
 ## Measurements
 
 <!-- One line per run. Keep the run number first so `nrw sample scan` can match
@@ -33,9 +24,8 @@
 
 | Run | Type | Condition |
 |-----|------|-----------|
-{% for row in measurements %}| {{ row.run }} | {{ row.type }} | {{ row.condition }} |
-{% else %}|     |      |           |
-{% endfor %}
+|     |      |           |
+
 ## Measurement conditions
 
 <!-- Anything about the *measurement* rather than the sample. These become
@@ -65,9 +55,7 @@
           "Sample bowed slightly after mounting -- expect some broadening."
           "Realigned between 218386 and 218393, so the two differ in theta."
           "0.45 deg segment looks 20% high against the 1.2 deg one." -->
-{% if measurement_conditions %}
-{{ measurement_conditions }}
-{% endif %}
+
 ## Fits to perform
 
 <!-- What you want out of this sample, in words. The agent turns these into
@@ -93,6 +81,3 @@
      e.g. "Co-refine 218386 and 218393 with the 218389 series. The oxide should
            thicken steadily through the EIS sequence -- linear in time on
            CuOx.thickness." -->
-{% if fits_to_perform %}
-{{ fits_to_perform }}
-{% endif -%}

@@ -8,7 +8,7 @@ directly over a scientist's edits.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -65,6 +65,46 @@ def _prose_list(items: tuple[str, ...]) -> str:
 
 
 @dataclass(frozen=True)
+class MeasurementRow:
+    """One row of the measurement table in ``sample.md``.
+
+    Attributes:
+        run: The run number.
+        type: The *Type* column, e.g. ``full Q``.
+        condition: The *Condition* column, e.g. ``OCV``.
+    """
+
+    run: int
+    type: str = ""
+    condition: str = ""
+
+
+@dataclass(frozen=True)
+class SampleProse:
+    """What the experiment catalog writes into a sample's ``sample.md``.
+
+    Every field defaults to empty, and an empty field renders exactly the
+    scaffold ``nrw sample new`` has always written -- guidance comment and all
+    -- so a sample the catalog does not manage is byte-for-byte unchanged.
+
+    Attributes:
+        managed: Whether the catalog owns this file; adds a note saying so.
+        description: The *Description* section.
+        details: The *Details* section.
+        measurement_conditions: The *Measurement conditions* section.
+        fits_to_perform: The *Fits to perform* section.
+        measurements: Rows of the measurement table, in run order.
+    """
+
+    managed: bool = False
+    description: str = ""
+    details: str = ""
+    measurement_conditions: str = ""
+    fits_to_perform: str = ""
+    measurements: tuple[MeasurementRow, ...] = ()
+
+
+@dataclass(frozen=True)
 class RenderContext:
     """Values substituted into ``.j2`` templates.
 
@@ -80,6 +120,8 @@ class RenderContext:
         harnesses: Names of the coding assistants this project is scaffolded
             for. Templates use it to record the choice and to recommend the
             matching editor extensions.
+        prose: What the experiment catalog writes into ``sample.md``; empty for
+            a sample it does not manage.
     """
 
     project_name: str
@@ -91,6 +133,7 @@ class RenderContext:
     title: str = ""
     created: str = ""
     harnesses: tuple[str, ...] = DEFAULT_HARNESSES
+    prose: SampleProse = field(default_factory=SampleProse)
 
     def as_dict(self) -> dict[str, Any]:
         """Return the template variables, filling in derived defaults.
@@ -117,6 +160,14 @@ class RenderContext:
                 for harness in resolve(self.harnesses)
                 if harness.vscode_extension
             ],
+            # Always defined, so StrictUndefined still catches a typo in a
+            # template rather than rendering an empty section.
+            "managed": self.prose.managed,
+            "description": self.prose.description,
+            "details": self.prose.details,
+            "measurement_conditions": self.prose.measurement_conditions,
+            "fits_to_perform": self.prose.fits_to_perform,
+            "measurements": list(self.prose.measurements),
         }
 
 

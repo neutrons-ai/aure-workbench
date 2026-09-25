@@ -86,13 +86,20 @@ def from_table(markdown: str, run: str) -> str | None:
             continue
         if run_at >= len(cells) or cells[run_at] != run:
             continue
-        # Prefer a column actually called "condition"; fall back to the last
-        # cell, which is where a free-text note lands in practice.
-        for name in ("condition", "conditions", "notes"):
-            if name in header and header.index(name) < len(cells):
-                value = cells[header.index(name)]
-                if value:
-                    return value
+        # A column called "condition" is authoritative, *including when its
+        # cell is empty*: falling through to another column then reported the
+        # Type ("full Q") as the condition, and that reached the ISAAC record.
+        for name in ("condition", "conditions"):
+            if name in header:
+                at = header.index(name)
+                value = cells[at] if at < len(cells) else ""
+                return value or None
+        # No condition column: a "notes" column, else the last cell, which is
+        # where a free-text note lands in practice.
+        if "notes" in header and header.index("notes") < len(cells):
+            value = cells[header.index("notes")]
+            if value:
+                return value
         rest = [c for i, c in enumerate(cells) if i != run_at and c]
         return rest[-1] if rest else None
     return None

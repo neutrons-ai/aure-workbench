@@ -1,0 +1,569 @@
+"""Apply: the one step that writes the catalog into samples/<id>/.
+
+It writes into a directory a scientist and an agent are both working in, so
+each test here pins one way it could write something it should not, or fail to
+say that it did not.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+from nr_workbench.experiment import apply as apply_module
+from nr_workbench.experiment.apply import (
+    Action,
+    ApplyBusy,
+    ApplyRefused,
+    PlanChanged,
+    apply,
+    plan_apply,
+    read_sources,
+)
+from nr_workbench.experiment.feeds.directory import DirectoryFeed
+from nr_workbench.experiment.live import LiveInventory
+from nr_workbench.experiment.model import (
+    Catalog,
+    RunChange,
+    RunKey,
+    SampleChange,
+    apply_changes,
+)
+from nr_workbench.experiment.sources.local import LocalDirectorySource
+from nr_workbench.project.render import RenderContext
+from nr_workbench.project.scaffold import Outcome
+
+from .experiment_fixtures import InMemorySource, write_autoreduced
+
+NOW = "2026-09-25T12:00:00Z"
+RUNS = (234277, 234280)
+
+
+# --------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------
+
+
+def catalog_for(*runs: int, sample: str = "Sample6", **run_fields) -> Catalog:
+    fields = {"sample_id": sample, "measurement": "full Q", "condition": "OCV"}
+    fields.update(run_fields)
+    return apply_changes(
+        Catalog(),
+        runs=[RunChange(RunKey(run), 0, dict(fields)) for run in runs],
+        samples=[SampleChange(sample, 0, {"fits_to_perform": "Fit both."})],
+        now=NOW,
+    )
+
+
+def edit(catalog: Catalog, run: int, **changes) -> Catalog:
+    entry = catalog.runs[RunKey(run)]
+    return apply_changes(
+        catalog, runs=[RunChange(RunKey(run), entry.rev, changes)], now=NOW
+    )
+
+
+def observe(source) -> tuple[dict, dict]:
+    """Poll once with every file long settled; return (runs, statuses)."""
+    live = LiveInventory(
+        source,
+        DirectoryFeed(),
+        settle_seconds=300,
+        poll_seconds=30,
+        clock=lambda: time.time() + 10_000,
+        autostart=False,
+    )
+    snapshot = live.scan_once()
+    runs = {k: v.source for k, v in snapshot.runs.items() if v.source is not None}
+    return runs, {k: v.status for k, v in snapshot.runs.items()}
+
+
+@pytest.fixture
+def folder(tmp_path: Path) -> Path:
+    """A facility folder with two complete new_reduction runs."""
+    reduced = tmp_path / "facility" / "new_reduction"
+    for run in RUNS:
+        write_autoreduced(reduced, run, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    return reduced
+
+
+@pytest.fixture
+def source(folder: Path) -> LocalDirectorySource:
+    return LocalDirectorySource(folder, str(folder), ipts="IPTS-00001")
+
+
+class Applier:
+    """Plan and apply against one project, source and catalog."""
+
+    def __init__(self, project: Path, context: RenderContext, source) -> None:
+        self.project, self.context, self.source = project, context, source
+
+    def plan(self, catalog: Catalog, **kwargs):
+        runs, statuses = observe(self.source)
+        return plan_apply(
+            self.project, catalog, runs, statuses, self.source, self.context, **kwargs
+        )
+
+    def apply(self, catalog: Catalog, **kwargs):
+        plan = self.plan(catalog, **kwargs)
+        runs, statuses = observe(self.source)
+        return plan, apply(
+            self.project,
+            catalog,
+            runs,
+            statuses,
+            self.source,
+            self.context,
+            expected_plan_id=plan.plan_id,
+            **kwargs,
+        )
+
+
+@pytest.fixture
+def applier(project: Path, context: RenderContext, source) -> Applier:
+    return Applier(project, context, source)
+
+
+def steady(project: Path, sample: str = "Sample6") -> Path:
+    return project / "samples" / sample / "data" / "steady"
+
+
+def actions(plan, sample: str = "Sample6") -> dict[str, Action]:
+    chosen = next(s for s in plan.samples if s.sample_id == sample)
+    return {f.name: f.action for f in chosen.files}
+
+
+# --------------------------------------------------------------------------
+# The ordinary case
+# --------------------------------------------------------------------------
+
+
+def test_apply_copies_complete_runs_and_renders_sample_md(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+
+    plan, report = applier.apply(catalog)
+
+    names = sorted(p.name for p in folder.iterdir())
+    assert sorted(p.name for p in steady(project).glob("REFL_*")) == names
+    for name in names:
+        assert (steady(project) / name).read_bytes() == (folder / name).read_bytes()
+    assert plan.samples[0].sample_md is Outcome.CREATE
+    text = (project / "samples" / "Sample6" / "sample.md").read_text()
+    assert "| 234277 | full Q | OCV |" in text and "Fit both." in text
+    assert set(read_sources(project / "samples" / "Sample6")) == set(names)
+    assert not report.failed
+
+
+def test_copies_are_dated_now_not_when_the_facility_wrote_them(
+    applier: Applier, project: Path
+) -> None:
+    """A copy dated an hour ago looks settled to `nrw agent watch` on arrival."""
+    applier.apply(catalog_for(*RUNS))
+
+    for path in steady(project).glob("REFL_*"):
+        assert time.time() - path.stat().st_mtime < 60
+
+
+def test_apply_twice_second_run_writes_nothing(applier: Applier, project: Path) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    stamps = {
+        p: p.stat().st_mtime_ns
+        for p in [*project.rglob("*")]
+        if p.is_file() and ".nrw/cache" not in p.as_posix()
+    }
+
+    plan, report = applier.apply(catalog)
+
+    assert not plan.writes
+    assert set(actions(plan).values()) == {Action.UNCHANGED}
+    assert report.done == []
+    after = {p: p.stat().st_mtime_ns for p in stamps}
+    assert after == stamps
+
+
+def test_downstream_scan_reads_the_applied_sample(
+    applier: Applier, project: Path
+) -> None:
+    from nr_workbench.project.scan import scan_sample
+
+    applier.apply(catalog_for(*RUNS))
+
+    scan = scan_sample(project, "Sample6")
+    assert sorted(scan.steady) == list(RUNS)
+    assert scan.documented_but_absent == [] and scan.present_but_undocumented == []
+
+
+# --------------------------------------------------------------------------
+# Only complete runs
+# --------------------------------------------------------------------------
+
+
+def test_apply_defers_an_unconfirmed_run_until_a_person_confirms_it(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    write_autoreduced(folder, 234290, [1], planned=3, mtime=time.time() - 3600)
+    catalog = catalog_for(234290)
+
+    plan = applier.plan(catalog)
+    assert set(actions(plan).values()) == {Action.DEFERRED}
+    assert "1 of 3" in plan.samples[0].files[0].detail
+
+    _, report = applier.apply(catalog, confirmed={RunKey(234290)})
+    assert [a.name for a in report.done] == ["REFL_234290_1_234290_autoreduction.dat"]
+
+
+def test_confirmation_does_not_override_a_quarantine(
+    applier: Applier, folder: Path
+) -> None:
+    write_autoreduced(folder, 234290, [1, 3], planned=3, mtime=time.time() - 3600)
+
+    plan = applier.plan(catalog_for(234290), confirmed={RunKey(234290)})
+
+    assert set(actions(plan).values()) == {Action.DEFERRED}
+    assert "quarantined" in plan.samples[0].files[0].detail
+
+
+def test_apply_rechecks_what_it_would_do_before_writing(
+    applier: Applier, project: Path, folder: Path, context: RenderContext, source
+) -> None:
+    catalog = catalog_for(*RUNS)
+    plan = applier.plan(catalog)
+    # A segment is rewritten by the reduction between review and apply.
+    (folder / "REFL_234277_2_234278_autoreduction.dat").write_text(
+        "# rewritten\n1 2 3\n"
+    )
+    os.utime(folder / "REFL_234277_2_234278_autoreduction.dat", (1, 1))
+
+    runs, statuses = observe(source)
+    with pytest.raises(PlanChanged):
+        apply(
+            project,
+            catalog,
+            runs,
+            statuses,
+            source,
+            context,
+            expected_plan_id=plan.plan_id,
+        )
+    assert not steady(project).exists()
+
+
+# --------------------------------------------------------------------------
+# Never overwrite
+# --------------------------------------------------------------------------
+
+
+def test_apply_source_rereduced_after_copy_is_reported_not_replaced(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    copied = (steady(project) / name).read_bytes()
+    (folder / name).write_text((folder / name).read_text() + "0.3 1e-9 1e-10 0.001\n")
+
+    plan, _ = applier.apply(catalog)
+
+    assert actions(plan)[name] is Action.SOURCE_CHANGED
+    assert (steady(project) / name).read_bytes() == copied
+
+
+def test_a_touched_but_identical_source_file_is_not_a_change(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    os.utime(folder / name, (time.time() - 100, time.time() - 100))
+
+    plan = applier.plan(catalog)
+
+    assert actions(plan)[name] is Action.RECORD
+
+
+def test_apply_a_local_edit_to_a_copy_is_left_alone(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    name = "REFL_234280_3_234282_autoreduction.dat"
+    (steady(project) / name).write_text("# edited by hand\n")
+
+    plan, _ = applier.apply(catalog)
+
+    assert actions(plan)[name] is Action.LOCAL_EDITED
+    assert (steady(project) / name).read_text() == "# edited by hand\n"
+
+
+def test_a_different_hand_copied_file_is_a_conflict_left_alone(
+    applier: Applier, project: Path
+) -> None:
+    steady(project).mkdir(parents=True)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    (steady(project) / name).write_text("# someone else's file\n")
+
+    plan, _ = applier.apply(catalog_for(234277))
+
+    assert actions(plan)[name] is Action.CONFLICT
+    assert (steady(project) / name).read_text() == "# someone else's file\n"
+
+
+def test_an_identical_hand_copied_file_is_recorded_not_copied(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    steady(project).mkdir(parents=True)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    (steady(project) / name).write_bytes((folder / name).read_bytes())
+
+    plan, _ = applier.apply(catalog_for(234277))
+
+    assert actions(plan)[name] is Action.RECORD
+    assert name in read_sources(project / "samples" / "Sample6")
+
+
+def test_apply_destination_symlink_target_not_modified(
+    applier: Applier, project: Path, tmp_path: Path
+) -> None:
+    """`nrw import` symlinks data; writing through one writes the facility's file."""
+    outside = tmp_path / "facility-file.txt"
+    outside.write_text("the original\n")
+    steady(project).mkdir(parents=True)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    (steady(project) / name).symlink_to(outside)
+
+    plan, _ = applier.apply(catalog_for(234277))
+
+    assert actions(plan)[name] is Action.CONFLICT
+    assert outside.read_text() == "the original\n"
+
+
+# --------------------------------------------------------------------------
+# A run is copied whole or not at all
+# --------------------------------------------------------------------------
+
+
+def test_apply_copy_fails_midway_no_partial_run_visible(
+    project: Path, context: RenderContext
+) -> None:
+    source = InMemorySource(fail_reads_after=1)
+    source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    applier = Applier(project, context, source)
+
+    _, report = applier.apply(catalog_for(234277))
+
+    assert not any(steady(project).glob("REFL_*"))
+    assert len(report.failed) == 3
+    assert "none of its files" in report.failed[0].detail
+    assert not any((project / "samples" / "Sample6" / "data").glob(".nrw-staging-*"))
+
+
+def test_apply_a_source_file_that_is_not_reduced_data_is_refused(
+    project: Path, context: RenderContext
+) -> None:
+    source = InMemorySource()
+    source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    source.files[
+        "REFL_234277_2_234278_autoreduction.dat"
+    ].data = b"<html>not data</html>"
+    applier = Applier(project, context, source)
+
+    _, report = applier.apply(catalog_for(234277))
+
+    assert not any(steady(project).glob("REFL_*"))
+    assert "not reduced data" in report.failed[0].detail
+
+
+def test_apply_a_file_over_the_size_cap_is_refused(
+    applier: Applier, project: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(apply_module, "MAX_FILE_BYTES", 100)
+
+    _, report = applier.apply(catalog_for(234277))
+
+    assert not any(steady(project).glob("REFL_*"))
+    assert report.failed
+
+
+# --------------------------------------------------------------------------
+# Exclusion is real
+# --------------------------------------------------------------------------
+
+
+def test_an_excluded_run_moves_out_of_every_readers_way_and_back(
+    applier: Applier, project: Path
+) -> None:
+    from nr_workbench.project.scan import scan_sample
+
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+
+    excluded = edit(catalog, 234280, include=False)
+    plan, _ = applier.apply(excluded)
+    assert {a for n, a in actions(plan).items() if "234280" in n} == {Action.MOVE_OUT}
+    assert sorted(scan_sample(project, "Sample6").steady) == [234277]
+    assert (project / "samples/Sample6/data/excluded/234280").is_dir()
+
+    restored = edit(excluded, 234280, include=True)
+    plan, _ = applier.apply(restored)
+    assert {a for n, a in actions(plan).items() if "234280" in n} == {Action.RESTORE}
+    assert sorted(scan_sample(project, "Sample6").steady) == list(RUNS)
+
+
+def test_a_reassigned_run_leaves_the_old_sample_and_reaches_the_new(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+
+    moved = edit(catalog, 234280, sample_id="Sample7")
+    plan, _ = applier.apply(moved)
+
+    old = actions(plan, "Sample6")
+    assert {a for n, a in old.items() if "234280" in n} == {Action.MOVE_OUT}
+    assert any("assigned to Sample7" in f.detail for f in plan.samples[0].files)
+    assert len(list(steady(project, "Sample7").glob("REFL_234280_*"))) == 3
+    assert not list(steady(project, "Sample6").glob("REFL_234280_*"))
+
+
+def test_a_hand_copied_file_of_an_unassigned_run_is_reported_not_moved(
+    applier: Applier, project: Path
+) -> None:
+    applier.apply(catalog_for(234277))
+    stray = steady(project) / "REFL_218386_1_218386_partial.txt"
+    stray.write_text("# copied in by hand\n")
+
+    plan, _ = applier.apply(catalog_for(234277))
+
+    assert actions(plan)[stray.name] is Action.NOT_MANAGED
+    assert stray.is_file()
+
+
+# --------------------------------------------------------------------------
+# sample.md
+# --------------------------------------------------------------------------
+
+
+def test_a_hand_edited_sample_md_gets_a_nrw_new_beside_it(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    path = project / "samples" / "Sample6" / "sample.md"
+    edited = path.read_text() + "\nMy own line.\n"
+    path.write_text(edited)
+
+    changed = edit(catalog, 234277, condition="CA")
+    plan, _ = applier.apply(changed)
+
+    assert plan.samples[0].sample_md is Outcome.DRIFTED
+    assert "nrw-new" in plan.samples[0].sample_md_detail
+    assert path.read_text() == edited
+    assert "| 234277 | full Q | CA |" in (path.parent / "sample.md.nrw-new").read_text()
+
+
+def test_an_untracked_sample_md_is_named_not_silently_skipped(
+    applier: Applier, project: Path
+) -> None:
+    """An imported sample.md is left alone -- and the plan must say so."""
+    sample = project / "samples" / "Sample6"
+    sample.mkdir(parents=True)
+    (sample / "sample.md").write_text("# Sample6\n\nWritten by hand.\n")
+
+    plan = applier.plan(catalog_for(*RUNS))
+
+    assert plan.samples[0].sample_md is Outcome.UNTRACKED
+    assert "Adopt" in plan.samples[0].sample_md_detail
+
+
+# --------------------------------------------------------------------------
+# Refusals
+# --------------------------------------------------------------------------
+
+
+def test_apply_a_changed_plan_id_refuses(
+    applier: Applier, project: Path, context, source
+) -> None:
+    runs, statuses = observe(source)
+
+    with pytest.raises(PlanChanged):
+        apply(
+            project,
+            catalog_for(*RUNS),
+            runs,
+            statuses,
+            source,
+            context,
+            expected_plan_id="not-the-plan",
+        )
+
+
+def test_apply_a_second_concurrent_apply_is_busy(
+    applier: Applier, project, context, source
+) -> None:
+    runs, statuses = observe(source)
+    plan = applier.plan(catalog_for(*RUNS))
+
+    assert apply_module._APPLY_LOCK.acquire(blocking=False)
+    try:
+        with pytest.raises(ApplyBusy):
+            apply(
+                project,
+                catalog_for(*RUNS),
+                runs,
+                statuses,
+                source,
+                context,
+                expected_plan_id=plan.plan_id,
+            )
+    finally:
+        apply_module._APPLY_LOCK.release()
+
+
+def test_apply_conflict_markers_in_the_scaffold_lock_refuse_and_leave_it(
+    applier: Applier, project: Path
+) -> None:
+    """A partial write over a lock that failed to load drops every other entry."""
+    lock = project / ".nrw" / "scaffold.lock.json"
+    damaged = "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> other\n"
+    lock.write_text(damaged)
+
+    plan = applier.plan(catalog_for(*RUNS))
+
+    assert any("conflict markers" in p.message for p in plan.problems)
+    with pytest.raises(ApplyRefused):
+        applier.apply(catalog_for(*RUNS))
+    assert lock.read_text() == damaged
+
+
+def test_a_sample_directory_differing_only_in_case_is_refused(
+    applier: Applier, project: Path
+) -> None:
+    (project / "samples" / "sample6").mkdir(parents=True)
+
+    plan = applier.plan(catalog_for(*RUNS))
+
+    assert "only in case" in plan.samples[0].problems[0].message
+
+
+def test_an_unreadable_copy_record_stops_that_sample_only(
+    applier: Applier, project: Path
+) -> None:
+    catalog = apply_changes(
+        catalog_for(234277),
+        runs=[RunChange(RunKey(234280), 0, {"sample_id": "Sample7"})],
+        now=NOW,
+    )
+    record = project / "samples" / "Sample6" / "data" / "sources.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+
+    plan = applier.plan(catalog)
+
+    by_sample = {s.sample_id: s for s in plan.samples}
+    assert by_sample["Sample6"].problems
+    assert not by_sample["Sample7"].problems

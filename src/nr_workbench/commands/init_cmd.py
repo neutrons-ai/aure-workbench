@@ -236,7 +236,10 @@ def run_init(
         raise click.ClickException(str(exc)) from exc
 
     for sample_id in sample_ids:
-        planned.extend(_plan_sample(context, sample_id))
+        try:
+            planned.extend(_plan_sample(root, context, sample_id))
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
 
     diffs: list[str] = []
     report = apply_scaffold(
@@ -484,11 +487,13 @@ def _build_context(
     )
 
 
-def _plan_sample(context: RenderContext, sample_id: str) -> list[PlannedFile]:
-    """Plan the files for one sample directory."""
-    from nr_workbench.commands.sample import plan_sample_files
+def _plan_sample(
+    root: Path, context: RenderContext, sample_id: str
+) -> list[PlannedFile]:
+    """Plan the files for one sample directory, consulting the catalog."""
+    from nr_workbench.experiment.render import plan_sample
 
-    return plan_sample_files(context, sample_id)
+    return plan_sample(root, context, sample_id)
 
 
 def _report(
