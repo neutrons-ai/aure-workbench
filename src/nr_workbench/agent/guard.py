@@ -68,12 +68,13 @@ _REASONS = {
         "`nrw aure run --dry-run` is allowed and validates it."
     ),
     "experiment": (
-        "Which sample a run belongs to, under what condition, and whether it "
-        "is used at all are a person's claims about the experiment -- like a "
-        "promotion, they decide what every later fit is built from. Write in "
-        "ESCALATIONS.md what you would assign or apply, and why, and stop. "
-        "`nrw experiment status`, and `apply` or `adopt` without --write, "
-        "are allowed: they show what would happen and change nothing."
+        "Which sample a run belongs to, under what condition, whether it is "
+        "used at all, and where the experiment's data is read from are a "
+        "person's claims about the experiment -- like a promotion, they decide "
+        "what every later fit is built from. Write in ESCALATIONS.md what you "
+        "would assign, apply or change, and why, and stop. `nrw experiment "
+        "status`, and `apply`, `adopt` or `settings` without --write, are "
+        "allowed: they show what would happen and change nothing."
     ),
     "nested": (
         "`nrw init --nested` was refused because an ancestor directory is "
@@ -240,7 +241,7 @@ def _judge_one(tokens: list[str]) -> Verdict:
 
     if "experiment" in subcommands and (
         {"assign", "release"} & set(subcommands)
-        or ({"apply", "adopt"} & set(subcommands) and "--write" in flags)
+        or ({"apply", "adopt", "settings"} & set(subcommands) and "--write" in flags)
     ):
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
 

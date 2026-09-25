@@ -41,7 +41,12 @@ from nr_workbench.experiment.model import (
     validate_sample_id,
 )
 from nr_workbench.experiment.status import STATES
-from nr_workbench.experiment.views import run_row, sample_card, unmanaged_card
+from nr_workbench.experiment.views import (
+    run_row,
+    sample_card,
+    settings_view,
+    unmanaged_card,
+)
 from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
 
@@ -152,18 +157,6 @@ def _in_daemon(function: Callable[[], Any]) -> Any:
     if "error" in outcome:
         raise outcome["error"]
     return outcome["value"]
-
-
-def _ipts_in_path(root: Path) -> str | None:
-    """An IPTS the project's own path names, e.g. /SNS/REF_L/IPTS-34347/shared/x."""
-    from nr_workbench.project.settings import normalize_ipts
-
-    for part in root.parts:
-        if part.upper().startswith("IPTS-"):
-            found = normalize_ipts(part)
-            if found:
-                return found
-    return None
 
 
 def _bounded_call(
@@ -742,61 +735,10 @@ class ExperimentData:
         to change a folder that may not answer, and asking the poller would
         start it listing that folder.
         """
-        from nr_workbench.experiment.config import experiment_config
-        from nr_workbench.project import settings as project
-        from nr_workbench.project.config import ProjectConfigError, load_config
-        from nr_workbench.project.tomlfile import TomlEditError
-
-        problems: list[Problem] = []
-        current = None
-        try:
-            current = project.read(self.root)
-        except (TomlEditError, OSError) as exc:
-            problems.append(Problem("config", f"nrw.toml cannot be edited here: {exc}"))
-        try:
-            config = experiment_config(load_config(self.root))
-        except ProjectConfigError:
-            config = experiment_config(None)
-        problems.extend(config.problems)
-
-        chosen = current.experiment if current else {}
-        values: dict[str, Any] = {
-            "ipts": current.ipts if current else "",
-            "label": current.label if current else "",
-        }
-        defaults: dict[str, Any] = {}
-        for table, keys in project.EXPERIMENT_KEYS.items():
-            prefix = table.split(".", 1)[1]
-            for key, default in keys.items():
-                values[f"{prefix}.{key}"] = chosen.get(table, {}).get(key)
-                defaults[f"{prefix}.{key}"] = default
-        editable = current is not None
-        return {
-            "schema": "nrw-settings/1",
-            "revision": current.revision if current else None,
-            "editable": editable,
-            "writable": self.writable and editable,
-            "read_only_reason": self.why_read_only,
-            "values": values,
-            "defaults": defaults,
-            "effective": {
-                "ipts": config.ipts,
-                "location": config.source.location,
-                "path": str(config.source.path) if config.source.path else None,
-                "needs_setup": config.needs_setup,
-            },
-            "options": {
-                "source": [dataclasses.asdict(o) for o in project.SOURCE_OPTIONS],
-                "feed": [dataclasses.asdict(o) for o in project.FEED_OPTIONS],
-            },
-            "ranges": {
-                "source.settle_seconds": list(project.SETTLE_RANGE),
-                "feed.poll_seconds": list(project.POLL_RANGE),
-            },
-            "suggested_ipts": _ipts_in_path(self.root),
-            "catalogued_runs": self._catalogued_runs(),
-            "problems": [p.as_dict() for p in problems],
-        }
+        view = settings_view(self.root, catalogued_runs=self._catalogued_runs())
+        view["writable"] = self.writable and view["editable"]
+        view["read_only_reason"] = self.why_read_only
+        return view
 
     def save_settings(
         self, revision: Any, changes: Any, confirmed: Any = None

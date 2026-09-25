@@ -1477,6 +1477,47 @@ def experiment_status_command(**kwargs: object) -> None:
     run_status(**kwargs)  # type: ignore[arg-type]
 
 
+@experiment_group.command("settings")
+@click.option("--ipts", default=None, help="The experiment's IPTS, e.g. IPTS-34347.")
+@click.option("--label", default=None, help="The beamtime label.")
+@click.option(
+    "--location",
+    default=None,
+    metavar="PATH",
+    help="The folder the reduced data is in; {ipts} is filled in.",
+)
+@click.option(
+    "--default-location",
+    is_flag=True,
+    help="Follow nrw's default data location again (it is provisional).",
+)
+@click.option(
+    "--settle", type=float, default=None, help="Seconds a run's files must be unchanged."
+)
+@click.option(
+    "--poll", type=float, default=None, help="Seconds between looks at the data folder."
+)
+@click.option("--check", is_flag=True, help="Say what the data folder holds.")
+@click.option(
+    "--confirm-ipts-change",
+    is_flag=True,
+    help="Change the IPTS even though the catalog already holds runs.",
+)
+@click.option("--write", is_flag=True, help="Save the change; without it, only show it.")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_settings_command(**kwargs: object) -> None:
+    """Show the IPTS, data folder and watcher; with options, change them.
+
+    The same settings as the Settings page of `nrw serve`, saved into
+    nrw.toml the same way: only nrw's own lines change. Shows the change
+    unless --write is given.
+    """
+    from nr_workbench.commands.experiment_cmd import run_settings
+
+    run_settings(**kwargs)  # type: ignore[arg-type]
+
+
 @experiment_group.command("assign")
 @click.argument("runs", nargs=-1, required=True)
 @click.option("--sample", default=None, help="The sample these runs belong to.")

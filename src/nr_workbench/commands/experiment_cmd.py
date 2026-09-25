@@ -503,3 +503,208 @@ def run_release(*, sample: str, root: str | None = None) -> None:
         "  If the catalog still assigns runs to this sample, apply keeps copying\n"
         "  their data, and the catalog's context no longer reaches the file."
     )
+
+
+# ---------------------------------------------------------------------------
+# settings
+# ---------------------------------------------------------------------------
+
+
+def run_settings(
+    *,
+    ipts: str | None = None,
+    label: str | None = None,
+    location: str | None = None,
+    default_location: bool = False,
+    settle: float | None = None,
+    poll: float | None = None,
+    check: bool = False,
+    confirm_ipts_change: bool = False,
+    write: bool = False,
+    root: str | None = None,
+    as_json: bool = False,
+) -> None:
+    """Show the experiment's settings; with options, preview or make a change.
+
+    The same settings, through the same save, as the Settings page of ``nrw
+    serve``: only nrw's own lines of nrw.toml change, and a file nrw cannot
+    edit safely is refused with the lines to add by hand.
+    """
+    from nr_workbench.agent.guard import refuse_if_agent
+    from nr_workbench.experiment.views import settings_view
+    from nr_workbench.project import settings as project_settings
+    from nr_workbench.project.tomlfile import TomlEditError
+
+    if write:
+        refuse_if_agent("experiment")
+    if location is not None and default_location:
+        raise click.ClickException(
+            "--location and --default-location contradict each other; give one."
+        )
+    project = _root(root)
+    changes: dict[str, Any] = {}
+    for name, value in (
+        ("ipts", ipts),
+        ("label", label),
+        ("source.location", location),
+        ("source.settle_seconds", settle),
+        ("feed.poll_seconds", poll),
+    ):
+        if value is not None:
+            changes[name] = value
+    if default_location:
+        changes["source.location"] = None
+    if write and not changes:
+        raise click.ClickException(
+            "Nothing to write: name a setting to change, e.g. --ipts IPTS-34347."
+        )
+
+    catalogued = _catalogued_runs(project)
+    checked = _check(project, changes) if check else None
+
+    if not changes:
+        view = settings_view(project, catalogued_runs=catalogued)
+        if as_json:
+            click.echo(json.dumps({**view, "check": checked}, indent=2))
+            return
+        _echo_settings(view)
+        if checked is not None:
+            _echo_check(checked)
+        return
+
+    try:
+        result = project_settings.save(
+            project,
+            changes,
+            confirmed={"ipts-change"} if confirm_ipts_change else set(),
+            catalogued_runs=catalogued,
+            write=write,
+        )
+    except project_settings.SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    except project_settings.NeedsConfirmation as exc:
+        raise click.ClickException(
+            f"{exc} Run again with --confirm-ipts-change to go ahead."
+        ) from exc
+    except TomlEditError as exc:
+        detail = f"\n{exc.lines}" if exc.lines else ""
+        raise click.ClickException(f"{exc}{detail}") from exc
+
+    if as_json:
+        click.echo(json.dumps({**result.as_dict(), "check": checked}, indent=2))
+        return
+    if not result.changed:
+        click.echo("  nrw.toml already says that; nothing to change.")
+    else:
+        click.echo(result.diff, nl=False)
+        if write:
+            click.echo(f"\n  Saved. The previous nrw.toml is kept at {result.backup}.")
+        else:
+            click.echo("\n  Nothing was written. Run again with --write to save it.")
+    for line in (*result.notes, *result.warnings):
+        click.secho(f"  ! {line}", fg="yellow")
+    if checked is not None:
+        _echo_check(checked)
+
+
+def _catalogued_runs(project: Path) -> int:
+    from nr_workbench.experiment.store import CatalogError
+    from nr_workbench.experiment.workspace import Workspace
+
+    try:
+        return len(Workspace(project).store.load().runs)
+    except CatalogError:
+        return 0
+
+
+def _check(project: Path, changes: dict[str, Any]) -> dict[str, Any]:
+    """What the (new, or current) data folder holds: a listing and a few headers."""
+    from nr_workbench.experiment.config import experiment_config
+    from nr_workbench.experiment.sources.local import LocalDirectorySource
+    from nr_workbench.project import settings as project_settings
+    from nr_workbench.project.config import ProjectConfigError, load_config
+
+    try:
+        config = experiment_config(load_config(project))
+    except ProjectConfigError as exc:
+        raise click.ClickException(str(exc)) from exc
+    location = changes.get("source.location", config.source.location)
+    if location is None:
+        location = project_settings.EXPERIMENT_KEYS["experiment.source"]["location"]
+    try:
+        edits, _ = project_settings.validate(
+            project, {"source.location": location, "ipts": changes.get("ipts", config.ipts)}
+        )
+    except project_settings.SettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    text = str(edits["experiment.source"]["location"].value)
+    ipts = str(edits["beamtime"]["ipts"].value) or None
+    if "{ipts}" in text and not ipts:
+        raise click.ClickException(
+            "This location is filled in from the IPTS; give --ipts to check it."
+        )
+    path = Path(text.replace("{ipts}", ipts or ""))
+    probe = LocalDirectorySource(path, text, ipts=ipts).probe()
+    return {"location": text, "path": str(path), **probe.as_dict()}
+
+
+def _echo_settings(view: dict[str, Any]) -> None:
+    values, defaults = view["values"], view["defaults"]
+
+    def shown(name: str, unit: str = "") -> str:
+        value = values[name]
+        if value is None:
+            return f"{defaults[name]}{unit}  (nrw's default)"
+        return f"{value}{unit}"
+
+    click.echo("Settings, from nrw.toml")
+    click.echo(f"  IPTS       {values['ipts'] or '(none)'}")
+    click.echo(f"  label      {values['label'] or '(none)'}")
+    click.echo(f"  source     {shown('source.kind')}")
+    location = shown("source.location")
+    if values["source.location"] is None:
+        location = location.replace("(nrw's default)", "(nrw's default; provisional)")
+    click.echo(f"  location   {location}")
+    effective = view["effective"]
+    click.echo(f"             -> {effective['path'] or 'cannot be worked out yet'}")
+    click.echo(f"  settle     {shown('source.settle_seconds', ' s')}")
+    click.echo(f"  watcher    {shown('feed.kind')}")
+    click.echo(f"  poll       {shown('feed.poll_seconds', ' s')}")
+    coming = [
+        f"{option['label']} ({side})"
+        for side, options in (("source", view["options"]["source"]), ("watcher", view["options"]["feed"]))
+        for option in options
+        if not option["available"]
+    ]
+    if coming:
+        click.echo(f"  coming     {', '.join(coming)}")
+    if effective["needs_setup"]:
+        click.secho(
+            "\n  Not set up yet: give the IPTS (--ipts) or a full data folder (--location).",
+            fg="yellow",
+        )
+    if view["problems"]:
+        click.echo()
+    for problem in view["problems"]:
+        click.secho(f"  ! {problem['message']}", fg="yellow")
+
+
+def _echo_check(found: dict[str, Any]) -> None:
+    click.echo(f"\nCheck of {found['path']}")
+    if not found["reachable"]:
+        click.secho(f"  {found['problems'][0]['message']}", fg="red")
+        return
+    if not found["runs"]:
+        click.echo("  reachable, and no reduced runs in it yet")
+    else:
+        click.echo(f"  {found['runs']} run(s), {found['first']} to {found['last']}")
+        for run in reversed(found["newest"]):
+            segments = ",".join(map(str, run["segments"]))
+            planned = f" of {run['n_segments']}" if run["n_segments"] else ""
+            click.echo(f"    {run['run']}  {run['title']}  segments {segments}{planned}")
+        if found["experiments"]:
+            click.echo(f"  headers name {', '.join(found['experiments'])}")
+    if found["unrecognized"]:
+        click.echo(f"  {found['unrecognized']} data file(s) with names nrw does not recognise")
+    for problem in found["problems"]:
+        click.secho(f"  ! {problem['message']}", fg="yellow")

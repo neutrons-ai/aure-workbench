@@ -306,6 +306,7 @@ def test_release_hands_sample_md_back(expt: Path) -> None:
         ["apply", "--write"],
         ["adopt", "--write"],
         ["release", "Sample6"],
+        ["settings", "--ipts", "IPTS-1", "--write"],
     ],
 )
 def test_an_unattended_agent_is_refused_every_organizing_command(
@@ -319,10 +320,109 @@ def test_an_unattended_agent_is_refused_every_organizing_command(
     assert "ESCALATIONS.md" in result.output
 
 
-@pytest.mark.parametrize("args", [["status"], ["apply"]])
+@pytest.mark.parametrize(
+    "args", [["status"], ["apply"], ["settings"], ["settings", "--ipts", "IPTS-1"]]
+)
 def test_an_unattended_agent_may_look(expt: Path, args) -> None:
     result = CliRunner().invoke(
         main, ["experiment", *args, "--root", str(expt)], env={"NRW_AGENT": "1"}
     )
 
     assert result.exit_code == 0, result.output
+
+
+# --------------------------------------------------------------------------
+# settings
+# --------------------------------------------------------------------------
+
+
+def test_settings_says_what_is_set_and_what_follows_the_default(expt: Path) -> None:
+    result = nrw("experiment", "settings", "--root", str(expt))
+
+    assert result.exit_code == 0, result.output
+    assert "IPTS       IPTS-00001" in result.output
+    assert "poll       30 s  (nrw's default)" in result.output
+    assert "SNS web monitor (watcher)" in result.output
+
+
+def test_settings_json_is_the_settings_pages_view(expt: Path) -> None:
+    payload = json.loads(
+        nrw("experiment", "settings", "--root", str(expt), "--json").output
+    )
+
+    assert payload["schema"] == "nrw-settings/1"
+    assert payload["values"]["ipts"] == "IPTS-00001"
+
+
+def test_settings_previews_a_change_and_writes_nothing(expt: Path) -> None:
+    before = (expt / "nrw.toml").read_bytes()
+
+    result = nrw("experiment", "settings", "--poll", "20", "--root", str(expt))
+
+    assert result.exit_code == 0, result.output
+    assert "+poll_seconds = 20" in result.output
+    assert "--write" in result.output
+    assert (expt / "nrw.toml").read_bytes() == before
+
+
+def test_settings_write_saves_and_names_the_backup(expt: Path) -> None:
+    result = nrw(
+        "experiment", "settings", "--poll", "20", "--write", "--root", str(expt)
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "kept at .nrw/backups/" in result.output
+    assert status(expt)["feed"]["kind"] == "directory"
+    from nr_workbench.project.config import load_config
+
+    assert load_config(expt).raw["experiment"]["feed"]["poll_seconds"] == 20
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (["--location", "/x", "--default-location"], "contradict"),
+        (["--write"], "Nothing to write"),
+        (["--poll", "1"], "from 5 to 600"),
+        (["--location", "relative/path"], "not a full path"),
+    ],
+)
+def test_settings_refuses_with_the_reason(expt: Path, args, message: str) -> None:
+    result = CliRunner().invoke(
+        main, ["experiment", "settings", *args, "--root", str(expt)]
+    )
+
+    assert result.exit_code != 0
+    assert message in result.output
+
+
+def test_settings_asks_before_changing_a_catalogued_experiments_ipts(
+    expt: Path,
+) -> None:
+    from nr_workbench.project.config import load_config
+
+    nrw("experiment", "assign", "234277", "--sample", "Sample6", "--root", str(expt))
+    args = [
+        "experiment",
+        "settings",
+        "--ipts",
+        "IPTS-2",
+        "--write",
+        "--root",
+        str(expt),
+    ]
+
+    asked = CliRunner().invoke(main, args)
+    assert asked.exit_code != 0 and "--confirm-ipts-change" in asked.output
+    assert load_config(expt).ipts == "IPTS-00001"
+
+    done = CliRunner().invoke(main, [*args, "--confirm-ipts-change"])
+    assert done.exit_code == 0, done.output
+    assert load_config(expt).ipts == "IPTS-2"
+
+
+def test_settings_check_says_what_the_folder_holds(expt: Path) -> None:
+    result = nrw("experiment", "settings", "--check", "--root", str(expt))
+
+    assert result.exit_code == 0, result.output
+    assert "3 run(s), 234277 to 234283" in result.output
