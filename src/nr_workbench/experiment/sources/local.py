@@ -26,6 +26,7 @@ import stat as stat_module
 import threading
 from collections import OrderedDict
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,27 @@ PROBE_FILES_PER_RUN = 12
 #: How many file headers to remember between polls. A beamtime folder holds a
 #: few thousand files; this keeps every one of them without growing forever.
 HEADER_CACHE_SIZE = 8192
+
+
+@dataclass
+class _Listing:
+    """One listing of the folder, sorted: each run's files, and the rest.
+
+    Attributes:
+        reachable: Whether the folder could be listed at all.
+        files: Each run's files, with the stat the listing gave them.
+        unrecognized: Data files that match no reduced-file name.
+        other: How many other files there are: plots, JSON, XML.
+        problems: What is wrong, run by run or with the folder.
+    """
+
+    reachable: bool
+    files: dict[int, list[tuple[SourceFile, os.stat_result]]] = field(
+        default_factory=dict
+    )
+    unrecognized: list[str] = field(default_factory=list)
+    other: int = 0
+    problems: list[Problem] = field(default_factory=list)
 
 
 class LocalDirectorySource:
@@ -85,19 +107,18 @@ class LocalDirectorySource:
     def inventory(self) -> Inventory:
         """Every run in the folder, judged from one listing."""
         listed = self._list()
-        if isinstance(listed, Inventory):
-            return listed
-        files, unrecognized, other, problems = listed
+        if not listed.reachable:
+            return Inventory(reachable=False, problems=tuple(listed.problems))
         runs = {
             RunKey(run): self._run(run, members)
-            for run, members in sorted(files.items())
+            for run, members in sorted(listed.files.items())
         }
         return Inventory(
             runs=runs,
-            unrecognized=tuple(unrecognized),
-            other_files=other,
+            unrecognized=tuple(listed.unrecognized),
+            other_files=listed.other,
             reachable=True,
-            problems=tuple(problems),
+            problems=tuple(listed.problems),
         )
 
     def probe(self, *, header_runs: int = 5) -> Probe:
@@ -113,9 +134,9 @@ class LocalDirectorySource:
             header_runs: How many of the newest runs to read in full.
         """
         listed = self._list()
-        if isinstance(listed, Inventory):
-            return Probe(reachable=False, problems=listed.problems)
-        files, unrecognized, other, problems = listed
+        if not listed.reachable:
+            return Probe(reachable=False, problems=tuple(listed.problems))
+        files, problems = listed.files, listed.problems
         numbers = sorted(files)
         newest = numbers[-header_runs:] if header_runs > 0 else []
         read = []
@@ -139,39 +160,16 @@ class LocalDirectorySource:
             first=numbers[0] if numbers else None,
             last=numbers[-1] if numbers else None,
             newest=tuple(read),
-            unrecognized=len(unrecognized),
-            other_files=other,
+            unrecognized=len(listed.unrecognized),
+            other_files=listed.other,
             problems=tuple(problems),
         )
 
-    def _list(
-        self,
-    ) -> (
-        Inventory
-        | tuple[
-            dict[int, list[tuple[SourceFile, os.stat_result]]],
-            list[str],
-            int,
-            list[Problem],
-        ]
-    ):
-        """One listing: each run's files, what was not recognised, and problems.
-
-        Returns:
-            The files by run, the unrecognised names, the count of other
-            files, and problems -- or an unreachable :class:`Inventory` when
-            the folder cannot be listed at all.
-        """
+    def _list(self) -> _Listing:
+        """One listing of the folder, sorted into runs, with what is wrong."""
         if self.path is None:
-            return Inventory(
-                reachable=False,
-                problems=(
-                    Problem(
-                        "source",
-                        "No data location is configured; see the configuration "
-                        "problems above.",
-                    ),
-                ),
+            return self._unreachable(
+                "No data location is configured; see the configuration problems above."
             )
         try:
             with os.scandir(self.path) as listing:
@@ -189,37 +187,44 @@ class LocalDirectorySource:
         except OSError as exc:
             return self._unreachable(f"{self.path} cannot be listed: {exc}")
 
-        files: dict[int, list[tuple[SourceFile, os.stat_result]]] = {}
-        unrecognized: list[str] = []
+        listed = _Listing(reachable=True)
         noncanonical: list[str] = []
         links: list[str] = []
-        other = 0
-        problems: list[Problem] = []
+        special: list[str] = []
+        problems = listed.problems
 
         for entry in sorted(entries, key=lambda e: e.name):
             name = entry.name
+            data_like = Path(name).suffix in STEADY_SUFFIXES
             try:
                 if entry.is_symlink():
                     links.append(name)
                     continue
                 if not entry.is_file(follow_symlinks=False):
+                    # A folder, a pipe or a device. Never opened -- opening a
+                    # pipe waits for a writer -- but one named like data is
+                    # worth a word: someone expected it to be read.
+                    if data_like:
+                        special.append(name)
                     continue
                 info = entry.stat(follow_symlinks=False)
             except OSError as exc:
                 problems.append(Problem(f"source:{name}", f"cannot be read: {exc}"))
                 continue
-            if Path(name).suffix not in STEADY_SUFFIXES:
-                other += 1
+            if not data_like:
+                listed.other += 1
                 continue
 
             parsed = canonical_name(name)
             if parsed is None:
                 loose = parse_segment_name(name) or parse_combined_name(name)
-                (noncanonical if loose is not None else unrecognized).append(name)
+                (noncanonical if loose is not None else listed.unrecognized).append(
+                    name
+                )
                 continue
             source_file = _source_file(name, info, parsed)
             run = parsed.run if isinstance(parsed, ReducedName) else parsed
-            files.setdefault(run, []).append((source_file, info))
+            listed.files.setdefault(run, []).append((source_file, info))
 
         if links:
             problems.append(
@@ -228,6 +233,15 @@ class LocalDirectorySource:
                     f"{len(links)} symbolic link(s) not followed, e.g. {links[0]}. "
                     "A link in a shared folder can point anywhere this account "
                     "can read, so nrw never copies through one.",
+                )
+            )
+        if special:
+            problems.append(
+                Problem(
+                    "source",
+                    f"{len(special)} item(s) named like reduced data are not plain "
+                    f"files (e.g. {special[0]}): a folder, a pipe or a device, "
+                    "which nrw never reads.",
                 )
             )
         if noncanonical:
@@ -239,21 +253,20 @@ class LocalDirectorySource:
                     "are not used.",
                 )
             )
-        if unrecognized:
+        if listed.unrecognized:
             problems.append(
                 Problem(
                     "source",
-                    f"{len(unrecognized)} data file(s) match no known "
-                    f"reduced-file name, e.g. {unrecognized[0]}. If this is a "
-                    "new reduction format, instrument/reduced.py is where nrw "
-                    "learns it.",
+                    f"{len(listed.unrecognized)} data file(s) match no known "
+                    f"reduced-file name, e.g. {listed.unrecognized[0]}. If this "
+                    "is a new reduction format, instrument/reduced.py is where "
+                    "nrw learns it.",
                 )
             )
+        return listed
 
-        return files, unrecognized, other, problems
-
-    def _unreachable(self, message: str) -> Inventory:
-        return Inventory(reachable=False, problems=(Problem("source", message),))
+    def _unreachable(self, message: str) -> _Listing:
+        return _Listing(reachable=False, problems=[Problem("source", message)])
 
     def _run(
         self, run: int, members: list[tuple[SourceFile, os.stat_result]]

@@ -97,8 +97,7 @@ def run_audience(
         try:
             audience_mod.write(layout.root, updated)
         except TomlEditError as exc:
-            detail = f"\n{exc.lines}" if exc.lines else ""
-            raise click.ClickException(f"{exc}{detail}") from exc
+            raise click.ClickException(exc.explained()) from exc
         except OSError as exc:
             raise click.ClickException(f"Could not write nrw.toml: {exc}") from exc
         click.echo("  nrw.toml updated.")

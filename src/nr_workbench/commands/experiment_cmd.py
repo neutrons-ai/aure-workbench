@@ -533,6 +533,7 @@ def run_settings(
     from nr_workbench.agent.guard import refuse_if_agent
     from nr_workbench.experiment.views import settings_view
     from nr_workbench.project import settings as project_settings
+    from nr_workbench.project.settings import CONFIRM_IPTS_CHANGE
     from nr_workbench.project.tomlfile import TomlEditError
 
     if write:
@@ -562,36 +563,45 @@ def run_settings(
     catalogued = _catalogued_runs(project)
     checked = _check(project, changes) if check else None
 
-    if not changes:
-        view = settings_view(project, catalogued_runs=catalogued)
-        if as_json:
-            click.echo(json.dumps({**view, "check": checked}, indent=2))
-            return
-        _echo_settings(view)
-        if checked is not None:
-            _echo_check(checked)
-        return
-
-    try:
-        result = project_settings.save(
-            project,
-            changes,
-            confirmed={"ipts-change"} if confirm_ipts_change else set(),
-            catalogued_runs=catalogued,
-            write=write,
-        )
-    except project_settings.SettingsError as exc:
-        raise click.ClickException(str(exc)) from exc
-    except project_settings.NeedsConfirmation as exc:
-        raise click.ClickException(
-            f"{exc} Run again with --confirm-ipts-change to go ahead."
-        ) from exc
-    except TomlEditError as exc:
-        detail = f"\n{exc.lines}" if exc.lines else ""
-        raise click.ClickException(f"{exc}{detail}") from exc
+    result = None
+    if changes:
+        try:
+            result = project_settings.save(
+                project,
+                changes,
+                confirmed={CONFIRM_IPTS_CHANGE} if confirm_ipts_change else set(),
+                catalogued_runs=catalogued,
+                write=write,
+            )
+        except project_settings.SettingsError as exc:
+            raise click.ClickException(str(exc)) from exc
+        except project_settings.NeedsConfirmation as exc:
+            raise click.ClickException(
+                f"{exc} Run again with --confirm-ipts-change to go ahead."
+            ) from exc
+        except TomlEditError as exc:
+            raise click.ClickException(exc.explained()) from exc
+        except OSError as exc:
+            raise click.ClickException(f"Could not write nrw.toml: {exc}") from exc
 
     if as_json:
-        click.echo(json.dumps({**result.as_dict(), "check": checked}, indent=2))
+        # One shape, whichever options were given: the settings as they now
+        # are, the change if one was asked for, and the check if one was run.
+        click.echo(
+            json.dumps(
+                {
+                    "settings": settings_view(project, catalogued_runs=catalogued),
+                    "change": result.as_dict() if result is not None else None,
+                    "check": checked,
+                },
+                indent=2,
+            )
+        )
+        return
+    if result is None:
+        _echo_settings(settings_view(project, catalogued_runs=catalogued))
+        if checked is not None:
+            _echo_check(checked)
         return
     if not result.changed:
         click.echo("  nrw.toml already says that; nothing to change.")
@@ -607,46 +617,33 @@ def run_settings(
         _echo_check(checked)
 
 
-def _catalogued_runs(project: Path) -> int:
+def _catalogued_runs(project: Path) -> int | None:
+    """How many runs the catalog holds; ``None`` when it cannot be read."""
     from nr_workbench.experiment.store import CatalogError
     from nr_workbench.experiment.workspace import Workspace
 
     try:
         return len(Workspace(project).store.load().runs)
     except CatalogError:
-        return 0
+        return None
 
 
 def _check(project: Path, changes: dict[str, Any]) -> dict[str, Any]:
-    """What the (new, or current) data folder holds: a listing and a few headers."""
-    from nr_workbench.experiment.config import experiment_config
-    from nr_workbench.experiment.sources.local import LocalDirectorySource
-    from nr_workbench.project import settings as project_settings
-    from nr_workbench.project.config import ProjectConfigError, load_config
+    """What the data folder the change names -- or the current one -- holds.
 
+    Built as the watcher builds it, and given the same deadline as the
+    Settings page's check: a dead mount must not hang a terminal either.
+    """
+    from nr_workbench.bounded import Bounded, TimedOut
+    from nr_workbench.experiment.sources import SOURCE_TIMEOUT
+    from nr_workbench.experiment.workspace import check_source
+    from nr_workbench.project.settings import SettingsError
+
+    once = Bounded(slots=1, timeout=SOURCE_TIMEOUT, busy="", name="nrw-folder-check")
     try:
-        config = experiment_config(load_config(project))
-    except ProjectConfigError as exc:
+        return check_source(project, changes, run=once.run)
+    except (SettingsError, TimedOut) as exc:
         raise click.ClickException(str(exc)) from exc
-    location = changes.get("source.location", config.source.location)
-    if location is None:
-        location = project_settings.EXPERIMENT_KEYS["experiment.source"]["location"]
-    try:
-        edits, _ = project_settings.validate(
-            project,
-            {"source.location": location, "ipts": changes.get("ipts", config.ipts)},
-        )
-    except project_settings.SettingsError as exc:
-        raise click.ClickException(str(exc)) from exc
-    text = str(edits["experiment.source"]["location"].value)
-    ipts = str(edits["beamtime"]["ipts"].value) or None
-    if "{ipts}" in text and not ipts:
-        raise click.ClickException(
-            "This location is filled in from the IPTS; give --ipts to check it."
-        )
-    path = Path(text.replace("{ipts}", ipts or ""))
-    probe = LocalDirectorySource(path, text, ipts=ipts).probe()
-    return {"location": text, "path": str(path), **probe.as_dict()}
 
 
 def _echo_settings(view: dict[str, Any]) -> None:
@@ -708,6 +705,8 @@ def _echo_check(found: dict[str, Any]) -> None:
             click.echo(
                 f"    {run['run']}  {run['title']}  segments {segments}{planned}"
             )
+            for problem in run["problems"]:
+                click.secho(f"      ! {problem}", fg="yellow")
         if found["experiments"]:
             click.echo(f"  headers name {', '.join(found['experiments'])}")
     if found["unrecognized"]:

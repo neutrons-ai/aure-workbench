@@ -113,7 +113,7 @@ def unmanaged_card(sample_id: str) -> dict[str, Any]:
     }
 
 
-def settings_view(root: Path, *, catalogued_runs: int = 0) -> dict[str, Any]:
+def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, Any]:
     """The experiment's settings as the Settings page and ``nrw experiment
     settings`` show them: what is set, what follows nrw's default, which
     choices exist yet, and what is wrong.
@@ -145,6 +145,14 @@ def settings_view(root: Path, *, catalogued_runs: int = 0) -> dict[str, Any]:
     except ProjectConfigError:
         config = experiment_config(None)
     problems.extend(config.problems)
+    if catalogued_runs is None:
+        problems.append(
+            Problem(
+                "catalog",
+                "The experiment catalog cannot be read, so a change of IPTS asks "
+                "first: nrw cannot tell whether it holds runs.",
+            )
+        )
 
     chosen = current.experiment if current else {}
     values: dict[str, Any] = {

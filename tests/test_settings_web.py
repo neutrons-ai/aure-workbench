@@ -147,6 +147,121 @@ def test_a_save_against_an_old_revision_is_a_409_and_changes_nothing(
     assert toml.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    ("body", "said"),
+    [
+        ({"changes": {"ipts": "IPTS-5"}}, "revision is required"),
+        ({"revision": "REV", "changes": {}}, "non-empty object"),
+        ({"revision": "REV", "changes": ["ipts", "IPTS-5"]}, "non-empty object"),
+        (
+            {"revision": "REV", "changes": {"ipts": "IPTS-5"}, "confirmed": "all"},
+            "list of names",
+        ),
+        ({"revision": "REV", "changes": {"colour": "blue"}}, "colour"),
+    ],
+    ids=[
+        "no-revision",
+        "no-changes",
+        "changes-a-list",
+        "confirmed-a-string",
+        "unknown",
+    ],
+)
+def test_a_malformed_save_is_a_400_and_writes_nothing(
+    app, writer, expt: Path, body: dict, said: str
+) -> None:
+    before = (expt / "nrw.toml").read_bytes()
+    if body.get("revision") == "REV":
+        body = {**body, "revision": revision(expt)}
+
+    response = put(writer, app, **body)
+
+    assert response.status_code == 400
+    assert said in response.get_json()["error"]
+    assert (expt / "nrw.toml").read_bytes() == before
+
+
+def test_a_check_whose_body_is_not_an_object_is_a_400(app, writer) -> None:
+    response = writer.post(
+        "/api/experiment/settings/check", json=["/data"], headers=write_headers(app)
+    )
+
+    assert response.status_code == 400
+
+
+def test_two_pages_saving_from_one_revision_write_the_first_and_refuse_the_second(
+    app, writer, expt: Path
+) -> None:
+    """The refusal says it is a conflict, which is what makes the page reload."""
+    shown = revision(expt)
+
+    first = put(writer, app, revision=shown, changes={"feed.poll_seconds": 20})
+    second = put(writer, app, revision=shown, changes={"feed.poll_seconds": 40})
+
+    assert (first.status_code, second.status_code) == (200, 409)
+    assert second.get_json()["kind"] == "TomlConflictError"
+    assert load_config(expt).raw["experiment"]["feed"]["poll_seconds"] == 20
+
+
+def test_two_saves_at_the_same_moment_write_one_and_refuse_the_other(
+    app, expt: Path
+) -> None:
+    """Read, edit and write happen under one lock, so neither is lost silently."""
+    from nr_workbench.project.tomlfile import TomlConflictError
+
+    settings = app.config["NRW_SETTINGS"]
+    shown = revision(expt)
+    start = threading.Barrier(2)
+    outcome: dict[int, str] = {}
+
+    def save_poll(seconds: int) -> None:
+        start.wait()
+        try:
+            settings.save_settings(shown, {"feed.poll_seconds": seconds})
+            outcome[seconds] = "saved"
+        except TomlConflictError:
+            outcome[seconds] = "refused"
+
+    threads = [threading.Thread(target=save_poll, args=(s,)) for s in (20, 40)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert sorted(outcome.values()) == ["refused", "saved"]
+    saved = next(seconds for seconds, said in outcome.items() if said == "saved")
+    assert load_config(expt).raw["experiment"]["feed"]["poll_seconds"] == saved
+
+
+def test_an_apply_reviewed_before_the_data_folder_changed_is_refused(
+    app, writer, expt: Path, tmp_path: Path
+) -> None:
+    """The same run, in another folder: the reviewed plan is not this one."""
+    from .test_experiment_web import assign
+
+    elsewhere = tmp_path / "elsewhere"
+    write_autoreduced(elsewhere, 234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    assert assign(writer, app).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    assert plan["writes"]
+    moved = put(
+        writer,
+        app,
+        revision=revision(expt),
+        changes={"source.location": str(elsewhere)},
+    )
+    assert moved.status_code == 200, moved.get_json()
+
+    response = writer.post(
+        "/api/experiment/apply",
+        json={"plan_id": plan["plan_id"]},
+        headers=write_headers(app),
+    )
+
+    assert response.status_code == 409
+    assert not (expt / "samples" / "Sample6").exists()
+
+
 def test_a_value_that_is_not_allowed_is_a_400_with_the_reason(
     app, writer, expt: Path
 ) -> None:
@@ -226,6 +341,24 @@ def test_checking_a_folder_says_what_it_holds(app, writer, tmp_path: Path) -> No
     assert (body["first"], body["last"]) == (234277, 234290)
     assert body["path"] == str(real)
     assert "IPTS-99999" in body["experiments"]
+    other = next(run for run in body["newest"] if run["run"] == 234290)
+    assert "IPTS-99999" in other["problems"][0]
+
+
+def test_a_check_judges_the_headers_against_the_ipts_it_is_given(
+    app, writer, tmp_path: Path
+) -> None:
+    """The page shows the server's judgement, so it must be the IPTS on the page."""
+    folder = tmp_path / "facility" / "IPTS-99999"
+    write_autoreduced(
+        folder, 234290, [1], planned=1, ipts="IPTS-99999", mtime=time.time() - 3600
+    )
+
+    typed = check(writer, app, location=str(folder), ipts="IPTS-99999").get_json()
+    saved = check(writer, app, location=str(folder)).get_json()
+
+    assert typed["newest"][0]["problems"] == []
+    assert "IPTS-00001" in saved["newest"][0]["problems"][0]
 
 
 def test_checking_a_folder_reads_only_the_newest_headers(
@@ -269,17 +402,19 @@ def test_checking_a_folder_inside_the_project_is_a_400(app, writer, expt: Path) 
     assert response.status_code == 400
 
 
-def test_a_folder_that_never_answers_is_a_504_and_then_busy(
+def test_a_folder_that_never_answers_is_a_504_then_busy_then_fine_once_it_does(
     app, writer, tmp_path: Path, monkeypatch
 ) -> None:
     """A hard-mounted path that has gone away blocks; the request must not."""
     from nr_workbench.experiment.sources import local
-    from nr_workbench.web import experiment as web_experiment
 
     gate = threading.Event()
-    monkeypatch.setattr(web_experiment, "SOURCE_TIMEOUT", 0.2)
+    real = local.LocalDirectorySource.probe
+    monkeypatch.setattr(app.config["NRW_SETTINGS"].checks, "timeout", 0.2)
     monkeypatch.setattr(
-        local.LocalDirectorySource, "probe", lambda self, **k: gate.wait()
+        local.LocalDirectorySource,
+        "probe",
+        lambda self, **k: gate.wait() and real(self, **k),
     )
     try:
         first = check(writer, app, location=str(tmp_path))
@@ -292,10 +427,12 @@ def test_a_folder_that_never_answers_is_a_504_and_then_busy(
         for thread in threading.enumerate():
             if thread.name == "nrw-folder-check":
                 thread.join(timeout=5)
+    fourth = check(writer, app, location=str(tmp_path))
 
     assert (first.status_code, second.status_code) == (504, 504)
     assert third.status_code == 409
     assert "already waiting" in third.get_json()["error"]
+    assert fourth.status_code == 200 and fourth.get_json()["reachable"]
 
 
 def test_checking_a_location_that_needs_the_ipts_without_one_is_a_400(
@@ -321,14 +458,20 @@ def test_checking_a_location_that_needs_the_ipts_without_one_is_a_400(
 )
 def test_a_read_only_server_refuses_settings_writes_itself(expt: Path, call) -> None:
     """The second of two mechanisms: the data layer refuses, whatever the route did."""
-    from nr_workbench.web.experiment import ExperimentData, WritesDisabledError
+    from nr_workbench.web.experiment import WritesDisabledError
+    from nr_workbench.web.settings import SettingsData
 
-    data = ExperimentData(expt, writable=False, why_read_only="view only")
-    try:
-        with pytest.raises(WritesDisabledError, match="view only"):
-            call(data)
-    finally:
-        data.stop()
+    data = SettingsData(
+        expt,
+        writable=False,
+        why_read_only="view only",
+        count_runs=lambda: 0,
+        watching=lambda: None,
+        on_saved=lambda: None,
+    )
+
+    with pytest.raises(WritesDisabledError, match="view only"):
+        call(data)
 
 
 # --------------------------------------------------------------------------
@@ -462,12 +605,12 @@ def test_a_malformed_nrw_toml_does_not_cost_the_one_time_link(expt: Path) -> Non
 def test_the_landing_page_is_chosen_before_the_link_is_spent(
     expt: Path, monkeypatch
 ) -> None:
-    from nr_workbench.web.experiment import ExperimentData
+    from nr_workbench.web.settings import SettingsData
 
     def broken(self):
         raise RuntimeError("anything at all")
 
-    monkeypatch.setattr(ExperimentData, "needs_setup", broken)
+    monkeypatch.setattr(SettingsData, "needs_setup", broken)
     app = make_app(expt)
     try:
         response = app.test_client().get(f"/auth/{TOKEN}")

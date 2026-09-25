@@ -191,13 +191,21 @@ def edited(text: str, document: Mapping[str, Any], edits: Changes) -> str:
         TomlEditError: The file writes a setting in a shape nrw does not edit,
             or the edit would change anything else.
     """
-    rest = {table: keys for table, keys in edits.items() if not table.startswith("experiment.")}
-    ours = {table: keys for table, keys in edits.items() if table.startswith("experiment.")}
+    rest = {
+        table: keys
+        for table, keys in edits.items()
+        if not table.startswith("experiment.")
+    }
+    ours = {
+        table: keys for table, keys in edits.items() if table.startswith("experiment.")
+    }
     new = text
     if ours:
         current = written_experiment(document)
         wanted = apply_edits(current, ours)
-        replaced = replace_block(new, experiment_block(current), experiment_block(wanted))
+        replaced = replace_block(
+            new, experiment_block(current), experiment_block(wanted)
+        )
         if replaced is not None:
             new = replaced
         elif "experiment" not in document and "[experiment." not in text:
@@ -242,7 +250,9 @@ def _refresh_readme(layout: ProjectLayout, notes: list[str]) -> list[str]:
     """README.md names the IPTS and the beamtime: refresh it if it is untouched."""
     readme = _planned(layout.root)["README.md"]
     target = layout.root / readme.relpath
-    outcome = classify(readme, target, load_lock(layout.scaffold_lock).get(readme.relpath))
+    outcome = classify(
+        readme, target, load_lock(layout.scaffold_lock).get(readme.relpath)
+    )
     if outcome is Outcome.UPGRADE and not lock_problem(layout.scaffold_lock):
         atomic_write_bytes(target, readme.content)
         record_installed(layout.root, readme)

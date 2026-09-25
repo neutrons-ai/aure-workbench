@@ -106,12 +106,6 @@ class SourceRun:
         return tuple(f for f in self.files if f.name in keep)
 
     @property
-    def other_artifacts(self) -> tuple[SourceFile, ...]:
-        """Its other files, such as the combined curve beside the segments."""
-        fitting = set(self.fitting_files)
-        return tuple(f for f in self.files if f not in fitting)
-
-    @property
     def last_subrun(self) -> int:
         """The highest run number any of its files came from."""
         return max([self.key.run, *(f.subrun for f in self.files if f.subrun)])

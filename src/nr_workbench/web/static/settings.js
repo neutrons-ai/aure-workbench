@@ -207,9 +207,10 @@
     $("s-diff-box").classList.toggle("d-none", !result.diff);
     const status = $("s-status");
     status.replaceChildren();
-    if (!shown.effective.needs_setup) {
+    // What the server reads now, as it says -- not what this page expects.
+    if (!shown.effective.needs_setup && shown.watching) {
       status.append(
-        "The Experiment page now watches " + (shown.effective.path || "the data source") + ". ",
+        "The Experiment page now watches " + shown.watching + ". ",
         el("a", { href: "/experiment", text: "Open it" })
       );
     }
@@ -217,6 +218,7 @@
 
   async function save(event, confirmed) {
     if (event) event.preventDefault();
+    confirmed = confirmed || [];
     const change = changes();
     const status = $("s-status");
     if (!Object.keys(change).length) {
@@ -230,7 +232,7 @@
       const response = await api("PUT", "/api/experiment/settings", {
         revision: shown.revision,
         changes: change,
-        confirmed: confirmed || [],
+        confirmed: confirmed,
       });
       shown = response.settings;
       render();
@@ -239,19 +241,22 @@
     } catch (error) {
       status.textContent = "Not saved.";
       const payload = error.payload || {};
-      if (error.status === 409 && payload.needs === "ipts-change") {
-        if (window.confirm(error.message + "\n\nChange the IPTS anyway?")) {
-          await save(null, ["ipts-change"]);
+      if (error.status === 409 && payload.needs && !confirmed.includes(payload.needs)) {
+        // The server names what to confirm; the page asks, and sends the same
+        // change again with that confirmation. Asked once each, never looped.
+        if (window.confirm(error.message + "\n\nGo ahead anyway?")) {
+          await save(null, confirmed.concat([payload.needs]));
         }
       } else if (error.status === 409 && payload.lines) {
         message(error.message, "warning");
         $("s-lines").textContent = payload.lines;
         $("s-lines").classList.remove("d-none");
-      } else if (error.status === 409) {
+      } else if (payload.kind === "TomlConflictError") {
+        // nrw.toml changed since the page loaded it: show what it says now.
         message(error.message + " The settings were reloaded; make the change again.", "warning");
         await reload();
       } else {
-        message(error.message, "danger");
+        message(error.message, error.status === 409 ? "warning" : "danger");
       }
     } finally {
       $("s-save").disabled = !writable();
@@ -273,14 +278,13 @@
       parts.push(el("div", {
         text: found.runs + " run(s), " + found.first + " to " + found.last + ".",
       }));
-      const others = found.experiments.filter(function (name) {
-        return name !== currentIpts();
-      });
-      if (others.length) {
+      if (found.experiments.length) {
+        // Said, not judged: whether a header's IPTS is this project's is the
+        // server's call, made against the IPTS being checked, and it comes
+        // back as a problem on the run below.
         parts.push(el("div", {
-          className: "text-warning-emphasis",
-          text: "The newest files' headers name " + others.join(", ") +
-            ": this may be another experiment's folder.",
+          className: "text-secondary",
+          text: "The newest files' headers name " + found.experiments.join(", ") + ".",
         }));
       }
       const list = el("ul", { className: "mb-0" });
@@ -290,7 +294,9 @@
         list.append(el("li", {}, [
           el("span", { className: "mono", text: String(run.run) }),
           "  " + (run.title || "") + "  segments " + segments,
-        ]));
+        ].concat((run.problems || []).map(function (text) {
+          return el("div", { className: "small text-warning-emphasis", text: text });
+        }))));
       });
       parts.push(el("div", { className: "text-secondary mt-1", text: "Newest:" }), list);
     }

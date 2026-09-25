@@ -176,6 +176,37 @@ def test_a_symbolic_link_is_not_followed(tmp_path: Path) -> None:
     assert any("symbolic link" in p.message for p in inventory.problems)
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no named pipes here")
+def test_a_pipe_named_like_data_is_reported_and_never_opened(tmp_path: Path) -> None:
+    """Opening a pipe waits for a writer: a listing that opened one would hang."""
+    from nr_workbench.bounded import Bounded
+
+    folder = tmp_path / "reduced"
+    write_autoreduced(folder, 234277, [1])
+    os.mkfifo(folder / "REFL_234278_1_234278_autoreduction.dat")
+    once = Bounded(slots=1, timeout=10, busy="", name="test-listing")
+
+    inventory = once.run(source_for(folder, ipts="IPTS-00001").inventory)
+
+    assert list(inventory.runs) == [RunKey(234277)]
+    assert any("not plain files" in p.message for p in inventory.problems)
+
+
+def test_a_check_reports_a_link_named_like_data_and_does_not_count_it(
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "reduced"
+    write_autoreduced(folder, 234277, [1])
+    secret = tmp_path / "private.txt"
+    secret.write_text("not data")
+    (folder / "REFL_234278_1_234278_autoreduction.dat").symlink_to(secret)
+
+    probe = source_for(folder, ipts="IPTS-00001").probe()
+
+    assert probe.runs == 1
+    assert any("symbolic link" in p.message for p in probe.problems)
+
+
 def test_an_unrecognized_data_file_is_reported_not_skipped(tmp_path: Path) -> None:
     """A folder of files in an unknown dialect once looked exactly like an empty one."""
     (tmp_path / "REFL_234277_seg1_v3.dat").write_text("0.01 1 0.1 0.001\n")
@@ -403,7 +434,6 @@ def test_a_combined_curve_is_an_artifact_of_its_measurement_not_a_fitting_file(
 
     assert [f.role for f in run.files] == [SEGMENT, SEGMENT, SEGMENT, COMBINED]
     assert [f.segment for f in run.fitting_files] == [1, 2, 3]
-    assert [f.role for f in run.other_artifacts] == [COMBINED]
     assert run.thetas[-1] is None and len(run.thetas) == len(run.files)
 
 

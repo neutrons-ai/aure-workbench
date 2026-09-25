@@ -350,8 +350,9 @@ def test_settings_json_is_the_settings_pages_view(expt: Path) -> None:
         nrw("experiment", "settings", "--root", str(expt), "--json").output
     )
 
-    assert payload["schema"] == "nrw-settings/1"
-    assert payload["values"]["ipts"] == "IPTS-00001"
+    assert payload["settings"]["schema"] == "nrw-settings/1"
+    assert payload["settings"]["values"]["ipts"] == "IPTS-00001"
+    assert (payload["change"], payload["check"]) == (None, None)
 
 
 def test_settings_previews_a_change_and_writes_nothing(expt: Path) -> None:

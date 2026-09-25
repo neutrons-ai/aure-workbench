@@ -94,7 +94,7 @@ def run_serve(
     )
     click.echo(f"  http://{shown}:{port}/api/overview    the same data as JSON")
     click.echo("")
-    needs_setup = app.config["NRW_EXPERIMENT"].needs_setup()
+    needs_setup = app.config["NRW_SETTINGS"].needs_setup()
     if needs_setup:
         click.echo(
             "  This experiment is not set up yet: nrw needs its IPTS, or the\n"

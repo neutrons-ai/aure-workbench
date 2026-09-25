@@ -19,6 +19,11 @@ from typing import Any, Protocol
 
 from nr_workbench.experiment.inventory import Inventory, SourceFile
 
+#: Seconds anyone -- a page request, a folder check, the command line -- waits
+#: for the data source before giving up on it. A mount that has gone away
+#: blocks rather than failing, so without a deadline it would wait for good.
+SOURCE_TIMEOUT = 15.0
+
 
 class SourceUnavailableError(Exception):
     """The configured source cannot be used. The message says why and what to do."""

@@ -296,3 +296,25 @@ def _seconds(
         )
         return float(default)
     return float(value)
+
+
+def experiment_config_for(root: Path) -> ExperimentConfig:
+    """The experiment's configuration from ``root``'s ``nrw.toml``, whatever it holds.
+
+    A file that cannot be read gives the defaults, with the reason as a
+    problem: a page that could not render over a broken ``nrw.toml`` is one
+    nobody could use to fix it.
+    """
+    from nr_workbench.project.config import ProjectConfigError, load_config
+
+    try:
+        return experiment_config(load_config(Path(root)))
+    except ProjectConfigError as exc:
+        config = experiment_config(None)
+        return ExperimentConfig(
+            ipts=config.ipts,
+            source=config.source,
+            feed=config.feed,
+            catalog_kind=config.catalog_kind,
+            problems=(Problem("config", str(exc)), *config.problems),
+        )

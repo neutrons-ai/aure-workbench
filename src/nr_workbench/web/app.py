@@ -38,6 +38,7 @@ from nr_workbench.web.api import api
 from nr_workbench.web.experiment import ExperimentData
 from nr_workbench.web.experiment_api import experiment_api
 from nr_workbench.web.project import ProjectData
+from nr_workbench.web.settings import SettingsData
 
 
 def create_app(
@@ -95,11 +96,20 @@ def create_app(
     app.config["NRW_READ_ONLY_REASON"] = read_only_reason or (
         "" if app.config["NRW_WRITABLE"] else _default_reason(bound_host)
     )
-    app.config["NRW_EXPERIMENT"] = ExperimentData(
+    experiment = ExperimentData(
         root,
         writable=app.config["NRW_WRITABLE"],
         why_read_only=app.config["NRW_READ_ONLY_REASON"],
         autostart=autostart,
+    )
+    app.config["NRW_EXPERIMENT"] = experiment
+    app.config["NRW_SETTINGS"] = SettingsData(
+        root,
+        writable=app.config["NRW_WRITABLE"],
+        why_read_only=app.config["NRW_READ_ONLY_REASON"],
+        count_runs=experiment.catalogued_runs,
+        watching=experiment.watching,
+        on_saved=experiment.reload,
     )
     app.register_blueprint(api)
     app.register_blueprint(experiment_api)
@@ -303,7 +313,7 @@ def _register_views(app: Flask) -> None:
         # set up yet goes straight to Settings, and so does one whose nrw.toml
         # cannot be read -- which must not cost the only link there is.
         try:
-            setup = app.config["NRW_EXPERIMENT"].needs_setup()
+            setup = app.config["NRW_SETTINGS"].needs_setup()
         except Exception:  # noqa: BLE001 - see above
             setup = True
         landing = "settings_page" if setup else "experiment"
@@ -350,7 +360,7 @@ def _register_views(app: Flask) -> None:
         writer = security.can_write()
         page = render_template(
             "settings.html",
-            payload=app.config["NRW_EXPERIMENT"].settings(),
+            payload=app.config["NRW_SETTINGS"].settings(),
             page_token=app.config["NRW_PAGE_TOKEN"] if writer else "",
             writer=writer,
             csp_nonce=nonce,

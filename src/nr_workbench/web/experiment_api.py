@@ -18,15 +18,15 @@ from typing import Any
 from flask import Blueprint, current_app, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+from nr_workbench.bounded import Busy, TimedOut
 from nr_workbench.web import security
 from nr_workbench.web.experiment import (
-    CheckBusyError,
     ExperimentData,
     RequestError,
     RunNotListedError,
-    SourceTimeoutError,
     WritesDisabledError,
 )
+from nr_workbench.web.settings import SettingsData, WriteFailedError
 
 experiment_api = Blueprint("experiment_api", __name__, url_prefix="/api/experiment")
 
@@ -34,6 +34,11 @@ experiment_api = Blueprint("experiment_api", __name__, url_prefix="/api/experime
 def data() -> ExperimentData:
     """The request's :class:`ExperimentData`, held on the app config."""
     return current_app.config["NRW_EXPERIMENT"]  # type: ignore[no-any-return]
+
+
+def settings_data() -> SettingsData:
+    """The request's :class:`SettingsData`, held on the app config."""
+    return current_app.config["NRW_SETTINGS"]  # type: ignore[no-any-return]
 
 
 @experiment_api.before_request
@@ -90,12 +95,15 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 SampleRenderError,
                 NeedsConfirmation,
                 TomlEditError,
-                CheckBusyError,
+                Busy,
             ),
             409,
         ),
         ((CatalogError,), 503),
-        ((SourceTimeoutError,), 504),
+        ((TimedOut,), 504),
+        # Expected, and said: a read-only project, a full disk. Not the
+        # generic 500 -- the person can do something about it.
+        ((WriteFailedError,), 500),
         ((RequestError, CatalogValidationError, SettingsError), 400),
     ):
         if isinstance(exc, kinds):
@@ -215,7 +223,7 @@ def adopt(sample_id: str) -> Any:
 @experiment_api.get("/settings")
 def settings() -> Any:
     """The IPTS, the data source and the watcher, as nrw.toml has them."""
-    return jsonify(data().settings())
+    return jsonify(settings_data().settings())
 
 
 @experiment_api.put("/settings")
@@ -223,7 +231,7 @@ def save_settings() -> Any:
     """Save settings: ``{"revision", "changes": {...}, "confirmed": [...]}``."""
     body = _body()
     return jsonify(
-        data().save_settings(
+        settings_data().save_settings(
             body.get("revision"), body.get("changes"), body.get("confirmed")
         )
     )
@@ -233,4 +241,4 @@ def save_settings() -> Any:
 def check_folder() -> Any:
     """What a folder holds, before choosing it: ``{"location", "ipts"}``."""
     body = _body()
-    return jsonify(data().check_folder(body.get("location"), body.get("ipts")))
+    return jsonify(settings_data().check_folder(body.get("location"), body.get("ipts")))

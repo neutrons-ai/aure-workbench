@@ -10,6 +10,7 @@ source still has samples worth applying from what was copied earlier.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -146,3 +147,95 @@ class Workspace:
         from nr_workbench.experiment.render import project_context
 
         return project_context(self.root)
+
+
+def candidate_source(
+    root: Path, changes: Mapping[str, Any]
+) -> tuple[Any, ExperimentConfig, list[str]]:
+    """The data source a settings change would configure, built as the watcher would.
+
+    For "Check folder": the change is checked, made to a copy of what
+    ``nrw.toml`` says, and resolved through the same configuration and the
+    same source registry the running server uses -- so a check reads exactly
+    the folder the watcher would, and no other.
+
+    Args:
+        root: Project root.
+        changes: Setting name to value, as the Settings page sends them.
+
+    Returns:
+        The source, the configuration it came from, and warnings.
+
+    Raises:
+        SettingsError: A value is not allowed, or the location cannot be
+            worked out (a ``{ipts}`` with no IPTS).
+        SourceUnavailableError: The source kind is not built yet.
+        ProjectConfigError: ``nrw.toml`` cannot be read.
+    """
+    import dataclasses
+
+    from nr_workbench.experiment.sources import open_source
+    from nr_workbench.project.config import load_config
+    from nr_workbench.project.settings import SettingsError, validate
+    from nr_workbench.project.tomlfile import applied
+
+    edits, warnings = validate(Path(root), changes)
+    project = load_config(Path(root))
+    raw = applied(project.raw, edits)
+    beamtime = raw.get("beamtime") if isinstance(raw.get("beamtime"), dict) else {}
+    config = experiment_config(
+        dataclasses.replace(project, ipts=beamtime.get("ipts") or None, raw=raw)
+    )
+    if config.source.path is None:
+        if "{ipts}" in config.source.location and not config.ipts:
+            raise SettingsError(
+                "This location is filled in from the IPTS; set the IPTS to check it."
+            )
+        why = next(
+            (p.message for p in config.problems if p.scope == "source"),
+            "The data location cannot be worked out.",
+        )
+        raise SettingsError(why)
+    return open_source(config.source, ipts=config.ipts), config, warnings
+
+
+def check_source(
+    root: Path, changes: Mapping[str, Any], *, run: Callable[..., Any]
+) -> dict[str, Any]:
+    """What the folder a settings change names -- or the current one -- holds.
+
+    The one check behind the Settings page's "Check folder" and ``nrw
+    experiment settings --check``. A setting the change leaves out keeps the
+    value ``nrw.toml`` gives it; only the IPTS and the location matter.
+
+    Args:
+        root: Project root.
+        changes: Setting name to value, as :func:`candidate_source` takes them.
+        run: Runs the probe, as ``run(probe)``. The caller gives it a deadline:
+            the probe lists a folder that may be on a mount that stopped
+            answering.
+
+    Raises:
+        SettingsError: The location is not one that could be saved or cannot
+            be worked out, ``nrw.toml`` cannot be read, or the source kind
+            cannot be checked yet.
+    """
+    from nr_workbench.experiment.sources import SourceUnavailableError
+    from nr_workbench.project.config import ProjectConfigError
+    from nr_workbench.project.settings import SettingsError
+
+    wanted = {k: v for k, v in changes.items() if k in ("ipts", "source.location")}
+    try:
+        source, config, warnings = candidate_source(root, wanted)
+    except (ProjectConfigError, SourceUnavailableError) as exc:
+        raise SettingsError(str(exc)) from exc
+    probe = getattr(source, "probe", None)
+    if probe is None:
+        raise SettingsError(f"A {source.kind} source cannot be checked yet.")
+    found = run(probe)
+    return {
+        "location": config.source.location,
+        "path": str(config.source.path),
+        **found.as_dict(),
+        "warnings": warnings,
+    }

@@ -37,6 +37,7 @@ from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
     normalize_ipts,
     written_experiment,
 )
+from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.tomlfile import Changes, Set, Unset, Value
 
 # ---------------------------------------------------------------------------
@@ -280,13 +281,13 @@ def _location(root: Path, value: Any, warnings: list[str]) -> str:
         )
     # Lexical only: resolving a path on a dead mount blocks the request.
     folder = os.path.normpath(concrete)
-    project = os.path.normpath(str(Path(root).absolute()))
-    for inside in ("samples", ".nrw", "experiment"):
-        area = os.path.join(project, inside)
-        if folder == area or folder.startswith(area + os.sep):
+    layout = ProjectLayout(root=Path(root).absolute())
+    for area in (layout.samples_dir, layout.state_dir, layout.experiment_dir):
+        inside = os.path.normpath(str(area))
+        if folder == inside or folder.startswith(inside + os.sep):
             raise SettingsError(
-                f"source.location is inside this project's {inside}/, which nrw "
-                "writes itself; point it at the facility's folder."
+                f"source.location is inside this project's {area.name}/, which "
+                "nrw writes itself; point it at the facility's folder."
             )
     home = os.path.normpath(str(Path.home()))
     if folder == home or folder.startswith(home + os.sep):

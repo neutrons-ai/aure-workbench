@@ -831,6 +831,12 @@ def dead_mount(app, monkeypatch):
 
     gate = threading.Event()
     monkeypatch.setattr(experiment_module, "SOURCE_TIMEOUT", 0.3)
+    # Reads keep the deadline their configuration was built with, so build
+    # again under the short one -- and list once, as the page would have
+    # before the mount went away.
+    data = app.config["NRW_EXPERIMENT"]
+    data.reload()
+    data.live.scan_once()
     monkeypatch.setattr(
         LocalDirectorySource, "read_bytes", lambda self, f, max_bytes: gate.wait(30)
     )

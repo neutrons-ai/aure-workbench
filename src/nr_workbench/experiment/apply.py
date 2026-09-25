@@ -708,8 +708,7 @@ def _plan_id(plans: Iterable[SamplePlan], catalog: Catalog, source: Any) -> str:
     digest = hashlib.sha256()
     # Which data source, too: a plan reviewed against one folder must never be
     # carried out against another after the settings change in between.
-    describe = getattr(source, "describe", None)
-    identity = describe() if callable(describe) else {}
+    identity = source.describe()
     digest.update(json.dumps(identity, sort_keys=True, default=str).encode())
     for plan in plans:
         digest.update(

@@ -43,6 +43,10 @@ class TomlEditError(Exception):
         super().__init__(message)
         self.lines = lines
 
+    def explained(self) -> str:
+        """The message, followed by the lines to add by hand when there are any."""
+        return f"{self}\n{self.lines}" if self.lines else str(self)
+
 
 class TomlConflictError(TomlEditError):
     """The file changed after it was read; nothing was written."""
@@ -533,7 +537,17 @@ def verify(old: str, new: str, changes: Changes) -> None:
         after = tomllib.loads(new)
     except tomllib.TOMLDecodeError as exc:
         raise TomlEditError(f"the edit would make nrw.toml invalid ({exc}).") from exc
-    want = copy.deepcopy(tomllib.loads(old))
+    want = applied(tomllib.loads(old), changes)
+    if not _same(_pruned(after), _pruned(want)):
+        raise TomlEditError(
+            "the edit would change more of nrw.toml than the settings asked "
+            "for, so nothing was written. Make the change by hand."
+        )
+
+
+def applied(document: Mapping[str, Any], changes: Changes) -> dict[str, Any]:
+    """A parsed document with ``changes`` made, as it would read back once written."""
+    want = copy.deepcopy(dict(document))
     for table, keys in changes.items():
         node = want
         for part in table.split("."):
@@ -543,11 +557,7 @@ def verify(old: str, new: str, changes: Changes) -> None:
                 node[key] = _as_written(change.value)
             else:
                 node.pop(key, None)
-    if not _same(_pruned(after), _pruned(want)):
-        raise TomlEditError(
-            "the edit would change more of nrw.toml than the settings asked "
-            "for, so nothing was written. Make the change by hand."
-        )
+    return want
 
 
 def _as_written(value: Value) -> Value:

@@ -8,6 +8,7 @@ poller.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -106,6 +107,32 @@ def test_a_touch_without_a_change_keeps_the_same_poller(
     toml.write_bytes(toml.read_bytes())
 
     assert data.live is before
+
+
+def test_an_edit_that_keeps_the_size_and_the_time_is_still_picked_up(
+    data: ExperimentData, project: Path, folders
+) -> None:
+    """Folders a and b: the same length, so the edit changes no size."""
+    assert runs_shown(data) == [234277]
+    toml = project / "nrw.toml"
+    before = toml.stat()
+    edited = toml.read_bytes().replace(
+        str(folders[0]).encode(), str(folders[1]).encode()
+    )
+    # A person's edit comes after the save; a coarse file clock ticks every
+    # few milliseconds, and the change time must be able to move.
+    time.sleep(0.05)
+    with toml.open("r+b") as handle:  # in place: the same inode
+        handle.write(edited)
+    os.utime(toml, ns=(before.st_atime_ns, before.st_mtime_ns))
+    after = toml.stat()
+    assert (after.st_ino, after.st_size, after.st_mtime_ns) == (
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+
+    assert runs_shown(data) == [234400]
 
 
 def test_an_unparseable_edit_keeps_the_last_good_configuration(

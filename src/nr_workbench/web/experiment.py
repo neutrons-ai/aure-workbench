@@ -9,8 +9,9 @@ Two rules shape it:
 **No request waits on the data mount.** Listing the source is the background
 poller's job (:class:`~nr_workbench.experiment.live.LiveInventory`); requests
 read its last snapshot. The two things that must read the source -- a quick
-look at a run's curves, and the fresh look apply takes before writing -- go
-through a two-thread pool with a timeout, so a dead mount costs those requests
+look at a run's curves, and the fresh look apply takes before writing -- run
+under a deadline with a cap on how many may wait at once
+(:class:`~nr_workbench.bounded.Bounded`), so a dead mount costs those requests
 a timeout rather than a thread each, forever.
 
 **Writes are the catalog's and apply's.** This class decides nothing: the
@@ -22,9 +23,7 @@ agent guard, so that forgetting one is not a hole.
 
 from __future__ import annotations
 
-import concurrent.futures
 import dataclasses
-import functools
 import hashlib
 import threading
 import time
@@ -33,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.bounded import Bounded, TimedOut
 from nr_workbench.experiment.model import (
     Catalog,
     RunChange,
@@ -40,18 +40,18 @@ from nr_workbench.experiment.model import (
     SampleChange,
     validate_sample_id,
 )
+from nr_workbench.experiment.sources import SOURCE_TIMEOUT
 from nr_workbench.experiment.status import STATES
 from nr_workbench.experiment.views import (
     run_row,
     sample_card,
-    settings_view,
     unmanaged_card,
 )
 from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
 
-#: Seconds a request may wait for the data source.
-SOURCE_TIMEOUT = 15.0
+#: Reads of the data source that may be waiting at once, per configuration.
+READ_SLOTS = 4
 
 #: Most files one run's quick look reads. A run has three or four; a folder
 #: anyone on the team can write to could hold a thousand under one run number.
@@ -106,85 +106,8 @@ class WritesDisabledError(PermissionError):
     """The server was started without write access. The message says why."""
 
 
-class SourceTimeoutError(TimeoutError):
-    """The data source did not answer in time -- usually a dead mount."""
-
-
-class CheckBusyError(Exception):
-    """Folder checks are already running -- usually stuck on a dead mount."""
-
-
-#: At most this many folder checks at once. A check stuck on a dead mount
-#: holds its place until the mount answers, so this also caps how many
-#: threads a person clicking "Check" repeatedly can leave waiting.
-_CHECKS = threading.BoundedSemaphore(2)
-
-
-def _in_daemon(function: Callable[[], Any]) -> Any:
-    """Run ``function`` on a daemon thread, waiting at most :data:`SOURCE_TIMEOUT`.
-
-    A daemon thread rather than the read pool: a pool's workers are joined
-    when the interpreter exits, so one stuck on a dead mount would make
-    stopping ``nrw serve`` hang as well.
-
-    Raises:
-        CheckBusyError: Two checks are already running.
-        SourceTimeoutError: It did not finish in time.
-    """
-    if not _CHECKS.acquire(blocking=False):
-        raise CheckBusyError(
-            "Two folder checks are already waiting for an answer -- the data "
-            "mount may be unavailable. Try again once they finish."
-        )
-    outcome: dict[str, Any] = {}
-    done = threading.Event()
-
-    def run() -> None:
-        try:
-            outcome["value"] = function()
-        except BaseException as exc:  # noqa: BLE001 - handed to the request
-            outcome["error"] = exc
-        finally:
-            done.set()
-            _CHECKS.release()
-
-    try:
-        threading.Thread(target=run, name="nrw-folder-check", daemon=True).start()
-    except BaseException:
-        _CHECKS.release()  # the thread that would have given it back never ran
-        raise
-    if not done.wait(SOURCE_TIMEOUT):
-        raise SourceTimeoutError(
-            f"The folder did not answer within {SOURCE_TIMEOUT:.0f}s; the data "
-            "mount may be unavailable."
-        )
-    if "error" in outcome:
-        raise outcome["error"]
-    return outcome["value"]
-
-
-def _bounded_call(
-    pool: concurrent.futures.ThreadPoolExecutor,
-    function: Callable[..., Any],
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
-    """Run ``function`` in ``pool``, waiting at most :data:`SOURCE_TIMEOUT`.
-
-    Raises:
-        SourceTimeoutError: It did not finish in time. A call still waiting
-            for a worker is cancelled, so waits do not pile up behind a
-            mount that has stopped answering.
-    """
-    future = pool.submit(function, *args, **kwargs)
-    try:
-        return future.result(timeout=SOURCE_TIMEOUT)
-    except (concurrent.futures.TimeoutError, TimeoutError) as exc:
-        future.cancel()
-        raise SourceTimeoutError(
-            f"The data source did not answer within {SOURCE_TIMEOUT:.0f}s; "
-            "the data mount may be unavailable."
-        ) from exc
+#: What a request raises when the data source did not answer in time.
+SourceTimeoutError = TimedOut
 
 
 def _digest(path: Path) -> str | None:
@@ -199,29 +122,32 @@ class _Wiring:
     """Everything that reads the data source, for one version of ``nrw.toml``.
 
     Attributes:
-        stamp: ``nrw.toml``'s modification time and size, for a cheap check.
+        stamp: ``nrw.toml``'s inode, size, and modification and change times:
+            every nrw write replaces the file, and a hand edit moves at least
+            one of them even within one tick of a coarse clock.
         revision: Its sha256, to tell an edit from a touch.
         workspace: Source, feed and catalog store built from it.
         source: The source, every byte read bounded.
         live: The background poller over that source.
-        pool: The workers the bounded reads run on.
+        reads: The deadline and the slots those reads run under -- this
+            wiring's own, so reads stuck on the old folder's dead mount do not
+            also take the new folder's.
     """
 
-    stamp: tuple[int, int] | None
+    stamp: tuple[int, int, int, int] | None
     revision: str | None
     workspace: Any
     source: _BoundedSource
     live: Any
-    pool: concurrent.futures.ThreadPoolExecutor
+    reads: Bounded
 
     def bounded(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run ``function`` on this wiring's workers, with the deadline."""
-        return _bounded_call(self.pool, function, *args, **kwargs)
+        """Run ``function`` under this wiring's deadline."""
+        return self.reads.run(function, *args, **kwargs)
 
     def close(self) -> None:
-        """Retire it: its poller stops for good, and queued reads are dropped."""
+        """Retire it: its poller stops for good."""
         self.live.close()
-        self.pool.shutdown(wait=False, cancel_futures=True)
 
 
 class ExperimentData:
@@ -272,7 +198,12 @@ class ExperimentData:
         config = self.root / "nrw.toml"
         try:
             info = config.stat()
-            stamp: tuple[int, int] | None = (info.st_mtime_ns, info.st_size)
+            stamp: tuple[int, int, int, int] | None = (
+                info.st_ino,
+                info.st_size,
+                info.st_mtime_ns,
+                info.st_ctime_ns,
+            )
         except OSError:
             stamp = None
         with self._lock:
@@ -302,7 +233,9 @@ class ExperimentData:
             current.close()
         return self._wiring
 
-    def _build(self, stamp: tuple[int, int] | None, revision: str | None) -> _Wiring:
+    def _build(
+        self, stamp: tuple[int, int, int, int] | None, revision: str | None
+    ) -> _Wiring:
         """Everything that reads the data source, for one configuration.
 
         Built in one step and handed to a request whole, so no request pairs a
@@ -313,20 +246,22 @@ class ExperimentData:
         from nr_workbench.experiment.workspace import Workspace
 
         workspace = Workspace(self.root)
-        # A pool per wiring: two reads stuck on a mount that has gone away
-        # must not also be the only two workers the next folder gets.
-        pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="nrw-source-read"
+        reads = Bounded(
+            slots=READ_SLOTS,
+            timeout=SOURCE_TIMEOUT,
+            busy=(
+                "Reads of the data source are already waiting for an answer -- "
+                "the data mount may be unavailable."
+            ),
+            name="nrw-source-read",
         )
         return _Wiring(
             stamp=stamp,
             revision=revision,
             workspace=workspace,
-            source=_BoundedSource(
-                workspace.source, functools.partial(_bounded_call, pool)
-            ),
+            source=_BoundedSource(workspace.source, reads.run),
             live=workspace.live(clock=self._clock, autostart=self._autostart),
-            pool=pool,
+            reads=reads,
         )
 
     @property
@@ -344,12 +279,27 @@ class ExperimentData:
         """The background poller for the current ``nrw.toml``."""
         return self._wired().live
 
-    def stop(self) -> None:
-        """Stop polling. For tests and shutdown."""
+    def reload(self) -> None:
+        """Rebuild from ``nrw.toml`` on the next request.
+
+        After a save, which knows the file changed however its timestamps
+        read; and for tests and shutdown.
+        """
         with self._lock:
             wiring, self._wiring = self._wiring, None
         if wiring is not None:
             wiring.close()
+
+    stop = reload
+
+    def catalogued_runs(self) -> int | None:
+        """How many runs the catalog holds; ``None`` when it cannot be read."""
+        catalog, _, readable = self._catalog(self._wired())
+        return len(catalog.runs) if readable else None
+
+    def watching(self) -> str | None:
+        """The folder the running server reads now."""
+        return self._wired().source.describe().get("path")
 
     # ------------------------------------------------------------------
     # Reading
@@ -684,8 +634,8 @@ class ExperimentData:
         if not isinstance(plan_id, str) or not plan_id:
             raise RequestError("plan_id is required: review the plan before applying")
         catalog = self._catalog_or_raise(w)
-        # A fresh poll, not the last snapshot: completeness is judged now. In
-        # the pool, because the poll itself lists the source.
+        # A fresh poll, not the last snapshot: completeness is judged now.
+        # Under the deadline, because the poll itself lists the source.
         snapshot = w.bounded(w.live.scan_fresh, SOURCE_TIMEOUT)
         runs, statuses = self._observed(snapshot)
         report = apply(
@@ -727,129 +677,6 @@ class ExperimentData:
             "rewritten": report.rewritten,
             "backup": report.backup,
         }
-
-    # ------------------------------------------------------------------
-    # Settings
-    # ------------------------------------------------------------------
-
-    def needs_setup(self) -> bool:
-        """Whether nothing can be watched until someone sets the experiment up.
-
-        From ``nrw.toml`` alone, never the data mount.
-        """
-        from nr_workbench.experiment.config import experiment_config
-        from nr_workbench.project.config import ProjectConfigError, load_config
-
-        try:
-            return experiment_config(load_config(self.root)).needs_setup
-        except ProjectConfigError:
-            return True
-
-    def settings(self) -> dict[str, Any]:
-        """What the Settings page shows: values, defaults, choices and problems.
-
-        Read from ``nrw.toml`` itself, never from the poller: the page exists
-        to change a folder that may not answer, and asking the poller would
-        start it listing that folder.
-        """
-        view = settings_view(self.root, catalogued_runs=self._catalogued_runs())
-        view["writable"] = self.writable and view["editable"]
-        view["read_only_reason"] = self.why_read_only
-        return view
-
-    def save_settings(
-        self, revision: Any, changes: Any, confirmed: Any = None
-    ) -> dict[str, Any]:
-        """Save settings into ``nrw.toml``, as :func:`nr_workbench.project.settings.save`.
-
-        The running server follows the new file on its next request.
-
-        Raises:
-            RequestError: A malformed request (400).
-            SettingsError: A value is not allowed (400).
-            NeedsConfirmation: The change needs confirming first (409).
-            TomlConflictError: ``nrw.toml`` changed since the page loaded it (409).
-            TomlEditError: ``nrw.toml`` cannot be edited safely (409).
-        """
-        from nr_workbench.project.settings import save
-
-        self._require_writable()
-        if not isinstance(revision, str) or not revision:
-            raise RequestError("revision is required: load the settings before saving")
-        if not isinstance(changes, dict) or not changes:
-            raise RequestError("changes must be a non-empty object")
-        confirmed = [] if confirmed is None else confirmed
-        if not isinstance(confirmed, list) or not all(
-            isinstance(c, str) for c in confirmed
-        ):
-            raise RequestError("confirmed must be a list of names")
-        result = save(
-            self.root,
-            changes,
-            base_revision=revision,
-            confirmed=set(confirmed),
-            catalogued_runs=self._catalogued_runs(),
-        )
-        return {"result": result.as_dict(), "settings": self.settings()}
-
-    def check_folder(self, location: Any, ipts: Any = None) -> dict[str, Any]:
-        """What a folder holds, before it is chosen as the data source.
-
-        Behind the write gate, although it writes nothing: it lists whatever
-        path it is given.
-
-        Args:
-            location: The location to try, placeholders allowed; ``None`` for
-                nrw's default.
-            ipts: The IPTS to fill in, when the page is changing it too;
-                otherwise the project's.
-
-        Raises:
-            SettingsError: The location is not one that could be saved (400).
-            CheckBusyError: Checks are already running (409).
-            SourceTimeoutError: The folder did not answer in time (504).
-        """
-        from nr_workbench.experiment.config import experiment_config
-        from nr_workbench.experiment.sources.local import LocalDirectorySource
-        from nr_workbench.project.config import ProjectConfigError, load_config
-        from nr_workbench.project.settings import (
-            EXPERIMENT_KEYS,
-            SettingsError,
-            validate,
-        )
-
-        self._require_writable()
-        if location is None:
-            location = EXPERIMENT_KEYS["experiment.source"]["location"]
-        changes: dict[str, Any] = {"source.location": location}
-        if ipts is not None:
-            changes["ipts"] = ipts
-        edits, warnings = validate(self.root, changes)
-        text = str(edits["experiment.source"]["location"].value)
-        if "beamtime" in edits:
-            chosen = str(edits["beamtime"]["ipts"].value) or None
-        else:
-            try:
-                chosen = experiment_config(load_config(self.root)).ipts
-            except ProjectConfigError:
-                chosen = None
-        if "{ipts}" in text and not chosen:
-            raise SettingsError(
-                "This location is filled in from the IPTS; set the IPTS to check it."
-            )
-        path = Path(text.replace("{ipts}", chosen or ""))
-        source = LocalDirectorySource(path, text, ipts=chosen)
-        probe = _in_daemon(source.probe)
-        return {
-            "location": text,
-            "path": str(path),
-            **probe.as_dict(),
-            "warnings": warnings,
-        }
-
-    def _catalogued_runs(self) -> int:
-        catalog, _, _ = self._catalog(self._wired())
-        return len(catalog.runs)
 
     # ------------------------------------------------------------------
     # Helpers
