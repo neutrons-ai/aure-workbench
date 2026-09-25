@@ -1,0 +1,324 @@
+"""The local data source and the folder feed, against real files.
+
+The folder is shared, on NFS, and polled continuously, so the tests are about
+what it must never do: follow a link, accept a name the reduction would not
+have written, list twice per poll, re-read an unchanged header, or skip a file
+it did not recognise without saying so.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from nr_workbench.experiment.config import FeedConfig, SourceConfig
+from nr_workbench.experiment.feeds import FeedUnavailableError, open_feed
+from nr_workbench.experiment.feeds.directory import DirectoryFeed
+from nr_workbench.experiment.model import RunKey
+from nr_workbench.experiment.sources import (
+    SourceChangedError,
+    SourceFileTooLarge,
+    SourceUnavailableError,
+    open_source,
+)
+from nr_workbench.experiment.sources import local as local_module
+from nr_workbench.experiment.sources.local import LocalDirectorySource
+
+from .experiment_fixtures import copy_reference, write_autoreduced
+
+
+def source_for(folder: Path, ipts: str | None = "IPTS-34347") -> LocalDirectorySource:
+    return LocalDirectorySource(folder, str(folder), ipts=ipts)
+
+
+# --------------------------------------------------------------------------
+# Listing the reference corpus
+# --------------------------------------------------------------------------
+
+
+def test_the_reference_corpus_lists_runs_not_subruns(tmp_path: Path) -> None:
+    """REFL_218386_2_218387 names two numbers; 218387 is a subrun, not a run.
+
+    At a beamline that numbers consecutively 218387 is also a real, separate
+    run -- which is how a looser pattern once marked neighbours as fitted.
+    """
+    copy_reference(tmp_path)
+
+    inventory = source_for(tmp_path).inventory()
+
+    assert [key.run for key in inventory.runs] == [218386, 218393]
+    assert inventory.reachable and inventory.problems == ()
+
+
+def test_a_reference_run_carries_what_its_headers_say(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+
+    run = source_for(tmp_path).inventory().runs[RunKey(218386)]
+
+    assert run.segments == (1, 2, 3)
+    assert run.title == "CuPt_d8-THF_FullQ-218386-1."
+    assert run.start_time.startswith("2025-04-20T13:42:43")
+    assert run.experiment == "IPTS-34347"
+    assert [round(t, 2) for t in run.thetas] == [0.45, 1.2, 3.5]
+    # The `# Meta:` dialect does not say how many segments were planned.
+    assert run.n_segments is None
+    assert run.problems == ()
+
+
+def test_a_file_from_another_experiment_is_a_problem(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(218386)]
+
+    assert any("IPTS-34347" in p and "another experiment" in p for p in run.problems)
+
+
+# --------------------------------------------------------------------------
+# The new_reduction dialect
+# --------------------------------------------------------------------------
+
+
+def test_a_new_reduction_run_reports_its_planned_segments(tmp_path: Path) -> None:
+    write_autoreduced(tmp_path, 234277, [1], planned=3)
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert run.segments == (1,)
+    assert run.n_segments == 3
+    assert run.title == "S1_air-234277-1."
+
+
+def test_a_new_reduction_run_has_no_start_time_and_none_is_invented(
+    tmp_path: Path,
+) -> None:
+    write_autoreduced(tmp_path, 234277, [1, 2, 3])
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert run.start_time == ""
+
+
+def test_the_same_segment_in_two_dialects_is_quarantined(tmp_path: Path) -> None:
+    """A reprocess by the other pipeline leaves both; which to use is a choice."""
+    copy_reference(tmp_path)
+    write_autoreduced(tmp_path, 218386, [2], ipts="IPTS-34347")
+
+    run = source_for(tmp_path).inventory().runs[RunKey(218386)]
+
+    assert any("segment 2 is here twice" in p for p in run.problems)
+
+
+def test_a_segment_beyond_the_plan_is_a_problem(tmp_path: Path) -> None:
+    write_autoreduced(tmp_path, 234277, [1, 2, 3, 4], planned=3)
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert any("plans only 3" in p for p in run.problems)
+
+
+def test_segments_that_skip_one_are_a_problem(tmp_path: Path) -> None:
+    write_autoreduced(tmp_path, 234277, [1, 3])
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert any("not contiguous" in p for p in run.problems)
+
+
+# --------------------------------------------------------------------------
+# What is reported rather than used
+# --------------------------------------------------------------------------
+
+
+def test_a_symbolic_link_is_not_followed(tmp_path: Path) -> None:
+    """A link in a team-writable folder can point at anything this account reads."""
+    folder = tmp_path / "reduced"
+    write_autoreduced(folder, 234277, [1])
+    secret = tmp_path / "private.txt"
+    secret.write_text("not data")
+    (folder / "REFL_234278_1_234278_autoreduction.dat").symlink_to(secret)
+
+    inventory = source_for(folder, ipts="IPTS-00001").inventory()
+
+    assert RunKey(234278) not in inventory.runs
+    assert any("symbolic link" in p.message for p in inventory.problems)
+
+
+def test_an_unrecognized_data_file_is_reported_not_skipped(tmp_path: Path) -> None:
+    """A folder of files in an unknown dialect once looked exactly like an empty one."""
+    (tmp_path / "REFL_234277_seg1_v3.dat").write_text("0.01 1 0.1 0.001\n")
+
+    inventory = source_for(tmp_path).inventory()
+
+    assert inventory.unrecognized == ("REFL_234277_seg1_v3.dat",)
+    assert any("match no known" in p.message for p in inventory.problems)
+
+
+def test_a_name_almost_like_a_reduced_file_is_reported_not_used(tmp_path: Path) -> None:
+    (tmp_path / "REFL_0234277_1_234277_autoreduction.dat").write_text("x\n")
+
+    inventory = source_for(tmp_path).inventory()
+
+    assert inventory.runs == {}
+    assert any("almost, but not" in p.message for p in inventory.problems)
+
+
+def test_plots_and_sidecars_are_counted_not_reported(tmp_path: Path) -> None:
+    write_autoreduced(tmp_path, 234277, [1])
+    (tmp_path / "REFL_234277_plot.png").write_bytes(b"\x89PNG")
+    (tmp_path / "REF_L_234277_auto_template.xml").write_text("<x/>")
+
+    inventory = source_for(tmp_path, ipts="IPTS-00001").inventory()
+
+    assert inventory.other_files == 2
+    assert inventory.problems == ()
+
+
+# --------------------------------------------------------------------------
+# An unreachable location
+# --------------------------------------------------------------------------
+
+
+def test_a_missing_location_says_to_check_the_mount(tmp_path: Path) -> None:
+    inventory = source_for(tmp_path / "not-mounted").inventory()
+
+    assert not inventory.reachable
+    assert "data mount" in inventory.problems[0].message
+
+
+def test_no_configured_location_is_reported_not_raised() -> None:
+    inventory = LocalDirectorySource(None, "", ipts=None).inventory()
+
+    assert not inventory.reachable and inventory.problems
+
+
+# --------------------------------------------------------------------------
+# NFS economy
+# --------------------------------------------------------------------------
+
+
+def test_the_folder_is_listed_once_per_poll(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+
+    source.inventory()
+    source.inventory()
+
+    assert source.listings == 2
+
+
+def test_an_unchanged_header_is_not_read_again(tmp_path: Path, monkeypatch) -> None:
+    from nr_workbench.instrument import header as header_module
+
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+    source.inventory()
+    reads: list[Path] = []
+    real = header_module.read_header
+    monkeypatch.setattr(
+        header_module, "read_header", lambda p: reads.append(p) or real(p)
+    )
+
+    source.inventory()
+    assert reads == []
+
+    changed = tmp_path / "REFL_218386_2_218387_partial.txt"
+    os.utime(changed, (1_700_000_000, 1_700_000_000))
+    source.inventory()
+    assert [p.name for p in reads] == [changed.name]
+
+
+def test_the_header_cache_is_bounded(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(local_module, "HEADER_CACHE_SIZE", 2)
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+
+    source.inventory()
+
+    assert len(source._headers) == 2
+
+
+# --------------------------------------------------------------------------
+# Reading bytes
+# --------------------------------------------------------------------------
+
+
+def test_read_bytes_returns_the_exact_file(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+    listed = source.inventory().runs[RunKey(218386)].files[0]
+
+    data = source.read_bytes(listed, max_bytes=1 << 20)
+
+    assert data == (tmp_path / listed.name).read_bytes()
+
+
+def test_read_bytes_refuses_a_file_rewritten_since_it_was_listed(
+    tmp_path: Path,
+) -> None:
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+    listed = source.inventory().runs[RunKey(218386)].files[0]
+    (tmp_path / listed.name).write_text("rewritten by the reduction\n")
+
+    with pytest.raises(SourceChangedError):
+        source.read_bytes(listed, max_bytes=1 << 20)
+
+
+def test_read_bytes_refuses_a_file_too_large_to_be_reduced_data(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+    listed = source.inventory().runs[RunKey(218386)].files[0]
+
+    with pytest.raises(SourceFileTooLarge):
+        source.read_bytes(listed, max_bytes=100)
+
+
+def test_read_bytes_will_not_open_a_file_swapped_for_a_link(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+    source = source_for(tmp_path)
+    listed = source.inventory().runs[RunKey(218386)].files[0]
+    target = tmp_path / listed.name
+    target.unlink()
+    target.symlink_to(tmp_path / "REFL_218393_1_218393_partial.txt")
+
+    with pytest.raises((OSError, SourceChangedError)):
+        source.read_bytes(listed, max_bytes=1 << 20)
+
+
+# --------------------------------------------------------------------------
+# Registries
+# --------------------------------------------------------------------------
+
+
+def test_open_source_builds_the_local_folder(tmp_path: Path) -> None:
+    source = open_source(SourceConfig(path=tmp_path, location=str(tmp_path)), ipts=None)
+
+    assert source.kind == "local"
+
+
+@pytest.mark.parametrize("kind,message", [("tiled", "planned"), ("s3", "not known")])
+def test_open_source_refuses_rather_than_falling_back(kind: str, message: str) -> None:
+    with pytest.raises(SourceUnavailableError, match=message):
+        open_source(SourceConfig(kind=kind), ipts=None)
+
+
+def test_open_feed_builds_the_folder_feed() -> None:
+    assert isinstance(open_feed(FeedConfig()), DirectoryFeed)
+
+
+@pytest.mark.parametrize("kind,message", [("monitor", "ORNL"), ("tiled", "planned")])
+def test_open_feed_refuses_a_planned_feed(kind: str, message: str) -> None:
+    with pytest.raises(FeedUnavailableError, match=message):
+        open_feed(FeedConfig(kind=kind))
+
+
+def test_the_folder_feed_announces_what_the_source_listed(tmp_path: Path) -> None:
+    copy_reference(tmp_path)
+
+    update = DirectoryFeed().poll(source_for(tmp_path).inventory())
+
+    assert [a.run for a in update.announcements] == [218386, 218393]
+    assert update.latest_run == 218393
+    assert update.announcements[0].title == "CuPt_d8-THF_FullQ-218386-1."
