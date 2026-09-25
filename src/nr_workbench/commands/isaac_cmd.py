@@ -7,10 +7,12 @@ The pipeline is the canonical one, driven rather than reimplemented::
     nr-isaac-format convert-ingest  -> validated ISAAC records
     nr-isaac-format push            -> the ISAAC Portal   (--upload)
 
-Both tools are invoked as subprocesses, not imported. They pull in httpx,
-pyarrow and a schema stack that nothing else here needs, and the CLIs are their
-documented contract while the Python API is not. It also means a missing tool
-is a clear message rather than an ImportError from three levels down.
+Both tools are invoked as subprocesses, not imported. They pull in httpx and a
+schema stack that nothing else here needs (pyarrow is a core dependency now,
+for the experiment catalog, but that is not a reason to import their Python
+API), and the CLIs are their documented contract while the Python API is not.
+It also means a missing tool is a clear message rather than an ImportError
+from three levels down.
 
 Uploading is opt-in and never implied by exporting. A record pushed to a shared
 portal is not straightforwardly retractable, so it is a separate flag with a

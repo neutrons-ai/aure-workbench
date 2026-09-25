@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.scan import scan_sample
 from nr_workbench.provenance.index import FitIndex
@@ -65,23 +65,6 @@ def _trim(text: str) -> str:
 
 #: Cap on heatmap cells (intervals x Q bins). A 21 x 250 series is 5k.
 MAX_HEATMAP_CELLS = 400_000
-
-
-@dataclass(frozen=True)
-class Problem:
-    """Something the UI could not do, stated plainly enough to act on.
-
-    Attributes:
-        scope: What was being read, e.g. ``series:218389``.
-        message: What went wrong, in terms the reader can fix.
-    """
-
-    scope: str
-    message: str
-
-    def as_dict(self) -> dict[str, str]:
-        """Return the JSON form."""
-        return {"scope": self.scope, "message": self.message}
 
 
 class ProjectData:

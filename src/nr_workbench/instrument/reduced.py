@@ -113,6 +113,83 @@ def parse_combined_name(name: str) -> int | None:
     return int(match.group("run")) if match else None
 
 
+# ---------------------------------------------------------------------------
+# Names about to be *written* -- stricter than names being read
+# ---------------------------------------------------------------------------
+
+#: The longest filename most filesystems accept, in bytes.
+MAX_NAME_BYTES = 255
+
+
+def segment_filename(run: int, segment: int, subrun: int, dialect: str) -> str:
+    """The exact filename the reduction writes for one segment.
+
+    Args:
+        run: The measurement.
+        segment: 1-based segment index.
+        subrun: The run that produced this segment.
+        dialect: :data:`PARTIAL_DIALECT` or :data:`AUTOREDUCTION_DIALECT`.
+
+    Returns:
+        The canonical name, e.g. ``REFL_218386_2_218387_partial.txt``.
+
+    Raises:
+        ValueError: If the dialect is not one this module knows.
+    """
+    suffixes = {
+        PARTIAL_DIALECT: _SEGMENT_SUFFIXES[0],
+        AUTOREDUCTION_DIALECT: _SEGMENT_SUFFIXES[1],
+    }
+    if dialect not in suffixes:
+        raise ValueError(f"unknown reduction dialect {dialect!r}")
+    return f"REFL_{run}_{segment}_{subrun}{suffixes[dialect]}"
+
+
+def combined_filename(run: int) -> str:
+    """The exact filename the reduction writes for a combined curve."""
+    return f"REFL_{run}_combined_data_auto.txt"
+
+
+def canonical_name(name: str) -> ReducedName | int | None:
+    """Parse *name* only if it is exactly a name the reduction would write.
+
+    The patterns above are for *reading* and are deliberately forgiving: `$`
+    also matches before a trailing newline, and ``\\d`` accepts any Unicode
+    digit, which ``int()`` then quietly converts. That is harmless when
+    classifying files already on disk. It is not harmless for a name that is
+    about to become a path inside a project -- copied from a shared facility
+    folder that anyone on the team can write to, or later from a remote
+    source. So a name is accepted here only if rebuilding it from the parsed
+    integers reproduces it byte for byte, which rules out trailing newlines,
+    non-ASCII digits, leading zeros, separators, and anything else a pattern
+    match would let through.
+
+    Args:
+        name: A bare filename. A path is rejected rather than reduced to its
+            final component, because the caller is about to write it.
+
+    Returns:
+        The parsed segment, the run of a combined curve, or ``None`` when the
+        name is not exactly canonical.
+    """
+    if not name or "\x00" in name or len(name.encode("utf-8")) > MAX_NAME_BYTES:
+        return None
+    if Path(name).name != name or "/" in name or "\\" in name:
+        return None
+
+    segment = parse_segment_name(name)
+    if segment is not None:
+        rebuilt = segment_filename(
+            segment.run, segment.segment, segment.subrun, segment.dialect
+        )
+        return segment if rebuilt == name else None
+
+    run = parse_combined_name(name)
+    if run is not None:
+        return run if combined_filename(run) == name else None
+    return None
+
+
 def segment_globs(run: int | str, segment: int | str = "*") -> list[str]:
     """Glob patterns matching one run's segment files, in both dialects.
 

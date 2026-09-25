@@ -78,7 +78,19 @@ dependencies = [
   "click>=8.1",
   "jinja2>=3.1",
   "flask>=3.0",
+  # Explicit although Flask brings it: 3.0.3 is where the debugger gained its
+  # own trusted-host check (CVE-2024-34069). `nrw serve --debug` enables that
+  # debugger, and the server now accepts writes from the experiment page.
+  "werkzeug>=3.0.3",
   "markdown-it-py>=3.0",
+  # The experiment catalog (`experiment/*.parquet`) -- runs grouped into
+  # samples, and the context that renders each sample.md. Parquet because a
+  # production deployment may serve the same tables from the facility's data
+  # lakehouse, whose data-assembler writer uses this schema family. The floor
+  # is the fix for CVE-2023-47248 (arbitrary code execution on reading an
+  # untrusted file). Imported inside functions only: ~0.9 s, and `nrw --help`
+  # must stay instant -- tests/test_cli.py enforces it.
+  "pyarrow>=14.0.1",
   "python-dotenv>=1.0",
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",

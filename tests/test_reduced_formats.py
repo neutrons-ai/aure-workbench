@@ -192,3 +192,55 @@ def test_no_other_module_spells_out_these_filenames():
     assert not offenders, "filename patterns outside reduced.py:\n" + "\n".join(
         offenders
     )
+
+
+# ---------------------------------------------------------------------------
+# Names about to be written into a project
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", [PARTIAL, AUTORED, COMBINED])
+def test_canonical_name_accepts_what_the_reduction_writes(name):
+    assert reduced.canonical_name(name) is not None
+
+
+def test_canonical_name_rebuilds_the_same_segment():
+    parsed = reduced.canonical_name(AUTORED)
+
+    assert isinstance(parsed, reduced.ReducedName)
+    assert (
+        reduced.segment_filename(
+            parsed.run, parsed.segment, parsed.subrun, parsed.dialect
+        )
+        == AUTORED
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(PARTIAL + "\n", id="trailing_newline"),
+        pytest.param("REFL_２１８３８６_1_218386_partial.txt", id="fullwidth_digits"),
+        pytest.param("REFL_0218386_1_218386_partial.txt", id="leading_zero"),
+        pytest.param("steady/" + PARTIAL, id="slash"),
+        pytest.param("..\\" + PARTIAL, id="backslash"),
+        pytest.param("REFL_218386_1_218386_partial.txt\x00", id="nul"),
+        pytest.param("REFL_" + "1" * 300 + "_1_1_partial.txt", id="overlong"),
+        pytest.param("..", id="dotdot"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_canonical_name_rejects_a_hostile_name(name):
+    """The loose reading patterns accept every one of these.
+
+    `$` matches before a trailing newline and `\\d` accepts full-width digits,
+    which `int()` converts without complaint -- fine for classifying a file on
+    disk, not for a name about to become a path in someone's project.
+    """
+    assert reduced.canonical_name(name) is None
+
+
+def test_the_reading_pattern_is_the_forgiving_one():
+    """Pins why canonical_name exists: parse_segment_name alone lets these in."""
+    assert reduced.parse_segment_name(PARTIAL + "\n") is not None
+    assert reduced.parse_segment_name("REFL_0218386_1_218386_partial.txt") is not None

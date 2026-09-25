@@ -15,8 +15,17 @@ from nr_workbench.cli import main
 #: Modules that must not be imported just to print help. `aure` heads the list:
 #: `aure/__init__.py` eagerly imports its workflow package, which chains through
 #: every node module into langchain-core, periodictable and scipy -- roughly
-#: 1.5-3 seconds. refl1d and matplotlib are nearly as expensive.
-FORBIDDEN_ON_HELP = ("aure", "refl1d", "bumps", "matplotlib", "scipy", "langchain_core")
+#: 1.5-3 seconds. refl1d and matplotlib are nearly as expensive, and pyarrow
+#: (the experiment catalog) costs about a second on its own.
+FORBIDDEN_ON_HELP = (
+    "aure",
+    "refl1d",
+    "bumps",
+    "matplotlib",
+    "scipy",
+    "langchain_core",
+    "pyarrow",
+)
 
 
 def test_help_lists_the_command_surface() -> None:

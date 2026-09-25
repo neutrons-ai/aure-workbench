@@ -154,6 +154,51 @@ def test_wheel_contains_py_typed(wheel_namelist: list[str]) -> None:
     assert "nr_workbench/py.typed" in wheel_namelist
 
 
+def test_wheel_contains_every_web_asset_recursively(wheel_namelist: list[str]) -> None:
+    """The web UI's templates and static files are package data too.
+
+    Their globs (`web/templates/*`, `web/static/*`) are single-level, so a page
+    split into a subdirectory would vanish from the wheel while an editable
+    install served it perfectly -- the same trap the skills fell into.
+    """
+    web = REPO_ROOT / "src" / "nr_workbench" / "web"
+    on_disk = sorted(
+        path.relative_to(REPO_ROOT / "src").as_posix()
+        for folder in ("templates", "static")
+        for path in (web / folder).rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+    assert on_disk, "no web assets found in this checkout"
+    missing = [path for path in on_disk if path not in set(wheel_namelist)]
+
+    assert not missing, (
+        f"web assets missing from the wheel: {missing}. Check the 'web/templates/*' "
+        "and 'web/static/*' globs in [tool.setuptools.package-data]."
+    )
+
+
+def test_wheel_requires_pyarrow_unconditionally(
+    wheel_path: Path, wheel_namelist: list[str]
+) -> None:
+    """The experiment catalog needs pyarrow on every install, not just `isaac`.
+
+    It used to arrive only through data-assembler, behind the `isaac` extra, so
+    a developer venv with that extra hides a plain install that cannot open
+    `experiment/*.parquet` at all.
+    """
+    metadata_name = next(n for n in wheel_namelist if n.endswith(".dist-info/METADATA"))
+    with zipfile.ZipFile(wheel_path) as archive:
+        metadata = archive.read(metadata_name).decode("utf-8")
+
+    pyarrow = [
+        line
+        for line in metadata.splitlines()
+        if line.startswith("Requires-Dist: pyarrow")
+    ]
+    assert pyarrow, "pyarrow is not a declared dependency"
+    assert any("extra ==" not in line for line in pyarrow), pyarrow
+
+
 def test_wheel_declares_only_the_expected_direct_references(
     wheel_path: Path, wheel_namelist: list[str]
 ) -> None:

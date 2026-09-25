@@ -120,6 +120,25 @@ def quarantine_reason(scan: Any, run: int) -> str:
             "which one is a question for a person."
         )
 
+    return segment_problems(measurement)
+
+
+def segment_problems(measurement: Any) -> str:
+    """Why a measurement's segments do not look like one run, or ``""``.
+
+    The part of :func:`quarantine_reason` that needs nothing but the files'
+    names, split out so a check made against a facility folder -- before any
+    file has been copied into a sample -- uses the same rule and the same
+    words as the one made in the sample afterwards.
+
+    Args:
+        measurement: A :class:`nr_workbench.project.scan.SteadyMeasurement`.
+            Its paths may be absolute; only the names are read.
+
+    Returns:
+        The reason, or an empty string when the segments look like one run.
+    """
+    run = measurement.run
     segments = sorted(measurement.partials)
     if segments and segments != list(range(1, len(segments) + 1)):
         return (
@@ -226,17 +245,39 @@ def fingerprint(root: Path, paths: list[str]) -> str:
     rewriting a file always changes its mtime, and these are megabytes each,
     polled every minute.
     """
+    entries: list[tuple[str, int, int] | tuple[str, None, None]] = []
+    for relative in paths:
+        try:
+            stat = (root / relative).stat()
+        except OSError:
+            entries.append((relative, None, None))
+            continue
+        entries.append((relative, stat.st_size, stat.st_mtime_ns))
+    return fingerprint_entries(entries)
+
+
+def fingerprint_entries(entries: Any) -> str:
+    """:func:`fingerprint` over files already stat'ed by the caller.
+
+    A caller that has just listed a directory has every size and mtime in hand;
+    stat'ing each file again to fingerprint it would double the traffic to an
+    NFS server that is being polled every minute.
+
+    Args:
+        entries: ``(name, size, mtime_ns)`` per file, with ``size`` and
+            ``mtime_ns`` both ``None`` for a file that could not be read.
+
+    Returns:
+        The same digest :func:`fingerprint` produces for the same files.
+    """
     import hashlib
 
     digest = hashlib.sha256()
-    for relative in sorted(paths):
-        path = root / relative
-        try:
-            stat = path.stat()
-        except OSError:
-            digest.update(f"{relative}:missing".encode())
+    for name, size, mtime_ns in sorted(entries, key=lambda entry: entry[0]):
+        if size is None:
+            digest.update(f"{name}:missing".encode())
             continue
-        digest.update(f"{relative}:{stat.st_size}:{stat.st_mtime_ns}".encode())
+        digest.update(f"{name}:{size}:{mtime_ns}".encode())
     return digest.hexdigest()
 
 
@@ -338,6 +379,50 @@ def _guarded(run: int, kind: str, judge: Any) -> Verdict:
         )
 
 
+def settle_state(
+    changed_at: float | None,
+    current: str,
+    previous: str | None,
+    *,
+    now: float,
+    settle_seconds: float,
+) -> tuple[str, float]:
+    """Whether a set of files has stopped changing.
+
+    Settled is not the same as *complete*: segments of one run are reduced
+    minutes apart -- 15 and 52 minutes in the reference corpus -- so a run can
+    sit settled with only its first segment on disk. That judgement needs
+    evidence about the sequence, not about the files, and is the caller's.
+
+    Args:
+        changed_at: When any of the files last changed, or ``None`` if none
+            could be read.
+        current: Fingerprint of the files now.
+        previous: Fingerprint from the previous poll, or ``None`` on the first.
+        now: Wall-clock reference, comparable with ``changed_at``.
+        settle_seconds: How long the files must be unchanged.
+
+    Returns:
+        ``(state, quiet_for)``: state is ``arriving``, ``settling`` or
+        ``settled``, and ``quiet_for`` is the seconds the files have been
+        unchanged (zero when they changed since the previous poll).
+    """
+    # How long since anything changed, from the files themselves rather than
+    # from what previous polls saw. A cross-poll counter cannot answer this on
+    # the first poll, which would make `--dry-run` report every measurement as
+    # "arriving" no matter how old it is --- the state a person checking the
+    # queue most wants to see through.
+    quiet_for = now - changed_at if changed_at is not None else 0.0
+    if previous not in (None, current):
+        # Changed between two polls. The mtime says the same thing, but a
+        # filesystem with coarse timestamps may not, and a rewrite mid-poll is
+        # exactly the case worth being conservative about.
+        quiet_for = 0.0
+    if quiet_for < settle_seconds:
+        return ("arriving" if quiet_for < 1.0 else "settling", quiet_for)
+    return ("settled", quiet_for)
+
+
 def _judge_steady(
     root: Path,
     scan: Any,
@@ -358,25 +443,19 @@ def _judge_steady(
     if measurement.combined:
         paths.append(measurement.combined)
 
-    # How long since anything changed, from the files themselves rather than
-    # from what previous polls saw. A cross-poll counter cannot answer this on
-    # the first poll, which would make `--dry-run` report every measurement as
-    # "arriving" no matter how old it is --- the state a person checking the
-    # queue most wants to see through.
     changed_at = _last_change(root, paths)
-    quiet_for = now - changed_at if changed_at is not None else 0.0
-
     current = fingerprint(root, paths)
-    if state.fingerprints.get(run) not in (None, current):
-        # Changed between two polls. The mtime says the same thing, but a
-        # filesystem with coarse timestamps may not, and a rewrite mid-poll is
-        # exactly the case worth being conservative about.
-        quiet_for = 0.0
+    state_name, quiet_for = settle_state(
+        changed_at,
+        current,
+        state.fingerprints.get(run),
+        now=now,
+        settle_seconds=settle_seconds,
+    )
     state.fingerprints[run] = current
     state.quiet_since[run] = changed_at if changed_at is not None else now
 
-    if quiet_for < settle_seconds:
-        state_name = "arriving" if quiet_for < 1.0 else "settling"
+    if state_name != "settled":
         return Verdict(
             run,
             ready=False,

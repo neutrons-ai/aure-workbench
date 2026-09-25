@@ -138,6 +138,14 @@ class ReducedHeader:
             question a disagreeing pair of segments sends you here to answer.
         sequence_number: Which angle segment this is, 1-based.
         sequence_id: The run number of the measurement as a whole.
+        n_segments: How many angle segments the measurement was *planned*
+            with, where the header says. Only the ``new_reduction`` dialect
+            does: its per-segment arrays (``DB``, ``scale_factor``,
+            ``ThetaShift``) come from the reduction template, so they are
+            sized to the plan rather than to what has been reduced so far.
+            ``None`` when the header does not say, or when those arrays
+            disagree about the count -- a guess here would call a run
+            complete while its last segment is still being measured.
         dq_over_q: Fractional resolution as reduced.
         dq_convention: ``"fwhm"`` or ``"sigma"`` -- what the 4th column's width
             actually is, read from the column-title line. ``None`` when the file
@@ -170,6 +178,7 @@ class ReducedHeader:
     norm_source: str | None = None
     sequence_number: int | None = None
     sequence_id: int | None = None
+    n_segments: int | None = None
     dq_over_q: float | None = None
     dq_convention: str | None = None
     dq_column_label: str | None = None
@@ -211,6 +220,7 @@ class ReducedHeader:
             "norm_source": self.norm_source,
             "sequence_number": self.sequence_number,
             "sequence_id": self.sequence_id,
+            "n_segments": self.n_segments,
             "dq_over_q": self.dq_over_q,
             "dq_convention": self.dq_convention,
             "dq_column_label": self.dq_column_label,
@@ -465,6 +475,8 @@ def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) ->
         theta = _as_float(series[slot])
         header.theta = abs(theta) if theta is not None else None
 
+    header.n_segments = _planned_segments(fields, config)
+
     if segment is not None:
         header.norm_source = _as_str(_by_segment(fields.get("DB"), segment))
         scaling = fields.get("Scaling factors")
@@ -485,6 +497,34 @@ def _apply_autoreduction(header: ReducedHeader, lines: list[str], path: Path) ->
     # -- on run 234277, qmax is 0.5 against data reaching 0.278, and dqbin is
     # 0.015 against a median dQ/Q of 0.011. Reporting a request as a
     # measurement is the error this module exists to prevent.
+
+
+def _planned_segments(fields: dict[str, Any], config: dict[str, Any]) -> int | None:
+    """How many segments the reduction template planned, if the header agrees.
+
+    Uses the same arrays :func:`_by_segment` indexes -- the ones with exactly
+    one entry per segment -- and not the angle or title arrays, which are per
+    *acquisition* and grow when a run is reprocessed.
+
+    Args:
+        fields: The parsed ``# Key = value`` lines.
+        config: The parsed ``Config`` object, or an empty mapping.
+
+    Returns:
+        The count when every per-segment array present has the same non-zero
+        length, else ``None``.
+    """
+    scaling = fields.get("Scaling factors")
+    candidates = [
+        fields.get("DB"),
+        scaling.get("scale_factor") if isinstance(scaling, dict) else None,
+        config.get("ThetaShift"),
+    ]
+    lengths = {len(value) for value in candidates if isinstance(value, list)}
+    if len(lengths) != 1:
+        return None
+    count = lengths.pop()
+    return count if count > 0 else None
 
 
 def _by_segment(series: Any, segment: int) -> Any:

@@ -458,3 +458,44 @@ def test_warnings_reach_as_dict(tmp_path: Path) -> None:
     write(path, DOUBLED)
 
     assert read_header(path).as_dict()["warnings"] == []
+
+
+# --------------------------------------------------------------------------
+# How many segments the measurement was planned with
+# --------------------------------------------------------------------------
+
+
+def test_autoreduction_reports_the_planned_segment_count(tmp_path: Path) -> None:
+    """`DB`, `scale_factor` and `ThetaShift` are sized by the template.
+
+    Read from segment 1's file, before segments 2 and 3 exist: the count is
+    what lets the experiment page tell "complete" from "one third arrived and
+    the rest has not been reduced yet".
+    """
+    header = read_header(write_autored(tmp_path, 1, 234277))
+
+    assert header.n_segments == 3
+    assert header.as_dict()["n_segments"] == 3
+
+
+def test_autoreduction_segment_count_is_none_when_the_arrays_disagree(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "REFL_234277_1_234277_autoreduction.dat"
+    write(
+        path,
+        "# DB = ['A1_Si.txt', 'A2_Si.txt']\n"
+        '# Config: {"ThetaShift": [0, 0, 0]}\n'
+        '# Angles: {"THS": [-0.45]}\n'
+        "# columns = Q, R, dR, dQ (sigma)\n",
+    )
+
+    assert read_header(path).n_segments is None
+
+
+def test_the_meta_dialect_does_not_claim_a_segment_count(tmp_path: Path) -> None:
+    """`# Meta:` has no per-segment arrays, so it must not invent a count."""
+    path = tmp_path / "REFL_218386_1_218386_partial.txt"
+    write(path, META)
+
+    assert read_header(path).n_segments is None
