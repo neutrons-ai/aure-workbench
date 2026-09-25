@@ -71,6 +71,24 @@ Then copy reduced data into `samples/Sample4/data/steady/` and
 Code. `nrw init` is idempotent and safe to run on top of an existing beamtime
 folder — it never overwrites a file you have edited.
 
+### Organizing a beamtime's runs
+
+While an experiment is running, `nrw serve` has an **Experiment** page that
+lists every run as the reduction writes it, with whether it has finished
+arriving. Select runs, assign them to a sample with a condition, describe the
+sample, and **apply**. The data is copied into the sample and its `sample.md`
+is written. Nothing is overwritten, and only complete runs are copied. The same
+from the command line:
+
+```bash
+nrw experiment status
+nrw experiment assign 234277 234280 --sample Sample4 --condition OCV
+nrw experiment apply --write
+```
+
+The organization is kept in `experiment/*.parquet`.
+**[docs/experiment.md](docs/experiment.md)** walks through it.
+
 ### Choosing an assistant
 
 A scaffolded project carries the instructions, subagent stubs and limits for

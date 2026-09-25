@@ -108,7 +108,9 @@ class ExperimentData:
         workspace = self.workspace
         with self._lock:
             if self._live is None:
-                self._live = workspace.live(clock=self._clock, autostart=self._autostart)
+                self._live = workspace.live(
+                    clock=self._clock, autostart=self._autostart
+                )
             return self._live
 
     def stop(self) -> None:
@@ -205,7 +207,9 @@ class ExperimentData:
                 else f"{key.run} combined"
             )
             try:
-                data = self._bounded(source.read_bytes, source_file, max_bytes=MAX_FILE_BYTES)
+                data = self._bounded(
+                    source.read_bytes, source_file, max_bytes=MAX_FILE_BYTES
+                )
                 curve = read_reduced_bytes(data, label=label, name=source_file.name)
             except SourceTimeoutError:
                 raise
@@ -214,7 +218,10 @@ class ExperimentData:
                 continue
             payload = curve.as_dict()
             payload["run"] = key.run
-            if index < len(view.source.thetas) and view.source.thetas[index] is not None:
+            if (
+                index < len(view.source.thetas)
+                and view.source.thetas[index] is not None
+            ):
                 payload["theta"] = view.source.thetas[index]
             curves.append(payload)
         return {"run": key.run, "curves": curves, "problems": problems}
@@ -241,12 +248,18 @@ class ExperimentData:
             planned = next(
                 p
                 for p in plan_sample(
-                    self.root, self.workspace.render_context(), sample_id, catalog=catalog
+                    self.root,
+                    self.workspace.render_context(),
+                    sample_id,
+                    catalog=catalog,
                 )
                 if p.relpath == relpath
             )
         except SampleRenderError as exc:
-            return {"sample": sample_id, "problems": [Problem("sample", str(exc)).as_dict()]}
+            return {
+                "sample": sample_id,
+                "problems": [Problem("sample", str(exc)).as_dict()],
+            }
         lock = load_lock(self.root / ".nrw" / "scaffold.lock.json")
         outcome = classify(planned, path, lock.get(relpath))
         text = planned.content.decode("utf-8")
@@ -287,7 +300,10 @@ class ExperimentData:
 
         validate_sample_id(sample_id)
         plan = plan_adopt(
-            self.root, self._catalog_or_raise(), sample_id, self.workspace.render_context()
+            self.root,
+            self._catalog_or_raise(),
+            sample_id,
+            self.workspace.render_context(),
         )
         return plan.as_dict()
 
@@ -320,7 +336,9 @@ class ExperimentData:
             if not isinstance(fields, dict) or not fields:
                 raise ValueError(f"run {key.run}: 'fields' must be a non-empty object")
             if {"title", "start_time"} & set(fields):
-                raise ValueError("title and start_time come from the data source, not the page")
+                raise ValueError(
+                    "title and start_time come from the data source, not the page"
+                )
             view = snapshot.runs.get(key)
             if view is not None and view.source is not None:
                 fields = {
@@ -331,7 +349,9 @@ class ExperimentData:
             run_changes.append(RunChange(key, _rev(item.get("base_rev", 0)), fields))
         catalog = self.workspace.store.update(runs=run_changes)
         return {
-            "runs": [self._row(c.key, snapshot.runs.get(c.key), catalog) for c in run_changes],
+            "runs": [
+                self._row(c.key, snapshot.runs.get(c.key), catalog) for c in run_changes
+            ],
             "samples": self._samples(catalog),
             "catalog_version": self._catalog_version(),
         }
@@ -366,7 +386,10 @@ class ExperimentData:
                 )
             ]
         )
-        return {"samples": self._samples(catalog), "catalog_version": self._catalog_version()}
+        return {
+            "samples": self._samples(catalog),
+            "catalog_version": self._catalog_version(),
+        }
 
     def apply(
         self,
@@ -516,7 +539,9 @@ class ExperimentData:
                 {
                     "id": sample_id,
                     "managed": True,
-                    "on_disk": (self.root / "samples" / sample_id / "sample.md").is_file(),
+                    "on_disk": (
+                        self.root / "samples" / sample_id / "sample.md"
+                    ).is_file(),
                     "title": context.title,
                     "description": context.description,
                     "details": context.details,
@@ -531,7 +556,13 @@ class ExperimentData:
         for sample_id in ProjectLayout(root=self.root).list_samples():
             if sample_id not in managed:
                 cards.append(
-                    {"id": sample_id, "managed": False, "on_disk": True, "runs": [], "excluded": []}
+                    {
+                        "id": sample_id,
+                        "managed": False,
+                        "on_disk": True,
+                        "runs": [],
+                        "excluded": [],
+                    }
                 )
         return cards
 

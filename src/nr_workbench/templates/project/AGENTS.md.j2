@@ -95,6 +95,18 @@ Read it, quote it, build specs from it. Do not write to it. An assistant
 editing it is competing with the person who holds the knowledge, and can
 silently overwrite something they added a minute ago.
 
+A `sample.md` that opens with *"Written from the experiment catalog"* is
+rendered from `experiment/*.parquet`, which the scientist edits on the
+Experiment page (`nrw serve`). It is still not yours to edit -- and there a
+hand edit does not even reach the catalog: it only stops the next apply from
+updating the file.
+
+Which sample a run belongs to, under what condition, and whether it is used
+are the scientist's decisions too. Read them with `nrw experiment status
+--json`; `nrw experiment assign`, `apply --write`, `adopt --write` and
+`release` are refused to an unattended session, so propose them in
+ESCALATIONS.md instead.
+
 That includes the sections that look like invitations. If `## Description` is
 empty and `nrw aure new` refuses, or the six questions in
 `skills/reflectometry/aure-first-fit/SKILL.md` have no answers in there, that
@@ -127,6 +139,8 @@ worth more than the fit and is the first thing forgotten.
 | Say who is reading, so reports are pitched right | `nrw audience --ask` |
 | Add a sample | `nrw sample new <ID>` |
 | See what data is actually on disk | `nrw sample scan <ID>` |
+| See every run of the experiment, and its sample | `nrw experiment status --json` |
+| Preview what applying the catalog would write | `nrw experiment apply` |
 | Browse everything in a browser | `nrw serve` |
 
 **Understanding the data before modelling it**
@@ -192,6 +206,8 @@ a theta of 1.201 to 1.2 — it came from the file.
 
 `nrw serve` also exposes `/api/…`, which returns exactly what the browser
 renders — useful for reading a curve, an assessment, or a fit's provenance
-without opening a page.
+without opening a page. `/api/experiment` reads the same way; its write
+endpoints accept only a browser that opened the link `nrw serve` printed, and
+reaching for them is the same decision as `nrw experiment apply --write`.
 
 Run `nrw --help` for the full surface.

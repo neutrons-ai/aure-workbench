@@ -61,9 +61,12 @@ resolved relative to it — never write an absolute path into a committed file.
 
 | What | Where | Who owns it |
 |---|---|---|
-| Sample context, prose | `samples/<id>/sample.md` | **You / the scientist.** Free text. |
+| Sample context, prose | `samples/<id>/sample.md` | **You / the scientist.** Free text. When the experiment catalog manages the sample (the file says so at the top), it is rendered from the catalog: edit it on the Experiment page. |
+| Which run belongs to which sample; each sample's context | `experiment/*.parquet` | **The scientist**, on the Experiment page (`nrw serve`) or `nrw experiment assign`. Committed. Read it with `nrw experiment status --json`. |
 | Measurement register | `samples/<id>/sample.yaml` | Machine. Maintained by `nrw sample scan`. |
-| Reduced steady-state data | `samples/<id>/data/steady/` | Instrument. Committed. |
+| Reduced steady-state data | `samples/<id>/data/steady/` | Instrument. Committed. Copied here by `nrw experiment apply`, or by hand. |
+| What apply copied, and from which source version | `samples/<id>/data/sources.json` | Machine. Committed. |
+| Copies of runs since excluded or reassigned | `samples/<id>/data/excluded/<run>/` | Machine. Moved there by apply; moved back if the run is included again. |
 | Reduced tNR slices | `samples/<id>/data/tnr/<run>_<binning>/` | Instrument. Committed. |
 | Raw NeXus | `samples/<id>/data/raw/` | Instrument. **Gitignored** (large). |
 | AuRE scouting run | `samples/<id>/aure/<name>/` | Machine. Setup and `run-env.json` committed; its `output/` payload is not. |

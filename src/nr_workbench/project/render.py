@@ -160,6 +160,10 @@ class RenderContext:
                 for harness in resolve(self.harnesses)
                 if harness.vscode_extension
             ],
+            # The scaffolded nrw.toml documents the experiment's default data
+            # location. Rendered from the one constant, not copied into the
+            # template, because the location is provisional and will move.
+            "experiment_location": _default_experiment_location(),
             # Always defined, so StrictUndefined still catches a typo in a
             # template rather than rendering an empty section.
             "managed": self.prose.managed,
@@ -169,6 +173,14 @@ class RenderContext:
             "fits_to_perform": self.prose.fits_to_perform,
             "measurements": list(self.prose.measurements),
         }
+
+
+def _default_experiment_location() -> str:
+    # Function-local: project/ sits below experiment/, and this is the one
+    # value it needs from there.
+    from nr_workbench.experiment.config import DEFAULT_LOCATION
+
+    return DEFAULT_LOCATION
 
 
 def templates_root() -> Path:

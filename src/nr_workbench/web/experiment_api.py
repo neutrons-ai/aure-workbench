@@ -60,7 +60,16 @@ def _map(exc: Exception) -> tuple[Any, int]:
     for kinds, status in (
         ((FileNotFoundError,), 404),
         ((PermissionError,), 403),
-        ((RecordConflict, ApplyError, AdoptRefused, LockProblemError, SampleRenderError), 409),
+        (
+            (
+                RecordConflict,
+                ApplyError,
+                AdoptRefused,
+                LockProblemError,
+                SampleRenderError,
+            ),
+            409,
+        ),
         ((CatalogError,), 503),
         ((SourceTimeoutError,), 504),
         ((ValueError,), 400),

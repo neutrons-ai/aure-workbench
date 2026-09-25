@@ -76,6 +76,11 @@ nrw doctor
 nrw sample new Sample6 --title "Cu/Pt in d8-THF, 1 M LiBF4 (expt 11)"
 ```
 
+> **Measuring right now?** The Experiment page in `nrw serve` does this step
+> for you. It watches the reduction's output folder, lets you assign each run to
+> a sample, and copies the data in only once a run has finished arriving. See
+> [experiment.md](experiment.md). The manual route below is what it automates.
+
 Copy the reduced ASCII in. Raw NeXus is gitignored; reduced data is small and
 belongs in the repository with the analysis.
 

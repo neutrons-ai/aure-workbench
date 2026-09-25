@@ -2770,3 +2770,171 @@ Two things deliberately left out. Data and model readiness are not gated —
 guessing at intent. And nothing hard-blocks: a `PreToolUse` hook would cover
 Claude Code only, while the refusals cover every harness, including a
 scientist typing the command themselves.
+
+### 2026-09-25: the experiment catalog owns sample.md, so the lock records an owner
+
+The Experiment page renders `samples/<id>/sample.md` from `experiment/*.parquet`,
+through the scaffold's three-way rule. That opened a reset trap in
+`classify()`: once the catalog has written the file, the lock records *its*
+content as "what nrw installed", so a later `nrw sample new <id>` (or
+`nrw init --sample <id>`), which plans the **blank** template, sees an
+unedited file with a newer template and returns UPGRADE. The file is reset
+to the blank scaffold, silently, since nothing about it is an error.
+
+Closed twice, because one mechanism is not two:
+
+- `experiment.render.plan_sample` is the only way a sample's files are planned,
+  and it consults the catalog.
+- A lock entry now carries an optional `owner`, and a plan from a *different*
+  owner is DRIFTED, never UPGRADE. That also covers a fourth caller nobody
+  has written yet.
+
+`plan_sample` also refuses when the lock says the catalog wrote a file the
+catalog no longer lists. `nrw experiment release <id>` drops the entry so the
+file becomes its people's (UNTRACKED) instead.
+
+### 2026-09-25: settled is not complete
+
+`nrw agent watch` calls a run ready once its files have been unchanged for 300
+seconds. The reference corpus shows why that is not "finished". Run 218386's
+three segments were reduced at 09:45, 10:00 and 10:53 (its `# Reduction time:`
+lines). The files sat unchanged for 15 minutes after segment 1 and for 52
+minutes after segment 2, so a five-minute settle calls the run finished twice
+before it is. A copy made at either point is part of a measurement, and it
+fits.
+
+The Experiment page therefore requires evidence the run ended before it copies
+anything (`experiment/status.py`):
+
+- **the planned segment count is reached**, from the `new_reduction` header's
+  per-segment arrays (`DB`, `scale_factor`, `ThetaShift`), which come from the
+  reduction template; or
+- **a later run has reduced files**, when the plan is not stated.
+
+A settled run without either is *unconfirmed*, and only a person can confirm
+it. A later run that a feed merely *announces* does not count, because
+acquisition starting is not reduction finishing.
+
+**Unverified:** that the template-sized arrays are already full length in
+segment 1's file. The trimmed fixture from run 234277 suggests so, but no real
+first-segment file has been checked. If the assumption is false, completeness
+rests on the later-run evidence alone.
+
+Copies are written with a fresh mtime, not the source's (`copy2` would keep
+it). A copy dated an hour ago looks settled to `nrw agent watch` the moment
+it lands.
+
+### 2026-09-25: one header, two clocks, and the new dialect has neither
+
+A `_partial.txt` header's `Run start time` is UTC. Its `Reduction time` is
+local: 218386 says it started at 13:42 and was reduced at 09:45 the same
+morning. The tNR sidecar's interval times are local too. Sorting runs by time
+put 218389 before 218386.
+
+The `new_reduction` header carries no start time at all. So the catalog stores
+whatever start time a header gives verbatim, invents none, never compares times
+across sources, and orders runs by run number.
+
+### 2026-09-25: a binary merge conflict has no conflict markers
+
+The catalog is parquet, the lakehouse's format. When two branches both change
+it, git cannot merge it: it leaves "ours" in the working tree with no markers,
+the file loads cleanly, and the next save commits the other side's loss. The
+store refuses to load or save while `git ls-files -u -- experiment/` is
+non-empty.
+
+A related trap in the same place: pyarrow's `ArrowInvalid` is a `ValueError`,
+so the house pattern `except (OSError, ValueError): return {}` would read a
+truncated catalog as an *empty* one, and the next save would replace every
+decision in it. The store's errors deliberately do not subclass `ValueError`,
+and an unreadable catalog is shown read-only, never empty.
+
+The manifest (`catalog.json`) is written after both tables, so a crash between
+the two replacements is detected. The last complete pair, kept in
+`.nrw/cache/experiment/`, is restored only when the manifest describes it
+exactly.
+
+### 2026-09-25: an analysis node's loopback is shared
+
+The web server had no authentication because it only read and bound to
+127.0.0.1. The Experiment page writes. On an SNS analysis node, loopback is
+reachable by every logged-in account, so a token embedded in the page protects
+nothing: another user can fetch the page and read it.
+
+Writes therefore need a secret that is on no page. `nrw serve` prints a one-time
+link that sets an HttpOnly, SameSite=Strict cookie. On top of that, every write
+needs all of:
+
+- the page's own token;
+- a JSON body (a `text/plain` POST needs no CORS preflight);
+- an `Origin` matching this server including its port (every localhost app is
+  "same-site");
+- a loopback peer.
+
+The `Host` header is checked on *every* request, because DNS rebinding makes a
+hostile page same-origin. Writes are disabled outright when the server is bound
+elsewhere or runs under `NRW_AGENT`.
+
+Two details learned on the way:
+
+- **Flask resolves error handlers by status code at every level before any
+  class-based handler**, so the app's HTML 403 page answered the API blueprint's
+  refusals until the blueprint registered its own handler per status code.
+- **`</` was not the only way out of a script block.** `<!--<script>` puts the
+  HTML tokeniser into a state where the block's own `</script>` no longer
+  closes it. The embedded JSON now escapes `<`, `>` and `&` as `\u` sequences.
+
+### 2026-09-25: an empty Condition cell was read as the condition
+
+`conditions.from_table` fell back to "the last non-empty cell" whenever the
+Condition cell was empty, so `| 218393 | full Q |  |` gave the condition
+`full Q`, and that is what the ISAAC record said. A Condition column is now
+authoritative even when empty. This bit hand-written tables too, not only
+rendered ones.
+
+Related, for the renderer:
+
+- **Catalog context is human prose, not generated text.** It must never be
+  fenced `<!-- nrw:generated -->`: `notes.human_text` drops those regions, and
+  every reader asking "did a person write this?" would discount the
+  scientist's own words.
+- **Run titles are never copied into the measurement table.** The title
+  beside the condition is what lets `nrw data reconcile` catch 218393, a run
+  whose own title says CA while the table said OCV.
+
+### 2026-09-25: three defects only a browser found
+
+The server-side tests were green; driving the page in headless Chrome over the
+DevTools protocol found three things they could not:
+
+- **A plan reviewed in one second was "changed" in the next.** The plan digest
+  hashed every scaffold file's bytes, and a new sample's `sample.yaml` is
+  stamped with the current second. The unit tests never crossed a second
+  boundary *and* pinned `created` in their render context, which the real
+  page does not. The digest now covers `sample.md`'s bytes and only the names
+  of the other files. The regression test builds its context the way the page
+  does, and fails without the fix.
+- **Plotly's `scattergl` needs `'unsafe-eval'`.** regl compiles shaders at run
+  time. Without it the quick-look plot fails silently under the page's CSP.
+- **`replaceChildren(null)` renders the text "null".** Optional children now go
+  through the page's `el()` helper, or are filtered out.
+
+### 2026-09-25: where the experiment's data is, and what else could say so
+
+Recorded from the user, not derivable from the code:
+
+- **The location is provisional.** The default data location,
+  `/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction`, is where REF_L's
+  `new_reduction` pipeline writes today, and is expected to move. It is one
+  constant (`experiment.config.DEFAULT_LOCATION`), rendered into the
+  scaffolded `nrw.toml` rather than copied.
+- **The IPTS is used verbatim.** Its digits are kept as written: `int()` would
+  turn IPTS-00001 into IPTS-1, a different directory.
+- **Unsliced tNR arrives as an ordinary run.** The unsliced tNR run lands in
+  the same folder as an ordinary reduced file. Sliced series come later.
+- **New runs can be announced by other feeds.** Besides files appearing, the
+  SNS web monitor (`monitor.sns.gov`, whose run lists need an ORNL login) and
+  Tiled can announce runs. The run feed is therefore its own seam, apart from
+  data access.
+- **ONCat is out of scope.** The facility catalog would add a dependency for
+  information the files and the feed already carry.

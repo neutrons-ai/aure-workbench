@@ -64,3 +64,20 @@ tnr_intervals_glob = "r{run}_*reduction.json"
 standard_thetas = [0.45, 1.2, 3.5]
 tnr_theta = 0.6
 dq_convention = "per-file, read from the header"
+
+# The experiment: where its runs are read from, and how new ones are noticed.
+# `nrw experiment status` shows what is found, and names any key below it does
+# not recognise -- a setting that changes nothing is never silently accepted.
+#
+# The location is PROVISIONAL: it is where REF_L's new_reduction pipeline
+# writes today, and it is expected to move. `{ipts}` is filled from
+# [beamtime] ipts. Uncomment and edit to point somewhere else.
+#
+# [experiment.source]
+# kind = "local"
+# location = "{{ experiment_location }}"
+# settle_seconds = 300
+#
+# [experiment.feed]
+# kind = "directory"   # a run is noticed when its reduced files appear
+# poll_seconds = 30
