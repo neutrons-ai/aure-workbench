@@ -116,6 +116,16 @@ class ExperimentConfig:
     catalog_kind: str = "parquet"
     problems: tuple[Problem, ...] = ()
 
+    @property
+    def needs_setup(self) -> bool:
+        """Whether nothing can be watched until someone says where the data is.
+
+        From the configuration alone: the source kind is not one nrw can use,
+        or no data folder can be worked out (no IPTS to fill in, say). Asking
+        the data mount would block on a dead one.
+        """
+        return self.source.kind not in SOURCE_KINDS or self.source.path is None
+
 
 def experiment_config(project: Any) -> ExperimentConfig:
     """Resolve the ``[experiment]`` table of a project's ``nrw.toml``.

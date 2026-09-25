@@ -34,7 +34,9 @@ import difflib
 import hashlib
 import json
 import shutil
-from collections.abc import Iterable, Mapping
+import threading
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -407,6 +409,42 @@ def _forced_content(planned: PlannedFile, target: Path) -> bytes:
     return ignore.force_merge(existing, planned.content.decode("utf-8")).encode("utf-8")
 
 
+_WRITERS = threading.Lock()
+_HOLDING = threading.local()
+
+
+@contextmanager
+def writing_scaffold(root: Path) -> Iterator[None]:
+    """Hold the scaffold lock file against every other writer while updating it.
+
+    ``nrw init``, ``nrw sample new``, experiment apply and adopt, and the
+    Settings page all read, change and write ``.nrw/scaffold.lock.json`` --
+    two of them from ``nrw serve``'s request threads while a terminal may run
+    the others. Two writers that each read the same lock would each write back
+    only their own entries. Re-entrant within a thread: a second ``flock`` from
+    the same thread would wait for itself.
+
+    Raises:
+        OSError: The lock cannot be taken, e.g. a read-only project.
+    """
+    from nr_workbench.fsutil import advisory_lock
+
+    if getattr(_HOLDING, "depth", 0):
+        _HOLDING.depth += 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth -= 1
+        return
+    guard = ProjectLayout(root=Path(root)).cache_dir / "scaffold.lock.json"
+    with _WRITERS, advisory_lock(guard):
+        _HOLDING.depth = 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth = 0
+
+
 def apply_scaffold(
     root: Path,
     planned_files: Iterable[PlannedFile],
@@ -446,6 +484,43 @@ def apply_scaffold(
             must not paper over: they mean two people's entries, and a
             rebuild would keep neither side's samples.
     """
+    if dry_run:
+        # A dry run (`nrw init --check`) writes nothing, not even a lock file.
+        return _apply_scaffold(
+            root,
+            planned_files,
+            dry_run=True,
+            show_diff=show_diff,
+            force=force,
+            lock_path=lock_path,
+            diff_sink=diff_sink,
+            rebuild_lock=rebuild_lock,
+        )
+    with writing_scaffold(Path(root).resolve()):
+        return _apply_scaffold(
+            root,
+            planned_files,
+            dry_run=False,
+            show_diff=show_diff,
+            force=force,
+            lock_path=lock_path,
+            diff_sink=diff_sink,
+            rebuild_lock=rebuild_lock,
+        )
+
+
+def _apply_scaffold(
+    root: Path,
+    planned_files: Iterable[PlannedFile],
+    *,
+    dry_run: bool = False,
+    show_diff: bool = False,
+    force: bool = False,
+    lock_path: Path | None = None,
+    diff_sink: list[str] | None = None,
+    rebuild_lock: bool = False,
+) -> ScaffoldReport:
+    """The body of :func:`apply_scaffold`, with the writer lock held."""
     root = Path(root).resolve()
     lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
     trouble = lock_problem(lock_path)
@@ -627,22 +702,23 @@ def replace_owned(
     """
     root = Path(root).resolve()
     lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
-    trouble = lock_problem(lock_path)
-    if trouble:
-        raise LockProblemError(trouble)
+    with writing_scaffold(root):
+        trouble = lock_problem(lock_path)
+        if trouble:
+            raise LockProblemError(trouble)
 
-    target = root / planned.relpath
-    backup: Path | None = None
-    if target.exists():
-        backup_root = ProjectLayout(root=root).backups_dir / _stamp()
-        _backup(target, root, backup_root)
-        backup = backup_root / planned.relpath
-    _write(target, planned.content)
+        target = root / planned.relpath
+        backup: Path | None = None
+        if target.exists():
+            backup_root = ProjectLayout(root=root).backups_dir / _stamp()
+            _backup(target, root, backup_root)
+            backup = backup_root / planned.relpath
+        _write(target, planned.content)
 
-    entries = load_lock(lock_path)
-    entries[planned.relpath] = _lock_entry(planned)
-    write_lock(lock_path, entries)
-    return backup
+        entries = load_lock(lock_path)
+        entries[planned.relpath] = _lock_entry(planned)
+        write_lock(lock_path, entries)
+        return backup
 
 
 def forget(root: Path, relpath: str, *, lock_path: Path | None = None) -> bool:
@@ -659,12 +735,46 @@ def forget(root: Path, relpath: str, *, lock_path: Path | None = None) -> bool:
     """
     root = Path(root).resolve()
     lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
-    trouble = lock_problem(lock_path)
-    if trouble:
-        raise LockProblemError(trouble)
-    entries = load_lock(lock_path)
-    if relpath not in entries:
-        return False
-    del entries[relpath]
-    write_lock(lock_path, entries)
-    return True
+    with writing_scaffold(root):
+        trouble = lock_problem(lock_path)
+        if trouble:
+            raise LockProblemError(trouble)
+        entries = load_lock(lock_path)
+        if relpath not in entries:
+            return False
+        del entries[relpath]
+        write_lock(lock_path, entries)
+        return True
+
+
+def record_installed(
+    root: Path, planned: PlannedFile, *, lock_path: Path | None = None
+) -> bool:
+    """Record that a file on disk is exactly ``planned``: nrw wrote it.
+
+    For a writer other than :func:`apply_scaffold` that has just put nrw's own
+    render in place -- the Settings page saving ``nrw.toml``. Without the
+    record the lock would still hold the previous content, and the next
+    template change would find the file "edited" and leave a ``.nrw-new``
+    beside it instead of upgrading it.
+
+    Returns:
+        Whether the lock now records the file. ``False``, with nothing
+        changed, when the lock cannot be written safely or the file is not
+        exactly ``planned``.
+    """
+    root = Path(root).resolve()
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
+    with writing_scaffold(root):
+        if lock_problem(lock_path):
+            return False
+        target = root / planned.relpath
+        if not target.is_file() or target.read_bytes() != planned.content:
+            return False
+        entries = load_lock(lock_path)
+        entry = _lock_entry(planned)
+        if entries.get(planned.relpath) != entry:
+            entries[planned.relpath] = entry
+            write_lock(lock_path, entries)
+        return True
+
