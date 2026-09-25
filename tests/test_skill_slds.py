@@ -84,8 +84,12 @@ QUOTED: list[tuple[str, str, str, float, float, float]] = [
     ids=[f"{s}:{lbl}" for s, lbl, _f, _d, _q, _t in QUOTED],
 )
 def test_quoted_sld_matches_the_physics(
-    skill: str, label: str, formula: str, density: float,
-    quoted: float, tolerance: float,
+    skill: str,
+    label: str,
+    formula: str,
+    density: float,
+    quoted: float,
+    tolerance: float,
 ) -> None:
     computed, _imag, _incoh = neutron_sld(pt_formula(formula), density=density)
     assert computed == pytest.approx(quoted, abs=tolerance), (

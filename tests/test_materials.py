@@ -55,8 +55,14 @@ def test_identical_ends_cannot_be_matched() -> None:
 
 @pytest.mark.parametrize(
     "name,expected",
-    [("Si", 2.07), ("silicon", 2.07), ("SiO2", 3.47), ("quartz", 3.47),
-     ("sapphire", 5.67), ("Al2O3", 5.67)],
+    [
+        ("Si", 2.07),
+        ("silicon", 2.07),
+        ("SiO2", 3.47),
+        ("quartz", 3.47),
+        ("sapphire", 5.67),
+        ("Al2O3", 5.67),
+    ],
 )
 def test_known_substrates_resolve(name: str, expected: float) -> None:
     assert substrate_sld(name) == pytest.approx(expected)
@@ -74,9 +80,12 @@ def test_the_arithmetic_does_not_import_aure() -> None:
     import sys
 
     subprocess.run(
-        [sys.executable, "-c",
-         "import sys; from nr_workbench.aure_adapter import contrast_match_ratio; "
-         "contrast_match_ratio(2.07); "
-         "assert 'aure' not in sys.modules, 'contrast arithmetic imported aure'"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; from nr_workbench.aure_adapter import contrast_match_ratio; "
+            "contrast_match_ratio(2.07); "
+            "assert 'aure' not in sys.modules, 'contrast arithmetic imported aure'",
+        ],
         check=True,
     )

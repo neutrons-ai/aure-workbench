@@ -35,9 +35,9 @@ before it could ask.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 #: The complete curve: every segment spliced into one file.
 COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
@@ -132,7 +132,9 @@ def segment_globs(run: int | str, segment: int | str = "*") -> list[str]:
     return [f"REFL_{run}_{segment}_*{suffix}" for suffix in _SEGMENT_SUFFIXES]
 
 
-def find_segments(directory: Path, run: int | str, segment: int | str = "*") -> list[Path]:
+def find_segments(
+    directory: Path, run: int | str, segment: int | str = "*"
+) -> list[Path]:
     """Every segment file for *run* in *directory*, both dialects, sorted."""
     return sorted(
         match

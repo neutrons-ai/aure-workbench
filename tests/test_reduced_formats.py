@@ -182,9 +182,12 @@ def test_no_other_module_spells_out_these_filenames():
             stripped = line.strip()
             if stripped.startswith("#") or stripped.startswith("*"):
                 continue
-            if "_partial.txt" in line or "_autoreduction.dat" in line:
-                if "glob(" in line or "re.compile" in line or 'f"REFL_' in line:
-                    offenders.append(f"{path.name}:{number}: {stripped}")
+            names_a_suffix = "_partial.txt" in line or "_autoreduction.dat" in line
+            builds_a_pattern = (
+                "glob(" in line or "re.compile" in line or 'f"REFL_' in line
+            )
+            if names_a_suffix and builds_a_pattern:
+                offenders.append(f"{path.name}:{number}: {stripped}")
 
     assert not offenders, "filename patterns outside reduced.py:\n" + "\n".join(
         offenders

@@ -147,7 +147,7 @@
     },
     "FitSettings": {
       "additionalProperties": false,
-      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Which fitter, ``amoeba`` or ``dream``. See\n        :mod:`nr_workbench.fitters` for why those are the only two.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    seed: Random seed.",
+      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Which fitter, ``amoeba``, ``de`` or ``dream``. See\n        :mod:`nr_workbench.fitters` for why those are the only three.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    pop: Population size, as a multiplier on the number of free\n        parameters. Used by ``de`` and ``dream``; ignored by ``amoeba``,\n        which has no population. It belongs in the spec rather than only\n        on the command line because it changes what the search covers, so\n        two runs of the same spec at different populations are two\n        different searches and the record should say which was which.\n    seed: Random seed.",
       "properties": {
         "method": {
           "default": "amoeba",
@@ -189,6 +189,18 @@
           ],
           "default": null,
           "title": "Burn"
+        },
+        "pop": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pop"
         },
         "seed": {
           "anyOf": [
