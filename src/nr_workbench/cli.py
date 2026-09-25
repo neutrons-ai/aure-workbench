@@ -1578,9 +1578,17 @@ def import_command(**kwargs: object) -> None:
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface.")
 @click.option("--port", default=8765, show_default=True, type=int, help="Port.")
-@click.option("--debug", is_flag=True, help="Enable the Flask reloader.")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable the Flask reloader and its debugger (loopback only).",
+)
 def serve_command(**kwargs: object) -> None:
-    """Browse the project: every measurement, fit, and SLD curve on one page."""
+    """Browse the project, and organize the experiment's runs into samples.
+
+    Pages only read, except the Experiment page, which edits the catalog from
+    a browser that opened the one-time link printed at start-up.
+    """
     from nr_workbench.commands.serve import run_serve
 
     run_serve(**kwargs)  # type: ignore[arg-type]

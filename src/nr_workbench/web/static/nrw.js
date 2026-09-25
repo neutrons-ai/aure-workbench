@@ -169,6 +169,12 @@ const NRW = (function () {
         overlay = curve;
         Plotly.react(divId, traces(), layout(), CONFIG);
       },
+      /* Replace the curves in place. Calling reflPanel again instead would
+       * add another toggle listener each time, each holding stale curves. */
+      setCurves: function (next) {
+        curves = next;
+        Plotly.react(divId, traces(), layout(), CONFIG);
+      },
     };
   }
 

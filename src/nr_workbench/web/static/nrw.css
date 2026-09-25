@@ -203,3 +203,40 @@ tr.fit-story > td > span + span::before {
 .table-hover > tbody > tr.fit-story:hover > * {
   background-color: transparent;
 }
+
+/* The Experiment page. */
+.expt-search {
+  max-width: 16rem;
+}
+
+.expt-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+}
+
+.expt-bulk .form-control,
+.expt-bulk .form-select {
+  width: auto;
+  min-width: 9rem;
+}
+
+.expt-table {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.expt-title {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expt-plan-list li {
+  word-break: break-all;
+}

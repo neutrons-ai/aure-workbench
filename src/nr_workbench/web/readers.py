@@ -122,10 +122,40 @@ def read_reduced(path: Path, *, label: str, root: Path | None = None) -> Curve:
         data = np.loadtxt(path, ndmin=2)
     except (ValueError, OSError) as exc:
         raise DataFormatError(f"Cannot read {path}: {exc}") from exc
+    return _reduced_curve(
+        data, label=label, name=str(path), source=_relative(path, root)
+    )
 
+
+def read_reduced_bytes(data: bytes, *, label: str, name: str) -> Curve:
+    """Read a reduced file's bytes, as a data source hands them over.
+
+    The experiment page plots runs straight from the data source -- the local
+    folder today, Tiled later -- and a source provides bytes, not a path. The
+    parsing is :func:`read_reduced`'s, so a quick look and an applied copy are
+    read identically.
+
+    Args:
+        data: The file's content.
+        label: Curve label to attach.
+        name: The file's name, for messages and provenance.
+
+    Raises:
+        DataFormatError: If the bytes are not a reduced file.
+    """
+    import io
+
+    try:
+        table = np.loadtxt(io.BytesIO(data), ndmin=2)
+    except ValueError as exc:
+        raise DataFormatError(f"Cannot read {name}: {exc}") from exc
+    return _reduced_curve(table, label=label, name=name, source=name)
+
+
+def _reduced_curve(data: np.ndarray, *, label: str, name: str, source: str) -> Curve:
     if data.size == 0 or data.shape[1] < 3:
         raise DataFormatError(
-            f"{path} has {data.shape[1] if data.size else 0} column(s); "
+            f"{name} has {data.shape[1] if data.size else 0} column(s); "
             "a reduced file needs at least Q, R and dR."
         )
 
@@ -134,7 +164,7 @@ def read_reduced(path: Path, *, label: str, root: Path | None = None) -> Curve:
         q=_clean(data[:, 0]),
         r=_clean(data[:, 1]),
         dr=_clean(data[:, 2]),
-        source=_relative(path, root),
+        source=source,
     )
     if data.shape[1] >= 4:
         curve.dq = _clean(data[:, 3])

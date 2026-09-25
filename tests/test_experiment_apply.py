@@ -567,3 +567,40 @@ def test_an_unreadable_copy_record_stops_that_sample_only(
     by_sample = {s.sample_id: s for s in plan.samples}
     assert by_sample["Sample6"].problems
     assert not by_sample["Sample7"].problems
+
+
+def test_a_plan_reviewed_in_one_second_applies_in_the_next(
+    project: Path, source, monkeypatch
+) -> None:
+    """A new sample's sample.yaml is stamped with the current second.
+
+    Found by driving the page in a browser: review, then click Apply a second
+    later, and the plan "changed" -- because its digest hashed that timestamp.
+    """
+    import datetime as real
+
+    from nr_workbench.project import render as render_module
+
+    ticks = iter(range(100))
+
+    class Clock(real.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real.datetime(2026, 9, 25, 12, 0, next(ticks), tzinfo=tz)
+
+    monkeypatch.setattr(render_module, "datetime", Clock)
+    # The context the page and the CLI use: no fixed `created`, so every
+    # render of a new sample's sample.yaml asks the clock.
+    from nr_workbench.experiment.render import project_context
+
+    context = project_context(project)
+    applier = Applier(project, context, source)
+    catalog = catalog_for(*RUNS)
+    plan = applier.plan(catalog)
+    runs, statuses = observe(source)
+
+    report = apply(
+        project, catalog, runs, statuses, source, context, expected_plan_id=plan.plan_id
+    )
+
+    assert len(report.done) == 6

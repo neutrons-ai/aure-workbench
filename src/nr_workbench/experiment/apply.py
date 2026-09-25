@@ -670,9 +670,17 @@ def _plan_id(plans: Iterable[SamplePlan], catalog: Catalog) -> str:
                     "sample": plan.sample_id,
                     "creates": plan.creates,
                     "md": str(plan.sample_md),
+                    # sample.md's bytes -- what the person reviewed -- but only
+                    # the *names* of the other scaffold files: a new sample's
+                    # sample.yaml is stamped with the current second, so
+                    # hashing its bytes made a review and an apply that
+                    # straddled a second boundary look like two plans.
                     "md_content": [
-                        hashlib.sha256(p.content).hexdigest() for p in plan.scaffold
+                        hashlib.sha256(p.content).hexdigest()
+                        for p in plan.scaffold
+                        if p.relpath.endswith("/sample.md")
                     ],
+                    "scaffold": sorted(p.relpath for p in plan.scaffold),
                     "files": [
                         [
                             f.run,

@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Experiment — nr-workbench{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('experiment_api.overview') }}">API</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
+  <h1 class="h4 mb-0">Experiment <span id="expt-ipts" class="text-secondary mono"></span></h1>
+  <span id="expt-source" class="small text-secondary mono"></span>
+  <span id="expt-scan" class="small text-secondary ms-auto" aria-live="polite"></span>
+</div>
+
+<div id="expt-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
+<div id="expt-message" class="alert py-2 d-none" role="alert"></div>
+<div id="expt-problems" class="alert alert-warning py-2 problem d-none">
+  <strong>Notes on this experiment</strong>
+  <ul class="mb-0 mt-1"></ul>
+</div>
+
+<div class="landscape">
+  <div>
+    <div class="panel">
+      <div class="panel-head flex-wrap">
+        <span>Runs</span>
+        <div class="btn-group btn-group-sm" role="group" id="expt-filters" aria-label="Show">
+          <button type="button" class="btn btn-outline-secondary active" data-filter="all">all</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="unassigned">unassigned</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="arriving">arriving</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="attention">needs a look</button>
+        </div>
+        <input id="expt-search" type="search" class="form-control form-control-sm expt-search ms-auto"
+               placeholder="run, title or sample" aria-label="Filter runs">
+      </div>
+
+      <div id="expt-bulk" class="expt-bulk d-none">
+        <span id="expt-selected" class="small"></span>
+        <select id="expt-sample" class="form-select form-select-sm" aria-label="Sample"></select>
+        <input id="expt-new-sample" class="form-control form-control-sm d-none" placeholder="new sample id"
+               aria-label="New sample id">
+        <input id="expt-type" class="form-control form-control-sm" placeholder="type (e.g. full Q)"
+               aria-label="Measurement type">
+        <input id="expt-condition" class="form-control form-control-sm" placeholder="condition (e.g. OCV)"
+               aria-label="Condition">
+        <button type="button" class="btn btn-sm btn-primary" id="expt-assign">Assign</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-unassign">Unassign</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-exclude">Exclude</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-include">Include</button>
+      </div>
+
+      <div class="expt-table">
+        <table class="table table-sm table-hover mb-0" id="expt-runs">
+          <thead><tr>
+            <th scope="col"><input type="checkbox" id="expt-select-all" aria-label="Select all shown"></th>
+            <th scope="col">run</th><th scope="col">state</th><th scope="col">title</th>
+            <th scope="col">segments</th><th scope="col">θ (°)</th>
+            <th scope="col">sample</th><th scope="col">type</th><th scope="col">condition</th>
+            <th scope="col"></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="expt-empty" class="p-3 small text-secondary mb-0 d-none"></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span>Quick look</span>
+        <span class="hint">selected runs, read straight from the data source; segments are not stitched</span>
+        <div class="form-check form-switch ms-auto mb-0">
+          <input class="form-check-input" type="checkbox" id="rq4-toggle">
+          <label class="form-check-label small" for="rq4-toggle">R·Q⁴</label>
+        </div>
+      </div>
+      <div id="plot-quick" class="plot plot-rq"></div>
+      <p id="quick-hint" class="px-3 pb-2 small text-secondary mb-0">Select runs to plot them.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span>Apply</span>
+        <span class="hint">copy assigned, complete runs into samples/ and write each sample.md</span>
+        <button type="button" class="btn btn-sm btn-outline-primary ms-auto" id="expt-review">Review</button>
+      </div>
+      <div id="expt-plan" class="p-3 small">
+        <p class="text-secondary mb-0">
+          Review shows exactly what would be copied, moved or written. Nothing
+          is written until you apply, and nothing is ever overwritten.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="rail">
+    <div class="panel">
+      <div class="panel-head">
+        <span>Samples</span>
+      </div>
+      <div id="expt-samples" class="list-group list-group-flush small"></div>
+    </div>
+
+    <div class="panel d-none" id="expt-editor">
+      <div class="panel-head">
+        <span id="expt-editor-title">Sample</span>
+        <span id="expt-md-state" class="badge text-bg-light ms-auto"></span>
+      </div>
+      <form id="expt-form" class="p-3 small" novalidate>
+        <label class="form-label mb-1" for="f-title">Title</label>
+        <input class="form-control form-control-sm mb-2" id="f-title" name="title">
+        <label class="form-label mb-1" for="f-description">Description</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-description" name="description" rows="2"
+                  placeholder="What the sample is, what it is in, what you expect."></textarea>
+        <label class="form-label mb-1" for="f-details">Details</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-details" name="details" rows="3"
+                  placeholder="Composition, electrolyte, environment -- anything that constrains the model."></textarea>
+        <label class="form-label mb-1" for="f-mounting">Was the sample moved between measurements?</label>
+        <select class="form-select form-select-sm mb-2" id="f-mounting" name="mounting">
+          <option value="unknown">not recorded</option>
+          <option value="once">no -- mounted once for all of them</option>
+          <option value="remounted">yes -- remounted or realigned between them</option>
+        </select>
+        <label class="form-label mb-1" for="f-conditions">Measurement conditions</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-conditions" name="measurement_conditions"
+                  rows="2" placeholder="Alignment, flatness, background, normalization."></textarea>
+        <label class="form-label mb-1" for="f-fits">Fits to perform</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-fits" name="fits_to_perform" rows="3"
+                  placeholder="What to fit and what should change. An unattended session needs this."></textarea>
+        <div class="d-flex gap-2 align-items-center">
+          <button type="submit" class="btn btn-sm btn-primary" id="expt-save">Save</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="expt-adopt">Pull hand edits</button>
+          <span id="expt-form-status" class="small text-secondary"></span>
+        </div>
+      </form>
+      <div id="expt-adopt-plan" class="px-3 pb-2 small d-none"></div>
+      <div class="p-3 markdown small border-top" id="expt-preview"></div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+  window.NRW_EXPERIMENT = {{ payload|nrwjson|safe }};
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='experiment.js') }}"></script>
+{% endblock %}

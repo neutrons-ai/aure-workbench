@@ -6,28 +6,61 @@ and there should never be any -- if a view needs a number computed, the
 computation belongs in ``ProjectData`` where it can be tested without a
 request context.
 
-The server is read-only and intended for ``localhost``. It has no
-authentication, so :func:`serve` binds to the loopback interface unless told
-otherwise, and says so when it does not.
+The server is for ``localhost``. Every page and ``/api`` route only reads.
+The one exception is the Experiment page's blueprint
+(:mod:`nr_workbench.web.experiment_api`), whose writes are gated by
+:mod:`nr_workbench.web.security`: loopback only, from a browser that opened
+the one-time link ``nrw serve`` prints, and disabled entirely when bound
+elsewhere or running under ``NRW_AGENT``.
 """
 
 from __future__ import annotations
 
 import json
+import secrets
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, abort, render_template, send_from_directory
+from flask import (
+    Flask,
+    abort,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
 
+from nr_workbench.web import security
 from nr_workbench.web.api import api
+from nr_workbench.web.experiment import ExperimentData
+from nr_workbench.web.experiment_api import experiment_api
 from nr_workbench.web.project import ProjectData
 
+#: Methods that change nothing.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-def create_app(root: Path) -> Flask:
+
+def create_app(
+    root: Path,
+    *,
+    writable: bool = True,
+    read_only_reason: str = "",
+    bound_host: str = "127.0.0.1",
+    token: str | None = None,
+    autostart: bool = True,
+) -> Flask:
     """Build the application for one project.
 
     Args:
         root: Project root, the directory holding ``nrw.toml``.
+        writable: Whether the Experiment page may write at all. Also forced off
+            when ``bound_host`` is not loopback.
+        read_only_reason: What the page says when it may not.
+        bound_host: The interface the server listens on.
+        token: The secret behind the one-time link; generated if omitted.
+        autostart: Start polling the data source on first use.
 
     Returns:
         A configured Flask application.
@@ -45,7 +78,34 @@ def create_app(root: Path) -> Flask:
     app = Flask(__name__)
     app.config["NRW_DATA"] = ProjectData(root)
     app.config["NRW_ROOT"] = root
+    security.install(
+        app,
+        bound_host=bound_host,
+        writable=writable,
+        token=token or secrets.token_urlsafe(24),
+    )
+    app.config["NRW_READ_ONLY_REASON"] = read_only_reason or (
+        "" if app.config["NRW_WRITABLE"] else _default_reason(bound_host)
+    )
+    app.config["NRW_EXPERIMENT"] = ExperimentData(
+        root,
+        writable=app.config["NRW_WRITABLE"],
+        why_read_only=app.config["NRW_READ_ONLY_REASON"],
+        autostart=autostart,
+    )
     app.register_blueprint(api)
+    app.register_blueprint(experiment_api)
+
+    @app.before_request
+    def _only_the_experiment_blueprint_writes() -> None:
+        # The second mechanism, beside the blueprint's own gate: an unsafe
+        # method anywhere else is refused, so a write route added outside the
+        # blueprint cannot slip past the gate by accident.
+        if (
+            request.method not in _SAFE_METHODS
+            and request.blueprint != "experiment_api"
+        ):
+            abort(405)
 
     app.jinja_env.filters["nrwjson"] = _compact_json
     app.jinja_env.filters["markdown"] = _render_markdown
@@ -71,7 +131,20 @@ def _compact_json(value: Any) -> str:
     spill the rest as visible markup. ``json.dumps`` does not do this on its
     own, and Jinja's autoescaping does not apply inside a script tag.
     """
-    return json.dumps(value, separators=(",", ":"), default=str).replace("</", "<\\/")
+    text = json.dumps(value, separators=(",", ":"), default=str)
+    # Every character that can change how the HTML parser reads a script
+    # block, as a JSON escape. `</` alone is not enough: `<!--<script>` puts
+    # the tokeniser into a state where the block's own `</script>` no longer
+    # closes it, and the rest of the page becomes script.
+    for char, escape in (
+        ("<", "\\u003c"),
+        (">", "\\u003e"),
+        ("&", "\\u0026"),
+        ("\u2028", "\\u2028"),
+        ("\u2029", "\\u2029"),
+    ):
+        text = text.replace(char, escape)
+    return text
 
 
 def _render_markdown(text: str | None) -> Any:
@@ -190,6 +263,57 @@ def _register_views(app: Flask) -> None:
             abort(404)
         return send_from_directory(directory, filename)
 
+    @app.get("/auth/<token>")
+    def authorize(token: str) -> Any:
+        """The one-time link `nrw serve` prints: grants this browser write access.
+
+        The link goes in a cookie and the browser is redirected to a clean URL,
+        so the secret does not linger in the address bar or leak in a Referer.
+        """
+        expected = app.config.get("NRW_TOKEN", "")
+        if not (
+            app.config.get("NRW_WRITABLE")
+            and security.is_loopback(request.remote_addr)
+            and secrets.compare_digest(token, expected)
+        ):
+            abort(403, "This link is not valid for this server.")
+        response = make_response(redirect(url_for("experiment"), code=303))
+        response.set_cookie(
+            security.COOKIE, expected, httponly=True, samesite="Strict", path="/"
+        )
+        return response
+
+    @app.get("/experiment")
+    def experiment() -> Any:
+        """Every run of the experiment, organized into samples."""
+        nonce = secrets.token_urlsafe(16)
+        writer = security.can_write()
+        page = render_template(
+            "experiment.html",
+            payload=app.config["NRW_EXPERIMENT"].overview(),
+            page_token=app.config["NRW_PAGE_TOKEN"] if writer else "",
+            writer=writer,
+            csp_nonce=nonce,
+        )
+        response = make_response(page)
+        # 'unsafe-eval' because Plotly's WebGL traces (scattergl, which the
+        # reflectivity panel uses) compile their shaders through regl, which
+        # builds functions at run time. It admits no injected <script> tag and
+        # no inline handler -- the nonce still stops both.
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' https://cdn.plot.ly; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data:; connect-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        )
+        return response
+
+    @app.errorhandler(403)
+    def forbidden(error: Any) -> tuple[str, int]:
+        """Render a 403 in the site's own layout."""
+        return render_template("error.html", code=403, message=error.description), 403
+
     @app.errorhandler(404)
     def not_found(error: Any) -> tuple[str, int]:
         """Render a 404 in the site's own layout."""
@@ -199,6 +323,15 @@ def _register_views(app: Flask) -> None:
     def bad_request(error: Any) -> tuple[str, int]:
         """Render a 400 in the site's own layout."""
         return render_template("error.html", code=400, message=error.description), 400
+
+
+def _default_reason(bound_host: str) -> str:
+    if not security.is_loopback(bound_host) and bound_host != "localhost":
+        return (
+            f"The server is bound to {bound_host}, not loopback, so it only "
+            "shows the experiment. Run `nrw serve` without --host to edit it."
+        )
+    return "This server was started read-only."
 
 
 def serve(
@@ -219,5 +352,5 @@ def serve(
     Raises:
         FileNotFoundError: If ``root`` is not a workbench project.
     """
-    app = create_app(root)
+    app = create_app(root, bound_host=host)
     app.run(host=host, port=port, debug=debug)
