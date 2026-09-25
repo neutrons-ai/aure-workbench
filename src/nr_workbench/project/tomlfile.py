@@ -1,0 +1,563 @@
+"""Editing ``nrw.toml`` in place, without losing a byte a person wrote.
+
+``nrw.toml`` is mostly comments explaining why its conventions are what they
+are, and people edit it by hand. The standard library only reads TOML, and a
+round-trip through any writer drops the comments. So nrw edits the file the way
+a careful person would. It changes only lines whose shape it recognises -- a
+single-line ``key = value`` inside a table header it recognises, or the
+commented placeholder ``# key = <default>`` it wrote itself -- and then it
+*proves* the edit: both versions are parsed, and the new document must be the
+old one with exactly the intended keys changed. Anything else is refused,
+along with the lines a person can add by hand.
+
+The functions here only transform text; :func:`write_config` is the one that
+touches the disk.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import re
+import secrets
+import shutil
+import threading
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+#: A value nrw writes: a string, a whole or decimal number, or a flag.
+Value = str | int | float | bool
+
+
+class TomlEditError(Exception):
+    """The file cannot be edited safely. The message says what to do instead.
+
+    Attributes:
+        lines: TOML a person can add by hand to make the same change, when the
+            refusal is about the file's shape rather than its state.
+    """
+
+    def __init__(self, message: str, lines: str = "") -> None:
+        super().__init__(message)
+        self.lines = lines
+
+
+class TomlConflictError(TomlEditError):
+    """The file changed after it was read; nothing was written."""
+
+
+@dataclass(frozen=True)
+class Set:
+    """Give a key this value.
+
+    Attributes:
+        value: The new value.
+        default: nrw's default for the key, when it writes one as a commented
+            placeholder; that placeholder line is then replaced rather than
+            left beside the new line.
+    """
+
+    value: Value
+    default: Value | None = None
+
+
+@dataclass(frozen=True)
+class Unset:
+    """Remove a key, so nrw's default applies again.
+
+    Attributes:
+        default: Written back as the placeholder ``# key = <default>``.
+    """
+
+    default: Value
+
+
+#: Changes by table name (``"experiment.source"``), then by key.
+Changes = Mapping[str, Mapping[str, Set | Unset]]
+
+
+@dataclass(frozen=True)
+class ConfigText:
+    """A configuration file as read, checked to be safe to edit.
+
+    Attributes:
+        raw: Its exact bytes.
+        text: The same, decoded.
+        revision: sha256 of ``raw``: what a page sends back to say "the file I
+            showed you", so an edit made in between is not written over.
+    """
+
+    raw: bytes
+    text: str
+    revision: str
+
+
+# ---------------------------------------------------------------------------
+# Encoding values
+# ---------------------------------------------------------------------------
+
+_ESCAPES = {
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+    '"': '\\"',
+    "\\": "\\\\",
+}
+
+
+def toml_string(value: str) -> str:
+    """A TOML basic string that reads back as exactly ``value``.
+
+    Escapes the quote, the backslash and every control character, which is
+    what TOML requires; a folder name containing ``"`` or ``\\`` otherwise
+    makes the whole file unreadable.
+    """
+    out = []
+    for char in value:
+        if char in _ESCAPES:
+            out.append(_ESCAPES[char])
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
+
+
+def toml_value(value: Value) -> str:
+    """``value`` as TOML: a basic string, an integer, a decimal, or a flag.
+
+    A whole float is written as an integer (``300``, not ``300.0``), the way a
+    person writes a number of seconds.
+
+    Raises:
+        ValueError: For a float that is not finite, or an unsupported type.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise ValueError(f"{value!r} is not a number TOML can hold")
+        return str(int(value)) if value.is_integer() else repr(value)
+    if isinstance(value, str):
+        return toml_string(value)
+    raise ValueError(f"cannot write {type(value).__name__} values")
+
+
+def key_line(key: str, value: Value) -> str:
+    """The line nrw writes for a key that is set, without its line ending."""
+    return f"{key} = {toml_value(value)}"
+
+
+def placeholder_line(key: str, default: Value) -> str:
+    """The commented line nrw writes for a key left at its default."""
+    return f"# {key} = {toml_value(default)}"
+
+
+# ---------------------------------------------------------------------------
+# Reading
+# ---------------------------------------------------------------------------
+
+
+def read_config(path: Path) -> ConfigText:
+    """Read a configuration file, refusing any the editor must not touch.
+
+    Raises:
+        TomlEditError: It is a symbolic link, not UTF-8, starts with a byte
+            order mark, holds git conflict markers, or is not valid TOML.
+        OSError: It cannot be read.
+    """
+    path = Path(path)
+    if path.is_symlink():
+        raise TomlEditError(
+            f"{path.name} is a symbolic link; nrw edits only a plain file, so "
+            "that writing it cannot change a file somewhere else."
+        )
+    raw = path.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raise TomlEditError(
+            f"{path.name} starts with a byte order mark, which TOML does not "
+            "allow; save it as plain UTF-8."
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise TomlEditError(f"{path.name} is not UTF-8 ({exc}).") from exc
+    if re.search(r"^(<{7}|>{7})", text, re.MULTILINE):
+        raise TomlEditError(
+            f"{path.name} contains git conflict markers. Resolve the merge and "
+            "commit before nrw edits it."
+        )
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise TomlEditError(f"{path.name} is not valid TOML: {exc}") from exc
+    return ConfigText(raw=raw, text=text, revision=hashlib.sha256(raw).hexdigest())
+
+
+# ---------------------------------------------------------------------------
+# Finding nrw's own lines
+# ---------------------------------------------------------------------------
+
+_HEADER = re.compile(
+    r"^[ \t]*\[(?!\[)[ \t]*(?P<name>[A-Za-z0-9_-]+(?:[ \t]*\.[ \t]*[A-Za-z0-9_-]+)*)"
+    r"[ \t]*\][ \t]*(?:#.*)?$"
+)
+_VALUE = (
+    r'"(?:[^"\\\r\n]|\\.)*"'  # basic string, one line
+    r"|'[^'\r\n]*'"  # literal string, one line
+    r"|[+-]?[0-9][0-9_]*(?:\.[0-9_]+)?(?:[eE][+-]?[0-9]+)?"  # number
+    r"|true|false"
+)
+_KEY = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<key>[A-Za-z0-9_-]+)[ \t]*=[ \t]*"
+    rf"(?P<value>{_VALUE})(?P<rest>[ \t]*(?:#.*)?)$"
+)
+_ANY_KEY = re.compile(r"^[ \t]*(?P<key>[A-Za-z0-9_\"'.-][^=]*?)[ \t]*=")
+
+
+def _starts_inside_string(lines: list[str]) -> list[bool]:
+    """For each line, whether it begins inside a multi-line string.
+
+    Such a line is text, whatever it looks like: a ``[experiment.source]``
+    written inside a ``\"\"\"`` string is not a table. A mistake here could only
+    ever make an edit fail its verification, never pass it.
+    """
+    inside: str | None = None
+    starts: list[bool] = []
+    for line in lines:
+        starts.append(inside is not None)
+        i, n = 0, len(line)
+        while i < n:
+            if inside is not None:
+                if inside == '"""' and line[i] == "\\":
+                    i += 2
+                elif line.startswith(inside, i):
+                    i += 3
+                    inside = None
+                else:
+                    i += 1
+                continue
+            char = line[i]
+            if char == "#":
+                break
+            if line.startswith('"""', i) or line.startswith("'''", i):
+                inside = line[i : i + 3]
+                i += 3
+            elif char == '"':
+                i += 1
+                while i < n and line[i] != '"':
+                    i += 2 if line[i] == "\\" else 1
+                i += 1
+            elif char == "'":
+                end = line.find("'", i + 1)
+                i = n if end < 0 else end + 1
+            else:
+                i += 1
+    return starts
+
+
+@dataclass(frozen=True)
+class _Region:
+    """One table's lines: its header, and everything up to the next header."""
+
+    header: int
+    end: int
+
+
+def _regions(lines: list[str]) -> dict[str, _Region]:
+    inside = _starts_inside_string(lines)
+    headers: list[tuple[int, str | None]] = []
+    for index, line in enumerate(lines):
+        if inside[index] or not line.lstrip().startswith("["):
+            continue
+        match = _HEADER.match(line.rstrip("\r\n"))
+        name = re.sub(r"[ \t]*\.[ \t]*", ".", match.group("name")) if match else None
+        headers.append((index, name))
+    regions: dict[str, _Region] = {}
+    for position, (index, name) in enumerate(headers):
+        end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
+        if name is None:
+            continue
+        if name in regions:
+            raise TomlEditError(f"[{name}] is declared twice; TOML allows it once.")
+        regions[name] = _Region(index, end)
+    return regions
+
+
+def _lookup(document: Mapping[str, Any], table: str) -> Any:
+    node: Any = document
+    for part in table.split("."):
+        if not isinstance(node, Mapping) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+# ---------------------------------------------------------------------------
+# Editing
+# ---------------------------------------------------------------------------
+
+
+def edit(text: str, changes: Changes) -> str:
+    """Apply ``changes`` to the text of a TOML file, touching only nrw's lines.
+
+    For each key, in its table's region:
+
+    * a ``key = value`` line gets the new value, keeping its indentation and
+      any comment after it;
+    * nrw's own placeholder ``# key = <default>`` becomes the set line (or
+      stays, for a key being unset);
+    * otherwise a set key is inserted after the last key line of the table.
+
+    A table the file does not have is appended at the end.
+
+    Raises:
+        TomlEditError: The file writes a managed key or table in a shape this
+            editor does not recognise -- a dotted key, an inline table, a
+            multi-line string -- or the edit would change anything else.
+    """
+    lines = text.splitlines(keepends=True)
+    newline = "\r\n" if lines and lines[0].endswith("\r\n") else "\n"
+    before = tomllib.loads(text)
+
+    appended: list[str] = []
+    # Bottom to top, so that an insertion never moves a region still to come.
+    regions = _regions(lines)
+    for table in sorted(changes, key=lambda t: -regions[t].header if t in regions else 0):
+        keys = changes[table]
+        region = regions.get(table)
+        if region is None:
+            if _lookup(before, table) is not None:
+                raise TomlEditError(
+                    f"nrw.toml defines [{table}] in a way nrw does not edit "
+                    "(dotted keys or an inline table). Make the change by hand:",
+                    _hand_lines(table, keys),
+                )
+            block = [key_line(k, c.value) for k, c in keys.items() if isinstance(c, Set)]
+            if block:
+                appended.append("\n".join([f"[{table}]", *block]))
+            continue
+        _edit_region(lines, region, table, keys, before, newline)
+
+    if appended:
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            lines[-1] += newline
+        if lines and lines[-1].strip():
+            lines.append(newline)
+        lines.append(newline.join("\n\n".join(appended).split("\n")) + newline)
+
+    result = "".join(lines)
+    verify(text, result, changes)
+    return result
+
+
+def _edit_region(
+    lines: list[str],
+    region: _Region,
+    table: str,
+    keys: Mapping[str, Set | Unset],
+    before: Mapping[str, Any],
+    newline: str,
+) -> None:
+    inside = _starts_inside_string(lines)
+    existing = _lookup(before, table) or {}
+    for key, change in keys.items():
+        active: list[int] = []
+        placeholder: int | None = None
+        default = change.default
+        for index in range(region.header + 1, region.end):
+            if inside[index]:
+                continue
+            body = lines[index].rstrip("\r\n")
+            match = _KEY.match(body)
+            if match and match.group("key") == key:
+                active.append(index)
+            elif (
+                default is not None
+                and body.strip() == placeholder_line(key, default)
+                and placeholder is None
+            ):
+                placeholder = index
+        if len(active) > 1:
+            raise TomlEditError(f"[{table}] sets {key} more than once.")
+        if key in existing and not active:
+            raise TomlEditError(
+                f"nrw.toml sets [{table}] {key} in a way nrw does not edit (a "
+                "multi-line value, a dotted key, or a quoted key). Make the "
+                "change by hand:",
+                _hand_lines(table, {key: change}),
+            )
+
+        if active:
+            index = active[0]
+            ending = lines[index][len(lines[index].rstrip("\r\n")) :]
+            match = _KEY.match(lines[index].rstrip("\r\n"))
+            assert match is not None
+            if isinstance(change, Set):
+                lines[index] = (
+                    f"{match.group('indent')}{key} = {toml_value(change.value)}"
+                    f"{match.group('rest')}{ending}"
+                )
+            else:
+                lines[index] = (
+                    f"{match.group('indent')}{placeholder_line(key, change.default)}"
+                    f"{match.group('rest')}{ending}"
+                )
+        elif isinstance(change, Set):
+            if placeholder is not None:
+                ending = lines[placeholder][len(lines[placeholder].rstrip("\r\n")) :]
+                indent = lines[placeholder][
+                    : len(lines[placeholder]) - len(lines[placeholder].lstrip())
+                ]
+                lines[placeholder] = f"{indent}{key_line(key, change.value)}{ending}"
+            else:
+                at = _insertion_point(lines, region, inside)
+                if not lines[at - 1].endswith(("\n", "\r")):
+                    lines[at - 1] += newline
+                lines.insert(at, key_line(key, change.value) + newline)
+                region = _Region(region.header, region.end + 1)
+                inside = _starts_inside_string(lines)
+        # An Unset key with no line is already unset.
+
+
+def _insertion_point(lines: list[str], region: _Region, inside: list[bool]) -> int:
+    """After the table's last key line or placeholder, else right after its header.
+
+    Not at the end of the region: the comment block introducing the *next*
+    table sits there, and a key inserted after it would read as that table's.
+    """
+    at = region.header + 1
+    for index in range(region.header + 1, region.end):
+        if inside[index]:
+            continue
+        body = lines[index].strip()
+        if _ANY_KEY.match(body) or re.match(r"^#\s*[A-Za-z0-9_-]+\s*=", body):
+            at = index + 1
+    return at
+
+
+def _hand_lines(table: str, keys: Mapping[str, Set | Unset]) -> str:
+    rows = [f"[{table}]"]
+    for key, change in keys.items():
+        if isinstance(change, Set):
+            rows.append(key_line(key, change.value))
+        else:
+            rows.append(f"# remove {key} to use nrw's default")
+    return "\n".join(rows)
+
+
+def replace_block(text: str, old: str, new: str) -> str | None:
+    """Replace ``old`` with ``new`` where it stands on whole lines, exactly once.
+
+    For a block nrw rendered itself, such as the experiment tables: while it is
+    still exactly nrw's text it can be rewritten as a unit.
+
+    Returns:
+        The new text, or ``None`` when ``old`` is not there exactly once.
+    """
+    if not old:
+        return None
+    for ending in ("\n", "\r\n"):
+        candidate = old.replace("\n", ending) if ending != "\n" else old
+        pattern = re.compile(r"(?:^|(?<=\n))" + re.escape(candidate) + r"(?=\r?\n|$)")
+        found = list(pattern.finditer(text))
+        if len(found) == 1:
+            replacement = new.replace("\n", ending) if ending != "\n" else new
+            start, end = found[0].span()
+            return text[:start] + replacement + text[end:]
+        if found:
+            return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Proving an edit
+# ---------------------------------------------------------------------------
+
+
+def verify(old: str, new: str, changes: Changes) -> None:
+    """Refuse unless ``new`` parses as ``old`` with exactly ``changes`` made.
+
+    Raises:
+        TomlEditError: ``new`` does not parse, or differs in anything else.
+    """
+    try:
+        after = tomllib.loads(new)
+    except tomllib.TOMLDecodeError as exc:
+        raise TomlEditError(f"the edit would make nrw.toml invalid ({exc}).") from exc
+    want = copy.deepcopy(tomllib.loads(old))
+    for table, keys in changes.items():
+        node = want
+        for part in table.split("."):
+            node = node.setdefault(part, {})
+        for key, change in keys.items():
+            if isinstance(change, Set):
+                node[key] = change.value
+            else:
+                node.pop(key, None)
+    if _pruned(after) != _pruned(want):
+        raise TomlEditError(
+            "the edit would change more of nrw.toml than the settings asked "
+            "for, so nothing was written. Make the change by hand."
+        )
+
+
+def _pruned(document: Any) -> Any:
+    """The document without empty tables: an empty table and none mean the same."""
+    if isinstance(document, dict):
+        kept = {k: _pruned(v) for k, v in document.items()}
+        return {k: v for k, v in kept.items() if v != {}}
+    return document
+
+
+# ---------------------------------------------------------------------------
+# Writing
+# ---------------------------------------------------------------------------
+
+_WRITE_LOCK = threading.Lock()
+
+
+def write_config(
+    path: Path,
+    base: ConfigText,
+    new_text: str,
+    *,
+    cache_dir: Path,
+    backups_dir: Path,
+) -> Path:
+    """Replace a configuration file with ``new_text``, if it is still ``base``.
+
+    The previous file is kept under ``backups_dir``. The lock file and the
+    temporary file live in ``cache_dir``: beside a tracked file, either would
+    show up as something to commit.
+
+    Returns:
+        Where the previous version was kept.
+
+    Raises:
+        TomlConflictError: The file is no longer what was read.
+        OSError: It could not be written.
+    """
+    from nr_workbench.fsutil import advisory_lock, atomic_write_bytes
+
+    path = Path(path)
+    with _WRITE_LOCK, advisory_lock(Path(cache_dir) / path.name):
+        if path.is_symlink() or path.read_bytes() != base.raw:
+            raise TomlConflictError(
+                f"{path.name} changed since it was read -- edited by hand, or "
+                "saved from somewhere else. Nothing was written; look again."
+            )
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup = Path(backups_dir) / f"{stamp}-{secrets.token_hex(3)}" / path.name
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup)
+        atomic_write_bytes(path, new_text.encode("utf-8"), scratch=Path(cache_dir))
+    return backup
