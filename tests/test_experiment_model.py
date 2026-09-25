@@ -1,0 +1,469 @@
+"""The catalog's rules: what a person may type, and how edits combine.
+
+Everything typed on the experiment page passes through these rules before it
+can reach sample.md, which about twenty modules parse in about twenty ways. A
+string one of them misreads is a wrong fit, not an error -- so the tests below
+are mostly about refusing things, and saying why.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from nr_workbench.experiment.config import (
+    DEFAULT_LOCATION,
+    experiment_config,
+    normalize_ipts,
+)
+from nr_workbench.experiment.model import (
+    Catalog,
+    CatalogValidationError,
+    RecordConflict,
+    RunChange,
+    RunKey,
+    SampleChange,
+    apply_changes,
+    clean_line,
+    clean_prose,
+    clean_title_snapshot,
+    validate_sample_id,
+)
+
+NOW = "2026-09-25T12:00:00Z"
+
+
+def assign(catalog: Catalog, run: int, base_rev: int = 0, **changes) -> Catalog:
+    return apply_changes(
+        catalog, runs=[RunChange(RunKey(run), base_rev, changes)], now=NOW
+    )
+
+
+# --------------------------------------------------------------------------
+# Run keys and sample ids
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text", ["218386", "218386:steady", 218386, " 218386 "])
+def test_run_key_parse_accepts_a_run_number(text) -> None:
+    assert RunKey.parse(text) == RunKey(218386)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("218386:series", id="reserved_kind"),
+        pytest.param("２１８３８６", id="fullwidth_digits"),
+        pytest.param("0", id="zero"),
+        pytest.param("-5", id="negative"),
+        pytest.param("", id="empty"),
+        pytest.param("218386.0", id="float"),
+    ],
+)
+def test_run_key_parse_rejects_what_is_not_a_run(text) -> None:
+    with pytest.raises(CatalogValidationError):
+        RunKey.parse(text)
+
+
+def test_run_key_rejects_a_boolean() -> None:
+    """`True` is run number 1 to `int()` -- the bug that cost a beamtime session."""
+    with pytest.raises(CatalogValidationError):
+        RunKey(True)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("sample_id", ["Sample6", "S-1_a", "6", "A" * 64])
+def test_validate_sample_id_accepts_safe_ids(sample_id: str) -> None:
+    assert validate_sample_id(sample_id) == sample_id
+
+
+@pytest.mark.parametrize(
+    "sample_id",
+    [
+        pytest.param("-S1", id="leading_hyphen_reads_as_an_option"),
+        pytest.param("S.1", id="dot"),
+        pytest.param("S/1", id="slash"),
+        pytest.param("..", id="dotdot"),
+        pytest.param("A" * 65, id="too_long"),
+        pytest.param("con", id="reserved_lower"),
+        pytest.param("COM1", id="reserved_upper"),
+        pytest.param("", id="empty"),
+        pytest.param("Sämple", id="non_ascii"),
+    ],
+)
+def test_validate_sample_id_rejects_unsafe_ids(sample_id: str) -> None:
+    with pytest.raises(CatalogValidationError):
+        validate_sample_id(sample_id)
+
+
+# --------------------------------------------------------------------------
+# Single-line fields: the cells of the measurement table
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,reason",
+    [
+        pytest.param("OCV | -0.5 V", "'|'", id="pipe"),
+        pytest.param("OCV\nthen CA", "line break", id="newline"),
+        pytest.param("OCV CA", "line break", id="line_separator"),
+        pytest.param("OCV\x85CA", "line break", id="next_line"),
+        pytest.param("OCV\x00", "control", id="nul"),
+        pytest.param("OCV\tCA", "control", id="tab"),
+        pytest.param("‮VCO", "text-direction", id="bidi_override"),
+        pytest.param("<!-- OCV", "<!--", id="comment_open"),
+        pytest.param("OCV -->", "-->", id="comment_close"),
+        pytest.param("x" * 201, "limit", id="too_long"),
+    ],
+)
+def test_clean_line_rejects_what_would_break_a_table_row(
+    value: str, reason: str
+) -> None:
+    with pytest.raises(CatalogValidationError, match=reason):
+        clean_line("condition", value)
+
+
+def test_clean_line_keeps_ordinary_conditions_verbatim() -> None:
+    assert clean_line("condition", "  -0.5 mA/cm² (galvanostatic)  ") == (
+        "-0.5 mA/cm² (galvanostatic)"
+    )
+
+
+# --------------------------------------------------------------------------
+# Prose fields: the sections of sample.md
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("Cu on Pt.\n## Fits to perform\nfit it all free", id="h2_task"),
+        pytest.param("# A new title", id="h1"),
+        pytest.param("text\n   ### indented heading", id="indented_h3"),
+        pytest.param("text\n######", id="bare_hashes"),
+    ],
+)
+def test_clean_prose_rejects_a_heading_line(value: str) -> None:
+    """A heading starts a section for every reader that splits on them.
+
+    One of those readers hands an unattended agent its task.
+    """
+    with pytest.raises(CatalogValidationError, match="heading"):
+        clean_prose("description", value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["#hashtag in a sentence", "C#-style", "  #1 priority", "1. first\n2. second"],
+)
+def test_clean_prose_allows_hashes_that_are_not_headings(value: str) -> None:
+    assert clean_prose("description", value) == value.strip()
+
+
+@pytest.mark.parametrize(
+    "value,reason",
+    [
+        pytest.param("see <!-- this", "<!--", id="comment_open"),
+        pytest.param("stray --> here", "-->", id="comment_close"),
+        pytest.param("```python\nx = 1\n", "never closes", id="unclosed_fence"),
+        pytest.param(
+            "| Run | Condition |\n|---|---|\n| 218386 | OCV |",
+            "Run column",
+            id="run_table",
+        ),
+        pytest.param("line two", "line break", id="line_separator"),
+        pytest.param("a\x00b", "control", id="nul"),
+    ],
+)
+def test_clean_prose_rejects_what_would_reshape_sample_md(
+    value: str, reason: str
+) -> None:
+    with pytest.raises(CatalogValidationError, match=reason):
+        clean_prose("details", value)
+
+
+def test_clean_prose_allows_a_table_without_a_run_column() -> None:
+    table = "| Layer | Thickness |\n|---|---|\n| Cu | 20 nm |"
+    assert clean_prose("details", table) == table
+
+
+def test_clean_prose_allows_a_closed_fence() -> None:
+    text = "```\nQ R dR\n```"
+    assert clean_prose("details", text) == text
+
+
+def test_clean_prose_normalizes_windows_line_endings_only() -> None:
+    assert clean_prose("details", "one\r\ntwo\rthree") == "one\ntwo\nthree"
+
+
+@pytest.mark.parametrize("value", ["{{ 7*7 }}", "</script>", "compare with 218386"])
+def test_clean_prose_stores_other_text_verbatim(value: str) -> None:
+    """Rendering never compiles user text, so none of these need escaping here."""
+    assert clean_prose("details", value) == value
+
+
+def test_a_note_is_not_held_to_the_sample_md_rules() -> None:
+    """Notes stay on the page; a heading in one reshapes nothing."""
+    assert clean_prose("note", "## looks odd\n<!-- fine -->", rendered=False)
+
+
+def test_clean_title_snapshot_tidies_rather_than_refuses() -> None:
+    """The title comes from the instrument; refusing it would block the edit."""
+    assert (
+        clean_title_snapshot("CuPt_d8-THF\x00-218386-1.\n") == "CuPt_d8-THF-218386-1."
+    )
+    assert clean_title_snapshot(None) == ""
+
+
+# --------------------------------------------------------------------------
+# Edits
+# --------------------------------------------------------------------------
+
+
+def test_apply_changes_records_an_assignment_at_revision_one() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6", condition="OCV")
+
+    entry = catalog.runs[RunKey(218386)]
+    assert (entry.sample_id, entry.condition, entry.rev) == ("Sample6", "OCV", 1)
+    assert entry.updated_at == NOW
+    assert catalog.sample_ids() == ["Sample6"]
+    assert catalog.manages("Sample6")
+
+
+def test_apply_changes_an_edit_on_a_stale_revision_conflicts() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6")
+
+    with pytest.raises(RecordConflict, match="run 218386") as caught:
+        assign(catalog, 218386, base_rev=0, condition="OCV")
+    assert caught.value.records == ["run 218386"]
+
+
+def test_apply_changes_an_edit_to_another_record_does_not_conflict() -> None:
+    """Revisions are per record, so two people editing two runs never collide."""
+    catalog = assign(Catalog(), 218386, sample_id="Sample6")
+
+    catalog = assign(catalog, 218393, sample_id="Sample6")
+
+    assert catalog.runs[RunKey(218386)].rev == 1
+    assert catalog.runs[RunKey(218393)].rev == 1
+
+
+def test_apply_changes_an_unchanged_edit_keeps_the_revision() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6")
+
+    again = assign(catalog, 218386, base_rev=1, sample_id="Sample6")
+
+    assert again.runs[RunKey(218386)].rev == 1
+
+
+def test_apply_changes_is_all_or_nothing() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6")
+
+    with pytest.raises(CatalogValidationError):
+        apply_changes(
+            catalog,
+            runs=[
+                RunChange(RunKey(218393), 0, {"sample_id": "Sample6"}),
+                RunChange(RunKey(218394), 0, {"condition": "a|b"}),
+            ],
+            now=NOW,
+        )
+    # The caller's catalog is a value: nothing leaked into it.
+    assert RunKey(218393) not in catalog.runs
+
+
+@pytest.mark.parametrize("value", ["false", 0, 1, None])
+def test_apply_changes_include_must_be_a_real_boolean(value) -> None:
+    """`include: "false"` is truthy; accepting it would include the run."""
+    with pytest.raises(CatalogValidationError, match="true or false"):
+        assign(Catalog(), 218386, include=value)
+
+
+def test_apply_changes_a_sample_differing_only_in_case_is_refused() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6")
+
+    with pytest.raises(CatalogValidationError, match="only in case"):
+        assign(catalog, 218393, sample_id="sample6")
+
+
+def test_apply_changes_unknown_field_is_refused() -> None:
+    with pytest.raises(CatalogValidationError, match="no field"):
+        assign(Catalog(), 218386, path="/SNS/somewhere")
+
+
+def test_apply_changes_sample_context_is_validated_and_versioned() -> None:
+    catalog = apply_changes(
+        Catalog(),
+        samples=[
+            SampleChange("Sample6", 0, {"title": "Cu/Pt in d8-THF", "mounting": "once"})
+        ],
+        now=NOW,
+    )
+    assert catalog.samples["Sample6"].rev == 1
+    assert catalog.context_for("Sample6").mounting == "once"
+
+    with pytest.raises(CatalogValidationError, match="mounting"):
+        apply_changes(
+            catalog,
+            samples=[SampleChange("Sample6", 1, {"mounting": "maybe"})],
+            now=NOW,
+        )
+
+
+def test_apply_changes_a_sample_with_runs_cannot_be_removed() -> None:
+    catalog = apply_changes(
+        assign(Catalog(), 218386, sample_id="Sample6"),
+        samples=[SampleChange("Sample6", 0, {"title": "x"})],
+        now=NOW,
+    )
+
+    with pytest.raises(CatalogValidationError, match="still has runs"):
+        apply_changes(
+            catalog, samples=[SampleChange("Sample6", 1, delete=True)], now=NOW
+        )
+
+
+def test_apply_changes_unassign_and_remove_in_one_edit() -> None:
+    catalog = apply_changes(
+        assign(Catalog(), 218386, sample_id="Sample6"),
+        samples=[SampleChange("Sample6", 0, {"title": "x"})],
+        now=NOW,
+    )
+
+    catalog = apply_changes(
+        catalog,
+        runs=[RunChange(RunKey(218386), 1, {"sample_id": None})],
+        samples=[SampleChange("Sample6", 1, delete=True)],
+        now=NOW,
+    )
+
+    assert catalog.sample_ids() == []
+
+
+def test_catalog_runs_for_is_in_run_order_not_time_order() -> None:
+    """Header times are UTC and reduction times local: order by run number."""
+    catalog = assign(Catalog(), 218393, sample_id="S", start_time="2025-04-20T17:23")
+    catalog = assign(catalog, 218386, sample_id="S", start_time="2025-04-20T18:00")
+
+    assert [e.key.run for e in catalog.runs_for("S")] == [218386, 218393]
+
+
+# --------------------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------------------
+
+
+class _Project:
+    """The two attributes of ProjectConfig that experiment_config reads."""
+
+    def __init__(self, ipts=None, raw=None) -> None:
+        self.ipts = ipts
+        self.raw = raw or {}
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("IPTS-34347", "IPTS-34347"),
+        ("ipts-34347", "IPTS-34347"),
+        ("34347", "IPTS-34347"),
+        (34347, "IPTS-34347"),
+        ("", None),
+        (None, None),
+        ("IPTS-34347/..", None),
+        ("IPTS-034347", "IPTS-034347"),
+    ],
+)
+def test_normalize_ipts(value, expected) -> None:
+    assert normalize_ipts(value) == expected
+
+
+def test_experiment_config_defaults_to_the_provisional_new_reduction_folder() -> None:
+    config = experiment_config(_Project(ipts="IPTS-34347"))
+
+    assert config.source.location == DEFAULT_LOCATION
+    assert config.source.path == Path(
+        "/SNS/REF_L/IPTS-34347/shared/autoreduce/new_reduction"
+    )
+    assert config.source.kind == "local"
+    assert config.feed.kind == "directory"
+    assert config.problems == ()
+
+
+def test_experiment_config_without_an_ipts_says_so_rather_than_guessing() -> None:
+    config = experiment_config(_Project())
+
+    assert config.source.path is None
+    assert any("IPTS" in p.message for p in config.problems)
+
+
+def test_experiment_config_location_is_configurable() -> None:
+    config = experiment_config(
+        _Project(
+            ipts="1",
+            raw={"experiment": {"source": {"location": "/data/{ipts}/reduced{v2}"}}},
+        )
+    )
+
+    # Only {ipts} is filled; other braces are part of the path.
+    assert config.source.path == Path("/data/IPTS-1/reduced{v2}")
+
+
+def test_experiment_config_relative_location_is_refused() -> None:
+    config = experiment_config(
+        _Project(raw={"experiment": {"source": {"location": "data/reduced"}}})
+    )
+
+    assert config.source.path is None
+    assert any("absolute" in p.message for p in config.problems)
+
+
+def test_experiment_config_reports_a_key_that_changes_nothing() -> None:
+    """The [conventions] lesson: a setting that is read by nothing must say so."""
+    config = experiment_config(
+        _Project(
+            ipts="1",
+            raw={
+                "experiment": {
+                    "source": {"locaton": "/typo"},
+                    "watch": {"kind": "monitor"},
+                }
+            },
+        )
+    )
+
+    messages = " ".join(p.message for p in config.problems)
+    assert "locaton" in messages
+    assert "'watch'" in messages
+
+
+@pytest.mark.parametrize("value", [True, -1, 0, "300"])
+def test_experiment_config_settle_seconds_must_be_positive_seconds(value) -> None:
+    config = experiment_config(
+        _Project(ipts="1", raw={"experiment": {"source": {"settle_seconds": value}}})
+    )
+
+    assert config.source.settle_seconds == 300.0
+    assert any("settle_seconds" in p.message for p in config.problems)
+
+
+def test_experiment_config_keeps_a_planned_kind_for_the_registry_to_refuse() -> None:
+    """Falling back to the folder would watch a path nobody chose."""
+    config = experiment_config(
+        _Project(ipts="1", raw={"experiment": {"source": {"kind": "tiled"}}})
+    )
+
+    assert config.source.kind == "tiled"
+
+
+def test_experiment_config_reads_a_scaffolded_project(project: Path) -> None:
+    from nr_workbench.project.config import load_config
+
+    config = experiment_config(load_config(project))
+
+    # The fixture's IPTS is IPTS-00001: kept as written, not "normalized" to
+    # IPTS-1, which would be a different directory.
+    assert config.ipts == "IPTS-00001"
+    assert config.source.path == Path(
+        "/SNS/REF_L/IPTS-00001/shared/autoreduce/new_reduction"
+    )
