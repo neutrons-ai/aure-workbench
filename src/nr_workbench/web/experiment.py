@@ -148,7 +148,11 @@ def _in_daemon(function: Callable[[], Any]) -> Any:
             done.set()
             _CHECKS.release()
 
-    threading.Thread(target=run, name="nrw-folder-check", daemon=True).start()
+    try:
+        threading.Thread(target=run, name="nrw-folder-check", daemon=True).start()
+    except BaseException:
+        _CHECKS.release()  # the thread that would have given it back never ran
+        raise
     if not done.wait(SOURCE_TIMEOUT):
         raise SourceTimeoutError(
             f"The folder did not answer within {SOURCE_TIMEOUT:.0f}s; the data "

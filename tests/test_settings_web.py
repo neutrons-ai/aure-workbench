@@ -441,3 +441,75 @@ def test_init_suggests_serve_to_set_the_experiment_up(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "nrw serve" in result.output
+
+
+def test_a_malformed_nrw_toml_does_not_cost_the_one_time_link(expt: Path) -> None:
+    """Valid TOML of the wrong shape once made /auth fail after spending the link."""
+    from nr_workbench.web import security
+
+    app = make_app(expt)
+    try:
+        (expt / "nrw.toml").write_text('beamtime = "oops"\n', encoding="utf-8")
+        response = app.test_client().get(f"/auth/{TOKEN}")
+    finally:
+        app.config["NRW_EXPERIMENT"].stop()
+
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("/settings")
+    assert security.COOKIE in response.headers["Set-Cookie"]
+
+
+def test_the_landing_page_is_chosen_before_the_link_is_spent(
+    expt: Path, monkeypatch
+) -> None:
+    from nr_workbench.web.experiment import ExperimentData
+
+    def broken(self):
+        raise RuntimeError("anything at all")
+
+    monkeypatch.setattr(ExperimentData, "needs_setup", broken)
+    app = make_app(expt)
+    try:
+        response = app.test_client().get(f"/auth/{TOKEN}")
+    finally:
+        app.config["NRW_EXPERIMENT"].stop()
+
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("/settings")
+
+
+@pytest.mark.parametrize("name", ["x.html", "x.svg"])
+def test_a_served_project_file_runs_nothing_as_this_server(
+    app, expt: Path, name: str
+) -> None:
+    """A script in it would read a page's write token and pass the write gate."""
+    folder = expt / "samples" / "Sample1" / "assessments" / "lbl"
+    folder.mkdir(parents=True)
+    (folder / name).write_text("<script>fetch('/settings')</script>", encoding="utf-8")
+
+    response = app.test_client().get(f"/figures/Sample1/lbl/{name}")
+
+    assert response.status_code == 200
+    assert "sandbox" in response.headers["Content-Security-Policy"]
+
+
+def test_checking_a_folder_reads_a_few_files_of_a_crowded_run(
+    app, writer, tmp_path: Path, monkeypatch
+) -> None:
+    from nr_workbench.experiment.sources.local import PROBE_FILES_PER_RUN
+    from nr_workbench.instrument import header as header_module
+
+    folder = tmp_path / "crowded"
+    write_autoreduced(folder, 234000, range(1, 31), planned=3, mtime=time.time() - 3600)
+    reads: list[str] = []
+    real = header_module.read_header_bytes
+    monkeypatch.setattr(
+        header_module,
+        "read_header_bytes",
+        lambda d, p: reads.append(p.name) or real(d, p),
+    )
+
+    body = check(writer, app, location=str(folder)).get_json()
+
+    assert len(reads) == PROBE_FILES_PER_RUN
+    assert any("30 files" in p["message"] for p in body["problems"])

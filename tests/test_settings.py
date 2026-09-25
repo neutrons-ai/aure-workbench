@@ -411,6 +411,8 @@ def test_an_ipts_is_saved_in_one_form(project: Path, value, expected: str) -> No
     [
         ("ipts", "IPTS-3x", "not an IPTS number"),
         ("ipts", 34347, "must be text"),
+        ("ipts", "123456789", "not an IPTS number"),
+        ("label", "\ud800", "not text"),
         ("label", "two\nlines", "one line"),
         ("label", "x" * 101, "longer than"),
         ("source.location", "data/new_reduction", "not a full path"),
@@ -537,3 +539,19 @@ def test_a_save_brings_an_unedited_older_file_up_to_date(project: Path) -> None:
     assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 10}
     assert any("brought up to date" in note for note in result.notes)
     assert init_check_is_clean(project)
+
+
+@pytest.mark.parametrize(
+    "text,message",
+    [
+        ('beamtime = "oops"\n', "[beamtime] must be a table"),
+        ('contract_version = "one"\n', "whole number"),
+    ],
+)
+def test_a_nrw_toml_of_the_wrong_shape_is_a_sentence_not_a_traceback(
+    tmp_path: Path, text: str, message: str
+) -> None:
+    (tmp_path / "nrw.toml").write_text(text, encoding="utf-8")
+
+    with pytest.raises(ProjectConfigError, match=message.replace("[", "\\[")):
+        load_config(tmp_path)

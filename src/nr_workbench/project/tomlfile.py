@@ -20,7 +20,6 @@ import copy
 import hashlib
 import re
 import secrets
-import shutil
 import threading
 import tomllib
 from collections.abc import Mapping
@@ -550,18 +549,34 @@ def write_config(
         TomlConflictError: The file is no longer what was read.
         OSError: It could not be written.
     """
-    from nr_workbench.fsutil import advisory_lock, atomic_write_bytes
+    from nr_workbench.fsutil import advisory_lock, atomic_write_bytes, write_new_file
 
     path = Path(path)
-    with _WRITE_LOCK, advisory_lock(Path(cache_dir) / path.name):
+    cache_dir, backups_dir = Path(cache_dir), Path(backups_dir)
+    # Encoded before anything is written: text that cannot be, fails here,
+    # not after the backup has been made.
+    data = new_text.encode("utf-8")
+    for folder in (cache_dir.parent, cache_dir, backups_dir):
+        if folder.is_symlink():
+            raise TomlEditError(
+                f"{folder} is a symbolic link. nrw writes its lock, its temporary "
+                "file and its backups only into the project's own folders, so "
+                "that saving cannot write anywhere else; make it a plain folder."
+            )
+    with _WRITE_LOCK, advisory_lock(cache_dir / path.name):
         if path.is_symlink() or path.read_bytes() != base.raw:
             raise TomlConflictError(
                 f"{path.name} changed since it was read -- edited by hand, or "
                 "saved from somewhere else. Nothing was written; look again."
             )
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        backup = Path(backups_dir) / f"{stamp}-{secrets.token_hex(3)}" / path.name
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, backup)
-        atomic_write_bytes(path, new_text.encode("utf-8"), scratch=Path(cache_dir))
+        # The bytes that were read and compared, not the file read again by
+        # name; into a new folder, reached through no link.
+        backup = write_new_file(
+            backups_dir / f"{stamp}-{secrets.token_hex(8)}",
+            path.name,
+            base.raw,
+            base=path.parent,
+        )
+        atomic_write_bytes(path, data, scratch=cache_dir)
     return backup

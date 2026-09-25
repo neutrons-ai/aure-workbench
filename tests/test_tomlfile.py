@@ -405,3 +405,44 @@ def test_write_config_keeps_the_files_permissions(tmp_path: Path) -> None:
     )
 
     assert path.stat().st_mode & 0o777 == 0o664
+
+
+@pytest.mark.parametrize("linked", ["cache", "backups"])
+def test_write_config_refuses_a_linked_cache_or_backups_folder(
+    tmp_path: Path, linked: str
+) -> None:
+    """Its lock, temporary file and backups go only into the project's own folders."""
+    path = tmp_path / "nrw.toml"
+    path.write_text(BASE, encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / ".nrw").mkdir()
+    (tmp_path / ".nrw" / linked).symlink_to(outside)
+
+    with pytest.raises(TomlEditError, match="symbolic link"):
+        write_config(
+            path,
+            read_config(path),
+            BASE + "\n",
+            cache_dir=tmp_path / ".nrw" / "cache",
+            backups_dir=tmp_path / ".nrw" / "backups",
+        )
+
+    assert list(outside.iterdir()) == []
+    assert path.read_text(encoding="utf-8") == BASE
+
+
+def test_text_that_cannot_be_written_fails_before_any_backup(tmp_path: Path) -> None:
+    path = tmp_path / "nrw.toml"
+    path.write_text(BASE, encoding="utf-8")
+
+    with pytest.raises(UnicodeEncodeError):
+        write_config(
+            path,
+            read_config(path),
+            'label = "\ud800"\n',
+            cache_dir=tmp_path / ".nrw" / "cache",
+            backups_dir=tmp_path / ".nrw" / "backups",
+        )
+
+    assert not (tmp_path / ".nrw" / "backups").exists()

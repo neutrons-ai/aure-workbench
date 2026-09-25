@@ -43,6 +43,9 @@ from nr_workbench.instrument.reduced import (
 from nr_workbench.problems import Problem
 from nr_workbench.project.settings import normalize_ipts
 
+#: Most files of one run whose headers a folder check reads.
+PROBE_FILES_PER_RUN = 12
+
 #: How many file headers to remember between polls. A beamtime folder holds a
 #: few thousand files; this keeps every one of them without growing forever.
 HEADER_CACHE_SIZE = 8192
@@ -115,12 +118,27 @@ class LocalDirectorySource:
         files, unrecognized, other, problems = listed
         numbers = sorted(files)
         newest = numbers[-header_runs:] if header_runs > 0 else []
+        read = []
+        for run in newest:
+            members = sorted(files[run], key=lambda m: m[0].name)
+            if len(members) > PROBE_FILES_PER_RUN:
+                # A folder anyone on the team can write could hold a thousand
+                # files under one run number; a check reads the first few.
+                problems.append(
+                    Problem(
+                        f"source:{run}",
+                        f"run {run} lists {len(members)} files; the check read "
+                        f"the first {PROBE_FILES_PER_RUN}.",
+                    )
+                )
+                members = members[:PROBE_FILES_PER_RUN]
+            read.append(self._run(run, members))
         return Probe(
             reachable=True,
             runs=len(numbers),
             first=numbers[0] if numbers else None,
             last=numbers[-1] if numbers else None,
-            newest=tuple(self._run(run, list(files[run])) for run in newest),
+            newest=tuple(read),
             unrecognized=len(unrecognized),
             other_files=other,
             problems=tuple(problems),

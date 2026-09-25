@@ -130,6 +130,21 @@ def create_app(
     return app
 
 
+def _inert(response: Any) -> Any:
+    """A project file, served so that nothing in it runs as this server.
+
+    Figures and results are the project's files, and anyone who can write the
+    project can put an HTML or SVG file among them. Opened directly, a script
+    in it would run with this server's origin: it could read a page's write
+    token and send writes that pass every check the write gate makes. The
+    sandbox renders it as an inert document; an image is unaffected.
+    """
+    response.headers["Content-Security-Policy"] = (
+        "sandbox; default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'"
+    )
+    return response
+
+
 def _compact_json(value: Any) -> str:
     """Serialise for embedding inside a ``<script>`` block.
 
@@ -256,7 +271,7 @@ def _register_views(app: Flask) -> None:
             directory.relative_to(project.root)
         except ValueError:
             abort(404)
-        return send_from_directory(directory, filename)
+        return _inert(send_from_directory(directory, filename))
 
     @app.get("/results/<sample_id>/<fit_id>/<path:filename>")
     def result_file(sample_id: str, fit_id: str, filename: str) -> Any:
@@ -269,7 +284,7 @@ def _register_views(app: Flask) -> None:
             directory.relative_to(project.root)
         except ValueError:
             abort(404)
-        return send_from_directory(directory, filename)
+        return _inert(send_from_directory(directory, filename))
 
     @app.get("/auth/<token>")
     def authorize(token: str) -> Any:
@@ -284,6 +299,14 @@ def _register_views(app: Flask) -> None:
             app.config.get("NRW_WRITABLE") and security.is_loopback(request.remote_addr)
         ):
             abort(403, "This link is not valid for this server.")
+        # Where to land, decided before the link is spent: a project nobody has
+        # set up yet goes straight to Settings, and so does one whose nrw.toml
+        # cannot be read -- which must not cost the only link there is.
+        try:
+            setup = app.config["NRW_EXPERIMENT"].needs_setup()
+        except Exception:  # noqa: BLE001 - see above
+            setup = True
+        landing = "settings_page" if setup else "experiment"
         session = security.redeem_link(token)
         if session is None:
             if security.link_used():
@@ -293,13 +316,6 @@ def _register_views(app: Flask) -> None:
                     "`nrw serve` for a new one.",
                 )
             abort(403, "This link is not valid for this server.")
-        # A project nobody has set up yet goes straight to Settings: that is
-        # the page the person opening the link after `nrw init` needs.
-        landing = (
-            "settings_page"
-            if app.config["NRW_EXPERIMENT"].needs_setup()
-            else "experiment"
-        )
         response = make_response(redirect(url_for(landing), code=303))
         response.set_cookie(
             security.COOKIE,

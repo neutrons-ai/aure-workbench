@@ -119,7 +119,8 @@ EXPERIMENT_KEYS: dict[str, dict[str, Value]] = {
 ExperimentValues = Mapping[str, Mapping[str, Value]]
 
 #: An IPTS as written in nrw.toml: ``IPTS-34347``, ``ipts-34347`` or ``34347``.
-_IPTS_RE = re.compile(r"(?:IPTS-)?([0-9]+)", re.IGNORECASE | re.ASCII)
+# At most eight digits: IPTS numbers have five or six, and it becomes a path.
+_IPTS_RE = re.compile(r"(?:IPTS-)?([0-9]{1,8})", re.IGNORECASE | re.ASCII)
 
 
 def normalize_ipts(value: Any) -> str | None:
@@ -215,7 +216,7 @@ MAX_LABEL = 100
 
 #: Characters no single-line setting may hold: control characters, and the
 #: Unicode line and paragraph separators that editors show as line breaks.
-_CONTROL = re.compile(r"[\x00-\x1f\x7f\x85  ]")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f\x85\u2028\u2029]")
 
 
 class SettingsError(ValueError):
@@ -403,6 +404,12 @@ def _line(value: Any, name: str, limit: int) -> str:
     text = value.strip()
     if _CONTROL.search(text):
         raise SettingsError(f"{name} must be one line of plain text.")
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # A lone surrogate reaches here from JSON (`"\\ud800"`); nrw.toml is
+        # UTF-8, so it cannot be written, and must be refused, not crash.
+        raise SettingsError(f"{name} holds a character that is not text.") from exc
     if len(text) > limit:
         raise SettingsError(f"{name} is longer than {limit} characters.")
     return text
@@ -606,8 +613,25 @@ def _new_text(
         new_text = new.content.decode("utf-8")
         if outcome is Outcome.UNCHANGED:
             verify(text, new_text, edits)
+        else:
+            # An upgrade takes the rest of the template too, so the edit cannot
+            # be proved against the old file; the new one must still parse.
+            _must_parse(new_text)
         return new_text, outcome is Outcome.UPGRADE
     return _edited(text, document, edits), False
+
+
+def _must_parse(text: str) -> None:
+    import tomllib
+
+    from nr_workbench.project.tomlfile import TomlEditError
+
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise TomlEditError(
+            f"the new nrw.toml would not be valid TOML ({exc})."
+        ) from exc
 
 
 def _edited(text: str, document: Mapping[str, Any], edits: Changes) -> str:

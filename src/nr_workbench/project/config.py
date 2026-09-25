@@ -127,6 +127,22 @@ def load_config(root: Path) -> ProjectConfig:
             f"{config_path} is not valid TOML: {exc}.{hint}"
         ) from exc
 
+    # Valid TOML can still have the wrong shape -- `beamtime = "x"` where a
+    # table belongs -- and every caller would then fail on `.get` with an
+    # AttributeError instead of a sentence.
+    for table in ("project", "beamtime", "conventions", "harness", "audience"):
+        if table in document and not isinstance(document[table], dict):
+            raise ProjectConfigError(
+                f"{config_path}: [{table}] must be a table, not "
+                f"{type(document[table]).__name__} {document[table]!r}."
+            )
+    try:
+        contract_version = int(document.get("contract_version", CONTRACT_VERSION))
+    except (TypeError, ValueError) as exc:
+        raise ProjectConfigError(
+            f"{config_path}: contract_version must be a whole number."
+        ) from exc
+
     project = document.get("project", {})
     beamtime = document.get("beamtime", {})
     conventions = dict(DEFAULT_CONVENTIONS)
@@ -144,7 +160,7 @@ def load_config(root: Path) -> ProjectConfig:
     return ProjectConfig(
         root=Path(root).resolve(),
         name=project.get("name", Path(root).resolve().name),
-        contract_version=int(document.get("contract_version", CONTRACT_VERSION)),
+        contract_version=contract_version,
         facility=project.get("facility", "SNS"),
         instrument=project.get("instrument", "REF_L"),
         beamtime=beamtime.get("label"),
