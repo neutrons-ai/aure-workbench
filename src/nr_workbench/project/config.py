@@ -34,6 +34,13 @@ DEFAULT_EXPERIMENT_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction
 #: someone is watching the page.
 DEFAULT_EXPERIMENT_POLL_SECONDS = 30
 
+#: What a project that says nothing reads its data from, learns of runs by,
+#: and keeps its catalog in. Named, not "whichever choice is listed first":
+#: listing a new choice first must not switch every project that never chose.
+DEFAULT_SOURCE_KIND = "local"
+DEFAULT_FEED_KIND = "directory"
+DEFAULT_CATALOG_KIND = "parquet"
+
 #: BL-4B conventions -- see skills/reflectometry/refl-bl4b-instrument.
 #:
 #: **The glob and dq entries are descriptive; nothing reads them.** The

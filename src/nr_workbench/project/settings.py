@@ -1,9 +1,9 @@
 """The settings a person makes for a project: its IPTS, and where its data comes from.
 
-Read from and written to ``nrw.toml``, which stays the project's one
-configuration file. This module sits below :mod:`nr_workbench.experiment` so
-that the scaffold, the Settings page and the command line share one idea of
-what can be set, what each choice means, and which choices exist yet.
+Checking a change and saving it, for the Settings page and ``nrw experiment
+settings``. What can be set lives in :mod:`nr_workbench.project.experiment_schema`
+(re-exported here); how ``nrw.toml`` is written, in
+:mod:`nr_workbench.project.nrwtoml`, which every writer of the file shares.
 """
 
 from __future__ import annotations
@@ -14,205 +14,34 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nr_workbench.arrival import DEFAULT_SETTLE_SECONDS
-from nr_workbench.project.config import (
-    DEFAULT_EXPERIMENT_LOCATION,
-    DEFAULT_EXPERIMENT_POLL_SECONDS,
+from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
+    CATALOG_KINDS,
+    CHANGE_KEYS,
+    CONFIRM_IPTS_CHANGE,
+    EXPERIMENT_KEYS,
+    FEED_KINDS,
+    FEED_OPTIONS,
+    MAX_LABEL,
+    MAX_LOCATION,
+    PLANNED_CATALOG_KINDS,
+    PLANNED_FEED_KINDS,
+    PLANNED_SOURCE_KINDS,
+    POLL_RANGE,
+    RANGES,
+    SETTLE_RANGE,
+    SOURCE_KINDS,
+    SOURCE_OPTIONS,
+    ExperimentValues,
+    Option,
+    experiment_block,
+    normalize_ipts,
+    written_experiment,
 )
-from nr_workbench.project.tomlfile import (
-    Changes,
-    Set,
-    Unset,
-    Value,
-    key_line,
-    placeholder_line,
-)
-
-
-@dataclass(frozen=True)
-class Option:
-    """One choice the Settings page offers, and whether it exists yet.
-
-    Attributes:
-        kind: The name written in ``nrw.toml``.
-        label: How the page names it.
-        available: Whether nrw can use it today. A planned one is shown, so
-            people know it is coming, but cannot be chosen.
-        detail: One sentence on what it does, or what it will do.
-    """
-
-    kind: str
-    label: str
-    available: bool
-    detail: str
-
-
-#: Where the reduced data can come from.
-SOURCE_OPTIONS = (
-    Option(
-        "local",
-        "A folder on this machine",
-        True,
-        "Reads the reduced files from one folder, usually on the data mount.",
-    ),
-    Option(
-        "tiled",
-        "Tiled",
-        False,
-        "Coming: for working away from the data mount. At ORNL an experiment "
-        "is the container projects/isaac/IPTS-<n> on tiled.ornl.gov.",
-    ),
-)
-
-#: How nrw learns that a run exists.
-FEED_OPTIONS = (
-    Option(
-        "directory",
-        "Files appearing in the data folder",
-        True,
-        "A run is noticed when its reduced files appear.",
-    ),
-    Option(
-        "monitor",
-        "SNS web monitor",
-        False,
-        "Coming: reports the run being measured, so a run can count as "
-        "complete once its last angle is reduced -- the last run of a "
-        "beamtime included.",
-    ),
-    Option(
-        "tiled",
-        "Tiled",
-        False,
-        "Coming: Tiled can announce runs whatever the data comes from.",
-    ),
-)
-
-#: The data sources nrw can read, and the ones that are planned.
-SOURCE_KINDS = tuple(o.kind for o in SOURCE_OPTIONS if o.available)
-PLANNED_SOURCE_KINDS = tuple(o.kind for o in SOURCE_OPTIONS if not o.available)
-
-#: The ways nrw can learn that a run exists, and the ones that are planned.
-FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if o.available)
-PLANNED_FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if not o.available)
-
-#: Where the catalog can be kept, and the ones that are planned.
-CATALOG_KINDS = ("parquet",)
-PLANNED_CATALOG_KINDS = ("api",)
-
-#: The experiment keys nrw writes, by table, each with nrw's default. A key
-#: left unset follows the default -- which matters because the default
-#: location is provisional and expected to move.
-EXPERIMENT_KEYS: dict[str, dict[str, Value]] = {
-    "experiment.source": {
-        "kind": SOURCE_KINDS[0],
-        "location": DEFAULT_EXPERIMENT_LOCATION,
-        "settle_seconds": DEFAULT_SETTLE_SECONDS,
-    },
-    "experiment.feed": {
-        "kind": FEED_KINDS[0],
-        "poll_seconds": DEFAULT_EXPERIMENT_POLL_SECONDS,
-    },
-}
-
-#: What a table of experiment settings holds: the keys that are set.
-ExperimentValues = Mapping[str, Mapping[str, Value]]
-
-#: An IPTS as written in nrw.toml: ``IPTS-34347``, ``ipts-34347`` or ``34347``.
-# At most eight digits: IPTS numbers have five or six, and it becomes a path.
-_IPTS_RE = re.compile(r"(?:IPTS-)?([0-9]{1,8})", re.IGNORECASE | re.ASCII)
-
-
-def normalize_ipts(value: Any) -> str | None:
-    """``34347`` / ``ipts-34347`` / ``IPTS-34347`` -> ``IPTS-34347``.
-
-    Returns:
-        The normalized identifier, or ``None`` when ``value`` is empty or is
-        not an IPTS number.
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    match = _IPTS_RE.fullmatch(text)
-    # The digits exactly as written. `int()` would turn IPTS-00001 into
-    # IPTS-1 -- a different directory from the one the person typed.
-    return f"IPTS-{match.group(1)}" if match else None
-
-
-def written_experiment(document: Mapping[str, Any]) -> dict[str, dict[str, Value]]:
-    """The experiment keys a parsed ``nrw.toml`` sets, as written.
-
-    Only nrw's own keys, and only values it can write back: a file whose
-    experiment tables hold anything else is not one nrw rendered, and is
-    left to its people.
-    """
-    table = document.get("experiment")
-    found: dict[str, dict[str, Value]] = {}
-    if not isinstance(table, Mapping):
-        return found
-    for name, defaults in EXPERIMENT_KEYS.items():
-        section = table.get(name.split(".", 1)[1])
-        if not isinstance(section, Mapping):
-            continue
-        kept = {
-            key: section[key]
-            for key in defaults
-            if key in section and isinstance(section[key], str | int | float | bool)
-        }
-        if kept:
-            found[name] = kept
-    return found
-
-
-def experiment_block(values: ExperimentValues) -> str:
-    """The experiment tables as nrw writes them, without a final newline.
-
-    One function for ``nrw init``'s template and for the Settings page, so
-    the two write the same bytes and ``nrw init`` finds nothing to do after
-    a save. A table with nothing set stays commented out -- a fresh project,
-    and advice to "add this table", keep working. A table with something set
-    is written out, its unset keys as commented placeholders showing the
-    default they follow.
-    """
-    blocks = []
-    for table, defaults in EXPERIMENT_KEYS.items():
-        chosen = values.get(table, {})
-        active = any(key in chosen for key in defaults)
-        lines = [f"[{table}]" if active else f"# [{table}]"]
-        for key, default in defaults.items():
-            if key in chosen:
-                lines.append(key_line(key, chosen[key]))
-            else:
-                lines.append(placeholder_line(key, default))
-        blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
-
+from nr_workbench.project.tomlfile import Changes, Set, Unset, Value
 
 # ---------------------------------------------------------------------------
 # Changing settings
 # ---------------------------------------------------------------------------
-
-#: The settings a change may name.
-CHANGE_KEYS = (
-    "ipts",
-    "label",
-    "source.kind",
-    "source.location",
-    "source.settle_seconds",
-    "feed.kind",
-    "feed.poll_seconds",
-)
-
-#: Seconds a run's files must be unchanged: long enough that a file still
-#: being written is not taken, short enough to notice a run within the hour.
-SETTLE_RANGE = (10, 3600)
-
-#: Seconds between polls: often enough to watch a beamtime, rarely enough not
-#: to load a shared file server.
-POLL_RANGE = (5, 600)
-
-MAX_LOCATION = 1024
-MAX_LABEL = 100
 
 #: Characters no single-line setting may hold: control characters, and the
 #: Unicode line and paragraph separators that editors show as line breaks.
@@ -491,16 +320,14 @@ def save(
     *,
     base_revision: str | None = None,
     confirmed: Collection[str] = (),
-    catalogued_runs: int = 0,
+    catalogued_runs: int | None = 0,
     write: bool = True,
 ) -> SaveResult:
     """Change settings in ``nrw.toml``, losing nothing a person wrote.
 
-    If the file is exactly nrw's own -- what ``nrw init`` would write, or
-    untouched since it did -- the new file is ``init``'s render with the new
-    values, so ``init`` finds nothing to do afterwards. Otherwise only nrw's
-    own lines change (:mod:`nr_workbench.project.tomlfile`), and the edit is
-    proved before it is written. Either way the previous file is kept.
+    Checks each value, asks for a confirmation the change needs, and writes
+    through :func:`nr_workbench.project.nrwtoml.write_as_nrw`, which edits only
+    nrw's own lines, proves the edit and keeps the previous file.
 
     Args:
         root: Project root.
@@ -509,7 +336,8 @@ def save(
             changed since is not written over.
         confirmed: Confirmations already given, e.g. ``"ipts-change"``.
         catalogued_runs: How many runs the experiment catalog holds, which
-            makes an IPTS change something to confirm.
+            makes an IPTS change something to confirm; ``None`` when the
+            catalog cannot be read, which is no reason to skip asking.
         write: ``False`` to only say what would change.
 
     Raises:
@@ -520,27 +348,16 @@ def save(
             what to change by hand.
         OSError: The file cannot be read or written.
     """
-    import difflib
-    import tomllib
+    from nr_workbench.project.nrwtoml import write_as_nrw
 
-    from nr_workbench.project.layout import ProjectLayout
-    from nr_workbench.project.tomlfile import (
-        TomlConflictError,
-        read_config,
-        write_config,
-    )
+    edits, warnings = validate(Path(root).absolute(), changes)
 
-    layout = ProjectLayout(root=Path(root).absolute())
-    base = read_config(layout.config_file)
-    if base_revision is not None and base_revision != base.revision:
-        raise TomlConflictError(
-            "nrw.toml changed since these settings were shown -- edited by hand, "
-            "or saved from somewhere else. Nothing was written; look again."
-        )
-    edits, warnings = validate(layout.root, changes)
-    document = tomllib.loads(base.text)
-
-    if "ipts" in changes and catalogued_runs and "ipts-change" not in confirmed:
+    def ask_first(document: Mapping[str, Any]) -> None:
+        # Against the file as it is under the lock -- the IPTS it names now.
+        if "ipts" not in changes or CONFIRM_IPTS_CHANGE in confirmed:
+            return
+        if catalogued_runs == 0:
+            return
         beamtime = document.get("beamtime")
         before = (
             normalize_ipts(beamtime.get("ipts"))
@@ -548,211 +365,27 @@ def save(
             else None
         )
         after = edits["beamtime"]["ipts"].value or None
-        if after != before:
-            raise NeedsConfirmation(
-                "ipts-change",
-                f"The catalog holds {catalogued_runs} run(s) from "
-                f"{before or 'no IPTS'}. Changing the IPTS to {after or 'none'} "
-                "points nrw at another experiment's data; the runs already "
-                "catalogued stay as they are.",
-            )
-
-    new_text, upgraded = _new_text(layout, base.text, document, edits)
-    if new_text == base.text:
-        return SaveResult(changed=False, diff="", warnings=tuple(warnings))
-    diff = "".join(
-        difflib.unified_diff(
-            base.text.splitlines(keepends=True),
-            new_text.splitlines(keepends=True),
-            "nrw.toml",
-            "nrw.toml",
+        if after == before:
+            return
+        held = (
+            f"The catalog holds {catalogued_runs} run(s) from {before or 'no IPTS'}."
+            if catalogued_runs is not None
+            else "The catalog cannot be read, so nrw cannot tell whether it holds runs."
         )
-    )
-    notes = []
-    if upgraded:
-        notes.append(
-            "nrw.toml had not been edited since nrw wrote it, so it was also "
-            "brought up to date with this version of nrw -- as `nrw init` would."
+        raise NeedsConfirmation(
+            CONFIRM_IPTS_CHANGE,
+            f"{held} Changing the IPTS to {after or 'none'} points nrw at "
+            "another experiment's data; runs already catalogued stay as they are.",
         )
-    if not write:
-        return SaveResult(True, diff, notes=tuple(notes), warnings=tuple(warnings))
 
-    backup = write_config(
-        layout.config_file,
-        base,
-        new_text,
-        cache_dir=layout.cache_dir,
-        backups_dir=layout.backups_dir,
+    result = write_as_nrw(
+        root, edits, base_revision=base_revision, write=write, check=ask_first
     )
-    written, more = _keep_in_step(layout, beamtime_changed="beamtime" in edits)
     return SaveResult(
-        changed=True,
-        diff=diff,
-        written=("nrw.toml", *written),
-        backup=backup.relative_to(layout.root).as_posix(),
-        notes=tuple(notes + more),
+        changed=result.changed,
+        diff=result.diff,
+        written=result.written,
+        backup=result.backup,
+        notes=result.notes,
         warnings=tuple(warnings),
     )
-
-
-def _new_text(
-    layout: Any, text: str, document: Mapping[str, Any], edits: Changes
-) -> tuple[str, bool]:
-    """The new file, and whether it also took this version of the template."""
-    from nr_workbench.project.render import init_context
-    from nr_workbench.project.scaffold import Outcome, classify, load_lock
-    from nr_workbench.project.tomlfile import verify
-
-    planned = _planned(init_context(layout.root))["nrw.toml"]
-    outcome = classify(
-        planned, layout.config_file, load_lock(layout.scaffold_lock).get("nrw.toml")
-    )
-    if outcome in (Outcome.UNCHANGED, Outcome.UPGRADE):
-        # Nothing in the file is a person's: write init's render, new values in.
-        new = _planned(_with(init_context(layout.root), edits))["nrw.toml"]
-        new_text = new.content.decode("utf-8")
-        if outcome is Outcome.UNCHANGED:
-            verify(text, new_text, edits)
-        else:
-            # An upgrade takes the rest of the template too, so the edit cannot
-            # be proved against the old file; the new one must still parse.
-            _must_parse(new_text)
-        return new_text, outcome is Outcome.UPGRADE
-    return _edited(text, document, edits), False
-
-
-def _must_parse(text: str) -> None:
-    import tomllib
-
-    from nr_workbench.project.tomlfile import TomlEditError
-
-    try:
-        tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise TomlEditError(
-            f"the new nrw.toml would not be valid TOML ({exc})."
-        ) from exc
-
-
-def _edited(text: str, document: Mapping[str, Any], edits: Changes) -> str:
-    """Change only nrw's own lines of a file a person has edited."""
-    from nr_workbench.project.tomlfile import edit, replace_block, verify
-
-    rest = {
-        table: keys
-        for table, keys in edits.items()
-        if not table.startswith("experiment.")
-    }
-    ours = {
-        table: keys for table, keys in edits.items() if table.startswith("experiment.")
-    }
-    new = text
-    if ours:
-        current = written_experiment(document)
-        wanted = _apply(current, ours)
-        replaced = replace_block(
-            new, experiment_block(current), experiment_block(wanted)
-        )
-        if replaced is not None:
-            # The experiment block is still exactly nrw's: rewrite it as a unit.
-            new = replaced
-        elif "experiment" not in document and "[experiment." not in text:
-            # A file from before the block existed: add nrw's, in full.
-            newline = "\r\n" if "\r\n" in text else "\n"
-            block = experiment_block(wanted).replace("\n", newline)
-            new = new.rstrip("\r\n") + newline + newline + block + newline
-        else:
-            rest.update(ours)
-    if rest:
-        new = edit(new, rest)
-    verify(text, new, edits)
-    return new
-
-
-def _apply(current: ExperimentValues, edits: Changes) -> dict[str, dict[str, Value]]:
-    values = {table: dict(keys) for table, keys in current.items()}
-    for table, keys in edits.items():
-        chosen = values.setdefault(table, {})
-        for key, change in keys.items():
-            if isinstance(change, Set):
-                chosen[key] = change.value
-            else:
-                chosen.pop(key, None)
-        if not chosen:
-            del values[table]
-    return values
-
-
-def _with(context: Any, edits: Changes) -> Any:
-    """``nrw init``'s render context, with the edits made."""
-    import dataclasses
-
-    beamtime = edits.get("beamtime", {})
-    ipts = beamtime["ipts"].value if "ipts" in beamtime else context.ipts
-    label = beamtime["label"].value if "label" in beamtime else context.beamtime
-    experiment = _apply(
-        context.experiment,
-        {t: k for t, k in edits.items() if t.startswith("experiment.")},
-    )
-    return dataclasses.replace(
-        context, ipts=ipts or None, beamtime=label or None, experiment=experiment
-    )
-
-
-def _planned(context: Any) -> dict[str, Any]:
-    from nr_workbench.project.render import render_tree
-
-    return {
-        p.relpath: p
-        for p in render_tree("project", context)
-        if p.relpath in ("nrw.toml", "README.md")
-    }
-
-
-def _keep_in_step(
-    layout: Any, *, beamtime_changed: bool
-) -> tuple[list[str], list[str]]:
-    """Record nrw.toml as nrw's, and refresh README.md if it is untouched.
-
-    Returns:
-        Paths also written, and notes.
-    """
-    from nr_workbench.fsutil import atomic_write_bytes
-    from nr_workbench.project.render import init_context
-    from nr_workbench.project.scaffold import (
-        Outcome,
-        classify,
-        load_lock,
-        lock_problem,
-        record_installed,
-        writing_scaffold,
-    )
-
-    written: list[str] = []
-    notes: list[str] = []
-    with writing_scaffold(layout.root):
-        trouble = lock_problem(layout.scaffold_lock)
-        if trouble:
-            notes.append(f"The scaffold lock was not updated: {trouble}")
-            return written, notes
-        planned = _planned(init_context(layout.root))
-        # True only when the file is exactly init's render; a file with a
-        # person's edits elsewhere stays theirs, as it was.
-        record_installed(layout.root, planned["nrw.toml"])
-        if not beamtime_changed:
-            return written, notes
-        readme = planned["README.md"]
-        target = layout.root / readme.relpath
-        outcome = classify(
-            readme, target, load_lock(layout.scaffold_lock).get(readme.relpath)
-        )
-        if outcome is Outcome.UPGRADE:
-            atomic_write_bytes(target, readme.content)
-            record_installed(layout.root, readme)
-            written.append(readme.relpath)
-        elif outcome in (Outcome.DRIFTED, Outcome.UNTRACKED):
-            notes.append(
-                "README.md names the IPTS and beamtime too. It has been edited, "
-                "so nrw left it alone; update it by hand."
-            )
-    return written, notes

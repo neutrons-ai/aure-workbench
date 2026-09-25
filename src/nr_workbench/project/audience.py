@@ -16,7 +16,6 @@ refuses anything; it changes how much is explained, and in which order.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,26 +49,6 @@ DEFAULTS: dict[str, str] = {
     "domain": "practitioner",
     "role": "collaborates",
 }
-
-#: The block appended to an ``nrw.toml`` that predates this feature.
-TEMPLATE = """
-# Who reads what comes out of this project. These change how much an assistant
-# explains and in what order -- they refuse nothing. Set them with
-# `nrw audience --ask`, or edit here.
-#
-#   reflectometry / statistics / domain : newcomer | practitioner | expert
-#   role                                : drives | collaborates | delegates
-#
-# The three knowledge axes are independent on purpose: a reflectometry expert
-# who wants the statistics spelled out is a real and common reader, and a
-# single novice/expert dial gets that reader wrong twice.
-[audience]
-reflectometry = "practitioner"
-statistics = "practitioner"
-domain = "practitioner"
-role = "collaborates"
-notes = ""
-"""
 
 
 @dataclass(frozen=True)
@@ -162,14 +141,15 @@ def validate(axis: str, value: str) -> str:
 
 
 def write(root: Path, audience: Audience) -> None:
-    """Update the ``[audience]`` block in ``nrw.toml`` in place.
+    """Update the ``[audience]`` block in ``nrw.toml``.
 
-    Through the same editor as every other change nrw makes to ``nrw.toml``
-    (:mod:`nr_workbench.project.tomlfile`): only the assignment lines inside
-    ``[audience]`` change, every comment stays, and the edit is proved by
-    parsing both versions before anything is written. ``nrw.toml`` is mostly
-    comments explaining why the instrument conventions are what they are, and
-    a round-trip through a TOML writer would delete all of them.
+    Through the one writer every change to ``nrw.toml`` goes through
+    (:func:`nr_workbench.project.nrwtoml.write_as_nrw`): only the assignment
+    lines of ``[audience]`` change, every comment stays, the edit is proved
+    before it is written, and a file that was nrw's own stays nrw's, so the
+    next ``nrw init`` finds nothing to put beside it. A project from before
+    this block gets a bare ``[audience]`` table; ``nrw init`` adds its
+    explanation around it.
 
     Args:
         root: Project root.
@@ -180,33 +160,12 @@ def write(root: Path, audience: Audience) -> None:
             why and what to change by hand.
         OSError: If ``nrw.toml`` cannot be read or written.
     """
-    from nr_workbench.project.layout import ProjectLayout
-    from nr_workbench.project.tomlfile import (
-        Set,
-        edit,
-        read_config,
-        verify,
-        write_config,
-    )
+    from nr_workbench.project.nrwtoml import write_as_nrw
+    from nr_workbench.project.tomlfile import Set
 
-    layout = ProjectLayout(root=Path(root))
-    base = read_config(layout.config_file)
-    changes = {
-        "audience": {key: Set(value) for key, value in audience.as_dict().items()}
-    }
-
-    text = base.text
-    if not re.search(r"^[ \t]*\[audience\][ \t]*(#.*)?$", text, re.MULTILINE):
-        # A project from before this block: add it with its explanation.
-        text = text.rstrip("\n") + "\n" + TEMPLATE
-    new = edit(text, changes)
-    verify(base.text, new, changes)
-    write_config(
-        layout.config_file,
-        base,
-        new,
-        cache_dir=layout.cache_dir,
-        backups_dir=layout.backups_dir,
+    write_as_nrw(
+        Path(root),
+        {"audience": {key: Set(value) for key, value in audience.as_dict().items()}},
     )
 
 

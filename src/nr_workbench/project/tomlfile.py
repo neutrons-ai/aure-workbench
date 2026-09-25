@@ -20,7 +20,6 @@ import copy
 import hashlib
 import re
 import secrets
-import threading
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -209,6 +208,11 @@ _HEADER = re.compile(
     r"^[ \t]*\[(?!\[)[ \t]*(?P<name>[A-Za-z0-9_-]+(?:[ \t]*\.[ \t]*[A-Za-z0-9_-]+)*)"
     r"[ \t]*\][ \t]*(?:#.*)?$"
 )
+#: A table header nrw wrote commented out: ``# [experiment.source]``.
+_COMMENTED_HEADER = re.compile(
+    r"^[ \t]*#[ \t]*\[(?!\[)[ \t]*(?P<name>[A-Za-z0-9_-]+(?:[ \t]*\.[ \t]*[A-Za-z0-9_-]+)*)"
+    r"[ \t]*\][ \t]*$"
+)
 _VALUE = (
     r'"(?:[^"\\\r\n]|\\.)*"'  # basic string, one line
     r"|'[^'\r\n]*'"  # literal string, one line
@@ -271,24 +275,40 @@ class _Region:
     end: int
 
 
-def _regions(lines: list[str]) -> dict[str, _Region]:
+def _regions(lines: list[str]) -> tuple[dict[str, _Region], dict[str, _Region]]:
+    """Each table's region: those written out, and those nrw wrote commented out.
+
+    A region runs to the next header of either kind, so a commented-out table
+    never claims the lines of the one after it.
+    """
     inside = _starts_inside_string(lines)
-    headers: list[tuple[int, str | None]] = []
+    headers: list[tuple[int, str | None, bool]] = []
     for index, line in enumerate(lines):
-        if inside[index] or not line.lstrip().startswith("["):
+        if inside[index]:
             continue
-        match = _HEADER.match(line.rstrip("\r\n"))
-        name = re.sub(r"[ \t]*\.[ \t]*", ".", match.group("name")) if match else None
-        headers.append((index, name))
+        body = line.rstrip("\r\n")
+        if line.lstrip().startswith("["):
+            match = _HEADER.match(body)
+            headers.append((index, _name(match), True))
+        elif (match := _COMMENTED_HEADER.match(body)) is not None:
+            headers.append((index, _name(match), False))
     regions: dict[str, _Region] = {}
-    for position, (index, name) in enumerate(headers):
+    commented: dict[str, _Region] = {}
+    for position, (index, name, active) in enumerate(headers):
         end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
         if name is None:
             continue
-        if name in regions:
-            raise TomlEditError(f"[{name}] is declared twice; TOML allows it once.")
-        regions[name] = _Region(index, end)
-    return regions
+        found = regions if active else commented
+        if name in found:
+            if active:
+                raise TomlEditError(f"[{name}] is declared twice; TOML allows it once.")
+            continue  # a second commented copy is a person's note; leave it
+        found[name] = _Region(index, end)
+    return regions, commented
+
+
+def _name(match: re.Match[str] | None) -> str | None:
+    return re.sub(r"[ \t]*\.[ \t]*", ".", match.group("name")) if match else None
 
 
 def _lookup(document: Mapping[str, Any], table: str) -> Any:
@@ -316,7 +336,10 @@ def edit(text: str, changes: Changes) -> str:
       stays, for a key being unset);
     * otherwise a set key is inserted after the last key line of the table.
 
-    A table the file does not have is appended at the end.
+    A table nrw wrote commented out (``# [experiment.source]``) is switched on
+    where it stands -- appending a second one below it would leave the file
+    advising a person to uncomment the first, which TOML then refuses. A table
+    the file does not have at all is appended at the end.
 
     Raises:
         TomlEditError: The file writes a managed key or table in a shape this
@@ -329,12 +352,26 @@ def edit(text: str, changes: Changes) -> str:
 
     appended: list[str] = []
     # Bottom to top, so that an insertion never moves a region still to come.
-    regions = _regions(lines)
-    for table in sorted(
-        changes, key=lambda t: -regions[t].header if t in regions else 0
-    ):
+    regions, commented = _regions(lines)
+
+    def position(table: str) -> int:
+        region = regions.get(table) or commented.get(table)
+        return -region.header if region else 0
+
+    for table in sorted(changes, key=position):
         keys = changes[table]
         region = regions.get(table)
+        if (
+            region is None
+            and table in commented
+            and _lookup(before, table) is None
+            and any(isinstance(c, Set) for c in keys.values())
+        ):
+            region = commented[table]
+            line = lines[region.header]
+            ending = line[len(line.rstrip("\r\n")) :]
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[region.header] = f"{indent}[{table}]{ending}"
         if region is None:
             if _lookup(before, table) is not None:
                 raise TomlEditError(
@@ -503,14 +540,32 @@ def verify(old: str, new: str, changes: Changes) -> None:
             node = node.setdefault(part, {})
         for key, change in keys.items():
             if isinstance(change, Set):
-                node[key] = change.value
+                node[key] = _as_written(change.value)
             else:
                 node.pop(key, None)
-    if _pruned(after) != _pruned(want):
+    if not _same(_pruned(after), _pruned(want)):
         raise TomlEditError(
             "the edit would change more of nrw.toml than the settings asked "
             "for, so nothing was written. Make the change by hand."
         )
+
+
+def _as_written(value: Value) -> Value:
+    """A value as it reads back once written: a whole float is written whole."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Equal, and of the same type: in Python ``True == 1`` and ``600 == 600.0``."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b, strict=True))
+    if type(a) is not type(b):
+        return False
+    return a == b or (a != a and b != b)  # NaN is NaN
 
 
 def _pruned(document: Any) -> Any:
@@ -525,8 +580,6 @@ def _pruned(document: Any) -> Any:
 # Writing
 # ---------------------------------------------------------------------------
 
-_WRITE_LOCK = threading.Lock()
-
 
 def write_config(
     path: Path,
@@ -538,9 +591,11 @@ def write_config(
 ) -> Path:
     """Replace a configuration file with ``new_text``, if it is still ``base``.
 
-    The previous file is kept under ``backups_dir``. The lock file and the
-    temporary file live in ``cache_dir``: beside a tracked file, either would
-    show up as something to commit.
+    The previous file is kept under ``backups_dir``, and the temporary file
+    lives in ``cache_dir``: beside a tracked file, either would show up as
+    something to commit. The caller holds the scaffold's writer lock
+    (:func:`nr_workbench.project.nrwtoml.write_as_nrw` does), which is what
+    keeps the comparison and the replacement together.
 
     Returns:
         Where the previous version was kept.
@@ -549,7 +604,7 @@ def write_config(
         TomlConflictError: The file is no longer what was read.
         OSError: It could not be written.
     """
-    from nr_workbench.fsutil import advisory_lock, atomic_write_bytes, write_new_file
+    from nr_workbench.fsutil import atomic_write_bytes, write_new_file
 
     path = Path(path)
     cache_dir, backups_dir = Path(cache_dir), Path(backups_dir)
@@ -559,24 +614,23 @@ def write_config(
     for folder in (cache_dir.parent, cache_dir, backups_dir):
         if folder.is_symlink():
             raise TomlEditError(
-                f"{folder} is a symbolic link. nrw writes its lock, its temporary "
-                "file and its backups only into the project's own folders, so "
+                f"{folder} is a symbolic link. nrw writes its temporary file and "
+                "its backups only into the project's own folders, so "
                 "that saving cannot write anywhere else; make it a plain folder."
             )
-    with _WRITE_LOCK, advisory_lock(cache_dir / path.name):
-        if path.is_symlink() or path.read_bytes() != base.raw:
-            raise TomlConflictError(
-                f"{path.name} changed since it was read -- edited by hand, or "
-                "saved from somewhere else. Nothing was written; look again."
-            )
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        # The bytes that were read and compared, not the file read again by
-        # name; into a new folder, reached through no link.
-        backup = write_new_file(
-            backups_dir / f"{stamp}-{secrets.token_hex(8)}",
-            path.name,
-            base.raw,
-            base=path.parent,
+    if path.is_symlink() or path.read_bytes() != base.raw:
+        raise TomlConflictError(
+            f"{path.name} changed since it was read -- edited by hand, or saved "
+            "from somewhere else. Nothing was written; look again."
         )
-        atomic_write_bytes(path, data, scratch=cache_dir)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    # The bytes that were read and compared, not the file read again by name;
+    # into a new folder, reached through no link.
+    backup = write_new_file(
+        backups_dir / f"{stamp}-{secrets.token_hex(8)}",
+        path.name,
+        base.raw,
+        base=path.parent,
+    )
+    atomic_write_bytes(path, data, scratch=cache_dir)
     return backup

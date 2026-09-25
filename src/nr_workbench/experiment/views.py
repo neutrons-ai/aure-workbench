@@ -129,14 +129,15 @@ def settings_view(root: Path, *, catalogued_runs: int = 0) -> dict[str, Any]:
 
     from nr_workbench.experiment.config import experiment_config
     from nr_workbench.problems import Problem
-    from nr_workbench.project import settings as project
+    from nr_workbench.project import experiment_schema as project
     from nr_workbench.project.config import ProjectConfigError, load_config
+    from nr_workbench.project.settings import read as read_settings
     from nr_workbench.project.tomlfile import TomlEditError
 
     problems: list[Problem] = []
     current = None
     try:
-        current = project.read(root)
+        current = read_settings(root)
     except (TomlEditError, OSError) as exc:
         problems.append(Problem("config", f"nrw.toml cannot be edited here: {exc}"))
     try:
@@ -184,7 +185,7 @@ def settings_view(root: Path, *, catalogued_runs: int = 0) -> dict[str, Any]:
 
 def ipts_in_path(root: Path) -> str | None:
     """An IPTS the project's own path names, e.g. /SNS/REF_L/IPTS-34347/shared/x."""
-    from nr_workbench.project.settings import normalize_ipts
+    from nr_workbench.project.experiment_schema import normalize_ipts
 
     for part in Path(root).absolute().parts:
         if part.upper().startswith("IPTS-"):

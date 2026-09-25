@@ -41,7 +41,7 @@ from nr_workbench.instrument.reduced import (
     parse_segment_name,
 )
 from nr_workbench.problems import Problem
-from nr_workbench.project.settings import normalize_ipts
+from nr_workbench.project.experiment_schema import normalize_ipts
 
 #: Most files of one run whose headers a folder check reads.
 PROBE_FILES_PER_RUN = 12

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,6 +18,7 @@ from nr_workbench.project.scaffold import (
     PlannedFile,
     ScaffoldReport,
     apply_scaffold,
+    writing_scaffold,
 )
 from nr_workbench.skills_install import discover_skills, plan_skill_files
 
@@ -224,44 +226,49 @@ def run_init(
     if not (root / "nrw.toml").is_file():
         _refuse_if_nested(root, allow=nested)
 
-    try:
-        context = init_context(
-            root,
-            project_name=project_name,
-            beamtime=beamtime,
-            ipts=ipts,
-            harnesses=harnesses,
-        )
-        planned = plan_project_files(context, include_skills=not no_skills)
-    except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    from nr_workbench.experiment.render import SampleRenderError
-
-    for sample_id in sample_ids:
+    # One writer at a time, from planning to writing: a settings save landing
+    # between init's plan and its write would otherwise be put back -- the
+    # save records nrw.toml as nrw's, and init's older plan then "upgrades"
+    # it. A check writes nothing, so it needs no lock and takes none.
+    with writing_scaffold(root) if not check else nullcontext():
         try:
-            planned.extend(_plan_sample(root, context, sample_id))
-        except (SampleRenderError, ValueError) as exc:
-            # A catalog that cannot be read, or an unusable sample id: both
-            # are the person's to fix, and neither is worth a traceback.
+            context = init_context(
+                root,
+                project_name=project_name,
+                beamtime=beamtime,
+                ipts=ipts,
+                harnesses=harnesses,
+            )
+            planned = plan_project_files(context, include_skills=not no_skills)
+        except Exception as exc:
             raise click.ClickException(str(exc)) from exc
 
-    diffs: list[str] = []
-    try:
-        report = apply_scaffold(
-            root,
-            planned,
-            # `init` plans the whole project, so it may rebuild a damaged lock
-            # -- that is how a project recovers. Conflict markers are still
-            # refused: they mean two people's entries, and the merge is theirs.
-            rebuild_lock=True,
-            dry_run=check,
-            show_diff=show_diff,
-            force=force,
-            diff_sink=diffs if show_diff else None,
-        )
-    except LockProblemError as exc:
-        raise click.ClickException(str(exc)) from exc
+        from nr_workbench.experiment.render import SampleRenderError
+
+        for sample_id in sample_ids:
+            try:
+                planned.extend(_plan_sample(root, context, sample_id))
+            except (SampleRenderError, ValueError) as exc:
+                # A catalog that cannot be read, or an unusable sample id: both
+                # are the person's to fix, and neither is worth a traceback.
+                raise click.ClickException(str(exc)) from exc
+
+        diffs: list[str] = []
+        try:
+            report = apply_scaffold(
+                root,
+                planned,
+                # `init` plans the whole project, so it may rebuild a damaged lock
+                # -- that is how a project recovers. Conflict markers are still
+                # refused: they mean two people's entries, and the merge is theirs.
+                rebuild_lock=True,
+                dry_run=check,
+                show_diff=show_diff,
+                force=force,
+                diff_sink=diffs if show_diff else None,
+            )
+        except LockProblemError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     if show_diff:
         for diff in diffs:

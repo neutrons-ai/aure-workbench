@@ -21,8 +21,8 @@ from nr_workbench import __version__
 from nr_workbench.harness import DEFAULT_HARNESSES, agent_dirs, resolve
 from nr_workbench.project.audience import DEFAULTS as AUDIENCE_DEFAULTS
 from nr_workbench.project.config import CONTRACT_VERSION
+from nr_workbench.project.experiment_schema import experiment_block, written_experiment
 from nr_workbench.project.scaffold import PlannedFile
-from nr_workbench.project.settings import experiment_block, written_experiment
 from nr_workbench.project.tomlfile import Value, toml_value
 
 #: The keys of ``[audience]`` nrw writes, in the order the template has them.

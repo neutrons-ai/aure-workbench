@@ -29,19 +29,21 @@ from typing import Any
 from nr_workbench.arrival import DEFAULT_SETTLE_SECONDS
 from nr_workbench.problems import Problem
 from nr_workbench.project.config import (
+    DEFAULT_CATALOG_KIND,
     DEFAULT_EXPERIMENT_LOCATION,
     DEFAULT_EXPERIMENT_POLL_SECONDS,
+    DEFAULT_FEED_KIND,
+    DEFAULT_SOURCE_KIND,
 )
 
 # What can be set, and which choices exist yet, is defined below this package
 # so the scaffold and the Settings page share it; re-exported under the names
 # this package has always used.
-from nr_workbench.project.settings import (  # noqa: F401 - re-exported
+from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
     CATALOG_KINDS,
+    EXPERIMENT_KEYS,
     FEED_KINDS,
-    PLANNED_CATALOG_KINDS,
-    PLANNED_FEED_KINDS,
-    PLANNED_SOURCE_KINDS,
+    RANGES,
     SOURCE_KINDS,
     normalize_ipts,
 )
@@ -56,9 +58,9 @@ from nr_workbench.project.settings import (  # noqa: F401 - re-exported
 DEFAULT_LOCATION = DEFAULT_EXPERIMENT_LOCATION
 DEFAULT_POLL_SECONDS = DEFAULT_EXPERIMENT_POLL_SECONDS
 
+#: The keys each experiment table may hold: the schema's, plus the catalog kind.
 _KNOWN_KEYS = {
-    "source": {"kind", "location", "settle_seconds"},
-    "feed": {"kind", "poll_seconds"},
+    **{table.split(".", 1)[1]: set(keys) for table, keys in EXPERIMENT_KEYS.items()},
     "catalog": {"kind"},
 }
 
@@ -77,7 +79,7 @@ class SourceConfig:
         settle_seconds: How long files must be unchanged.
     """
 
-    kind: str = "local"
+    kind: str = DEFAULT_SOURCE_KIND
     location: str = DEFAULT_LOCATION
     path: Path | None = None
     settle_seconds: float = DEFAULT_SETTLE_SECONDS
@@ -93,7 +95,7 @@ class FeedConfig:
         poll_seconds: Seconds between polls while someone is watching.
     """
 
-    kind: str = "directory"
+    kind: str = DEFAULT_FEED_KIND
     poll_seconds: float = DEFAULT_POLL_SECONDS
 
 
@@ -114,7 +116,7 @@ class ExperimentConfig:
     ipts: str | None = None
     source: SourceConfig = field(default_factory=SourceConfig)
     feed: FeedConfig = field(default_factory=FeedConfig)
-    catalog_kind: str = "parquet"
+    catalog_kind: str = DEFAULT_CATALOG_KIND
     problems: tuple[Problem, ...] = ()
 
     @property
@@ -184,12 +186,12 @@ def experiment_config(project: Any) -> ExperimentConfig:
 
     source = _source(sections["source"], ipts, problems)
     feed = FeedConfig(
-        kind=_kind(sections["feed"], "feed", FEED_KINDS[0], problems),
+        kind=_kind(sections["feed"], "feed", DEFAULT_FEED_KIND, problems),
         poll_seconds=_seconds(
             sections["feed"], "feed", "poll_seconds", DEFAULT_POLL_SECONDS, problems
         ),
     )
-    catalog_kind = _kind(sections["catalog"], "catalog", CATALOG_KINDS[0], problems)
+    catalog_kind = _kind(sections["catalog"], "catalog", DEFAULT_CATALOG_KIND, problems)
     return ExperimentConfig(
         ipts=ipts,
         source=source,
@@ -202,7 +204,7 @@ def experiment_config(project: Any) -> ExperimentConfig:
 def _source(
     section: dict[str, Any], ipts: str | None, problems: list[Problem]
 ) -> SourceConfig:
-    kind = _kind(section, "source", SOURCE_KINDS[0], problems)
+    kind = _kind(section, "source", DEFAULT_SOURCE_KIND, problems)
     location = section.get("location", DEFAULT_LOCATION)
     if not isinstance(location, str) or not location.strip():
         problems.append(
@@ -276,13 +278,21 @@ def _seconds(
     problems: list[Problem],
 ) -> float:
     value = section.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+    low, high = RANGES.get((f"experiment.{name}", key), (0, float("inf")))
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not low <= value <= high
+        or value <= 0
+    ):
+        # The same range the Settings page holds a value to: one typed by hand
+        # outside it (a 1 s poll loads a shared file server) is said, not used.
         problems.append(
             Problem(
                 "config",
-                f"[experiment.{name}] {key} must be a positive number of "
-                f"seconds, not {value!r}; using {default:g}.",
+                f"[experiment.{name}] {key} must be a number of seconds from "
+                f"{low:g} to {high:g}, not {value!r}; using {default:g}.",
             )
         )
-        return default
+        return float(default)
     return float(value)

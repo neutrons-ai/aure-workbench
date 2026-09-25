@@ -75,7 +75,10 @@ def open_source(config: Any, *, ipts: str | None) -> DataSource:
             not known at all. Deliberately not a fallback to the local folder:
             that would quietly watch a path nobody chose.
     """
-    from nr_workbench.project.settings import PLANNED_SOURCE_KINDS, SOURCE_KINDS
+    from nr_workbench.project.experiment_schema import (
+        PLANNED_SOURCE_KINDS,
+        SOURCE_KINDS,
+    )
 
     if config.kind == "local":
         from nr_workbench.experiment.sources.local import LocalDirectorySource

@@ -496,7 +496,7 @@ def test_a_save_never_writes_an_edit_its_proof_rejects(
     project: Path, monkeypatch
 ) -> None:
     """Whatever the block rewrite gets wrong, the proof after it stops the write."""
-    from nr_workbench.project import tomlfile
+    from nr_workbench.project import nrwtoml, tomlfile
     from nr_workbench.project.settings import save
 
     toml = project / "nrw.toml"
@@ -511,7 +511,7 @@ def test_a_save_never_writes_an_edit_its_proof_rejects(
         replaced = real(text, old, new)
         return replaced.replace('label = "june2026"', 'label = "oops"')
 
-    monkeypatch.setattr(tomlfile, "replace_block", careless)
+    monkeypatch.setattr(nrwtoml, "replace_block", careless)
 
     with pytest.raises(tomlfile.TomlEditError):
         save(project, {"source.location": "/data/x"})
@@ -519,8 +519,14 @@ def test_a_save_never_writes_an_edit_its_proof_rejects(
     assert toml.read_bytes() == before
 
 
-def test_a_save_brings_an_unedited_older_file_up_to_date(project: Path) -> None:
-    """What `nrw init` would do anyway, with the new value in -- and said so."""
+def test_a_save_on_an_unedited_older_file_leaves_the_upgrade_to_init(
+    project: Path,
+) -> None:
+    """The save changes its own lines; `nrw init` upgrades the rest and keeps them.
+
+    Once, the save re-rendered the whole file from the current template --
+    unproved, since the rest of the template changed too.
+    """
     from nr_workbench.project.scaffold import load_lock, sha256_bytes, write_lock
     from nr_workbench.project.settings import save
 
@@ -535,9 +541,13 @@ def test_a_save_brings_an_unedited_older_file_up_to_date(project: Path) -> None:
 
     result = save(project, {"feed.poll_seconds": 10})
 
+    assert toml.read_text(encoding="utf-8").startswith(older)
+    assert any("next `nrw init`" in note for note in result.notes)
+    init = CliRunner().invoke(main, ["init", str(project)])
+    assert init.exit_code == 0, init.output
     assert toml.read_text(encoding="utf-8") == rendered_nrw_toml(project)
     assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 10}
-    assert any("brought up to date" in note for note in result.notes)
+    assert not (project / "nrw.toml.nrw-new").exists()
     assert init_check_is_clean(project)
 
 
@@ -555,3 +565,196 @@ def test_a_nrw_toml_of_the_wrong_shape_is_a_sentence_not_a_traceback(
 
     with pytest.raises(ProjectConfigError, match=message.replace("[", "\\[")):
         load_config(tmp_path)
+
+
+# --------------------------------------------------------------------------
+# One writer at a time, and nrw's file stays nrw's -- never a person's
+# --------------------------------------------------------------------------
+
+
+def test_a_save_while_nrw_init_runs_is_not_put_back(project: Path, monkeypatch) -> None:
+    """Init plans, a save lands, init writes: the save must survive.
+
+    It once did not. The save recorded nrw.toml as nrw's, and init's older plan
+    then "upgraded" it -- the chosen folder was nowhere on disk, not even in
+    the save's backup.
+    """
+    import threading
+
+    from nr_workbench.commands import init_cmd
+    from nr_workbench.project.settings import save
+
+    real = init_cmd.apply_scaffold
+    saver = threading.Thread(
+        target=save, args=(project, {"source.location": "/data/chosen"})
+    )
+
+    def apply_after_a_save_tries_to_land(*args, **kwargs):
+        saver.start()
+        saver.join(timeout=0.5)  # blocks on init's lock, or lands here unguarded
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(init_cmd, "apply_scaffold", apply_after_a_save_tries_to_land)
+
+    result = CliRunner().invoke(main, ["init", str(project)])
+    saver.join(timeout=10)
+
+    assert result.exit_code == 0, result.output
+    assert not saver.is_alive()
+    source = load_config(project).raw["experiment"]["source"]
+    assert source["location"] == "/data/chosen"
+    # Nor did init find a half-saved file to set a .nrw-new beside: the save
+    # waited for init, whole.
+    assert not (project / "nrw.toml.nrw-new").exists()
+
+
+def test_a_save_on_a_hand_edited_file_leaves_it_the_persons(project: Path) -> None:
+    """A later template change must leave it DRIFTED, with the person's note."""
+    from nr_workbench.commands.init_cmd import plan_project_files
+    from nr_workbench.project.scaffold import Outcome, apply_scaffold
+    from nr_workbench.project.settings import save
+
+    toml = project / "nrw.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8").replace(
+            "[conventions]", "# our note\n[conventions]"
+        ),
+        encoding="utf-8",
+    )
+    save(project, {"source.location": "/data/x"})
+    planned = [
+        dataclasses.replace(p, content=p.content + b"# a newer template\n")
+        if p.relpath == "nrw.toml"
+        else p
+        for p in plan_project_files(init_context(project))
+    ]
+
+    report = apply_scaffold(project, planned)
+
+    outcome = {f.relpath: f.outcome for f in report.files}["nrw.toml"]
+    assert outcome is Outcome.DRIFTED
+    assert "# our note" in toml.read_text(encoding="utf-8")
+
+
+def test_nrw_audience_on_an_untouched_older_file_leaves_init_nothing_beside_it(
+    project: Path, monkeypatch
+) -> None:
+    from nr_workbench.project.scaffold import load_lock, sha256_bytes, write_lock
+
+    toml = project / "nrw.toml"
+    current = toml.read_text(encoding="utf-8")
+    older = current[: current.index("# The experiment:")].rstrip("\n") + "\n"
+    toml.write_text(older, encoding="utf-8")
+    lock_path = project / ".nrw" / "scaffold.lock.json"
+    lock = load_lock(lock_path)
+    lock["nrw.toml"]["sha256_at_install"] = sha256_bytes(older.encode())
+    write_lock(lock_path, lock)
+
+    assert (
+        nrw(project, monkeypatch, "audience", "--set", "statistics=expert").exit_code
+        == 0
+    )
+    init = nrw(project, monkeypatch, "init")
+
+    assert init.exit_code == 0, init.output
+    assert not (project / "nrw.toml.nrw-new").exists()
+    assert load_config(project).raw["audience"]["statistics"] == "expert"
+
+
+OLDER_BLOCK = """# The experiment: where its runs are read from, and how new ones are noticed.
+# The location is PROVISIONAL. Uncomment and edit to point somewhere else.
+#
+# [experiment.source]
+# kind = "local"
+# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+# settle_seconds = 300
+#
+# [experiment.feed]
+# kind = "directory"   # a run is noticed when its reduced files appear
+# poll_seconds = 30
+"""
+
+
+def test_an_older_commented_block_is_switched_on_where_it_stands(project: Path) -> None:
+    """Never a second table below it, which its own advice would then break."""
+    from nr_workbench.project.settings import save
+
+    toml = project / "nrw.toml"
+    text = toml.read_text(encoding="utf-8")
+    text = text[: text.index("# The experiment:")] + OLDER_BLOCK
+    text = text.replace("[conventions]", "# our note\n[conventions]")
+    toml.write_text(text, encoding="utf-8")
+
+    save(project, {"source.location": "/data/x", "feed.poll_seconds": 10})
+
+    after = toml.read_text(encoding="utf-8")
+    assert after.count("[experiment.source]") == 1
+    assert '\n[experiment.source]\n# kind = "local"\nlocation = "/data/x"\n' in after
+    assert "\npoll_seconds = 10\n" in after
+    assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 10}
+
+
+def test_an_unreadable_catalog_still_asks_before_the_ipts_changes(
+    project: Path,
+) -> None:
+    """It once read as "no runs", which skipped the question."""
+    from nr_workbench.project.settings import NeedsConfirmation, save
+
+    with pytest.raises(NeedsConfirmation, match="cannot be read"):
+        save(project, {"ipts": "IPTS-2"}, catalogued_runs=None)
+
+    assert load_config(project).ipts == "IPTS-00001"
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("nr_workbench.project.settings", "nr_workbench.project.render"),
+        ("nr_workbench.project.render", "nr_workbench.project.settings"),
+        ("nr_workbench.project.nrwtoml", "nr_workbench.experiment.config"),
+    ],
+)
+def test_the_settings_modules_import_in_any_order(order: tuple[str, str]) -> None:
+    """No import cycle waiting for someone to move an import to the top."""
+    import subprocess
+    import sys
+
+    code = "; ".join(f"import {name}" for name in order)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_default_kinds_are_named_not_the_first_option_listed() -> None:
+    from nr_workbench.experiment.config import experiment_config
+    from nr_workbench.project.config import DEFAULT_FEED_KIND, DEFAULT_SOURCE_KIND
+
+    config = experiment_config(None)
+
+    assert EXPERIMENT_KEYS["experiment.source"]["kind"] == DEFAULT_SOURCE_KIND
+    assert EXPERIMENT_KEYS["experiment.feed"]["kind"] == DEFAULT_FEED_KIND
+    assert (config.source.kind, config.feed.kind) == (
+        DEFAULT_SOURCE_KIND,
+        DEFAULT_FEED_KIND,
+    )
+
+
+def test_a_hand_typed_setting_out_of_range_is_said_not_used(project: Path) -> None:
+    """The same range the Settings page holds a value to."""
+    from nr_workbench.experiment.config import experiment_config
+
+    toml = project / "nrw.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8").replace(
+            '# [experiment.feed]\n# kind = "directory"\n# poll_seconds = 30',
+            "[experiment.feed]\npoll_seconds = 1",
+        ),
+        encoding="utf-8",
+    )
+
+    config = experiment_config(load_config(project))
+
+    assert config.feed.poll_seconds == 30
+    assert any("from 5 to 600" in p.message for p in config.problems)

@@ -446,3 +446,32 @@ def test_text_that_cannot_be_written_fails_before_any_backup(tmp_path: Path) -> 
         )
 
     assert not (tmp_path / ".nrw" / "backups").exists()
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("[a]\nx = 1\n", "[a]\nx = true\n"),
+        ("[a]\nx = 0\n", "[a]\nx = false\n"),
+        ("[a]\nx = 600\n", "[a]\nx = 600.0\n"),
+    ],
+    ids=["one-to-true", "zero-to-false", "int-to-float"],
+)
+def test_verify_sees_a_change_of_type(old: str, new: str) -> None:
+    """In Python `True == 1` and `600 == 600.0`; in TOML they are different values."""
+    with pytest.raises(TomlEditError):
+        verify(old, new, {})
+
+
+def test_verify_takes_a_whole_float_as_the_integer_it_is_written_as() -> None:
+    verify("[a]\nx = 1\n", "[a]\nx = 300\n", {"a": {"x": Set(300.0)}})
+
+
+def test_edit_switches_a_commented_table_on_instead_of_adding_a_second() -> None:
+    text = BASE.replace("[experiment.source]", "# [experiment.source]")
+
+    new = edit(text, {"experiment.source": {"location": Set("/x", default=DEFAULT)}})
+
+    assert new.count("[experiment.source]") == 1
+    assert "\n[experiment.source]\n# kind" in new
+    assert tomllib.loads(new)["experiment"]["source"] == {"location": "/x"}
