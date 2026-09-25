@@ -528,13 +528,21 @@ def _plan_run(
             )
         return actions
 
-    listed_names = {f.name for f in listed.files}
+    listed_by_name = {f.name: f for f in listed.files}
+    fitting = {f.name for f in listed.fitting_files}
     for name, entry in sorted(recorded.items()):
-        if name not in listed_names:
-            actions.append(_already_copied(run, name, entry, None, steady, source))
+        if name not in fitting:
+            # No longer listed; or an artifact nrw copied before only the
+            # files a fit reads were copied -- still nrw's, still checked.
+            actions.append(
+                _already_copied(run, name, entry, listed_by_name.get(name), steady, source)
+            )
 
     may_copy, why_not = _may_copy(key, status, confirmed)
-    for source_file in listed.files:
+    # What a fit of the sample reads, and nothing else: the segments, or the
+    # combined curve when there are none. A combined curve beside segments
+    # stays at the source; one nrw copied before this rule is still managed.
+    for source_file in listed.fitting_files:
         name = source_file.name
         entry = recorded.get(name)
         if entry is not None:

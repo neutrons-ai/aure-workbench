@@ -47,6 +47,12 @@ def run_row(key: RunKey, view: Any, entry: RunEntry | None) -> dict[str, Any]:
         or (entry.start_time if entry else ""),
         "segments": list(source.segments) if source else [],
         "n_segments": source.n_segments if source else None,
+        # Every file of the measurement and what it is to it: the segments a
+        # fit co-refines, and other artifacts such as the combined curve.
+        "artifacts": [
+            {"name": f.name, "role": f.role, "segment": f.segment}
+            for f in (source.files if source else ())
+        ],
         "thetas": [round(t, 3) if t is not None else None for t in source.thetas]
         if source
         else [],

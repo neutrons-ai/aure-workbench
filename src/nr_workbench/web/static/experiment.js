@@ -200,9 +200,13 @@
   }
 
   function segmentsText(row) {
-    if (!row.segments.length) return "—";
+    const combined = (row.artifacts || []).some(function (a) {
+      return a.role === "combined";
+    });
+    if (!row.segments.length) return combined ? "combined only" : "—";
     const listed = row.segments.join(",");
-    return row.n_segments ? listed + " of " + row.n_segments : listed;
+    const text = row.n_segments ? listed + " of " + row.n_segments : listed;
+    return combined ? text + " + combined" : text;
   }
 
   function renderRuns() {

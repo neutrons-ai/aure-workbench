@@ -9,6 +9,7 @@ page's own origin -- and that everything else still only reads.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -146,6 +147,35 @@ def test_curves_come_from_the_source_segment_by_segment(app) -> None:
         "234277#3",
     ]
     assert all(c["run"] == 234277 for c in payload["curves"])
+
+
+def test_the_quick_look_plots_the_segments_not_the_combined_curve(
+    expt: Path, tmp_path: Path
+) -> None:
+    """Each segment keeps its own angle, even with an artifact among the files."""
+    from nr_workbench.instrument.reduced import combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    folder = tmp_path / "facility" / "new_reduction"
+    combined = folder / combined_filename(234277)
+    combined.write_text(reduced_rows(), encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(combined, (old, old))
+    app = make_app(expt)
+    try:
+        body = app.test_client().get("/api/experiment/runs/234277/curves").get_json()
+        row = next(
+            r
+            for r in app.test_client().get("/api/experiment").get_json()["runs"]
+            if r["run"] == 234277
+        )
+    finally:
+        app.config["NRW_EXPERIMENT"].stop()
+
+    assert [c["label"] for c in body["curves"]] == ["234277#1", "234277#2", "234277#3"]
+    assert [round(c["theta"], 2) for c in body["curves"]] == [0.45, 1.25, 3.5]
+    assert [a["role"] for a in row["artifacts"]] == ["segment"] * 3 + ["combined"]
 
 
 def test_curves_for_an_unlisted_run_are_404(app) -> None:

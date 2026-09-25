@@ -191,6 +191,37 @@ def canonical_name(name: str) -> ReducedName | int | None:
     return None
 
 
+#: What a reduced file is to its measurement, in nrw's words. A measurement
+#: (keyed by its first run number) is N angle segments -- the curves a fit
+#: co-refines -- plus other artifacts, of which the combined curve, every
+#: segment stitched into one, is the one nrw reads today. :func:`role` speaks
+#: AuRE's words, "partial" for a segment, to compare the two tools; nrw says
+#: "segment" because "partial" is also the name of one reduction dialect.
+SEGMENT = "segment"
+COMBINED = "combined"
+
+
+def fitting_names(names: Iterable[str]) -> list[str]:
+    """Which of one measurement's reduced files a fit uses.
+
+    Its angle segments; or its combined curve when it has no segments at all.
+    The combined curve is a stitched convenience, fitted only when nothing
+    else exists -- the rule ``nrw model new`` follows. Here so that the files
+    apply copies into a sample are the files a fit of it will read.
+
+    Args:
+        names: File names of one measurement.
+
+    Returns:
+        The names to fit, in the order given.
+    """
+    names = list(names)
+    segments = [name for name in names if parse_segment_name(name) is not None]
+    if segments:
+        return segments
+    return [name for name in names if parse_combined_name(name) is not None]
+
+
 def segment_globs(run: int | str, segment: int | str = "*") -> list[str]:
     """Glob patterns matching one run's segment files, in both dialects.
 

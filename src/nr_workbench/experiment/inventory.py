@@ -43,10 +43,22 @@ class SourceFile:
     subrun: int | None = None
     dialect: str | None = None
 
+    @property
+    def role(self) -> str:
+        """What the file is to its measurement: a segment, or the combined curve."""
+        from nr_workbench.instrument.reduced import COMBINED, SEGMENT
+
+        return SEGMENT if self.segment is not None else COMBINED
+
 
 @dataclass(frozen=True)
 class SourceRun:
-    """One run, as the source's files describe it.
+    """One measurement, as the source's files describe it.
+
+    A measurement is keyed by its first run number -- what the catalog calls a
+    run -- and is made of N angle segments, each reduced from its own subrun,
+    plus other artifacts such as the combined curve. The segments are what a
+    fit co-refines (:attr:`fitting_files`).
 
     Attributes:
         key: Which run.
@@ -84,6 +96,20 @@ class SourceRun:
     def segments(self) -> tuple[int, ...]:
         """The segment numbers present, in order."""
         return tuple(f.segment for f in self.files if f.segment is not None)
+
+    @property
+    def fitting_files(self) -> tuple[SourceFile, ...]:
+        """The files a fit uses: the segments, else the combined curve."""
+        from nr_workbench.instrument.reduced import fitting_names
+
+        keep = set(fitting_names(f.name for f in self.files))
+        return tuple(f for f in self.files if f.name in keep)
+
+    @property
+    def other_artifacts(self) -> tuple[SourceFile, ...]:
+        """Its other files, such as the combined curve beside the segments."""
+        fitting = set(self.fitting_files)
+        return tuple(f for f in self.files if f not in fitting)
 
     @property
     def last_subrun(self) -> int:

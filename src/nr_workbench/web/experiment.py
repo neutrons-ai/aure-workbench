@@ -438,16 +438,26 @@ class ExperimentData:
         curves = []
         problems = []
         source = w.source
-        files = view.source.files
-        if len(files) > MAX_CURVE_FILES:
+        # The curves a fit would use -- the segments, or the combined curve
+        # when there are none -- each with its own angle. `thetas` lines up
+        # with `files` by position, so they are paired before any is skipped.
+        thetas = list(view.source.thetas)
+        thetas += [None] * (len(view.source.files) - len(thetas))
+        fitting = set(view.source.fitting_files)
+        pairs = [
+            (source_file, theta)
+            for source_file, theta in zip(view.source.files, thetas, strict=False)
+            if source_file in fitting
+        ]
+        if len(pairs) > MAX_CURVE_FILES:
             problems.append(
                 Problem(
                     f"curve:{key.run}",
-                    f"run {key.run} lists {len(files)} files; showing the first "
+                    f"run {key.run} lists {len(pairs)} files; showing the first "
                     f"{MAX_CURVE_FILES}.",
                 ).as_dict()
             )
-        for index, source_file in enumerate(files[:MAX_CURVE_FILES]):
+        for source_file, theta in pairs[:MAX_CURVE_FILES]:
             label = (
                 f"{key.run}#{source_file.segment}"
                 if source_file.segment is not None
@@ -463,11 +473,8 @@ class ExperimentData:
                 continue
             payload = curve.as_dict()
             payload["run"] = key.run
-            if (
-                index < len(view.source.thetas)
-                and view.source.thetas[index] is not None
-            ):
-                payload["theta"] = view.source.thetas[index]
+            if theta is not None:
+                payload["theta"] = theta
             curves.append(payload)
         return {"run": key.run, "curves": curves, "problems": problems}
 

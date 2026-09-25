@@ -830,3 +830,79 @@ def test_one_broken_sample_does_not_stop_the_others(
     assert len(list(steady(project, "Sample7").glob("REFL_234280_*"))) == 3
     assert record.read_text() == "{not json"
     assert not list(steady(project).glob("REFL_*"))
+
+
+# --------------------------------------------------------------------------
+# A measurement and its artifacts: apply copies what a fit reads
+# --------------------------------------------------------------------------
+
+
+def settled_file(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(path, (old, old))
+    return path
+
+
+def test_apply_copies_the_segments_and_leaves_the_combined_curve_at_the_source(
+    applier: Applier, project: Path
+) -> None:
+    """A fit co-refines the segments; the stitched curve is not the sample's data."""
+    from nr_workbench.instrument.reduced import combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    combined = settled_file(
+        folder_of(applier) / combined_filename(234277), reduced_rows()
+    )
+
+    plan, report = applier.apply(catalog_for(234277))
+
+    copied = sorted(p.name for p in steady(project).glob("REFL_*"))
+    assert copied == [
+        "REFL_234277_1_234277_autoreduction.dat",
+        "REFL_234277_2_234278_autoreduction.dat",
+        "REFL_234277_3_234279_autoreduction.dat",
+    ]
+    assert combined.name not in actions(plan)
+    assert report.failed == []
+
+
+def test_a_measurement_with_only_a_combined_curve_copies_that(
+    applier: Applier, project: Path
+) -> None:
+    """Nothing else to fit, so the combined curve is what `nrw model new` fits."""
+    from nr_workbench.instrument.reduced import combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    only = settled_file(folder_of(applier) / combined_filename(234286), reduced_rows())
+
+    applier.apply(catalog_for(234286))
+
+    assert [p.name for p in steady(project).glob("REFL_*")] == [only.name]
+
+
+def test_a_combined_curve_copied_before_stays_managed(
+    applier: Applier, project: Path
+) -> None:
+    """One an earlier nrw copied is still checked, not dropped from the record."""
+    from nr_workbench.instrument.reduced import combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    applier.apply(catalog_for(234277))
+    name = combined_filename(234277)
+    settled_file(folder_of(applier) / name, reduced_rows())
+    (steady(project) / name).write_text(reduced_rows(), encoding="utf-8")
+    record = project / "samples" / "Sample6" / "data" / "sources.json"
+    document = json.loads(record.read_text(encoding="utf-8"))
+    document["files"][name] = {
+        "run": 234277,
+        "sha256": "0" * 64,  # not what is there now: an edited copy
+    }
+    record.write_text(json.dumps(document), encoding="utf-8")
+
+    plan = applier.plan(catalog_for(234277))
+
+    assert actions(plan)[name] is Action.LOCAL_EDITED

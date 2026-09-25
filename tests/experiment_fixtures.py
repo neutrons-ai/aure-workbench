@@ -199,6 +199,14 @@ class InMemorySource:
         else:
             self.planned.pop(run, None)
 
+    def add_combined(self, run: int, *, mtime: float = 0.0) -> str:
+        """Add *run*'s combined curve, every segment stitched into one file."""
+        from nr_workbench.instrument.reduced import combined_filename
+
+        name = combined_filename(run)
+        self.files[name] = MemoryFile(reduced_rows().encode(), mtime)
+        return name
+
     def touch(self, name: str, mtime: float) -> None:
         """Rewrite a file: new version, new mtime."""
         entry = self.files[name]
@@ -224,22 +232,30 @@ class InMemorySource:
         grouped: dict[int, list[SourceFile]] = {}
         for name, entry in sorted(self.files.items()):
             parsed = canonical_name(name)
-            if not isinstance(parsed, ReducedName):
+            if parsed is None:
                 continue
-            grouped.setdefault(parsed.run, []).append(
-                SourceFile(
-                    name=name,
-                    size=len(entry.data),
-                    mtime=entry.mtime,
-                    version=f"v{entry.version}:{entry.mtime}",
+            common = {
+                "name": name,
+                "size": len(entry.data),
+                "mtime": entry.mtime,
+                "version": f"v{entry.version}:{entry.mtime}",
+            }
+            if isinstance(parsed, ReducedName):
+                file = SourceFile(
+                    **common,
                     segment=parsed.segment,
                     subrun=parsed.subrun,
                     dialect=parsed.dialect,
                 )
-            )
+                run = parsed.run
+            else:
+                # A combined curve, as the local folder lists one.
+                file, run = SourceFile(**common), parsed
+            grouped.setdefault(run, []).append(file)
         runs = {}
         for run, files in grouped.items():
-            files.sort(key=lambda f: f.segment or 0)
+            # Segments in order, then any combined curve: as the folder does.
+            files.sort(key=lambda f: (f.segment is None, f.segment or 0))
             runs[RunKey(run)] = SourceRun(
                 key=RunKey(run),
                 files=tuple(files),

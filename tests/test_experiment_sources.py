@@ -382,3 +382,51 @@ def test_the_folder_feed_announces_what_the_source_listed(tmp_path: Path) -> Non
 
     assert [a.run for a in update.announcements] == [218386, 218393]
     assert update.announcements[0].title == "CuPt_d8-THF_FullQ-218386-1."
+
+
+# --------------------------------------------------------------------------
+# A measurement: its segments, and its other artifacts
+# --------------------------------------------------------------------------
+
+
+def test_a_combined_curve_is_an_artifact_of_its_measurement_not_a_fitting_file(
+    tmp_path: Path,
+) -> None:
+    from nr_workbench.instrument.reduced import COMBINED, SEGMENT, combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    write_autoreduced(tmp_path, 234277, [1, 2, 3])
+    (tmp_path / combined_filename(234277)).write_text(reduced_rows())
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert [f.role for f in run.files] == [SEGMENT, SEGMENT, SEGMENT, COMBINED]
+    assert [f.segment for f in run.fitting_files] == [1, 2, 3]
+    assert [f.role for f in run.other_artifacts] == [COMBINED]
+    assert run.thetas[-1] is None and len(run.thetas) == len(run.files)
+
+
+def test_the_in_memory_source_lists_a_combined_curve_as_the_folder_does(
+    tmp_path: Path,
+) -> None:
+    from .experiment_fixtures import InMemorySource
+
+    memory = InMemorySource()
+    memory.add_segments(234277, [1, 2, 3])
+    memory.add_combined(234277)
+    write_autoreduced(tmp_path, 234277, [1, 2, 3])
+    from nr_workbench.instrument.reduced import combined_filename
+
+    from .experiment_fixtures import reduced_rows
+
+    (tmp_path / combined_filename(234277)).write_text(reduced_rows())
+
+    def shape(inventory):
+        run = inventory.runs[RunKey(234277)]
+        return [(f.name, f.role) for f in run.files], [
+            f.name for f in run.fitting_files
+        ]
+
+    local = source_for(tmp_path, ipts="IPTS-00001").inventory()
+    assert shape(memory.inventory()) == shape(local)
