@@ -1457,6 +1457,103 @@ def data_check_command(**kwargs: object) -> None:
     run_check(**kwargs)  # type: ignore[arg-type]
 
 
+@main.group("experiment")
+def experiment_group() -> None:
+    """The experiment's runs, organized into samples (also: nrw serve).
+
+    The data folder is watched for new runs; the catalog in experiment/ says
+    which sample each belongs to and renders each managed sample's sample.md;
+    `apply` copies the data and writes the files.
+    """
+
+
+@experiment_group.command("status")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_status_command(**kwargs: object) -> None:
+    """What the data source holds, what the catalog says, what is unassigned."""
+    from nr_workbench.commands.experiment_cmd import run_status
+
+    run_status(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("assign")
+@click.argument("runs", nargs=-1, required=True)
+@click.option("--sample", default=None, help="The sample these runs belong to.")
+@click.option("--unassign", is_flag=True, help="Take the runs out of any sample.")
+@click.option(
+    "--type", "measurement", default=None, help="Measurement type, e.g. 'full Q'."
+)
+@click.option(
+    "--condition", default=None, help="Condition, e.g. 'OCV' or '-0.5 mA/cm2'."
+)
+@click.option(
+    "--note", default=None, help="A note for the page (not written to sample.md)."
+)
+@click.option("--exclude", is_flag=True, help="Record the runs as not used.")
+@click.option("--include", is_flag=True, help="Record the runs as used again.")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+def experiment_assign_command(**kwargs: object) -> None:
+    """Record which sample RUNS belong to, and how they were measured."""
+    from nr_workbench.commands.experiment_cmd import run_assign
+
+    run_assign(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("apply")
+@click.argument("samples", nargs=-1)
+@click.option(
+    "--write", is_flag=True, help="Carry the plan out; without it, only show it."
+)
+@click.option(
+    "--confirm",
+    multiple=True,
+    metavar="RUN",
+    help="Copy this unconfirmed run anyway (it settled, but nothing shows it ended).",
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_apply_command(**kwargs: object) -> None:
+    """Copy assigned data into samples/ and render each managed sample.md.
+
+    Shows what it would do unless --write is given. Nothing is overwritten:
+    a re-reduced source, an edited copy or a hand-edited sample.md is
+    reported, and exits non-zero, rather than replaced.
+    """
+    from nr_workbench.commands.experiment_cmd import run_apply
+
+    run_apply(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("adopt")
+@click.argument("samples", nargs=-1)
+@click.option(
+    "--write", is_flag=True, help="Record in the catalog; without it, only show."
+)
+@click.option(
+    "--rewrite",
+    is_flag=True,
+    help="Also replace sample.md with the catalog's rendering (backed up first).",
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_adopt_command(**kwargs: object) -> None:
+    """Bring hand-written samples into the catalog, or pull hand edits back."""
+    from nr_workbench.commands.experiment_cmd import run_adopt
+
+    run_adopt(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("release")
+@click.argument("sample")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+def experiment_release_command(**kwargs: object) -> None:
+    """Make SAMPLE's sample.md yours again: no nrw command will rewrite it."""
+    from nr_workbench.commands.experiment_cmd import run_release
+
+    run_release(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("import")
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")

@@ -19,7 +19,7 @@ DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 #: Command groups, so `nrw model generate` is read as two words and
 #: `nrw whence <path>` as one followed by an argument.
-GROUPS = {"data", "model", "sample", "fit", "tnr", "skills"}
+GROUPS = {"data", "model", "sample", "fit", "tnr", "skills", "experiment"}
 
 
 def commands_in(text: str) -> set[tuple[str, ...]]:

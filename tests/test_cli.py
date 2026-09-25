@@ -77,7 +77,9 @@ def test_help_does_not_import_heavy_modules() -> None:
     )
 
 
-@pytest.mark.parametrize("group", ["aure", "model", "fit", "sample", "data"])
+@pytest.mark.parametrize(
+    "group", ["aure", "model", "fit", "sample", "data", "experiment"]
+)
 def test_group_help_does_not_import_heavy_modules(group: str) -> None:
     """A group's own `--help` must stay as cheap as the top-level one.
 

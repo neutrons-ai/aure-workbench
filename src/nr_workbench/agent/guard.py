@@ -67,6 +67,14 @@ _REASONS = {
         "say in ESCALATIONS.md that it is ready to run, and stop. "
         "`nrw aure run --dry-run` is allowed and validates it."
     ),
+    "experiment": (
+        "Which sample a run belongs to, under what condition, and whether it "
+        "is used at all are a person's claims about the experiment -- like a "
+        "promotion, they decide what every later fit is built from. Write in "
+        "ESCALATIONS.md what you would assign or apply, and why, and stop. "
+        "`nrw experiment status`, and `apply` or `adopt` without --write, "
+        "are allowed: they show what would happen and change nothing."
+    ),
     "nested": (
         "`nrw init --nested` was refused because an ancestor directory is "
         "already a project -- this would create a second nrw.toml, a second "
@@ -186,6 +194,12 @@ def _judge_text(piece: str) -> Verdict:
     """
     if not re.search(r"(?<![\w./-])(nrw|nr-workbench)(?![\w-])", piece):
         return Verdict(allowed=True)
+    experiment = re.search(r"(?<![\w-])experiment(?![\w-])", piece)
+    if experiment and re.search(
+        r"(?<![\w-])(assign|release)(?![\w-])|--write(?![\w-])",
+        piece[experiment.end() :],
+    ):
+        return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
     for pattern, rule in (
         (r"(?<![\w-])promote(?![\w-])", "promote"),
         (r"--upload(?![\w-])", "upload"),
@@ -223,6 +237,12 @@ def _judge_one(tokens: list[str]) -> Verdict:
 
     if "promote" in subcommands:
         return Verdict(allowed=False, rule="promote", reason=_REASONS["promote"])
+
+    if "experiment" in subcommands and (
+        {"assign", "release"} & set(subcommands)
+        or ({"apply", "adopt"} & set(subcommands) and "--write" in flags)
+    ):
+        return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
 
     if "isaac" in subcommands and "--upload" in flags:
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
@@ -348,8 +368,8 @@ def refuse_if_agent(action: str) -> None:
     configured is still protected and a hook that was bypassed still is.
 
     Args:
-        action: ``promote``, ``upload``, ``force``, ``nested`` or
-            ``aure-run``.
+        action: ``promote``, ``upload``, ``force``, ``nested``,
+            ``aure-run`` or ``experiment``.
 
     Raises:
         click.ClickException: When ``NRW_AGENT`` is set.
