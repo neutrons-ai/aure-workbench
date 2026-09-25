@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -57,7 +58,8 @@ def atomic_write_bytes(
 
     The temp file is unique to this call, so two writers never write into one
     another's; it is fsynced before the rename, so a crash cannot leave a
-    renamed but empty file; and it is removed if anything fails.
+    renamed but empty file; it is removed if anything fails; and the replaced
+    file's permission bits are kept.
 
     Args:
         target: The file to replace.
@@ -74,6 +76,11 @@ def atomic_write_bytes(
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
+        # The file keeps its permissions. The temp file has this process's
+        # umask, and a group-writable nrw.toml in a shared project would
+        # otherwise come back writable by its owner alone.
+        with suppress(FileNotFoundError):
+            os.chmod(temp, stat.S_IMODE(os.stat(target).st_mode))
         os.replace(temp, target)
     finally:
         temp.unlink(missing_ok=True)

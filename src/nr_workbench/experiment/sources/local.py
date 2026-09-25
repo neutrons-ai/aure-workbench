@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.arrival import fingerprint_entries, segment_problems
-from nr_workbench.experiment.config import normalize_ipts
 from nr_workbench.experiment.inventory import Inventory, SourceFile, SourceRun
 from nr_workbench.experiment.model import RunKey, clean_title_snapshot
 from nr_workbench.experiment.sources import SourceChangedError, SourceFileTooLarge
@@ -42,6 +41,7 @@ from nr_workbench.instrument.reduced import (
     parse_segment_name,
 )
 from nr_workbench.problems import Problem
+from nr_workbench.project.settings import normalize_ipts
 
 #: How many file headers to remember between polls. A beamtime folder holds a
 #: few thousand files; this keeps every one of them without growing forever.

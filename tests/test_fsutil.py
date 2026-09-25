@@ -104,3 +104,18 @@ def test_advisory_lock_excludes_a_second_holder(tmp_path: Path) -> None:
     other.join(timeout=5)
 
     assert acquired == [True]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_atomic_write_bytes_keeps_the_files_mode(tmp_path: Path) -> None:
+    """A group-writable file in a shared project stays group-writable."""
+    target = tmp_path / "nrw.toml"
+    target.write_bytes(b"old\n")
+    target.chmod(0o664)
+    old_umask = os.umask(0o077)
+    try:
+        atomic_write_bytes(target, b"new\n")
+    finally:
+        os.umask(old_umask)
+
+    assert target.stat().st_mode & 0o777 == 0o664

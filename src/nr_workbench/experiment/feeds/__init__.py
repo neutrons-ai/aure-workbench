@@ -65,7 +65,7 @@ def open_feed(config: Any) -> RunFeed:
         FeedUnavailableError: For a kind that is planned but not built, or not
             known at all.
     """
-    from nr_workbench.experiment.config import FEED_KINDS, PLANNED_FEED_KINDS
+    from nr_workbench.project.settings import FEED_KINDS, PLANNED_FEED_KINDS
 
     if config.kind == "directory":
         from nr_workbench.experiment.feeds.directory import DirectoryFeed

@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 import click
 
-from nr_workbench.harness import DEFAULT_HARNESSES, resolve
-from nr_workbench.project.render import RenderContext, render_tree
+from nr_workbench.harness import resolve
+from nr_workbench.project.render import RenderContext, init_context, render_tree
 from nr_workbench.project.scaffold import (
     LockProblemError,
     Outcome,
@@ -225,7 +225,7 @@ def run_init(
         _refuse_if_nested(root, allow=nested)
 
     try:
-        context = _build_context(
+        context = init_context(
             root,
             project_name=project_name,
             beamtime=beamtime,
@@ -431,71 +431,6 @@ def _refuse_if_nested(root: Path, *, allow: bool) -> None:
         "If you meant to add a sample to the existing project, use "
         "`nrw sample new <ID>` instead.\n"
         "If you really want a project here, pass --nested."
-    )
-
-
-def _build_context(
-    root: Path,
-    *,
-    project_name: str | None,
-    beamtime: str | None,
-    ipts: str | None,
-    harnesses: tuple[str, ...] = (),
-) -> RenderContext:
-    """Build the render context, preserving existing project identity.
-
-    Re-running `init` must be a genuine no-op when nothing has changed. Two
-    things would otherwise break that:
-
-    * ``created`` is stamped into ``nrw.toml`` and ``README.md``. Regenerating
-      it every run makes those files differ on every invocation, so `init`
-      reports an upgrade forever -- and the field would come to mean "last
-      init" rather than "created", which is not what a provenance record wants.
-    * Omitting ``--beamtime`` on a later run would silently blank a value the
-      user set on the first one.
-
-    So existing values win unless explicitly overridden on the command line.
-
-    Args:
-        root: Project root, which may or may not already hold an ``nrw.toml``.
-        project_name: Explicit project name, or None to keep/derive it.
-        beamtime: Explicit beamtime label, or None to keep the existing one.
-        ipts: Explicit IPTS identifier, or None to keep the existing one.
-        harnesses: Explicit harness names from ``--harness``, or empty to keep
-            what the project records.
-
-    Returns:
-        The render context to scaffold with.
-    """
-    from nr_workbench.project.config import ProjectConfigError, load_config
-
-    existing = None
-    if (root / "nrw.toml").is_file():
-        try:
-            existing = load_config(root)
-        except ProjectConfigError:
-            # A malformed nrw.toml must not block a repair run; fall back to
-            # defaults and let the scaffold offer a fresh copy alongside it.
-            existing = None
-
-    created = ""
-    if existing is not None:
-        created = str(existing.raw.get("project", {}).get("created", "") or "")
-
-    # --harness wins, then what the project already records, then the default.
-    # Resolving here rather than at the call site normalises order and case, so
-    # `--harness copilot --harness claude` and a reordered nrw.toml both plan
-    # the same files in the same sequence.
-    selected = harnesses or (existing.harnesses if existing else DEFAULT_HARNESSES)
-
-    return RenderContext(
-        project_name=project_name or (existing.name if existing else root.name),
-        facility=existing.facility if existing else "SNS",
-        instrument=existing.instrument if existing else "REF_L",
-        beamtime=beamtime or (existing.beamtime if existing else None),
-        ipts=ipts or (existing.ipts if existing else None),
-        created=created,
-        harnesses=tuple(h.name for h in resolve(selected)),
     )
 
 

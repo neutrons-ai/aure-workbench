@@ -22,7 +22,6 @@ eliminates the right suspect while changing nothing.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,6 +31,19 @@ from nr_workbench.problems import Problem
 from nr_workbench.project.config import (
     DEFAULT_EXPERIMENT_LOCATION,
     DEFAULT_EXPERIMENT_POLL_SECONDS,
+)
+
+# What can be set, and which choices exist yet, is defined below this package
+# so the scaffold and the Settings page share it; re-exported under the names
+# this package has always used.
+from nr_workbench.project.settings import (  # noqa: F401 - re-exported
+    CATALOG_KINDS,
+    FEED_KINDS,
+    PLANNED_CATALOG_KINDS,
+    PLANNED_FEED_KINDS,
+    PLANNED_SOURCE_KINDS,
+    SOURCE_KINDS,
+    normalize_ipts,
 )
 
 #: The defaults, under the names this module uses. Each is defined once, where
@@ -44,27 +56,11 @@ from nr_workbench.project.config import (
 DEFAULT_LOCATION = DEFAULT_EXPERIMENT_LOCATION
 DEFAULT_POLL_SECONDS = DEFAULT_EXPERIMENT_POLL_SECONDS
 
-#: The data sources nrw can read, and the ones that are planned.
-SOURCE_KINDS = ("local",)
-PLANNED_SOURCE_KINDS = ("tiled",)
-
-#: The ways nrw can learn that a run exists, and the ones that are planned.
-FEED_KINDS = ("directory",)
-PLANNED_FEED_KINDS = ("monitor", "tiled")
-
-#: Where the catalog can be kept, and the ones that are planned.
-CATALOG_KINDS = ("parquet",)
-PLANNED_CATALOG_KINDS = ("api",)
-
 _KNOWN_KEYS = {
     "source": {"kind", "location", "settle_seconds"},
     "feed": {"kind", "poll_seconds"},
     "catalog": {"kind"},
 }
-
-#: An IPTS as written in nrw.toml: ``IPTS-34347``, ``ipts-34347`` or ``34347``.
-_IPTS_RE = re.compile(r"(?:IPTS-)?([0-9]+)", re.IGNORECASE | re.ASCII)
-
 
 @dataclass(frozen=True)
 class SourceConfig:
@@ -119,22 +115,6 @@ class ExperimentConfig:
     feed: FeedConfig = field(default_factory=FeedConfig)
     catalog_kind: str = "parquet"
     problems: tuple[Problem, ...] = ()
-
-
-def normalize_ipts(value: Any) -> str | None:
-    """``34347`` / ``ipts-34347`` / ``IPTS-34347`` -> ``IPTS-34347``.
-
-    Returns:
-        The normalized identifier, or ``None`` when ``value`` is empty or is
-        not an IPTS number.
-    """
-    if value is None:
-        return None
-    text = str(value).strip()
-    match = _IPTS_RE.fullmatch(text)
-    # The digits exactly as written. `int()` would turn IPTS-00001 into
-    # IPTS-1 -- a different directory from the one the person typed.
-    return f"IPTS-{match.group(1)}" if match else None
 
 
 def experiment_config(project: Any) -> ExperimentConfig:
