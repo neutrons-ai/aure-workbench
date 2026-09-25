@@ -8,23 +8,25 @@ directly over a scientist's edits.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from jinja2 import StrictUndefined, Template
+from jinja2 import Environment, StrictUndefined
 
 from nr_workbench import __version__
-from nr_workbench.arrival import DEFAULT_SETTLE_SECONDS
 from nr_workbench.harness import DEFAULT_HARNESSES, agent_dirs, resolve
-from nr_workbench.project.config import (
-    CONTRACT_VERSION,
-    DEFAULT_EXPERIMENT_LOCATION,
-    DEFAULT_EXPERIMENT_POLL_SECONDS,
-)
+from nr_workbench.project.audience import DEFAULTS as AUDIENCE_DEFAULTS
+from nr_workbench.project.config import CONTRACT_VERSION
 from nr_workbench.project.scaffold import PlannedFile
+from nr_workbench.project.settings import experiment_block, written_experiment
+from nr_workbench.project.tomlfile import Value, toml_value
+
+#: The keys of ``[audience]`` nrw writes, in the order the template has them.
+AUDIENCE_KEYS = (*AUDIENCE_DEFAULTS, "notes")
 
 #: Bump when a template's *content* changes, so existing projects pick it up on
 #: the next `nrw init`. Files the user has edited are still never overwritten.
@@ -127,6 +129,10 @@ class RenderContext:
             matching editor extensions.
         prose: What the experiment catalog writes into ``sample.md``; empty for
             a sample it does not manage.
+        audience: ``[audience]`` values as the project already has them; an
+            axis not given renders at its default.
+        experiment: The experiment settings the project already has, by
+            table; see :func:`nr_workbench.project.settings.experiment_block`.
     """
 
     project_name: str
@@ -139,6 +145,8 @@ class RenderContext:
     created: str = ""
     harnesses: tuple[str, ...] = DEFAULT_HARNESSES
     prose: SampleProse = field(default_factory=SampleProse)
+    audience: Mapping[str, str] = field(default_factory=dict)
+    experiment: Mapping[str, Mapping[str, Value]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """Return the template variables, filling in derived defaults.
@@ -165,13 +173,14 @@ class RenderContext:
                 for harness in resolve(self.harnesses)
                 if harness.vscode_extension
             ],
-            # The scaffolded nrw.toml documents the experiment's defaults.
-            # Rendered from the constants the code uses, not copied into the
-            # template: the location is provisional and will move, and a
+            # What nrw itself writes into nrw.toml, rendered from what the
+            # file already says, so that a change made through nrw -- `nrw
+            # audience`, the Settings page -- leaves `nrw init` nothing to do.
+            # The experiment block documents nrw's defaults from the constants
+            # the code uses: the location is provisional and will move, and a
             # documented default that differs from the real one misleads.
-            "experiment_location": DEFAULT_EXPERIMENT_LOCATION,
-            "experiment_settle_seconds": DEFAULT_SETTLE_SECONDS,
-            "experiment_poll_seconds": DEFAULT_EXPERIMENT_POLL_SECONDS,
+            "audience": {**AUDIENCE_DEFAULTS, "notes": "", **self.audience},
+            "experiment_block": experiment_block(self.experiment),
             # Always defined, so StrictUndefined still catches a typo in a
             # template rather than rendering an empty section.
             "managed": self.prose.managed,
@@ -241,6 +250,20 @@ def init_context(
     # the same files in the same sequence.
     selected = harnesses or (existing.harnesses if existing else DEFAULT_HARNESSES)
 
+    # What nrw writes into nrw.toml besides the identity above: written back
+    # as the file already has it, as a person's value always is here.
+    audience: dict[str, str] = {}
+    experiment: dict[str, dict[str, Value]] = {}
+    if existing is not None:
+        block = existing.raw.get("audience")
+        if isinstance(block, dict):
+            audience = {
+                key: value
+                for key, value in block.items()
+                if key in AUDIENCE_KEYS and isinstance(value, str)
+            }
+        experiment = written_experiment(existing.raw)
+
     return RenderContext(
         project_name=project_name or (existing.name if existing else root.name),
         facility=existing.facility if existing else "SNS",
@@ -249,6 +272,8 @@ def init_context(
         ipts=ipts or (existing.ipts if existing else None),
         created=created,
         harnesses=tuple(h.name for h in resolve(selected)),
+        audience=audience,
+        experiment=experiment,
     )
 
 
@@ -270,6 +295,29 @@ def templates_root() -> Path:
             "[tool.setuptools.package-data] in pyproject.toml."
         )
     return root
+
+
+def _environment() -> Environment:
+    r"""The Jinja environment every packaged template renders in.
+
+    StrictUndefined: a typo'd variable must fail loudly at scaffold time, not
+    silently produce an empty field in a config file.
+
+    keep_trailing_newline: Jinja drops the final newline by default, so every
+    rendered file shipped without one -- git reports "\ No newline at end
+    of file" on each of them, and a scaffolded project's own
+    `end-of-file-fixer` would rewrite them on its first commit.
+
+    The ``toml`` filter: every value nrw.toml.j2 writes goes through it. A
+    folder name or a beamtime label containing ``"`` or ``\`` otherwise
+    makes the whole file unreadable, and every nrw command with it.
+    """
+    environment = Environment(undefined=StrictUndefined, keep_trailing_newline=True)
+    environment.filters["toml"] = toml_value
+    return environment
+
+
+_TEMPLATES = _environment()
 
 
 def render_tree(
@@ -310,20 +358,8 @@ def render_tree(
             relative = relative[: -len(JINJA_SUFFIX)]
             raw = source.read_text(encoding="utf-8")
             try:
-                # StrictUndefined: a typo'd variable must fail loudly at scaffold
-                # time, not silently produce an empty field in a config file.
-                #
-                # keep_trailing_newline: Jinja drops the final newline by
-                # default, so every rendered file shipped without one -- git
-                # reports "\ No newline at end of file" on each of them, and a
-                # scaffolded project's own `end-of-file-fixer` would rewrite
-                # them on its first commit. Only visible once a file that
-                # previously had one (.vscode/extensions.json) became a
-                # template; the .md and .toml ones had been missing it since
-                # the beginning.
-                content = Template(
-                    raw, undefined=StrictUndefined, keep_trailing_newline=True
-                ).render(**variables)
+                # The environment's settings are explained in `_environment`.
+                content = _TEMPLATES.from_string(raw).render(**variables)
             except Exception as exc:
                 raise TemplateError(f"Failed to render {source}: {exc}") from exc
             data = content.encode("utf-8")

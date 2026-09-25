@@ -484,15 +484,15 @@ def test_uncommenting_the_scaffolded_experiment_block_changes_nothing(
     toml = project / "nrw.toml"
     text = toml.read_text(encoding="utf-8")
     lines = text.splitlines()
+    # The block is the file's last lines: each table commented out, a blank
+    # line between them.
     start = lines.index("# [experiment.source]")
-    block = []
-    for line in lines[start:]:
-        if not line.startswith("#"):
-            break
-        block.append(line.removeprefix("#").removeprefix(" "))
+    block = [line.removeprefix("#").removeprefix(" ") for line in lines[start:]]
     default = experiment_config(load_config(project))
 
-    toml.write_text(text + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+    toml.write_text(
+        "\n".join(lines[:start] + block) + "\n", encoding="utf-8"
+    )
     configured = experiment_config(load_config(project))
 
     assert "[experiment.feed]" in block and "[experiment.source]" in block

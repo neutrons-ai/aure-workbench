@@ -115,7 +115,18 @@ def load_config(root: Path) -> ProjectConfig:
         with config_path.open("rb") as handle:
             document = tomllib.load(handle)
     except tomllib.TOMLDecodeError as exc:
-        raise ProjectConfigError(f"{config_path} is not valid TOML: {exc}") from exc
+        hint = ""
+        if "twice" in str(exc) or "overwrite" in str(exc):
+            # The likely cause: a table added below one the file already has
+            # -- by following advice to "add [experiment.source]" to a file
+            # where it is already written out.
+            hint = (
+                " A table or key is set twice: keep one, and move its settings "
+                "into it."
+            )
+        raise ProjectConfigError(
+            f"{config_path} is not valid TOML: {exc}.{hint}"
+        ) from exc
 
     project = document.get("project", {})
     beamtime = document.get("beamtime", {})

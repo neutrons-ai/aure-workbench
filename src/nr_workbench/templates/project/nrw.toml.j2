@@ -1,14 +1,14 @@
 contract_version = {{ contract_version }}
 
 [project]
-name = "{{ project_name }}"
-created = "{{ created }}"
-facility = "{{ facility }}"
-instrument = "{{ instrument }}"
+name = {{ project_name|toml }}
+created = {{ created|toml }}
+facility = {{ facility|toml }}
+instrument = {{ instrument|toml }}
 
 [beamtime]
-label = {% if beamtime %}"{{ beamtime }}"{% else %}""{% endif %}
-ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
+label = {{ beamtime|toml }}
+ipts = {{ ipts|toml }}
 
 # Which coding assistants this project is set up for. Each one reads its
 # instructions, its subagent stubs and its limits from a different place, so
@@ -18,7 +18,7 @@ ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
 # Removing a name never deletes anything -- the files stay where they are and
 # `nrw doctor` reports them as no longer maintained.
 [harness]
-kinds = [{% for name in harnesses %}"{{ name }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+kinds = [{% for name in harnesses %}{{ name|toml }}{% if not loop.last %}, {% endif %}{% endfor %}]
 
 # Who reads what comes out of this project. These change how much an assistant
 # explains and in what order -- they refuse nothing. Set them with
@@ -31,11 +31,11 @@ kinds = [{% for name in harnesses %}"{{ name }}"{% if not loop.last %}, {% endif
 # who wants the statistics spelled out is a real and common reader, and a
 # single novice/expert dial gets that reader wrong twice.
 [audience]
-reflectometry = "practitioner"
-statistics = "practitioner"
-domain = "practitioner"
-role = "collaborates"
-notes = ""
+reflectometry = {{ audience.reflectometry|toml }}
+statistics = {{ audience.statistics|toml }}
+domain = {{ audience.domain|toml }}
+role = {{ audience.role|toml }}
+notes = {{ audience.notes|toml }}
 
 # Filename and instrument conventions for REF_L / BL-4B.
 #
@@ -66,18 +66,15 @@ tnr_theta = 0.6
 dq_convention = "per-file, read from the header"
 
 # The experiment: where its runs are read from, and how new ones are noticed.
-# `nrw experiment status` shows what is found, and names any key below it does
-# not recognise -- a setting that changes nothing is never silently accepted.
+# Set these on the Settings page of `nrw serve`, or here. `nrw experiment
+# status` shows what they find, and names any key it does not recognise -- a
+# setting that changes nothing is never silently accepted.
 #
-# The location is PROVISIONAL: it is where REF_L's new_reduction pipeline
-# writes today, and it is expected to move. `{ipts}` is filled from
-# [beamtime] ipts. Uncomment and edit to point somewhere else.
+# A setting left commented out follows nrw's default, shown beside it; once
+# one of a table's settings is set, the table is written out. Edit that table
+# rather than adding a second one: TOML allows each table once. The default
+# location is PROVISIONAL: it is where REF_L's new_reduction pipeline writes
+# today, and it is expected to move. `{ipts}` is filled from [beamtime] ipts.
+# The "directory" feed notices a run when its reduced files appear.
 #
-# [experiment.source]
-# kind = "local"
-# location = "{{ experiment_location }}"
-# settle_seconds = {{ experiment_settle_seconds }}
-#
-# [experiment.feed]
-# kind = "directory"   # a run is noticed when its reduced files appear
-# poll_seconds = {{ experiment_poll_seconds }}
+{{ experiment_block }}
