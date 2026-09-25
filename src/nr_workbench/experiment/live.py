@@ -176,6 +176,7 @@ class LiveInventory:
         self._resume = threading.Event()
         self._idle = threading.Event()
         self._stop = threading.Event()
+        self._closed = False
         self._thread: threading.Thread | None = None
         self._thread_lock = threading.Lock()
 
@@ -384,7 +385,7 @@ class LiveInventory:
     def touch(self) -> None:
         """Note a request: start polling if idle, keep polling if not."""
         self._last_request = self.clock()
-        if not self.autostart:
+        if not self.autostart or self._closed:
             return
         # Requests arrive on many threads at once; only one may start the
         # scanner, or two would poll the mount in parallel.
@@ -402,8 +403,19 @@ class LiveInventory:
         self._stop.set()
         self._resume.set()
 
+    def close(self) -> None:
+        """Stop for good: a closed inventory never polls again, whoever asks.
+
+        For an inventory whose configuration has been replaced. :meth:`stop`
+        alone is not enough: the next request still holding this inventory
+        would start its thread again, and it would go on polling the old
+        folder for as long as that request's page stayed open.
+        """
+        self._closed = True
+        self.stop()
+
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop.is_set() and not self._closed:
             if self.clock() - self._last_request > self.idle_after:
                 self._resume.clear()
                 # Re-check after clearing: a request that arrived between the

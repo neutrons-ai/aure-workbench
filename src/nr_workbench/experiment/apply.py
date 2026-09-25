@@ -367,7 +367,7 @@ def plan_apply(
             )
     return ApplyPlan(
         samples=tuple(plans),
-        plan_id=_plan_id(plans, catalog),
+        plan_id=_plan_id(plans, catalog, source),
         problems=tuple(problems),
     )
 
@@ -694,8 +694,13 @@ def _describe_md(outcome: Outcome) -> str:
     }.get(outcome, str(outcome))
 
 
-def _plan_id(plans: Iterable[SamplePlan], catalog: Catalog) -> str:
+def _plan_id(plans: Iterable[SamplePlan], catalog: Catalog, source: Any) -> str:
     digest = hashlib.sha256()
+    # Which data source, too: a plan reviewed against one folder must never be
+    # carried out against another after the settings change in between.
+    describe = getattr(source, "describe", None)
+    identity = describe() if callable(describe) else {}
+    digest.update(json.dumps(identity, sort_keys=True, default=str).encode())
     for plan in plans:
         digest.update(
             json.dumps(

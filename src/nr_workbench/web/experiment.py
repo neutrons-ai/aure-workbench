@@ -23,10 +23,13 @@ agent guard, so that forgetting one is not a hole.
 from __future__ import annotations
 
 import concurrent.futures
+import dataclasses
+import functools
 import hashlib
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +105,67 @@ class SourceTimeoutError(TimeoutError):
     """The data source did not answer in time -- usually a dead mount."""
 
 
+def _bounded_call(
+    pool: concurrent.futures.ThreadPoolExecutor,
+    function: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    """Run ``function`` in ``pool``, waiting at most :data:`SOURCE_TIMEOUT`.
+
+    Raises:
+        SourceTimeoutError: It did not finish in time. A call still waiting
+            for a worker is cancelled, so waits do not pile up behind a
+            mount that has stopped answering.
+    """
+    future = pool.submit(function, *args, **kwargs)
+    try:
+        return future.result(timeout=SOURCE_TIMEOUT)
+    except (concurrent.futures.TimeoutError, TimeoutError) as exc:
+        future.cancel()
+        raise SourceTimeoutError(
+            f"The data source did not answer within {SOURCE_TIMEOUT:.0f}s; "
+            "the data mount may be unavailable."
+        ) from exc
+
+
+def _digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+@dataclass(frozen=True)
+class _Wiring:
+    """Everything that reads the data source, for one version of ``nrw.toml``.
+
+    Attributes:
+        stamp: ``nrw.toml``'s modification time and size, for a cheap check.
+        revision: Its sha256, to tell an edit from a touch.
+        workspace: Source, feed and catalog store built from it.
+        source: The source, every byte read bounded.
+        live: The background poller over that source.
+        pool: The workers the bounded reads run on.
+    """
+
+    stamp: tuple[int, int] | None
+    revision: str | None
+    workspace: Any
+    source: _BoundedSource
+    live: Any
+    pool: concurrent.futures.ThreadPoolExecutor
+
+    def bounded(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run ``function`` on this wiring's workers, with the deadline."""
+        return _bounded_call(self.pool, function, *args, **kwargs)
+
+    def close(self) -> None:
+        """Retire it: its poller stops for good, and queued reads are dropped."""
+        self.live.close()
+        self.pool.shutdown(wait=False, cancel_futures=True)
+
+
 class ExperimentData:
     """The experiment of one project, shaped for the page.
 
@@ -128,53 +192,104 @@ class ExperimentData:
         self.why_read_only = why_read_only
         self._clock = clock
         self._autostart = autostart
-        self._workspace: Any = None
-        self._source: Any = None
-        self._live: Any = None
+        self._wiring: _Wiring | None = None
+        self._config_problem: Problem | None = None
         self._lock = threading.Lock()
-        self._pool = concurrent.futures.ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="nrw-source-read"
-        )
 
     # ------------------------------------------------------------------
     # Wiring, lazily: `nrw serve` must not touch the data mount at start-up
     # ------------------------------------------------------------------
 
+    def _wired(self) -> _Wiring:
+        """The wiring for ``nrw.toml`` as it is now, rebuilt when it changes.
+
+        A stat on every request, and a digest only when the stat moved: a
+        save from the Settings page, a hand edit, or ``nrw experiment
+        settings`` then takes effect without a restart. An edit that cannot be
+        parsed keeps the last good wiring and says so, rather than dropping the
+        page to "no data location" while someone is halfway through typing.
+        """
+        from nr_workbench.project.config import ProjectConfigError, load_config
+
+        config = self.root / "nrw.toml"
+        try:
+            info = config.stat()
+            stamp: tuple[int, int] | None = (info.st_mtime_ns, info.st_size)
+        except OSError:
+            stamp = None
+        with self._lock:
+            current = self._wiring
+            if current is not None and current.stamp == stamp:
+                return current
+            revision = _digest(config)
+            if current is not None and revision == current.revision:
+                # Touched, or put back as it was: the wiring is what the file
+                # says, so any complaint about an unreadable edit is over.
+                self._config_problem = None
+                self._wiring = dataclasses.replace(current, stamp=stamp)
+                return self._wiring
+            if current is not None:
+                try:
+                    load_config(self.root)
+                except ProjectConfigError as exc:
+                    self._config_problem = Problem(
+                        "config",
+                        f"{exc} Still using the settings nrw.toml had before.",
+                    )
+                    self._wiring = dataclasses.replace(current, stamp=stamp)
+                    return self._wiring
+            self._config_problem = None
+            self._wiring = self._build(stamp, revision)
+        if current is not None:
+            current.close()
+        return self._wiring
+
+    def _build(self, stamp: tuple[int, int] | None, revision: str | None) -> _Wiring:
+        """Everything that reads the data source, for one configuration.
+
+        Built in one step and handed to a request whole, so no request pairs a
+        poller made from one ``nrw.toml`` with a source made from another.
+        Building touches nothing on the data mount: the poller starts on the
+        first request that asks for it.
+        """
+        from nr_workbench.experiment.workspace import Workspace
+
+        workspace = Workspace(self.root)
+        # A pool per wiring: two reads stuck on a mount that has gone away
+        # must not also be the only two workers the next folder gets.
+        pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="nrw-source-read"
+        )
+        return _Wiring(
+            stamp=stamp,
+            revision=revision,
+            workspace=workspace,
+            source=_BoundedSource(workspace.source, functools.partial(_bounded_call, pool)),
+            live=workspace.live(clock=self._clock, autostart=self._autostart),
+            pool=pool,
+        )
+
     @property
     def workspace(self) -> Any:
-        """The project's experiment workspace, built on first use."""
-        with self._lock:
-            if self._workspace is None:
-                from nr_workbench.experiment.workspace import Workspace
-
-                self._workspace = Workspace(self.root)
-            return self._workspace
+        """The project's experiment workspace, for the current ``nrw.toml``."""
+        return self._wired().workspace
 
     @property
     def source(self) -> Any:
-        """The data source, with every byte read bounded by :data:`SOURCE_TIMEOUT`."""
-        workspace = self.workspace
-        with self._lock:
-            if self._source is None:
-                self._source = _BoundedSource(workspace.source, self._bounded)
-            return self._source
+        """The data source, every byte read bounded by :data:`SOURCE_TIMEOUT`."""
+        return self._wired().source
 
     @property
     def live(self) -> Any:
-        """The background poller, built on first use."""
-        workspace = self.workspace
-        with self._lock:
-            if self._live is None:
-                self._live = workspace.live(
-                    clock=self._clock, autostart=self._autostart
-                )
-            return self._live
+        """The background poller for the current ``nrw.toml``."""
+        return self._wired().live
 
     def stop(self) -> None:
         """Stop polling. For tests and shutdown."""
-        if self._live is not None:
-            self._live.stop()
-        self._pool.shutdown(wait=False, cancel_futures=True)
+        with self._lock:
+            wiring, self._wiring = self._wiring, None
+        if wiring is not None:
+            wiring.close()
 
     # ------------------------------------------------------------------
     # Reading
@@ -187,9 +302,10 @@ class ExperimentData:
             The source, feed and catalog, every run (from the source, the feed
             or the catalog), every sample, and the cursor for :meth:`changes`.
         """
-        workspace = self.workspace
-        changes = self.live.changes(None)
-        catalog, catalog_problems, readable = self._catalog()
+        w = self._wired()
+        workspace = w.workspace
+        changes = w.live.changes(None)
+        catalog, catalog_problems, readable = self._catalog(w)
         rows = {view.key: self._row(view.key, view, catalog) for view in changes.runs}
         for key in catalog.runs:
             if key not in rows:
@@ -201,7 +317,7 @@ class ExperimentData:
             "feed": workspace.feed.describe(),
             "catalog": {
                 **workspace.store.describe(),
-                "version": self._catalog_version(),
+                "version": self._catalog_version(w),
                 "readable": readable,
             },
             # A catalog that cannot be read must not be edited: saving over it
@@ -215,7 +331,12 @@ class ExperimentData:
             "samples": self._samples(catalog),
             "problems": [
                 p.as_dict()
-                for p in (*workspace.problems, *catalog_problems, *changes.problems)
+                for p in (
+                    *self._config_problems(),
+                    *workspace.problems,
+                    *catalog_problems,
+                    *changes.problems,
+                )
             ],
         }
 
@@ -228,16 +349,20 @@ class ExperimentData:
             what the page holds, someone else edited the catalog and the page
             should reload it.
         """
-        changes = self.live.changes(since)
-        catalog, catalog_problems, _ = self._catalog()
+        w = self._wired()
+        changes = w.live.changes(since)
+        catalog, catalog_problems, _ = self._catalog(w)
         return {
             "cursor": changes.cursor,
             "resync": changes.resync,
             "runs": [self._row(v.key, v, catalog) for v in changes.runs],
             "removed": [k.slug() for k in changes.removed],
-            "catalog_version": self._catalog_version(),
+            "catalog_version": self._catalog_version(w),
             "scan": _scan(changes),
-            "problems": [p.as_dict() for p in (*catalog_problems, *changes.problems)],
+            "problems": [
+                p.as_dict()
+                for p in (*self._config_problems(), *catalog_problems, *changes.problems)
+            ],
         }
 
     def curves(self, run: int) -> dict[str, Any]:
@@ -247,16 +372,17 @@ class ExperimentData:
             RunNotListedError: If the source does not list the run.
             SourceTimeoutError: If the source does not answer in time.
         """
+        w = self._wired()
         from nr_workbench.experiment.apply import MAX_FILE_BYTES
         from nr_workbench.web.readers import read_reduced_bytes
 
         key = RunKey.parse(run)
-        view = self.live.snapshot().runs.get(key)
+        view = w.live.snapshot().runs.get(key)
         if view is None or view.source is None:
             raise RunNotListedError(f"The data source does not list run {key.run}.")
         curves = []
         problems = []
-        source = self.source
+        source = w.source
         files = view.source.files
         if len(files) > MAX_CURVE_FILES:
             problems.append(
@@ -296,6 +422,7 @@ class ExperimentData:
         Raises:
             CatalogValidationError: If the sample id is not usable.
         """
+        w = self._wired()
         from nr_workbench.experiment.render import (
             SampleRenderError,
             plan_sample,
@@ -305,7 +432,7 @@ class ExperimentData:
         from nr_workbench.web.prose import render
 
         validate_sample_id(sample_id)
-        catalog, problems, _ = self._catalog()
+        catalog, problems, _ = self._catalog(w)
         relpath = sample_md_relpath(sample_id)
         path = self.root / relpath
         try:
@@ -313,7 +440,7 @@ class ExperimentData:
                 p
                 for p in plan_sample(
                     self.root,
-                    self.workspace.render_context(),
+                    w.workspace.render_context(),
                     sample_id,
                     catalog=catalog,
                 )
@@ -342,17 +469,18 @@ class ExperimentData:
         self, samples: list[str] | None = None, confirmed: list[Any] | None = None
     ) -> dict[str, Any]:
         """What applying would do, from the latest snapshot. Writes nothing."""
+        w = self._wired()
         from nr_workbench.experiment.apply import plan_apply
 
-        catalog = self._catalog_or_raise()
-        runs, statuses = self._observed(self.live.snapshot())
+        catalog = self._catalog_or_raise(w)
+        runs, statuses = self._observed(w.live.snapshot())
         plan = plan_apply(
             self.root,
             catalog,
             runs,
             statuses,
-            self.source,
-            self.workspace.render_context(),
+            w.source,
+            w.workspace.render_context(),
             samples=_sample_list(samples),
             confirmed=_run_keys(confirmed),
         )
@@ -360,14 +488,15 @@ class ExperimentData:
 
     def adopt_plan(self, sample_id: str) -> dict[str, Any]:
         """What adopting (or pulling) a sample's sample.md would do."""
+        w = self._wired()
         from nr_workbench.experiment.adopt import plan_adopt
 
         validate_sample_id(sample_id)
         plan = plan_adopt(
             self.root,
-            self._catalog_or_raise(),
+            self._catalog_or_raise(w),
             sample_id,
-            self.workspace.render_context(),
+            w.workspace.render_context(),
         )
         return plan.as_dict()
 
@@ -388,10 +517,11 @@ class ExperimentData:
             CatalogValidationError: A rule broken (400).
             RecordConflict: A record changed since the page loaded it (409).
         """
+        w = self._wired()
         self._require_writable()
         if not isinstance(changes, list) or not changes:
             raise RequestError("expected a non-empty list of run changes")
-        snapshot = self.live.snapshot()
+        snapshot = w.live.snapshot()
         run_changes = []
         for item in changes:
             if not isinstance(item, dict):
@@ -415,13 +545,13 @@ class ExperimentData:
                 }
             # base_rev is checked where the catalog changes, not here as well.
             run_changes.append(RunChange(key, item.get("base_rev", 0), fields))
-        catalog = self.workspace.store.update(runs=run_changes)
+        catalog = w.workspace.store.update(runs=run_changes)
         return {
             "runs": [
                 self._row(c.key, snapshot.runs.get(c.key), catalog) for c in run_changes
             ],
             "samples": self._samples(catalog),
-            "catalog_version": self._catalog_version(),
+            "catalog_version": self._catalog_version(w),
         }
 
     def update_sample(self, sample_id: str, payload: Any) -> dict[str, Any]:
@@ -432,6 +562,7 @@ class ExperimentData:
             CatalogValidationError: A rule broken (400).
             RecordConflict: The record changed since the page loaded it (409).
         """
+        w = self._wired()
         self._require_writable()
         validate_sample_id(sample_id)
         if not isinstance(payload, dict):
@@ -448,7 +579,7 @@ class ExperimentData:
         fields = payload.get("fields", {})
         if not isinstance(fields, dict):
             raise RequestError("'fields' must be an object")
-        catalog = self.workspace.store.update(
+        catalog = w.workspace.store.update(
             samples=[
                 SampleChange(
                     sample_id, payload.get("base_rev", 0), fields, delete=delete
@@ -457,7 +588,7 @@ class ExperimentData:
         )
         return {
             "samples": self._samples(catalog),
-            "catalog_version": self._catalog_version(),
+            "catalog_version": self._catalog_version(w),
         }
 
     def apply(
@@ -474,23 +605,24 @@ class ExperimentData:
                 something must be fixed first (409).
             SourceTimeoutError: The source did not answer in time.
         """
+        w = self._wired()
         from nr_workbench.experiment.apply import apply
 
         self._require_writable()
         if not isinstance(plan_id, str) or not plan_id:
             raise RequestError("plan_id is required: review the plan before applying")
-        catalog = self._catalog_or_raise()
+        catalog = self._catalog_or_raise(w)
         # A fresh poll, not the last snapshot: completeness is judged now. In
         # the pool, because the poll itself lists the source.
-        snapshot = self._bounded(self.live.scan_fresh, SOURCE_TIMEOUT)
+        snapshot = w.bounded(w.live.scan_fresh, SOURCE_TIMEOUT)
         runs, statuses = self._observed(snapshot)
         report = apply(
             self.root,
             catalog,
             runs,
             statuses,
-            self.source,
-            self.workspace.render_context(),
+            w.source,
+            w.workspace.render_context(),
             expected_plan_id=plan_id,
             samples=_sample_list(samples),
             confirmed=_run_keys(confirmed),
@@ -499,6 +631,7 @@ class ExperimentData:
 
     def adopt(self, sample_id: str, rewrite: Any, plan_id: Any) -> dict[str, Any]:
         """Adopt (or pull) a sample's sample.md into the catalog, as reviewed."""
+        w = self._wired()
         from nr_workbench.experiment.adopt import adopt, plan_adopt
 
         self._require_writable()
@@ -507,11 +640,11 @@ class ExperimentData:
             raise RequestError("rewrite must be true or false")
         if not isinstance(plan_id, str) or not plan_id:
             raise RequestError("plan_id is required: review the adoption first")
-        context = self.workspace.render_context()
-        plan = plan_adopt(self.root, self._catalog_or_raise(), sample_id, context)
+        context = w.workspace.render_context()
+        plan = plan_adopt(self.root, self._catalog_or_raise(w), sample_id, context)
         report = adopt(
             self.root,
-            self.workspace.store,
+            w.workspace.store,
             plan,
             context,
             rewrite=rewrite,
@@ -527,13 +660,17 @@ class ExperimentData:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _config_problems(self) -> list[Problem]:
+        """The newest ``nrw.toml`` could not be used, if that is so."""
+        return [self._config_problem] if self._config_problem else []
+
     def _require_writable(self) -> None:
         if not self.writable:
             raise WritesDisabledError(
                 self.why_read_only or "This server was started read-only."
             )
 
-    def _catalog(self) -> tuple[Catalog, list[Problem], bool]:
+    def _catalog(self, w: _Wiring) -> tuple[Catalog, list[Problem], bool]:
         """The catalog, its problems, and whether it could be read at all.
 
         An unreadable catalog comes back empty *for display only*, with the
@@ -541,22 +678,22 @@ class ExperimentData:
         """
         from nr_workbench.experiment.store import CatalogError
 
-        store = self.workspace.store
+        store = w.workspace.store
         try:
             catalog, problems = store.load_report()
             return (catalog, list(problems), True)
         except CatalogError as exc:
             return (Catalog(), [Problem("catalog", str(exc))], False)
 
-    def _catalog_or_raise(self) -> Catalog:
-        return self.workspace.store.load()
+    def _catalog_or_raise(self, w: _Wiring) -> Catalog:
+        return w.workspace.store.load()
 
-    def _catalog_version(self) -> str:
+    def _catalog_version(self, w: _Wiring) -> str:
         from nr_workbench.experiment.store import MANIFEST_FILE, RUNS_FILE, SAMPLES_FILE
 
         digest = hashlib.sha256()
         for name in (MANIFEST_FILE, RUNS_FILE, SAMPLES_FILE):
-            path = self.workspace.store.directory / name
+            path = w.workspace.store.directory / name
             try:
                 stat = path.stat()
             except OSError:
@@ -568,16 +705,6 @@ class ExperimentData:
     def _observed(self, snapshot: Any) -> tuple[dict, dict]:
         runs = {k: v.source for k, v in snapshot.runs.items() if v.source is not None}
         return (runs, {k: v.status for k, v in snapshot.runs.items()})
-
-    def _bounded(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        future = self._pool.submit(function, *args, **kwargs)
-        try:
-            return future.result(timeout=SOURCE_TIMEOUT)
-        except (concurrent.futures.TimeoutError, TimeoutError) as exc:
-            raise SourceTimeoutError(
-                f"The data source did not answer within {SOURCE_TIMEOUT:.0f}s; "
-                "the data mount may be unavailable."
-            ) from exc
 
     def _row(self, key: RunKey, view: Any, catalog: Catalog) -> dict[str, Any]:
         return run_row(key, view, catalog.runs.get(key))
