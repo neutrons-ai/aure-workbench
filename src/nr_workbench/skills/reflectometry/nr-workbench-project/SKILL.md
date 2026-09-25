@@ -66,6 +66,7 @@ resolved relative to it — never write an absolute path into a committed file.
 | Measurement register | `samples/<id>/sample.yaml` | Machine. Maintained by `nrw sample scan`. |
 | Reduced steady-state data | `samples/<id>/data/steady/` | Instrument. Committed. Copied here by `nrw experiment apply`, or by hand. |
 | What apply copied, and from which source version | `samples/<id>/data/sources.json` | Machine. Committed. |
+| The IPTS, where the experiment's data is, how new runs are noticed | `nrw.toml` (`[beamtime]`, `[experiment.*]`) | **The scientist**, on the Settings page (`nrw serve`) or `nrw experiment settings --write`. Read it with `nrw experiment settings --json`; never change it unattended. |
 | Copies of runs since excluded or reassigned | `samples/<id>/data/excluded/<run>/` | Machine. Moved there by apply; moved back if the run is included again. |
 | Reduced tNR slices | `samples/<id>/data/tnr/<run>_<binning>/` | Instrument. Committed. |
 | Raw NeXus | `samples/<id>/data/raw/` | Instrument. **Gitignored** (large). |

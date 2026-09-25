@@ -3014,3 +3014,98 @@ Two refactors were deliberately left for later:
   and the error-mapping differences between them are real (a script's exit
   code versus a status code). A third surface, such as an agent tool, is the
   point where a shared service pays for itself.
+
+### 2026-09-25: one `.dat` per angle, and what the web monitor will add
+
+From the user, while planning the Settings page:
+
+- **Each angle's `_autoreduction.dat` is written once that angle has been
+  measured.** A file is never a partly acquired angle, but a run's segments
+  still arrive one at a time. So "all planned segments present and settled" is
+  not proof on its own, and completeness still waits for a later *reduced* run
+  or a person (`experiment/status.py`).
+- **The SNS web monitor reports the run being measured now.** That is the
+  evidence a monitor feed will bring. "Measuring run M" proves every segment of
+  an earlier run with a subrun below M has been *acquired*. Once those are
+  reduced and settled, the run is complete, without waiting for the next run's
+  reduction. The last run of a beamtime can then complete without a person
+  too, because the monitor then reports that nothing is being measured.
+  `docs/experiment-sources.md` words the rule; the feed waits for the
+  monitor's URL and login.
+- **A measurement is N segments plus other artifacts**, such as the combined
+  curve stitching them. A fit co-refines the segments. The combined curve is
+  fitted only when a run has no segments, which is what `nrw model new`
+  already did. The rule now lives once, in `instrument/reduced.fitting_names`,
+  and apply copies exactly those files. Before this, apply copied every file
+  it listed, a combined curve included.
+
+### 2026-09-25: nrw.toml must render back exactly what nrw writes into it
+
+`nrw init` re-renders `nrw.toml` on every run, and any file that differs from
+both the render and the lock is DRIFTED, which leaves `nrw.toml.nrw-new` beside
+it on every later `init`. `[beamtime]` was rendered from the existing file, so
+editing the IPTS by hand was fine. Two things nrw itself told people to do were
+not:
+
+- `nrw audience --ask` edited `[audience]`, which the template hard-coded.
+- The template's own comment said to uncomment the `[experiment]` block.
+
+Now everything nrw writes into `nrw.toml` renders from what the file already
+says. That covers `[audience]` and the experiment block, whose one renderer
+(`settings.experiment_block`) the Settings page shares. So `nrw init --check`
+is clean after any save. Every string goes through one TOML encoder: a folder
+name or beamtime label containing `"` or `\` used to make the file unreadable,
+and every `nrw` command with it.
+
+A save also refreshes the scaffold lock when the result is exactly the render
+(`scaffold.record_installed`). Without that, the lock still holds the old
+bytes. `init --check` passes, since the file matches the render, but the first
+template change after an nrw upgrade finds the file "edited" and leaves a
+`.nrw-new` instead of upgrading it.
+
+### 2026-09-25: an empty active table is a trap, so the experiment block stays commented until set
+
+The first design rendered `[experiment.source]` and `[experiment.feed]` as
+active tables with every key a commented placeholder. The review caught what
+that breaks: TOML allows each table once, and the docs, four test fixtures,
+and anyone following older advice *append* an `[experiment.source]` table.
+Against an active one, that stops every `nrw` command. So a table stays
+commented out until one of its settings is set, and `load_config` names the fix
+when a file declares a table twice. The docs now say to edit the existing
+table.
+
+### 2026-09-25: the poller that came back to life, and the source that outlived it
+
+Found reviewing the reload design, both in code already committed:
+
+- **`LiveInventory.stop()` did not stay stopped.** `touch()` restarted the
+  thread whenever it was not alive, so any request still holding a replaced
+  inventory brought it back. It would then poll the *old* folder for up to ten
+  minutes. `close()` is permanent.
+- **`source` and `live` were cached separately.** Each read the workspace
+  outside the lock and cached under it, so a reload between the two could pair
+  the new source with the old poller. They are now one frozen `_Wiring`, rebuilt
+  whenever `nrw.toml` changes and taken whole by each request.
+
+### 2026-09-25: a folder check reads five headers, not all of them
+
+`LocalDirectorySource.inventory()` reads the head of every file, up to 64 KiB
+each, to learn titles, angles and the IPTS. Over NFS on a real beamtime folder
+that is tens of megabytes. The poller does it once and caches it by file
+version; a button must not. `probe()` lists once and reads the newest five
+runs' headers, which is enough to show what a folder holds and to notice one
+that belongs to another experiment. The check runs on a daemon thread with at
+most two in flight: a pool's workers are joined when the interpreter exits, so
+one stuck on a dead mount would make stopping `nrw serve` hang too.
+
+### 2026-09-25: every writer of the scaffold lock holds one lock
+
+`.nrw/scaffold.lock.json` is read, changed and written by `nrw init`,
+`nrw sample new`, experiment apply and adopt, `nrw experiment release`, and now
+a settings save. Two of those run on `nrw serve`'s request threads while a
+terminal may run the others. Two writers that each read the same lock write
+back only their own entries. `scaffold.writing_scaffold` serializes them: a
+process lock plus an advisory lock in `.nrw/cache/`. It is re-entrant within a
+thread, because a second `flock` from the same thread would wait for itself.
+Dry runs take nothing, since `nrw init --check` must write nothing, not even a
+lock file.

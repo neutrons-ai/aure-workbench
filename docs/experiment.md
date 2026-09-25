@@ -12,18 +12,29 @@ see one you set up by hand.
 
 ## Start it
 
+From an empty folder:
+
 ```bash
+nrw init
 nrw serve
 ```
 
 ```
   http://127.0.0.1:8765/experiment      the experiment's runs
+  http://127.0.0.1:8765/settings        its IPTS, data folder and watcher
+
+  This experiment is not set up yet: nrw needs its IPTS, or the
+  folder its reduced data is in, before it can watch anything.
 
   To edit the experiment, open this link in your browser:
     http://127.0.0.1:8765/auth/9f0c…
   It works once, for one browser, and is kept out of the request log.
   Without it the pages are view-only.
+  It opens Settings.
 ```
+
+On a project that is not set up yet the link opens **Settings** (see
+[Settings](#settings) below); once it is, the link opens the Experiment page.
 
 The `/auth/…` link lets *this browser* make changes. Without it the page is
 view-only, which is on purpose: an analysis node is shared, and anyone logged in
@@ -35,11 +46,41 @@ The same organization is available from the command line, for scripts and for
 anyone who prefers it:
 
 ```bash
+nrw experiment settings --ipts 34347 --write   # or the Settings page
 nrw experiment status              # every run, its state and its sample
 nrw experiment assign 234277 234280 --sample Sample6 --type "full Q" --condition OCV
 nrw experiment apply               # shows what would be written; changes nothing
 nrw experiment apply --write       # writes it
 ```
+
+## Settings
+
+The Settings page sets what the Experiment page watches. Everything it saves
+goes into `nrw.toml`, which you can also edit by hand.
+
+- **The experiment.** Its IPTS and beamtime label. When the project's own path
+  names an IPTS (`/SNS/REF_L/IPTS-34347/shared/…`), the page offers it.
+- **Where the data is.** Either nrw's default location (see below), shown
+  resolved as you type the IPTS, or another folder. **Check folder** says what
+  a folder holds before you choose it: how many runs and their range, the
+  newest runs, files it does not recognise, and the IPTS their headers name. A
+  folder whose headers name another experiment is flagged.
+- **How new runs are noticed.** Files appearing in the data folder. The SNS web
+  monitor and Tiled are listed as coming and cannot be chosen yet.
+- **Advanced**: the settle time and the poll interval.
+
+A save changes only the lines of `nrw.toml` that hold these settings, keeps
+every comment and hand edit, and keeps the previous file under
+`.nrw/backups/`. It takes effect in the running server straight away, with no
+restart. If `nrw.toml` was edited by hand since the page loaded it, the save is
+refused and the page reloads, so nothing is written over. If the file writes a
+setting in a shape nrw does not edit (an inline table, say), the page shows the
+lines to change by hand instead. Changing the IPTS of an experiment whose
+catalog already holds runs asks first.
+
+`nrw experiment settings` does the same from the command line. With no options
+it shows each setting and whether it follows nrw's default. With options it
+shows the change as a diff, and `--write` saves it.
 
 ## Where the runs come from
 
@@ -50,13 +91,19 @@ By default the page watches the folder REF_L's `new_reduction` pipeline writes:
 ```
 
 with `{ipts}` taken from `[beamtime] ipts` in `nrw.toml`. **That location is
-provisional** and expected to move. To point somewhere else, set it in
-`nrw.toml`:
+provisional** and expected to move. A project that keeps the default follows it
+when nrw's default moves. To point somewhere else, use the Settings page or
+`nrw experiment settings --location PATH`. By hand, edit the
+`[experiment.source]` table `nrw.toml` already has:
 
 ```toml
 [experiment.source]
 location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
 ```
+
+Uncomment it if it is still commented out, but do not add a second one: TOML
+allows each table once, and a file that declares it twice stops every `nrw`
+command until one is removed.
 
 `nrw experiment status` says whether the folder can be reached, and names any
 key in `[experiment]` it does not recognise rather than ignoring it.
@@ -133,7 +180,10 @@ misread it:
 
 **Review** shows exactly what apply would do:
 
-- **+ copy**: new files into `samples/<id>/data/steady/`.
+- **+ copy**: new files into `samples/<id>/data/steady/`. These are the files a
+  fit reads: each run's angle segments, which fits co-refine. A combined curve
+  beside them stays at the source. A run that has only a combined curve is
+  copied as that.
 - **− move-out**: copies of runs you have since excluded, or moved to another
   sample, go to `samples/<id>/data/excluded/<run>/`. They are moved back if you
   include the run again. They are never deleted.
@@ -191,6 +241,7 @@ nrw experiment release Sample6
 | `experiment/samples.parquet` | One row per sample: its context | Yes |
 | `experiment/catalog.json` | Digests of both, written last, so an interrupted save is noticed | Yes |
 | `samples/<id>/data/sources.json` | What apply copied | Yes |
+| `nrw.toml` (`[beamtime]`, `[experiment.*]`) | The IPTS, where the data is, and how new runs are noticed | Yes |
 
 The tables are parquet: the same shape the facility's data lakehouse uses,
 so that a later version can read the catalog from a facility service instead.
@@ -208,8 +259,8 @@ page shows it read-only, and nothing is saved over it until it is restored.
 ## Unattended agents
 
 An assistant can read the experiment, with `nrw experiment status --json` and
-the page's API, and can preview `apply`. It cannot assign, apply, adopt or
-release. Which sample a run belongs to is a claim about the experiment, like
+the page's API, and can preview `apply` and `settings`. It cannot assign,
+apply, adopt, release or change the settings. Which sample a run belongs to is a claim about the experiment, like
 promoting a fit, so those commands are refused under `NRW_AGENT` and the agent
 is told to write its proposal in `ESCALATIONS.md`.
 

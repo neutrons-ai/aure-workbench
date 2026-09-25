@@ -11,9 +11,34 @@ replaced without touching the others or the page:
 | Where is the organization kept? | `CatalogStore` (`experiment/store.py`) | parquet in the project | a facility service |
 
 They are configured independently in `nrw.toml` (`[experiment.source]`,
-`[experiment.feed]`, `[experiment.catalog]`). A planned kind is refused by name,
-never replaced by the local folder: falling back would quietly watch a path
-nobody chose.
+`[experiment.feed]`, `[experiment.catalog]`), on the Settings page of
+`nrw serve`, or with `nrw experiment settings`. A planned kind is refused by
+name, never replaced by the local folder: falling back would quietly watch a
+path nobody chose.
+
+**How a new kind reaches the page.** The Settings page and `nrw experiment
+settings` list every kind from one registry, `SOURCE_OPTIONS` and
+`FEED_OPTIONS` in `project/settings.py`: the built ones to choose from, the
+planned ones shown as coming. Adding a kind means building it, registering it
+in `open_source` or `open_feed`, and setting `available=True` on its `Option`.
+The kind lists the registries check, and every surface, follow from that one
+flag.
+
+## A measurement, and what a source lists
+
+A **measurement** is what the catalog calls a run: it is keyed by its first run
+number, and it is made of N angle segments, each reduced from its own subrun,
+plus other **artifacts**. Today the one other artifact nrw reads is the
+combined curve, every segment stitched into one file.
+
+A source lists every artifact of a measurement it can see (`SourceRun.files`,
+each with its `role`). It does not decide which ones matter. That is one rule,
+in `instrument/reduced.py` beside the file-name grammar: `fitting_names` gives
+the segments, or the combined curve when there are no segments. This is the
+rule `nrw model new` fits by. Apply copies exactly those files
+(`SourceRun.fitting_files`), so a sample holds what a fit of it reads, and the
+quick look plots the same ones. A new artifact kind, such as tNR slices or a
+reduction sidecar, gets a role there first.
 
 ## `DataSource`: files and their bytes, nothing else
 
@@ -100,11 +125,23 @@ A feed returns every run it currently knows. `experiment/live.py` works out
 what changed, so a feed never keeps state about what it has already said. If a
 remote API only offers deltas, keep the accumulated set inside the feed.
 
-**Acquisition is not reduction.** A later run that a feed merely *announces*
-does not make an earlier run complete: that is when the next acquisition
-started, and the earlier run's last segment may still be reducing. Only a later
-run with *reduced files* counts (`status.judge`, `latest_reduced`). A monitor
-feed should keep it that way.
+**Acquisition is not reduction.** Each angle's `.dat` file is written once
+*that angle* has been measured, so a run's segments arrive one by one, and a
+run whose files have settled may still have angles to come. A later run that a
+feed merely *announces* does not make an earlier run complete: that is when the
+next acquisition started, and the earlier run's last segment may still be
+reducing. Today only a later run with *reduced files* counts (`status.judge`,
+`latest_reduced`).
+
+**What the monitor will add.** The web monitor reports the run being measured
+*now*. "The instrument is measuring run M" proves that every segment of an
+earlier run with a subrun below M has been *acquired*. Once each of those has
+been reduced and its files have settled, that run is complete, without waiting
+for the next run's reduction. That is also what will let the last run of a
+beamtime complete without a person: the monitor then reports that nothing is
+being measured. A monitor feed should announce the current run with
+`state="acquiring"` and leave the judgement to `status.judge`, which will need
+that one rule added.
 
 ## `CatalogStore`: the organization
 
@@ -112,7 +149,7 @@ feed should keep it that way.
 class CatalogStore(Protocol):
     def describe(self) -> dict: ...
     def load(self) -> Catalog: ...
-    def problems(self) -> list[Problem]: ...
+    def load_report(self) -> tuple[Catalog, tuple[Problem, ...]]: ...  # and what it recovered from
     def update(self, *, runs=(), samples=(), now=None) -> Catalog: ...
 ```
 
