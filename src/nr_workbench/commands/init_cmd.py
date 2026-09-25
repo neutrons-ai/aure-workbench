@@ -245,6 +245,9 @@ def run_init(
     report = apply_scaffold(
         root,
         planned,
+        # `init` plans the whole project, so it may rebuild a damaged lock --
+        # that is how a project recovers. Conflict markers are still refused.
+        rebuild_lock=True,
         dry_run=check,
         show_diff=show_diff,
         force=force,

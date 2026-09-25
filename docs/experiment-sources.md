@@ -49,6 +49,20 @@ Rules a source must keep:
   version listed. It is called from a bounded worker pool with a timeout, so a
   slow source costs a request a timeout, not a thread.
 
+**Where Tiled keeps an experiment.** On the facility server an experiment is a
+container at `projects/isaac/IPTS-<n>/`. It can be browsed at
+`https://tiled.ornl.gov/ui/browse/projects/isaac/IPTS-<n>/`; the matching API,
+under `/api/v1/`, needs ORNL authentication. How runs and their reduced files
+are laid out *inside* that container has not been checked yet (it needs a
+logged-in look), and it decides the mapping below. The configuration this
+points to:
+
+```toml
+[experiment.source]
+kind = "tiled"                        # planned: refused by name today
+location = "https://tiled.ornl.gov/projects/isaac/{ipts}"
+```
+
 **A Tiled source**:
 
 - `inventory()` searches the experiment's container (by IPTS) for reduced

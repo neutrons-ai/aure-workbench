@@ -83,12 +83,21 @@ class ParsedSample:
             ``mounting``.
         rows: The measurement table, one row per run, in file order.
         leftovers: Text with no place in the catalog, each with the reason.
+        listed: Every run number the table names, including rows whose cells
+            could not be used. A run in the table is not a run removed from
+            it, whatever is wrong with its row.
+        blocking: Rows that name a run but cannot be carried into the catalog
+            as written. They stop adoption: recording such a run without its
+            condition -- or, worse, as excluded -- would be a claim the table
+            does not make.
     """
 
     title: str
     fields: dict[str, str]
     rows: tuple[MeasurementRow, ...]
     leftovers: tuple[str, ...]
+    listed: tuple[int, ...] = ()
+    blocking: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -122,6 +131,7 @@ class AdoptPlan:
     in_step: bool = False
     diff: str = ""
     problems: tuple[Problem, ...] = ()
+    plan_id: str = ""
 
     @property
     def rewrite_ready(self) -> bool:
@@ -141,6 +151,7 @@ class AdoptPlan:
             "in_step": self.in_step,
             "diff": self.diff,
             "rewrite_ready": self.rewrite_ready,
+            "plan_id": self.plan_id,
             "problems": [p.as_dict() for p in self.problems],
         }
 
@@ -255,6 +266,8 @@ def parse_sample_md(text: str) -> ParsedSample:
             f"text before the first section: {_snippet(_COMMENT_RE.sub('', rest))}"
         )
 
+    listed: list[int] = []
+    blocking: list[str] = []
     seen: set[str] = set()
     for heading, body in sections:
         if heading in seen:
@@ -269,7 +282,7 @@ def parse_sample_md(text: str) -> ParsedSample:
         body = _COMMENT_RE.sub("", body)
 
         if heading == _MEASUREMENTS:
-            rows.extend(_parse_table(body, leftovers))
+            rows.extend(_parse_table(body, leftovers, listed, blocking))
         elif heading in _PROSE_SECTIONS:
             _parse_prose(_PROSE_SECTIONS[heading], body.strip(), fields, leftovers)
         elif body.strip():
@@ -286,7 +299,12 @@ def parse_sample_md(text: str) -> ParsedSample:
         leftovers.append(f"the title: {exc}")
         title = ""
     return ParsedSample(
-        title=title, fields=fields, rows=tuple(rows), leftovers=tuple(leftovers)
+        title=title,
+        fields=fields,
+        rows=tuple(rows),
+        leftovers=tuple(leftovers),
+        listed=tuple(listed),
+        blocking=tuple(blocking),
     )
 
 
@@ -305,39 +323,57 @@ def _parse_prose(
         leftovers.append(str(exc))
 
 
-def _parse_table(body: str, leftovers: list[str]) -> list[MeasurementRow]:
+def _parse_table(
+    body: str, leftovers: list[str], listed: list[int], blocking: list[str]
+) -> list[MeasurementRow]:
+    from nr_workbench.sample_md import (
+        CONDITION_HEADERS,
+        RUN_HEADERS,
+        TYPE_HEADERS,
+        column,
+        table_cells,
+    )
+
     header: list[str] | None = None
     rows: list[MeasurementRow] = []
     runs: set[int] = set()
     for line in body.split("\n"):
-        match = _ROW_RE.match(line)
-        if match is None:
+        cells = table_cells(line)
+        if cells is None:
             if line.strip():
                 leftovers.append(f"text in '## Measurements': {_snippet(line)}")
             continue
-        cells = [cell.strip() for cell in match.group(1).split("|")]
         if header is None:
             header = [cell.lower() for cell in cells]
-            if "run" not in header:
+            if column(header, RUN_HEADERS) is None:
                 leftovers.append(f"a table with no Run column: {_snippet(line)}")
                 return rows
             continue
         if set("".join(cells)) <= set("-: "):
             continue
-        run_text = (
-            cells[header.index("run")] if header.index("run") < len(cells) else ""
-        )
+        run_at = column(header, RUN_HEADERS)
+        type_at = column(header, TYPE_HEADERS)
+        condition_at = column(header, CONDITION_HEADERS)
+        run_text = cells[run_at] if run_at is not None and run_at < len(cells) else ""
+        if not run_text:
+            if any(cells):
+                leftovers.append(f"a table row with no run number: {_snippet(line)}")
+            continue
         if not run_text.isascii() or not run_text.isdigit():
-            leftovers.append(f"a table row with no run number: {_snippet(line)}")
+            blocking.append(
+                f"a table row names run {run_text!r}, which is not a run number"
+            )
             continue
         run = int(run_text)
+        listed.append(run)
         if run in runs:
-            leftovers.append(f"run {run} is listed twice in the table")
+            blocking.append(f"run {run} is listed twice in the table")
             continue
+        kept = {i for i in (run_at, type_at, condition_at) if i is not None}
         extra = [
             f"{name}={cells[i]}"
             for i, name in enumerate(header)
-            if name not in ("run", "type", "condition") and i < len(cells) and cells[i]
+            if i not in kept and i < len(cells) and cells[i]
         ]
         if extra:
             leftovers.append(
@@ -346,22 +382,21 @@ def _parse_table(body: str, leftovers: list[str]) -> list[MeasurementRow]:
         try:
             row = MeasurementRow(
                 run=run,
-                type=clean_line("type", _cell(cells, header, "type")),
-                condition=clean_line("condition", _cell(cells, header, "condition")),
+                type=clean_line("type", _at(cells, type_at)),
+                condition=clean_line("condition", _at(cells, condition_at)),
             )
         except CatalogValidationError as exc:
-            leftovers.append(f"run {run}: {exc}")
+            blocking.append(f"run {run}: {exc}")
             continue
         runs.add(run)
         rows.append(row)
     return rows
 
 
-def _cell(cells: list[str], header: list[str], name: str) -> str:
-    if name not in header:
+def _at(cells: list[str], index: int | None) -> str:
+    if index is None or index >= len(cells):
         return ""
-    at = header.index(name)
-    return cells[at] if at < len(cells) else ""
+    return cells[index]
 
 
 # ---------------------------------------------------------------------------
@@ -392,12 +427,30 @@ def plan_adopt(
             ParsedSample("", {}, (), ()),
             problems=(Problem(f"sample:{sample_id}", f"{path.name} does not exist."),),
         )
-    text = path.read_text(encoding="utf-8", errors="replace")
+    raw = path.read_bytes()
+    try:
+        # Strictly: text replaced by U+FFFD here would be written into the
+        # catalog as though the scientist had typed it.
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        return AdoptPlan(
+            sample_id,
+            ParsedSample("", {}, (), ()),
+            problems=(
+                Problem(
+                    f"sample:{sample_id}",
+                    f"{path.name} is not UTF-8 text ({exc.reason} at byte "
+                    f"{exc.start}); save it as UTF-8 and try again.",
+                ),
+            ),
+        )
     parsed = parse_sample_md(text)
-    problems: list[Problem] = []
+    problems: list[Problem] = [
+        Problem(f"sample:{sample_id}", reason) for reason in parsed.blocking
+    ]
 
     run_changes: list[RunChange] = []
-    listed = {row.run for row in parsed.rows}
+    listed = set(parsed.listed)
     for row in parsed.rows:
         key = RunKey(row.run)
         current = catalog.runs.get(key)
@@ -503,7 +556,33 @@ def plan_adopt(
         in_step=in_step,
         diff=diff,
         problems=tuple(problems),
+        plan_id=_plan_id(raw, run_changes, sample_change),
     )
+
+
+def _plan_id(
+    raw: bytes, run_changes: list[RunChange], sample_change: SampleChange | None
+) -> str:
+    """What was reviewed: the file's exact bytes, and the edits read from it."""
+    import hashlib
+    import json
+
+    digest = hashlib.sha256(raw)
+    digest.update(
+        json.dumps(
+            [
+                [
+                    [c.key.slug(), c.base_rev, sorted(c.changes.items())]
+                    for c in run_changes
+                ],
+                [sample_change.base_rev, sorted(sample_change.changes.items())]
+                if sample_change
+                else None,
+            ],
+            default=str,
+        ).encode()
+    )
+    return digest.hexdigest()[:16]
 
 
 def adopt(
@@ -513,6 +592,7 @@ def adopt(
     context: RenderContext,
     *,
     rewrite: bool,
+    expected_plan_id: str | None = None,
 ) -> AdoptReport:
     """Carry out a reviewed adoption.
 
@@ -524,11 +604,18 @@ def adopt(
         rewrite: Also replace sample.md with the catalog's rendering (after a
             backup), so later applies keep it in step. Without it the catalog
             is updated and the file is left exactly as it is.
+        expected_plan_id: The plan id the person reviewed. The page passes
+            it: pulling hand edits happens while someone is editing the file,
+            and the file adopted must be the file that was shown.
 
     Raises:
-        AdoptRefused: The plan has problems, or a rewrite would lose text.
+        AdoptRefused: The plan has problems, a rewrite would lose text or
+            cannot be written safely, or the plan is not the one reviewed.
+            Raised before anything is changed.
         RecordConflict: The catalog changed since the plan was made.
     """
+    if expected_plan_id is not None and expected_plan_id != plan.plan_id:
+        raise AdoptRefused("sample.md changed since it was reviewed; review it again.")
     if plan.problems:
         raise AdoptRefused("; ".join(p.message for p in plan.problems))
     if rewrite and plan.parsed.leftovers:
@@ -536,6 +623,15 @@ def adopt(
             "sample.md has text the catalog cannot hold, which rewriting would "
             "lose: " + "; ".join(plan.parsed.leftovers)
         )
+    if rewrite:
+        # Checked before the catalog changes: a rewrite refused afterwards
+        # would leave the catalog adopted and the file not.
+        from nr_workbench.project.layout import ProjectLayout
+        from nr_workbench.project.scaffold import lock_problem
+
+        trouble = lock_problem(ProjectLayout(root=Path(root)).scaffold_lock)
+        if trouble:
+            raise AdoptRefused(trouble)
 
     catalog = store.update(
         runs=plan.run_changes,

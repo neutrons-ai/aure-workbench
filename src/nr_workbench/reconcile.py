@@ -32,10 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.sample_md import RUN_HEADERS, table_cells
 from nr_workbench.web.prose import strip_comments
-
-#: A markdown table row: ``| 218393 | full Q | -0.5 mA/cm2 |``.
-_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
 
 #: A cell that is only dashes and colons is the header underline.
 _RULE = set("-: ")
@@ -126,11 +124,10 @@ def read_table(markdown: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     header: list[str] = []
     for line in markdown.splitlines():
-        match = _ROW.match(line)
-        if not match:
+        cells = table_cells(line)
+        if cells is None:
             header = []  # a table ended
             continue
-        cells = [c.strip() for c in match.group(1).split("|")]
         if set("".join(cells)) <= _RULE:
             continue
         if not header:
@@ -157,7 +154,7 @@ def documented_runs(markdown: str) -> dict[int, dict[str, str]]:
     """
     found: dict[int, dict[str, str]] = {}
     for row in read_table(strip_comments(markdown)):
-        raw = row.get("run") or row.get("run number") or ""
+        raw = next((row[name] for name in RUN_HEADERS if row.get(name)), "")
         digits = re.fullmatch(r"\s*(\d{4,})\s*", raw)
         if digits:
             found[int(digits.group(1))] = row

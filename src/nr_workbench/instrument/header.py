@@ -115,6 +115,12 @@ _AUTORED_MARKERS = ("# Angles:", "# Config:")
 #: file should not be read in full either.
 _MAX_HEADER_LINES = 60
 
+#: How many leading bytes to read, whatever the lines. A real header is a few
+#: kilobytes; a file with no newline at all would otherwise be read whole into
+#: memory as "line 1" -- and the experiment page reads files in a folder the
+#: whole team can write to.
+MAX_HEADER_BYTES = 64 * 1024
+
 
 class HeaderError(Exception):
     """Raised when a header is present but cannot be understood."""
@@ -253,14 +259,38 @@ def read_header(path: Path) -> ReducedHeader:
         OSError: If the file cannot be read.
     """
     path = Path(path)
+    with path.open("rb") as handle:
+        return read_header_bytes(handle.read(MAX_HEADER_BYTES), path)
+
+
+def read_header_bytes(data: bytes, path: Path) -> ReducedHeader:
+    """:func:`read_header`, for a caller that has already read the file.
+
+    The experiment's data source reads a shared folder, where a file can be
+    swapped for a symbolic link between being listed and being opened; it opens
+    each file itself, refusing links, and hands the bytes here.
+
+    Args:
+        data: The start of the file. Only the first :data:`MAX_HEADER_BYTES`
+            are read, whatever is passed.
+        path: The file, for its name (which carries the segment in the
+            ``new_reduction`` dialect) and for messages.
+
+    Returns:
+        What the header said.
+
+    Raises:
+        HeaderError: As for :func:`read_header`.
+    """
+    path = Path(path)
     header = ReducedHeader(path=path)
 
     lines: list[str] = []
-    with path.open("r", encoding="utf-8", errors="replace") as handle:
-        for index, line in enumerate(handle):
-            if index >= _MAX_HEADER_LINES or not line.startswith("#"):
-                break
-            lines.append(line.rstrip("\n"))
+    text = data[:MAX_HEADER_BYTES].decode("utf-8", errors="replace")
+    for index, line in enumerate(text.split("\n")):
+        if index >= _MAX_HEADER_LINES or not line.startswith("#"):
+            break
+        lines.append(line.rstrip("\r"))
 
     # Read first and unconditionally: the column titles sit *below* the JSON
     # block, so anything that returns on finding `# Meta:` would never see them.
@@ -361,7 +391,7 @@ def _autoreduction_fields(lines: list[str]) -> dict[str, Any]:
         value: Any = raw
         try:
             value = json.loads(raw)
-        except ValueError:
+        except (ValueError, RecursionError):
             try:
                 value = ast.literal_eval(raw)
             except (ValueError, SyntaxError, MemoryError, RecursionError):
@@ -550,7 +580,9 @@ def _apply_meta(header: ReducedHeader, payload: str, path: Path) -> None:
     """Populate a header from the JSON metadata block."""
     try:
         meta = json.loads(payload)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # RecursionError: deeply nested JSON is valid enough to recurse on and
+        # is not a ValueError, so it would escape every caller's handler.
         raise HeaderError(
             f"{path}: the '# Meta:' line is not valid JSON ({exc}). "
             "The file may be truncated."

@@ -199,10 +199,10 @@ def test_a_hostile_run_title_cannot_break_out_of_the_script_block(
 
 
 def test_compact_json_escapes_everything_that_can_end_a_script() -> None:
-    text = _compact_json({"t": "</script><!--<script>& "})
+    text = _compact_json({"t": "</script><!--<script>&\u2028"})
 
-    assert not set("<>& ") & set(text)
-    assert json.loads(text) == {"t": "</script><!--<script>& "}
+    assert not set("<>&\u2028") & set(text)
+    assert json.loads(text) == {"t": "</script><!--<script>&\u2028"}
 
 
 # --------------------------------------------------------------------------
@@ -305,6 +305,15 @@ def test_a_stale_revision_is_a_409_and_changes_nothing(app, writer) -> None:
     )
 
     assert response.status_code == 409
+    from nr_workbench.experiment.model import RunKey
+    from nr_workbench.experiment.store import ParquetCatalogStore
+
+    entry = (
+        ParquetCatalogStore.for_project(app.config["NRW_ROOT"])
+        .load()
+        .runs[RunKey(234277)]
+    )
+    assert (entry.condition, entry.rev) == ("", 1)
 
 
 def test_a_rule_broken_is_a_400_with_the_reason(app, writer) -> None:
@@ -357,9 +366,12 @@ def test_a_read_only_server_refuses_writes_and_the_link(expt: Path) -> None:
 
 def test_a_server_bound_beyond_loopback_never_writes(expt: Path) -> None:
     app = make_app(expt, bound_host="0.0.0.0")
+    client = app.test_client()
 
-    assert app.config["NRW_WRITABLE"] is False
-    assert app.test_client().get(f"/auth/{TOKEN}").status_code == 403
+    assert client.get(f"/auth/{TOKEN}").status_code == 403
+    # Everything else a write needs, forged: still refused.
+    client.set_cookie("nrw_session", TOKEN, domain="localhost")
+    assert assign(client, app).status_code == 403
 
 
 # --------------------------------------------------------------------------
@@ -460,10 +472,22 @@ def test_the_preview_shows_what_sample_md_would_become(app, writer) -> None:
     assert "<table>" in preview["html"]
 
 
-def test_a_sample_id_with_a_path_in_it_is_refused(app) -> None:
-    response = app.test_client().get("/api/experiment/samples/..%2Fetc/preview")
-
-    assert response.status_code in (400, 404)
+@pytest.mark.parametrize("sample_id", ["S.1", "-S1", "con"])
+def test_an_unusable_sample_id_is_refused_on_every_route(
+    app, writer, sample_id
+) -> None:
+    """Ids the router accepts, so the refusal is validate_sample_id's own."""
+    for response in (
+        writer.get(f"/api/experiment/samples/{sample_id}/preview"),
+        writer.get(f"/api/experiment/samples/{sample_id}/adopt"),
+        writer.put(
+            f"/api/experiment/samples/{sample_id}",
+            json={"base_rev": 0, "fields": {"title": "x"}},
+            headers=write_headers(app),
+        ),
+    ):
+        assert response.status_code == 400, response.get_data(as_text=True)
+        assert response.is_json
 
 
 # --------------------------------------------------------------------------
@@ -477,18 +501,31 @@ def _serve(expt: Path, *args: str, env: dict[str, str] | None = None, monkeypatc
 
     from nr_workbench.cli import main
 
-    monkeypatch.setattr(Flask, "run", lambda self, **kwargs: None)
-    monkeypatch.delenv("NRW_SERVE_TOKEN", raising=False)
-    return CliRunner().invoke(
+    captured: dict[str, Flask] = {}
+
+    def run(self, **kwargs) -> None:
+        del kwargs
+        captured["app"] = self
+
+    monkeypatch.setattr(Flask, "run", run)
+    # setenv, not delenv: delenv on an absent variable registers no undo, and
+    # run_serve then sets it for every later test on this worker.
+    monkeypatch.setenv("NRW_SERVE_TOKEN", "")
+    result = CliRunner().invoke(
         main, ["serve", "--root", str(expt), *args], env=env or {}
     )
+    result.app = captured.get("app")  # type: ignore[attr-defined]
+    return result
 
 
-def test_serve_prints_the_one_time_link(expt: Path, monkeypatch) -> None:
+def test_serve_prints_a_one_time_link_that_works(expt: Path, monkeypatch) -> None:
     result = _serve(expt, monkeypatch=monkeypatch)
 
     assert result.exit_code == 0, result.output
-    assert "/auth/" in result.output
+    path = re.search(r"http://[^/]+(/auth/\S+)", result.output).group(1)
+    client = result.app.test_client()
+    assert client.get(path).status_code == 303
+    assert client.get(path).status_code == 403  # and only once
 
 
 def test_serve_beyond_loopback_says_view_only_and_prints_no_link(
@@ -514,3 +551,236 @@ def test_serve_debug_beyond_loopback_is_refused(expt: Path, monkeypatch) -> None
 
     assert result.exit_code != 0
     assert "run code on this machine" in result.output
+
+
+# --------------------------------------------------------------------------
+# The one-time link
+# --------------------------------------------------------------------------
+
+
+def test_a_wrong_link_is_refused_and_grants_nothing(app) -> None:
+    client = app.test_client()
+
+    response = client.get("/auth/not-the-token")
+
+    assert response.status_code == 403
+    assert "Set-Cookie" not in response.headers
+    assert assign(client, app).status_code == 403
+
+
+def test_the_link_sets_an_httponly_strict_cookie_that_is_not_the_link(app) -> None:
+    """The secret travels in a URL and may be logged; the cookie must not be it."""
+    header = app.test_client().get(f"/auth/{TOKEN}").headers["Set-Cookie"]
+
+    assert "HttpOnly" in header and "SameSite=Strict" in header and "Max-Age" in header
+    value = header.split(";", 1)[0].split("=", 1)[1]
+    assert value and value != TOKEN
+
+
+def test_the_link_works_once(app, writer) -> None:
+    second = app.test_client().get(f"/auth/{TOKEN}")
+
+    assert second.status_code == 403
+    assert "already been used" in second.get_data(as_text=True)
+    # The browser that did open it keeps working.
+    assert assign(writer, app).status_code == 200
+
+
+def test_the_link_from_another_machine_is_refused_and_sets_no_cookie(app) -> None:
+    response = app.test_client().get(
+        f"/auth/{TOKEN}", environ_base={"REMOTE_ADDR": "10.0.0.5"}
+    )
+
+    assert response.status_code == 403
+    assert "Set-Cookie" not in response.headers
+
+
+def test_the_request_log_never_shows_the_link(app) -> None:
+    import logging
+
+    from nr_workbench.web import security
+
+    assert security._REDACTOR in logging.getLogger("werkzeug").filters
+    record = logging.LogRecord(
+        "werkzeug",
+        logging.INFO,
+        "x",
+        1,
+        '"GET /auth/%s HTTP/1.1" 303 -',
+        (TOKEN,),
+        None,
+    )
+    security._REDACTOR.filter(record)
+    assert TOKEN not in record.getMessage()
+    assert "/auth/[redacted]" in record.getMessage()
+
+
+# --------------------------------------------------------------------------
+# The sample-context and adopt routes
+# --------------------------------------------------------------------------
+
+
+def put_sample(client, app, sample: str = "Sample6", **body):
+    return client.put(
+        f"/api/experiment/samples/{sample}", json=body, headers=write_headers(app)
+    )
+
+
+def test_the_fits_to_perform_are_written_and_previewed(app, writer) -> None:
+    """This route is how an unattended session's task gets written."""
+    assert assign(writer, app).status_code == 200
+
+    response = put_sample(
+        writer, app, base_rev=0, fields={"fits_to_perform": "Co-refine both."}
+    )
+
+    assert response.status_code == 200, response.get_json()
+    preview = writer.get("/api/experiment/samples/Sample6/preview").get_json()
+    assert "Co-refine both." in preview["markdown"]
+
+
+def test_a_stale_sample_edit_is_a_409(app, writer) -> None:
+    assert put_sample(writer, app, base_rev=0, fields={"title": "A"}).status_code == 200
+
+    assert put_sample(writer, app, base_rev=0, fields={"title": "B"}).status_code == 409
+
+
+def test_a_heading_in_the_fits_is_a_400_with_the_reason(app, writer) -> None:
+    response = put_sample(
+        writer, app, base_rev=0, fields={"fits_to_perform": "x\n## Details\ny"}
+    )
+
+    assert response.status_code == 400
+    assert "heading" in response.get_json()["error"]
+
+
+def test_a_sample_with_runs_cannot_be_removed(app, writer) -> None:
+    assert assign(writer, app).status_code == 200
+    assert put_sample(writer, app, base_rev=0, fields={"title": "A"}).status_code == 200
+
+    assert put_sample(writer, app, base_rev=1, delete=True).status_code == 400
+
+
+def test_a_sample_already_on_disk_cannot_be_removed(app, writer, expt: Path) -> None:
+    assert put_sample(writer, app, base_rev=0, fields={"title": "A"}).status_code == 200
+    (expt / "samples" / "Sample6").mkdir(parents=True)
+
+    response = put_sample(writer, app, base_rev=1, delete=True)
+
+    assert response.status_code == 400
+    assert "release" in response.get_json()["error"]
+
+
+def _hand_written(expt: Path, extra: str = "") -> Path:
+    path = expt / "samples" / "Sample9" / "sample.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# S9\n\n## Description\n\nHand written.\n" + extra, encoding="utf-8"
+    )
+    return path
+
+
+def test_adopt_needs_a_real_boolean_and_the_reviewed_plan(
+    app, writer, expt: Path
+) -> None:
+    _hand_written(expt)
+    plan = writer.get("/api/experiment/samples/Sample9/adopt").get_json()
+    url = "/api/experiment/samples/Sample9/adopt"
+
+    bad = writer.post(
+        url,
+        json={"rewrite": "yes", "plan_id": plan["plan_id"]},
+        headers=write_headers(app),
+    )
+    stale = writer.post(
+        url, json={"rewrite": False, "plan_id": "stale"}, headers=write_headers(app)
+    )
+
+    assert bad.status_code == 400
+    assert stale.status_code == 409
+
+
+def test_adopt_refuses_a_rewrite_that_would_lose_text(app, writer, expt: Path) -> None:
+    path = _hand_written(expt, "\n## Notes\n\nKeep me.\n")
+    before = path.read_bytes()
+    plan = writer.get("/api/experiment/samples/Sample9/adopt").get_json()
+
+    response = writer.post(
+        "/api/experiment/samples/Sample9/adopt",
+        json={"rewrite": True, "plan_id": plan["plan_id"]},
+        headers=write_headers(app),
+    )
+
+    assert response.status_code == 409
+    assert path.read_bytes() == before
+
+
+# --------------------------------------------------------------------------
+# A dead data mount costs a request a timeout, never a thread
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dead_mount(app, monkeypatch):
+    """Every read and listing of the source blocks until released."""
+    import threading
+
+    from nr_workbench.experiment.sources.local import LocalDirectorySource
+    from nr_workbench.web import experiment as experiment_module
+
+    gate = threading.Event()
+    monkeypatch.setattr(experiment_module, "SOURCE_TIMEOUT", 0.3)
+    monkeypatch.setattr(
+        LocalDirectorySource, "read_bytes", lambda self, f, max_bytes: gate.wait(30)
+    )
+    monkeypatch.setattr(LocalDirectorySource, "inventory", lambda self: gate.wait(30))
+    yield gate
+    gate.set()
+
+
+def test_a_quick_look_on_a_dead_mount_is_a_504(app, dead_mount) -> None:
+    started = time.monotonic()
+
+    response = app.test_client().get("/api/experiment/runs/234277/curves")
+
+    assert response.status_code == 504 and response.is_json
+    assert time.monotonic() - started < 5
+
+
+def test_an_apply_on_a_dead_mount_is_a_504(app, writer, dead_mount) -> None:
+    dead_mount.set()  # let the assignment's own snapshot read proceed
+    assert assign(writer, app).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    dead_mount.clear()
+    started = time.monotonic()
+
+    response = writer.post(
+        "/api/experiment/apply",
+        json={"plan_id": plan["plan_id"]},
+        headers=write_headers(app),
+    )
+
+    assert response.status_code == 504 and response.is_json
+    assert time.monotonic() - started < 5
+
+
+# --------------------------------------------------------------------------
+# The backup safeguards, on their own
+# --------------------------------------------------------------------------
+
+
+def test_experiment_data_refuses_writes_on_its_own(expt: Path) -> None:
+    """Second to the request gate; must hold even if the gate were bypassed."""
+    from nr_workbench.web.experiment import ExperimentData, WritesDisabledError
+
+    data = ExperimentData(expt, writable=False, autostart=False)
+
+    with pytest.raises(WritesDisabledError):
+        data.update_runs([{"run": 234277, "base_rev": 0, "fields": {"sample_id": "S"}}])
+
+
+def test_an_unsafe_method_outside_the_experiment_api_is_refused(expt: Path) -> None:
+    app = create_app(expt, token=TOKEN, autostart=False)
+    app.add_url_rule("/probe", "probe", lambda: "wrote", methods=["POST"])
+
+    assert app.test_client().post("/probe").status_code == 405

@@ -56,8 +56,10 @@ class SourceRun:
             the ``new_reduction`` header does not carry one, and none is
             invented.
         experiment: The IPTS the header names, or ``None``.
-        thetas: Incident angle of each segment in degrees, ``None`` where the
-            header does not say.
+        thetas: Incident angle in degrees for each entry of ``files``, in the
+            same order, ``None`` where it is not known -- a combined curve, or
+            a header that could not be read. Aligned by position so that a
+            missing one cannot shift the rest onto the wrong segment.
         n_segments: How many segments the header says were planned, or
             ``None`` when it does not say.
         changed_at: When any of its files last changed (file server clock).
@@ -142,8 +144,3 @@ class FeedUpdate:
 
     announcements: tuple[Announcement, ...] = ()
     problems: tuple[Problem, ...] = ()
-
-    @property
-    def latest_run(self) -> int | None:
-        """The highest run number the feed knows, or ``None``."""
-        return max((a.run for a in self.announcements), default=None)

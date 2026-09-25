@@ -2804,21 +2804,23 @@ before it is. A copy made at either point is part of a measurement, and it
 fits.
 
 The Experiment page therefore requires evidence the run ended before it copies
-anything (`experiment/status.py`):
+anything (`experiment/status.py`), and one kind counts: **a later run has
+reduced files**. A later run that a feed merely *announces* does not count,
+because acquisition starting is not reduction finishing. A settled run without
+that evidence is *unconfirmed*, and only a person can confirm it; the last run
+of a beamtime always needs one.
 
-- **the planned segment count is reached**, from the `new_reduction` header's
-  per-segment arrays (`DB`, `scale_factor`, `ThetaShift`), which come from the
-  reduction template; or
-- **a later run has reduced files**, when the plan is not stated.
-
-A settled run without either is *unconfirmed*, and only a person can confirm
-it. A later run that a feed merely *announces* does not count, because
-acquisition starting is not reduction finishing.
-
-**Unverified:** that the template-sized arrays are already full length in
-segment 1's file. The trimmed fixture from run 234277 suggests so, but no real
-first-segment file has been checked. If the assumption is false, completeness
-rests on the later-run evidence alone.
+**The header's planned segment count only vetoes.** The `new_reduction`
+header's per-segment arrays (`DB`, `scale_factor`, `ThetaShift`) appear to be
+sized by the reduction template. When they say three and two segments are
+present, the run is unconfirmed whatever else is true. A *fulfilled* plan was
+first accepted as proof as well, and review took that back: it rests on the
+arrays being full length already in segment 1's file, which no real
+first-segment file has confirmed. The trimmed fixture from run 234277 suggests
+so. If they grow with each segment instead, segment 1's header says "1 of 1",
+and a five-minute-old third of a measurement is "complete". Once a real
+first-segment file shows the arrays are full length, the plan can prove
+completion too, and the last run of a beamtime will no longer need a person.
 
 Copies are written with a fresh mtime, not the source's (`copy2` would keep
 it). A copy dated an hour ago looks settled to `nrw agent watch` the moment
@@ -2938,3 +2940,48 @@ Recorded from the user, not derivable from the code:
   data access.
 - **ONCat is out of scope.** The facility catalog would add a dependency for
   information the files and the feed already carry.
+
+### 2026-09-25: a lock that failed to load must not be written over
+
+`load_lock` reads an unreadable `.nrw/scaffold.lock.json` as empty. That is
+safe for a full `nrw init`, where every file then reads as UNTRACKED and is
+left alone. It is not safe for a *partial* plan: `nrw sample new`, apply and
+adopt each plan one sample's files, and writing their lock over one that failed
+to load keeps their entries and permanently drops every other. The lock is
+tracked and shared, so the likely cause is a git conflict.
+
+`apply_scaffold` now refuses to write over a lock it could not read unless the
+caller passes `rebuild_lock=True`. Only `nrw init`, which plans the whole
+project, does. Conflict markers are refused even then, because the right merge
+is a person's. Adopt checks the lock *before* it updates the catalog, since
+refusing afterwards would leave a sample adopted in the catalog and its
+`sample.md` not rewritten.
+
+### 2026-09-25: the one-time link works once, and reads have a deadline
+
+Two review findings about the web server's new write surface:
+
+- **The link's secret is exactly the kind of value that leaks.** It is printed
+  to a terminal and travels in a URL, so copies end up in scrollback, shell
+  history and chat. Redeeming it now mints a fresh, unrelated session value for
+  that browser's cookie, and the link is dead after one use. A leaked copy
+  opens nothing, and a second browser needs a restarted server.
+- **Reading a file on a dead NFS mount does not fail, it blocks.** Listing
+  already happened only on the background poller. But apply and its review
+  also read file bytes on the request thread, to copy them and to tell a
+  re-reduced source from a touched one. Every such read now goes through a
+  two-worker pool with a 15-second deadline (`web/experiment.py`,
+  `SOURCE_TIMEOUT`). A read that times out fails that file the way any other
+  read failure does, and apply releases its lock. The source is wrapped once,
+  where the page gets it, so no call site has to remember the rule.
+
+### 2026-09-25: four readers of the measurement table disagreed about its columns
+
+ISAAC's conditions, `nrw data reconcile`, adoption into the catalog, and the
+catalog's check against a second table in the prose each decided for themselves
+which column is the run and which the condition. `| Run | Type | Conditions |`
+gave ISAAC a condition and gave adoption an empty one. A guard that recognizes a
+narrower table shape than a reader does is also a way in: prose the guard
+accepts would be read as measurements. The shared vocabulary (`RUN_HEADERS`,
+`CONDITION_HEADERS`, `table_cells`) now lives in `nr_workbench/sample_md.py`,
+and all four use it.

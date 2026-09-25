@@ -777,9 +777,24 @@ def _apply_sample(
     steady = sample_dir / "data" / "steady"
     steady.mkdir(parents=True, exist_ok=True)
     record = read_sources(sample_dir)
+    try:
+        _copy_runs(steady, plan, source, record, report)
+        _move(sample_dir, steady, plan, record, report)
+        _record_matches(plan, record, report)
+    finally:
+        # Whatever happened, the record must describe what is on disk: a copy
+        # nrw made but did not record would read as someone else's file.
+        write_sources(sample_dir, record)
 
-    _copy_runs(steady, plan, source, record, report)
-    _move(sample_dir, steady, plan, record, report)
+    if not plan.creates:
+        md = apply_scaffold(root, list(plan.scaffold))
+        report.sample_md[plan.sample_id] = str(md.files[0].outcome) if md.files else ""
+
+
+def _record_matches(
+    plan: SamplePlan, record: dict[str, dict[str, Any]], report: ApplyReport
+) -> None:
+    """Record files found to hold exactly the source's bytes."""
     for action in plan.files:
         if action.action is Action.RECORD and action.source is not None:
             fresh = _record_entry(action.run, action.sha256, action.source, "steady")
@@ -791,11 +806,6 @@ def _apply_sample(
                 )
             record[action.name] = fresh
             report.done.append(action)
-    write_sources(sample_dir, record)
-
-    if not plan.creates:
-        md = apply_scaffold(root, list(plan.scaffold))
-        report.sample_md[plan.sample_id] = str(md.files[0].outcome) if md.files else ""
 
 
 def _copy_runs(
@@ -846,14 +856,61 @@ def _copy_runs(
                     )
                 continue
 
-            for action, part, digest in staged:
-                os.replace(part, steady / action.name)
+            placed: list[tuple[FileAction, str]] = []
+            try:
+                for action, part, digest in staged:
+                    _place(part, steady / action.name)
+                    placed.append((action, digest))
+            except OSError as exc:
+                # Whole or not at all: take back what this run already placed.
+                # Each was a new file, planned because nothing was there.
+                for action, _ in placed:
+                    (steady / action.name).unlink(missing_ok=True)
+                for action in actions:
+                    report.failed.append(
+                        FileAction(
+                            run,
+                            action.name,
+                            action.action,
+                            f"run {run} was not copied, none of its files: "
+                            f"placing {action.name} failed ({exc})",
+                        )
+                    )
+                continue
+            for action, digest in placed:
                 record[action.name] = _record_entry(
                     run, digest, action.source, "steady"
                 )
                 report.done.append(action)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _place(source: Path, target: Path) -> None:
+    """Move *source* to *target*, refusing if *target* exists by then.
+
+    ``os.replace`` would silently overwrite a file that appeared at the target
+    after the plan was made -- a copy made by hand in the minutes between
+    review and apply. A hard link fails instead, atomically, which is the
+    never-overwrite rule enforced by the filesystem rather than by a check
+    that could race.
+
+    Raises:
+        FileExistsError: *target* exists.
+        OSError: Anything else that stops the move.
+    """
+    try:
+        os.link(source, target)
+    except FileExistsError:
+        raise
+    except OSError:
+        # No hard links on this filesystem: the check-then-replace fallback,
+        # with its small race, is the best that remains.
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"{target.name} already exists") from None
+        os.replace(source, target)
+        return
+    source.unlink()
 
 
 def _move(
@@ -893,7 +950,13 @@ def _move(
             )
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        os.replace(origin, target)
+        try:
+            _place(origin, target)
+        except OSError as exc:
+            report.failed.append(
+                FileAction(action.run, action.name, action.action, f"not moved: {exc}")
+            )
+            continue
         record[action.name] = {**record.get(action.name, {}), "location": location}
         report.done.append(action)
 

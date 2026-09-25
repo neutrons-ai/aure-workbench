@@ -221,7 +221,9 @@ def test_apply_recovers_from_corrupt_lock(tmp_path: Path) -> None:
     lock = tmp_path / ".nrw" / "scaffold.lock.json"
     lock.write_text("{ not json", encoding="utf-8")
 
-    report = apply_scaffold(tmp_path, [planned(content=b"v2\n", version=2)])
+    report = apply_scaffold(
+        tmp_path, [planned(content=b"v2\n", version=2)], rebuild_lock=True
+    )
 
     assert (tmp_path / "a.txt").read_bytes() == b"v1\n"
     assert report.count(Outcome.UNTRACKED) == 1
@@ -283,3 +285,30 @@ def test_apply_creates_parent_directories(tmp_path: Path, relpath: str) -> None:
     apply_scaffold(tmp_path, [planned(relpath)])
 
     assert (tmp_path / relpath).is_file()
+
+
+def test_apply_refuses_a_damaged_lock_unless_asked_to_rebuild(tmp_path: Path) -> None:
+    """A partial plan over a lock that failed to load would drop every other entry."""
+    from nr_workbench.project.scaffold import LockProblemError
+
+    apply_scaffold(tmp_path, [planned(content=b"v1\n")])
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    lock.write_text("{ not json", encoding="utf-8")
+
+    with pytest.raises(LockProblemError):
+        apply_scaffold(tmp_path, [planned(content=b"v2\n", version=2)])
+    assert lock.read_text(encoding="utf-8") == "{ not json"
+
+
+def test_even_a_rebuild_refuses_git_conflict_markers(tmp_path: Path) -> None:
+    """Two people's entries: a rebuild would keep neither side's samples."""
+    from nr_workbench.project.scaffold import LockProblemError
+
+    apply_scaffold(tmp_path, [planned(content=b"v1\n")])
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    conflicted = "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> other\n"
+    lock.write_text(conflicted, encoding="utf-8")
+
+    with pytest.raises(LockProblemError, match="conflict markers"):
+        apply_scaffold(tmp_path, [planned(content=b"v2\n")], rebuild_lock=True)
+    assert lock.read_text(encoding="utf-8") == conflicted

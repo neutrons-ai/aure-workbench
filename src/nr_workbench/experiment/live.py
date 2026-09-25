@@ -174,6 +174,7 @@ class LiveInventory:
         self._scan_started: float | None = None
         self._last_request = clock()
         self._resume = threading.Event()
+        self._idle = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._thread_lock = threading.Lock()
@@ -186,6 +187,11 @@ class LiveInventory:
         """The latest snapshot. Never waits on the source."""
         with self._lock:
             return self._snapshot
+
+    @property
+    def idle(self) -> bool:
+        """Whether the background thread is waiting for a request, not polling."""
+        return self._idle.is_set()
 
     def changes(self, since: str | None = None) -> ChangeSet:
         """What changed since *since*, and keep polling for a while.
@@ -261,13 +267,42 @@ class LiveInventory:
         if not self._scan_lock.acquire(blocking=False):
             return self.snapshot()
         try:
+            return self._scan_locked()
+        finally:
+            self._scan_lock.release()
+
+    def scan_fresh(self, timeout: float) -> Snapshot:
+        """Poll now, waiting at most *timeout* for a poll already under way.
+
+        :meth:`scan_once` returns the *previous* snapshot while another poll is
+        running, which is right for a background loop and wrong for apply:
+        whether a run is complete must be judged from a listing taken after the
+        person clicked, not one started before. So this waits for the running
+        poll to finish and then polls again.
+
+        Raises:
+            TimeoutError: The poll already under way did not finish in time --
+                usually a data mount that has stopped answering.
+        """
+        if not self._scan_lock.acquire(timeout=timeout):
+            raise TimeoutError(
+                f"a poll of the data source has been running for more than "
+                f"{timeout:.0f}s"
+            )
+        try:
+            return self._scan_locked()
+        finally:
+            self._scan_lock.release()
+
+    def _scan_locked(self) -> Snapshot:
+        """One poll. The caller holds the scan lock."""
+        try:
             self._scan_started = self.clock()
             inventory = _guarded_inventory(self.source)
             feed = _guarded_poll(self.feed, inventory)
             return self._publish(inventory, feed, self.clock())
         finally:
             self._scan_started = None
-            self._scan_lock.release()
 
     def _publish(self, inventory: Inventory, feed: FeedUpdate, now: float) -> Snapshot:
         with self._lock:
@@ -371,7 +406,13 @@ class LiveInventory:
         while not self._stop.is_set():
             if self.clock() - self._last_request > self.idle_after:
                 self._resume.clear()
-                self._resume.wait()
+                # Re-check after clearing: a request that arrived between the
+                # check above and the clear would otherwise be missed until
+                # the next one, and the page would show a stale listing.
+                if self.clock() - self._last_request > self.idle_after:
+                    self._idle.set()
+                    self._resume.wait()
+                    self._idle.clear()
                 continue
             self.scan_once()
             self._stop.wait(self.poll_seconds)

@@ -17,6 +17,7 @@ elsewhere or running under ``NRW_AGENT``.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,16 @@ def create_app(
         raise FileNotFoundError(
             f"{root} is not a workbench project (no nrw.toml). "
             "Run `nrw init` there first, or pass --root."
+        )
+
+    from nr_workbench.agent.guard import AGENT_ENV
+
+    if os.environ.get(AGENT_ENV):
+        # Here as well as in `nrw serve`: any other way of starting the app
+        # (web.app.serve, a WSGI server) must be read-only for an agent too.
+        writable = False
+        read_only_reason = read_only_reason or (
+            f"{AGENT_ENV} is set, so this server does not accept edits."
         )
 
     app = Flask(__name__)
@@ -267,19 +278,32 @@ def _register_views(app: Flask) -> None:
     def authorize(token: str) -> Any:
         """The one-time link `nrw serve` prints: grants this browser write access.
 
-        The link goes in a cookie and the browser is redirected to a clean URL,
-        so the secret does not linger in the address bar or leak in a Referer.
+        Good once. The browser gets a fresh session value in an HttpOnly
+        cookie -- not the link's secret -- and is redirected to a clean URL, so
+        the secret does not linger in the address bar, leak in a Referer, or
+        stay useful to anyone who later finds it in a log.
         """
-        expected = app.config.get("NRW_TOKEN", "")
         if not (
-            app.config.get("NRW_WRITABLE")
-            and security.is_loopback(request.remote_addr)
-            and secrets.compare_digest(token, expected)
+            app.config.get("NRW_WRITABLE") and security.is_loopback(request.remote_addr)
         ):
+            abort(403, "This link is not valid for this server.")
+        session = security.redeem_link(token)
+        if session is None:
+            if security.link_used():
+                abort(
+                    403,
+                    "This link has already been used; it works once. Restart "
+                    "`nrw serve` for a new one.",
+                )
             abort(403, "This link is not valid for this server.")
         response = make_response(redirect(url_for("experiment"), code=303))
         response.set_cookie(
-            security.COOKIE, expected, httponly=True, samesite="Strict", path="/"
+            security.COOKIE,
+            session,
+            httponly=True,
+            samesite="Strict",
+            path="/",
+            max_age=security.SESSION_MAX_AGE,
         )
         return response
 
@@ -326,7 +350,7 @@ def _register_views(app: Flask) -> None:
 
 
 def _default_reason(bound_host: str) -> str:
-    if not security.is_loopback(bound_host) and bound_host != "localhost":
+    if not security.is_loopback(bound_host):
         return (
             f"The server is bound to {bound_host}, not loopback, so it only "
             "shows the experiment. Run `nrw serve` without --host to edit it."

@@ -8,6 +8,7 @@ it did not recognise without saying so.
 
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 
@@ -126,6 +127,36 @@ def test_segments_that_skip_one_are_a_problem(tmp_path: Path) -> None:
     assert any("not contiguous" in p for p in run.problems)
 
 
+def test_headers_disagreeing_about_the_plan_are_quarantined(tmp_path: Path) -> None:
+    """Which header to believe is a person's call, so neither sets the plan."""
+    write_autoreduced(tmp_path, 234277, [1], planned=3)
+    write_autoreduced(tmp_path, 234277, [2], planned=4)
+
+    run = source_for(tmp_path, ipts="IPTS-00001").inventory().runs[RunKey(234277)]
+
+    assert run.n_segments is None
+    assert any("disagree" in p and "(3, 4)" in p for p in run.problems)
+
+
+def test_an_unreadable_header_quarantines_the_run_and_names_the_file(
+    tmp_path: Path,
+) -> None:
+    copy_reference(tmp_path)
+    broken = tmp_path / "REFL_218393_2_218394_partial.txt"
+    broken.write_text(
+        "".join(
+            "# Meta:{not json\n" if line.startswith("# Meta:") else line
+            for line in broken.read_text().splitlines(keepends=True)
+        )
+    )
+
+    inventory = source_for(tmp_path).inventory()
+
+    problems = inventory.runs[RunKey(218393)].problems
+    assert any(p.startswith(f"{broken.name}: ") and "JSON" in p for p in problems)
+    assert inventory.runs[RunKey(218386)].problems == ()
+
+
 # --------------------------------------------------------------------------
 # What is reported rather than used
 # --------------------------------------------------------------------------
@@ -198,14 +229,34 @@ def test_no_configured_location_is_reported_not_raised() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_folder_is_listed_once_per_poll(tmp_path: Path) -> None:
+def test_an_unchanged_folder_costs_one_listing_and_nothing_else(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Counted at the operating system, not by a tally the source keeps itself.
+
+    Every call here is a round trip to the file server, on a folder polled
+    every few seconds by everyone watching the beamtime.
+    """
     copy_reference(tmp_path)
     source = source_for(tmp_path)
+    source.inventory()
+    calls = {"scandir": 0, "stat": 0, "open": 0}
+
+    def counted(name: str):
+        real = getattr(os, name)
+
+        def call(*args, **kwargs):
+            calls[name] += 1
+            return real(*args, **kwargs)
+
+        return call
+
+    for name in calls:
+        monkeypatch.setattr(local_module.os, name, counted(name))
 
     source.inventory()
-    source.inventory()
 
-    assert source.listings == 2
+    assert calls == {"scandir": 1, "stat": 0, "open": 0}
 
 
 def test_an_unchanged_header_is_not_read_again(tmp_path: Path, monkeypatch) -> None:
@@ -215,9 +266,11 @@ def test_an_unchanged_header_is_not_read_again(tmp_path: Path, monkeypatch) -> N
     source = source_for(tmp_path)
     source.inventory()
     reads: list[Path] = []
-    real = header_module.read_header
+    real = header_module.read_header_bytes
     monkeypatch.setattr(
-        header_module, "read_header", lambda p: reads.append(p) or real(p)
+        header_module,
+        "read_header_bytes",
+        lambda data, p: reads.append(p) or real(data, p),
     )
 
     source.inventory()
@@ -275,7 +328,13 @@ def test_read_bytes_refuses_a_file_too_large_to_be_reduced_data(tmp_path: Path) 
         source.read_bytes(listed, max_bytes=100)
 
 
+@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="no O_NOFOLLOW here")
 def test_read_bytes_will_not_open_a_file_swapped_for_a_link(tmp_path: Path) -> None:
+    """Refused by the open itself, not noticed afterwards.
+
+    Checking the version after opening would already have followed the link,
+    and a FIFO or a device behind it can hang the read.
+    """
     copy_reference(tmp_path)
     source = source_for(tmp_path)
     listed = source.inventory().runs[RunKey(218386)].files[0]
@@ -283,8 +342,10 @@ def test_read_bytes_will_not_open_a_file_swapped_for_a_link(tmp_path: Path) -> N
     target.unlink()
     target.symlink_to(tmp_path / "REFL_218393_1_218393_partial.txt")
 
-    with pytest.raises((OSError, SourceChangedError)):
+    with pytest.raises(OSError) as raised:
         source.read_bytes(listed, max_bytes=1 << 20)
+
+    assert raised.value.errno == errno.ELOOP
 
 
 # --------------------------------------------------------------------------
@@ -320,5 +381,4 @@ def test_the_folder_feed_announces_what_the_source_listed(tmp_path: Path) -> Non
     update = DirectoryFeed().poll(source_for(tmp_path).inventory())
 
     assert [a.run for a in update.announcements] == [218386, 218393]
-    assert update.latest_run == 218393
     assert update.announcements[0].title == "CuPt_d8-THF_FullQ-218386-1."

@@ -43,8 +43,39 @@ from nr_workbench.problems import Problem
 #: Seconds a request may wait for the data source.
 SOURCE_TIMEOUT = 15.0
 
-#: Most runs a quick look will plot at once.
-MAX_QUICK_LOOK_RUNS = 8
+#: Most files one run's quick look reads. A run has three or four; a folder
+#: anyone on the team can write to could hold a thousand under one run number.
+MAX_CURVE_FILES = 12
+
+
+class _BoundedSource:
+    """The data source, with every read of a file's bytes given a deadline.
+
+    Apply and its review read file bytes -- to copy them, and to tell a
+    re-reduced source from a touched one. Called on a request thread against
+    a hard-mounted NFS path that has gone away, each read would block that
+    thread for good, and apply would hold its lock while it did. Wrapping the
+    source once, where the page gets it, puts every caller under the rule
+    instead of trusting each call site to remember it. A read that times out
+    raises, and apply reports it against that file like any other failure.
+
+    Listing is left alone: only the background poller lists, and a poller
+    stuck on a dead mount is reported as stuck rather than waited for.
+    """
+
+    def __init__(self, source: Any, bounded: Callable[..., Any]) -> None:
+        self._source = source
+        self._bounded = bounded
+        self.kind = getattr(source, "kind", "")
+
+    def describe(self) -> dict[str, Any]:
+        return self._source.describe()
+
+    def inventory(self) -> Any:
+        return self._source.inventory()
+
+    def read_bytes(self, file: Any, *, max_bytes: int) -> bytes:
+        return self._bounded(self._source.read_bytes, file, max_bytes=max_bytes)
 
 
 class WritesDisabledError(PermissionError):
@@ -82,6 +113,7 @@ class ExperimentData:
         self._clock = clock
         self._autostart = autostart
         self._workspace: Any = None
+        self._source: Any = None
         self._live: Any = None
         self._lock = threading.Lock()
         self._pool = concurrent.futures.ThreadPoolExecutor(
@@ -101,6 +133,15 @@ class ExperimentData:
 
                 self._workspace = Workspace(self.root)
             return self._workspace
+
+    @property
+    def source(self) -> Any:
+        """The data source, with every byte read bounded by :data:`SOURCE_TIMEOUT`."""
+        workspace = self.workspace
+        with self._lock:
+            if self._source is None:
+                self._source = _BoundedSource(workspace.source, self._bounded)
+            return self._source
 
     @property
     def live(self) -> Any:
@@ -199,17 +240,24 @@ class ExperimentData:
             raise FileNotFoundError(f"The data source does not list run {key.run}.")
         curves = []
         problems = []
-        source = self.workspace.source
-        for index, source_file in enumerate(view.source.files):
+        source = self.source
+        files = view.source.files
+        if len(files) > MAX_CURVE_FILES:
+            problems.append(
+                Problem(
+                    f"curve:{key.run}",
+                    f"run {key.run} lists {len(files)} files; showing the first "
+                    f"{MAX_CURVE_FILES}.",
+                ).as_dict()
+            )
+        for index, source_file in enumerate(files[:MAX_CURVE_FILES]):
             label = (
                 f"{key.run}#{source_file.segment}"
                 if source_file.segment is not None
                 else f"{key.run} combined"
             )
             try:
-                data = self._bounded(
-                    source.read_bytes, source_file, max_bytes=MAX_FILE_BYTES
-                )
+                data = source.read_bytes(source_file, max_bytes=MAX_FILE_BYTES)
                 curve = read_reduced_bytes(data, label=label, name=source_file.name)
             except SourceTimeoutError:
                 raise
@@ -287,7 +335,7 @@ class ExperimentData:
             catalog,
             runs,
             statuses,
-            self.workspace.source,
+            self.source,
             self.workspace.render_context(),
             samples=_sample_list(samples),
             confirmed=_run_keys(confirmed),
@@ -411,15 +459,16 @@ class ExperimentData:
         if not isinstance(plan_id, str) or not plan_id:
             raise ValueError("plan_id is required: review the plan before applying")
         catalog = self._catalog_or_raise()
-        # A fresh poll, not the last snapshot: completeness is judged now.
-        snapshot = self._bounded(self.live.scan_once)
+        # A fresh poll, not the last snapshot: completeness is judged now. In
+        # the pool, because the poll itself lists the source.
+        snapshot = self._bounded(self.live.scan_fresh, SOURCE_TIMEOUT)
         runs, statuses = self._observed(snapshot)
         report = apply(
             self.root,
             catalog,
             runs,
             statuses,
-            self.workspace.source,
+            self.source,
             self.workspace.render_context(),
             expected_plan_id=plan_id,
             samples=_sample_list(samples),
@@ -427,17 +476,26 @@ class ExperimentData:
         )
         return report.as_dict()
 
-    def adopt(self, sample_id: str, rewrite: Any) -> dict[str, Any]:
-        """Adopt (or pull) a sample's sample.md into the catalog."""
+    def adopt(self, sample_id: str, rewrite: Any, plan_id: Any) -> dict[str, Any]:
+        """Adopt (or pull) a sample's sample.md into the catalog, as reviewed."""
         from nr_workbench.experiment.adopt import adopt, plan_adopt
 
         self._require_writable()
         validate_sample_id(sample_id)
         if not isinstance(rewrite, bool):
             raise ValueError("rewrite must be true or false")
+        if not isinstance(plan_id, str) or not plan_id:
+            raise ValueError("plan_id is required: review the adoption first")
         context = self.workspace.render_context()
         plan = plan_adopt(self.root, self._catalog_or_raise(), sample_id, context)
-        report = adopt(self.root, self.workspace.store, plan, context, rewrite=rewrite)
+        report = adopt(
+            self.root,
+            self.workspace.store,
+            plan,
+            context,
+            rewrite=rewrite,
+            expected_plan_id=plan_id,
+        )
         return {
             "catalog_changes": report.catalog_changes,
             "rewritten": report.rewritten,
@@ -464,7 +522,8 @@ class ExperimentData:
 
         store = self.workspace.store
         try:
-            return (store.load(), store.problems(), True)
+            catalog, problems = store.load_report()
+            return (catalog, list(problems), True)
         except CatalogError as exc:
             return (Catalog(), [Problem("catalog", str(exc))], False)
 
@@ -493,7 +552,7 @@ class ExperimentData:
         future = self._pool.submit(function, *args, **kwargs)
         try:
             return future.result(timeout=SOURCE_TIMEOUT)
-        except concurrent.futures.TimeoutError as exc:
+        except (concurrent.futures.TimeoutError, TimeoutError) as exc:
             raise SourceTimeoutError(
                 f"The data source did not answer within {SOURCE_TIMEOUT:.0f}s; "
                 "the data mount may be unavailable."

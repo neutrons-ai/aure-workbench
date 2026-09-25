@@ -157,6 +157,8 @@ class InMemorySource:
         planned: Run number to planned segment count, or absent if unknown.
         problems_for: Run number to the problems its listing should carry.
         block: When set, :meth:`inventory` waits on it -- a dead NFS mount.
+        entered: Set whenever :meth:`inventory` is entered, before any
+            blocking, so a test can wait for a listing to be under way.
         fail_reads_after: Raise ``OSError`` on the read after this many.
         reachable: Whether the listing succeeds at all.
     """
@@ -166,6 +168,7 @@ class InMemorySource:
     planned: dict[int, int] = field(default_factory=dict)
     problems_for: dict[int, tuple[str, ...]] = field(default_factory=dict)
     block: threading.Event | None = None
+    entered: threading.Event = field(default_factory=threading.Event)
     fail_reads_after: int | None = None
     reachable: bool = True
     inventories: int = 0
@@ -210,6 +213,7 @@ class InMemorySource:
         from nr_workbench.instrument.reduced import ReducedName, canonical_name
 
         self.inventories += 1
+        self.entered.set()
         if self.block is not None:
             self.block.wait()
         if not self.reachable:

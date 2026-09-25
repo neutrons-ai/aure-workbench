@@ -15,7 +15,7 @@ from nr_workbench.project.samples import (
     plan_sample_files as plan_sample_files,  # re-exported
 )
 from nr_workbench.project.samples import validate_sample_id
-from nr_workbench.project.scaffold import Outcome, apply_scaffold
+from nr_workbench.project.scaffold import LockProblemError, Outcome, apply_scaffold
 
 
 def run_sample_new(
@@ -61,7 +61,10 @@ def run_sample_new(
         planned = plan_sample(layout.root, context, sample_id, title=title)
     except SampleRenderError as exc:
         raise click.ClickException(str(exc)) from exc
-    report = apply_scaffold(layout.root, planned)
+    try:
+        report = apply_scaffold(layout.root, planned)
+    except LockProblemError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     created = report.count(Outcome.CREATE)
     if created == 0:

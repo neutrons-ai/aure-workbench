@@ -12,6 +12,7 @@ import os
 import shutil
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -99,9 +100,31 @@ def test_judge_a_run_with_problems_is_quarantined() -> None:
     assert status.reason == "segment 2 is here twice"
 
 
-def test_judge_all_planned_segments_settled_is_complete() -> None:
+def test_judge_a_fulfilled_plan_alone_does_not_prove_completion() -> None:
+    """The header's count is unverified in a run's first file, so it cannot prove."""
     status = settled(run_with([1, 2, 3], n=3))
+    assert status.state == "unconfirmed" and not status.complete
+    assert "later run" in status.reason
+
+
+def test_judge_a_fulfilled_plan_and_a_later_run_is_complete() -> None:
+    status = settled(run_with([1, 2, 3], n=3), latest=234290)
     assert status.state == "complete" and status.complete
+
+
+def test_judge_a_first_segment_header_sized_one_is_not_complete() -> None:
+    """If the arrays grow as segments land, segment 1's file says "1 of 1".
+
+    Trusting that would copy a third of a measurement five minutes after it
+    arrived -- the failure this module exists to prevent.
+    """
+    status = settled(run_with([1], n=1))
+    assert status.state == "unconfirmed" and not status.complete
+
+
+def test_judge_a_plan_that_grows_with_each_segment_is_not_complete() -> None:
+    status = settled(run_with([1, 2], n=2))
+    assert status.state == "unconfirmed" and not status.complete
 
 
 def test_judge_a_known_plan_with_a_missing_segment_is_never_complete() -> None:
@@ -208,7 +231,7 @@ def test_the_reference_timeline_is_complete_only_once_the_next_run_arrives(
     assert snapshot.runs[RunKey(218393)].status.state == "settling"
 
 
-def test_a_planned_new_reduction_run_completes_when_its_last_segment_settles() -> None:
+def test_a_planned_new_reduction_run_completes_once_the_next_run_is_reduced() -> None:
     clock = Clock()
     source = InMemorySource()
     live = LiveInventory(
@@ -229,6 +252,11 @@ def test_a_planned_new_reduction_run_completes_when_its_last_segment_settles() -
     clock.now = T0 + 510
     assert live.scan_once().runs[key].status.state == "arriving"
     clock.now = T0 + 900
+    # Every planned segment, settled: still waiting for proof the run ended.
+    assert live.scan_once().runs[key].status.state == "unconfirmed"
+
+    source.add_segments(234290, [1], planned=3, mtime=T0 + 950)
+    clock.now = T0 + 960
     assert live.scan_once().runs[key].status.state == "complete"
 
 
@@ -389,54 +417,100 @@ def test_a_source_that_raises_does_not_end_polling(steady_live) -> None:
 # --------------------------------------------------------------------------
 
 
+def wait_until(condition: Callable[[], bool], timeout: float = 5.0) -> bool:
+    """Wait for *condition*; generous, so a slow machine cannot fail the test."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.002)
+    return True
+
+
+def test_a_request_never_lists_the_source_itself() -> None:
+    """Only the background thread touches the mount; requests read snapshots."""
+    source = InMemorySource()
+    source.add_segments(234277, [1], mtime=T0)
+    live = LiveInventory(
+        source,
+        DirectoryFeed(),
+        settle_seconds=SETTLE,
+        poll_seconds=30,
+        clock=Clock(),
+        autostart=False,
+    )
+
+    for _ in range(3):
+        live.changes(None)
+        live.snapshot()
+
+    assert source.inventories == 0
+
+
 def test_a_request_returns_while_the_source_listing_is_blocked() -> None:
     """A hard-mounted NFS path that has gone away blocks; the page must not."""
     gate = threading.Event()
+    clock = Clock()
     source = InMemorySource(block=gate)
     live = LiveInventory(
         source,
         DirectoryFeed(),
         settle_seconds=SETTLE,
-        poll_seconds=0.05,
-        stuck_after=0.2,
+        poll_seconds=30,
+        clock=clock,
+        stuck_after=60,
+        autostart=False,
     )
+    scanner = threading.Thread(target=live.scan_once, daemon=True)
+    scanner.start()
     try:
-        started = time.monotonic()
-        live.changes(None)
-        assert time.monotonic() - started < 0.5
+        assert source.entered.wait(timeout=5)
 
-        time.sleep(0.4)
-        changes = live.changes(None)
-        assert changes.scanning and changes.stuck
-        assert any("taken" in p.message for p in changes.problems)
+        answered: list = []
+        request = threading.Thread(
+            target=lambda: answered.append(live.changes(None)), daemon=True
+        )
+        request.start()
+        request.join(timeout=5)
+        assert answered, "a request waited for the blocked listing"
+        assert answered[0].scanning and not answered[0].stuck
 
-        # Neither the thread nor another caller starts a second listing.
+        clock.now += 61
+        assert live.changes(None).stuck
+
+        # Neither another caller nor the loop starts a second listing.
         live.scan_once()
         assert source.inventories == 1
     finally:
-        live.stop()
         gate.set()
+        scanner.join(timeout=5)
+    assert not scanner.is_alive()
 
 
-def test_polling_stops_when_nobody_is_watching() -> None:
+def test_polling_stops_when_nobody_is_watching_and_resumes_on_a_request() -> None:
+    """Idleness is judged by the injected clock, so no test waits it out."""
+    clock = Clock()
     source = InMemorySource()
     live = LiveInventory(
         source,
         DirectoryFeed(),
         settle_seconds=SETTLE,
-        poll_seconds=0.01,
-        idle_after=0.1,
+        poll_seconds=0.001,
+        idle_after=600,
+        clock=clock,
     )
     try:
         live.changes(None)
-        time.sleep(0.6)
+        assert wait_until(lambda: source.inventories >= 2)
+        assert not live.idle
+
+        clock.now += 601
+        assert wait_until(lambda: live.idle)
         idle_count = source.inventories
-        time.sleep(0.4)
+        time.sleep(0.05)  # fifty poll intervals
         assert source.inventories == idle_count
-        assert idle_count > 0
 
         live.changes(None)
-        time.sleep(0.2)
-        assert source.inventories > idle_count
+        assert wait_until(lambda: source.inventories > idle_count)
     finally:
         live.stop()

@@ -61,19 +61,16 @@ MAX_PROSE = 20_000
 #: Characters that end a line for *some* reader. ``str.splitlines`` honours all
 #: of these; markdown honours only ``\n`` and ``\r``. A cell containing U+2028
 #: is one row to the browser and two to ``conditions.from_table``.
-_LINE_BREAKS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85  ")
+_LINE_BREAKS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
 
 #: Bidirectional overrides: they make displayed text differ from stored text.
-_BIDI_CONTROLS = frozenset("‪‫‬‭‮⁦⁧⁨⁩")
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 #: An ATX heading, as CommonMark reads one.
 _HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)", re.MULTILINE)
 
 #: The opening line of a fenced code block.
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-
-#: A markdown table row, the shape ``reconcile.read_table`` reads.
-_TABLE_ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
 
 
 class CatalogValidationError(ValueError):
@@ -311,12 +308,14 @@ def _check_fences(label: str, text: str) -> None:
 
 
 def _check_tables(label: str, text: str) -> None:
+    from nr_workbench.sample_md import RUN_HEADERS, table_cells
+
     for line in text.split("\n"):
-        match = _TABLE_ROW_RE.match(line)
-        if not match:
+        cells = table_cells(line)
+        if cells is None:
             continue
-        cells = {cell.strip().lower() for cell in match.group(1).split("|")}
-        if cells & {"run", "runs"}:
+        # Every header any reader takes as the run column, and "runs" too.
+        if {cell.lower() for cell in cells} & {*RUN_HEADERS, "runs"}:
             raise CatalogValidationError(
                 f"{label} contains a table with a Run column. nrw writes the "
                 "measurement table from your assignments, and readers of "

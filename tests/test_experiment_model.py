@@ -106,11 +106,11 @@ def test_validate_sample_id_rejects_unsafe_ids(sample_id: str) -> None:
     [
         pytest.param("OCV | -0.5 V", "'|'", id="pipe"),
         pytest.param("OCV\nthen CA", "line break", id="newline"),
-        pytest.param("OCV CA", "line break", id="line_separator"),
+        pytest.param("OCV\u2028CA", "line break", id="line_separator"),
         pytest.param("OCV\x85CA", "line break", id="next_line"),
         pytest.param("OCV\x00", "control", id="nul"),
         pytest.param("OCV\tCA", "control", id="tab"),
-        pytest.param("‮VCO", "text-direction", id="bidi_override"),
+        pytest.param("\u202eVCO", "text-direction", id="bidi_override"),
         pytest.param("<!-- OCV", "<!--", id="comment_open"),
         pytest.param("OCV -->", "-->", id="comment_close"),
         pytest.param("x" * 201, "limit", id="too_long"),
@@ -171,7 +171,7 @@ def test_clean_prose_allows_hashes_that_are_not_headings(value: str) -> None:
             "Run column",
             id="run_table",
         ),
-        pytest.param("line two", "line break", id="line_separator"),
+        pytest.param("line\u2028two", "line break", id="line_separator"),
         pytest.param("a\x00b", "control", id="nul"),
     ],
 )
@@ -204,7 +204,9 @@ def test_clean_prose_stores_other_text_verbatim(value: str) -> None:
 
 def test_a_note_is_not_held_to_the_sample_md_rules() -> None:
     """Notes stay on the page; a heading in one reshapes nothing."""
-    assert clean_prose("note", "## looks odd\n<!-- fine -->", rendered=False)
+    note = "## looks odd\n<!-- fine -->"
+
+    assert clean_prose("note", note, rendered=False) == note
 
 
 def test_clean_title_snapshot_tidies_rather_than_refuses() -> None:

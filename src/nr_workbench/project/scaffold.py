@@ -58,6 +58,10 @@ class Outcome(StrEnum):
     MERGE = "merge"
 
 
+class LockProblemError(Exception):
+    """The scaffold lock must not be written until a person fixes it."""
+
+
 #: Outcomes that represent a change to the working tree.
 CHANGING_OUTCOMES = frozenset(
     {Outcome.CREATE, Outcome.UPGRADE, Outcome.DRIFTED, Outcome.MERGE}
@@ -236,6 +240,14 @@ def lock_problem(lock_path: Path) -> str | None:
     )
 
 
+def _has_conflict_markers(lock_path: Path) -> bool:
+    try:
+        text = lock_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "<<<<<<<" in text or ">>>>>>>" in text
+
+
 def write_lock(lock_path: Path, entries: Mapping[str, dict[str, Any]]) -> None:
     """Write the scaffold lock atomically.
 
@@ -396,6 +408,7 @@ def apply_scaffold(
     force: bool = False,
     lock_path: Path | None = None,
     diff_sink: list[str] | None = None,
+    rebuild_lock: bool = False,
 ) -> ScaffoldReport:
     """Install a set of templated files under ``root``, idempotently.
 
@@ -409,12 +422,27 @@ def apply_scaffold(
         lock_path: Override the lock location. Defaults to
             ``root/.nrw/scaffold.lock.json``.
         diff_sink: List to append rendered diffs to when ``show_diff`` is set.
+        rebuild_lock: Allow replacing a lock that cannot be read. Only a plan
+            covering the whole project may: ``nrw init`` passes it, and its
+            rebuilt lock loses only the entries it did not plan, which then
+            read as UNTRACKED -- conservative. A partial plan (one sample)
+            over a damaged lock would keep its own entries and drop every
+            other one, so every other caller is refused.
 
     Returns:
         A report of what happened (or would happen).
+
+    Raises:
+        LockProblemError: The lock cannot be read and ``rebuild_lock`` is
+            off -- or it holds git conflict markers, which even ``nrw init``
+            must not paper over: they mean two people's entries, and a
+            rebuild would keep neither side's samples.
     """
     root = Path(root).resolve()
     lock_path = lock_path or (root / ".nrw" / "scaffold.lock.json")
+    trouble = lock_problem(lock_path)
+    if trouble and (not rebuild_lock or _has_conflict_markers(lock_path)):
+        raise LockProblemError(trouble)
     lock = load_lock(lock_path)
     updated_lock = dict(lock)
 
@@ -562,10 +590,6 @@ def _render_diff(planned: PlannedFile, target: Path) -> str:
 # ---------------------------------------------------------------------------
 # Changing ownership, with consent
 # ---------------------------------------------------------------------------
-
-
-class LockProblemError(Exception):
-    """The scaffold lock must not be written until a person fixes it."""
 
 
 def render_diff(planned: PlannedFile, target: Path) -> str:

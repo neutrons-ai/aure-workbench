@@ -6,22 +6,26 @@ the reference corpus, 218386's three segments landed 15 and then 52 minutes
 apart. A five-minute settle therefore calls the run complete twice before it
 is, and a copy made then is a third of a measurement that fits perfectly well.
 
-So *complete* needs evidence the sequence has ended, and there are two kinds:
+So *complete* needs evidence that the sequence has ended, and today there is
+one kind that proves it: **the instrument moved on** -- a *later run whose
+files have been reduced*. A later run that a feed merely *announces* does not
+count: that is when the next acquisition started, and this run's last segment
+may still be reducing.
 
-1. **The plan is fulfilled.** The ``new_reduction`` header sizes its
-   per-segment arrays by the reduction template, so it says how many segments
-   there will be (:attr:`~nr_workbench.instrument.header.ReducedHeader.
-   n_segments`). When all of them are present and settled, the run is done.
-   When the plan is known and a segment is missing, nothing else overrides it:
-   the run stays incomplete until it arrives or a person decides otherwise.
-2. **The instrument moved on.** When the plan is not stated (the older
-   ``_partial.txt`` dialect), a *later run whose files have been reduced* shows
-   this one was finished. A later run that a feed merely *announces* does not
-   count: that is when the next acquisition started, and this run's last
-   segment may still be reducing.
+**The header's plan can veto, but not prove.** The ``new_reduction`` header's
+per-segment arrays appear to be sized by the reduction template, so they
+would say how many segments there will be (:attr:`~nr_workbench.instrument.
+header.ReducedHeader.n_segments`). When they say three and two are present,
+the run is not complete, whatever else is true. But whether those arrays are
+already full length in the *first* segment's file has not been checked on a
+real file: if they grow as segments are reduced instead, a count read from
+segment 1 is 1, and trusting it would copy a third of a measurement five
+minutes after it landed. Until a real first-segment file settles that, a
+fulfilled plan still waits for a later run (or a person) -- see
+``docs/ground_truths.md``.
 
-A settled run with neither is *unconfirmed*. It is shown, it can be assigned,
-and a person can confirm it -- but it is never copied on its own.
+A settled run without that evidence is *unconfirmed*. It is shown, it can be
+assigned, and a person can confirm it -- but it is never copied on its own.
 """
 
 from __future__ import annotations
@@ -130,19 +134,12 @@ def judge(
         )
 
     segments = run.segments
-    if run.n_segments is not None:
-        expected = tuple(range(1, run.n_segments + 1))
-        if segments == expected:
-            return RunStatus(
-                "complete",
-                f"all {run.n_segments} planned segment(s) are present and settled",
-                complete=True,
-                settled=True,
-                quiet_for=quiet,
-            )
+    planned = run.n_segments
+    if planned is not None and segments != tuple(range(1, planned + 1)):
+        # The veto: a plan that says more is coming wins over any later run.
         return RunStatus(
             "unconfirmed",
-            f"{len(segments)} of {run.n_segments} planned segments are present. "
+            f"{len(segments)} of {planned} planned segments are present. "
             "The rest may still be measured or reduced; if the measurement was "
             "stopped early, confirm it to use what is here.",
             settled=True,
@@ -155,6 +152,16 @@ def judge(
             f"settled, and a later run ({latest_reduced}) has been reduced, so "
             "this measurement has finished",
             complete=True,
+            settled=True,
+            quiet_for=quiet,
+        )
+    if planned is not None:
+        return RunStatus(
+            "unconfirmed",
+            f"all {planned} planned segment(s) are present and settled. It "
+            "counts as complete once a later run has been reduced: the plan is "
+            "read from the header, which is not yet known to be reliable in a "
+            "run's first file. Confirm it to use it now.",
             settled=True,
             quiet_for=quiet,
         )

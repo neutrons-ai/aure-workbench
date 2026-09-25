@@ -30,7 +30,10 @@ it runs under ``NRW_AGENT``.
 from __future__ import annotations
 
 import ipaddress
+import logging
+import re
 import secrets
+import threading
 from typing import Any
 
 from flask import Flask, abort, current_app, request
@@ -44,6 +47,33 @@ TOKEN_HEADER = "X-NRW-Token"
 
 #: Largest write request accepted. Catalog edits are a few kilobytes.
 MAX_WRITE_BYTES = 1024 * 1024
+
+#: How long a browser keeps its session cookie. The session itself lives only
+#: as long as the server process, so this only decides whether reopening the
+#: browser needs the link again.
+SESSION_MAX_AGE = 7 * 24 * 3600
+
+
+class _RedactLink(logging.Filter):
+    """Keep the one-time link out of the server's access log.
+
+    Werkzeug logs every request line, ``GET /auth/<secret>`` included, to
+    stderr -- which people redirect to files, into tmux logs, into CI
+    captures. On a shared machine any of those can be readable by another
+    account.
+    """
+
+    _PATTERN = re.compile(r"/auth/[^\s\"?]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "/auth/" in message:
+            record.msg = self._PATTERN.sub("/auth/[redacted]", message)
+            record.args = ()
+        return True
+
+
+_REDACTOR = _RedactLink()
 
 #: Host names that mean "this machine" when the server is bound to loopback.
 _LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -83,7 +113,7 @@ def install(app: Flask, *, bound_host: str, writable: bool, token: str) -> None:
         writable: Whether writes are allowed at all.
         token: The per-process secret behind the one-time link and the cookie.
     """
-    loopback_bind = is_loopback(bound_host) or bound_host == "localhost"
+    loopback_bind = is_loopback(bound_host)
     app.config.update(
         NRW_BOUND_HOST=bound_host,
         NRW_LOOPBACK_BIND=loopback_bind,
@@ -94,6 +124,10 @@ def install(app: Flask, *, bound_host: str, writable: bool, token: str) -> None:
         NRW_PAGE_TOKEN=secrets.token_urlsafe(24),
         MAX_CONTENT_LENGTH=MAX_WRITE_BYTES,
     )
+    app.extensions["nrw_sessions"] = _Sessions()
+    werkzeug = logging.getLogger("werkzeug")
+    if _REDACTOR not in werkzeug.filters:
+        werkzeug.addFilter(_REDACTOR)
 
     @app.before_request
     def _check_host() -> None:
@@ -119,11 +153,58 @@ def install(app: Flask, *, bound_host: str, writable: bool, token: str) -> None:
         return response
 
 
+class _Sessions:
+    """The one-time link, and the sessions it has granted, for one server.
+
+    The link's secret is printed to a terminal and travels in a URL, so it is
+    exactly the kind of value that ends up somewhere it should not. It is
+    therefore good once: redeeming it mints a fresh, unrelated session value
+    for that browser's cookie, and a copy of the link found later -- in a
+    log, in shell history, in scrollback -- opens nothing.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._used = False
+        self._sessions: set[str] = set()
+
+    def redeem(self, presented: str, expected: str) -> str | None:
+        """A new session value for a correct, unused link; ``None`` otherwise."""
+        with self._lock:
+            if self._used or not expected:
+                return None
+            if not secrets.compare_digest(presented, expected):
+                return None
+            self._used = True
+            session = secrets.token_urlsafe(32)
+            self._sessions.add(session)
+            return session
+
+    @property
+    def used(self) -> bool:
+        with self._lock:
+            return self._used
+
+    def valid(self, presented: str) -> bool:
+        with self._lock:
+            return any(secrets.compare_digest(presented, s) for s in self._sessions)
+
+
+def redeem_link(presented: str) -> str | None:
+    """Exchange the one-time link's secret for a session value, once."""
+    sessions: _Sessions = current_app.extensions["nrw_sessions"]
+    return sessions.redeem(presented, current_app.config.get("NRW_TOKEN", ""))
+
+
+def link_used() -> bool:
+    """Whether the one-time link has already been opened."""
+    return current_app.extensions["nrw_sessions"].used
+
+
 def has_session() -> bool:
     """Whether this request comes from a browser that opened the one-time link."""
     presented = request.cookies.get(COOKIE, "")
-    expected = current_app.config.get("NRW_TOKEN", "")
-    return bool(expected) and secrets.compare_digest(presented, expected)
+    return bool(presented) and current_app.extensions["nrw_sessions"].valid(presented)
 
 
 def can_write() -> bool:

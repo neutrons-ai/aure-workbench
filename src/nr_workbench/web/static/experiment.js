@@ -583,7 +583,7 @@
     async function run(rewriteFile) {
       try {
         await api("POST", "/api/experiment/samples/" + encodeURIComponent(id) + "/adopt",
-          { rewrite: rewriteFile });
+          { rewrite: rewriteFile, plan_id: plan.plan_id });
         message("Taken into the catalog" + (rewriteFile ? "; sample.md rewritten." : "."),
           "success");
         await reload();

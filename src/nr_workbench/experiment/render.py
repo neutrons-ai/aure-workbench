@@ -96,12 +96,18 @@ def load_catalog(root: Path) -> Catalog:
             blank template instead would be guessing that the catalog does not
             manage this sample -- and guessing wrong resets its sample.md.
     """
-    from nr_workbench.experiment.store import CatalogError, ParquetCatalogStore
+    from nr_workbench.experiment.config import experiment_config
+    from nr_workbench.experiment.store import CatalogError, open_store
+    from nr_workbench.project.config import ProjectConfigError, load_config
 
-    store = ParquetCatalogStore.for_project(Path(root))
-    if not store.exists():
-        return Catalog()
     try:
+        kind = experiment_config(load_config(Path(root))).catalog_kind
+    except ProjectConfigError:
+        kind = "parquet"
+    try:
+        store = open_store(Path(root), kind)
+        if not store.exists():
+            return Catalog()
         return store.load()
     except CatalogError as exc:
         raise SampleRenderError(

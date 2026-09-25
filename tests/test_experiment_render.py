@@ -276,7 +276,11 @@ def test_sample_new_after_apply_sample_md_unchanged(
 
     run_sample_new(sample_id="Sample6")
 
-    assert (project / "samples" / "Sample6" / "sample.md").read_bytes() == rendered
+    sample_dir = project / "samples" / "Sample6"
+    assert (sample_dir / "sample.md").read_bytes() == rendered
+    # Nor a blank-template "proposal" beside it, which is what planning the
+    # scaffold instead of the catalog's render leaves behind.
+    assert not (sample_dir / "sample.md.nrw-new").exists()
 
 
 def test_init_sample_after_apply_sample_md_unchanged(

@@ -189,10 +189,10 @@ def test_missing_manifest_loads_the_tables_and_says_so(store) -> None:
     populated(store)
     (store.directory / MANIFEST_FILE).unlink()
 
-    catalog = store.load()
+    catalog, problems = store.load_report()
 
     assert RunKey(218386) in catalog.runs
-    assert any("manifest" in p.message for p in store.problems())
+    assert any("manifest" in p.message for p in problems)
 
 
 # --------------------------------------------------------------------------
@@ -228,11 +228,11 @@ def test_a_crash_between_the_two_tables_recovers_the_last_complete_catalog(
         )
     monkeypatch.undo()
 
-    catalog = store.load()
+    catalog, problems = store.load_report()
 
     assert catalog.runs[RunKey(218386)].condition == "OCV"
     assert catalog.samples["Sample6"].title == "Cu/Pt"
-    assert any("interrupted" in p.message for p in store.problems())
+    assert any("interrupted" in p.message for p in problems)
 
 
 def test_the_next_save_after_a_crash_writes_a_consistent_catalog(
@@ -246,9 +246,11 @@ def test_the_next_save_after_a_crash_writes_a_consistent_catalog(
 
     assign(store, 218386, base_rev=1, condition="CA")
 
-    fresh = ParquetCatalogStore(store.directory, store.cache_dir)
-    assert fresh.load().runs[RunKey(218386)].condition == "CA"
-    assert fresh.problems() == []
+    catalog, problems = ParquetCatalogStore(
+        store.directory, store.cache_dir
+    ).load_report()
+    assert catalog.runs[RunKey(218386)].condition == "CA"
+    assert problems == ()
 
 
 def test_a_mismatch_the_kept_copy_does_not_explain_is_refused(store) -> None:
@@ -326,12 +328,20 @@ def test_an_edit_to_another_record_is_merged_not_refused(store) -> None:
 
 
 def test_an_unchanged_save_writes_nothing(store) -> None:
+    def stamps() -> dict[str, tuple[int, int]]:
+        # The inode as well: a replace within one tick of a coarse clock keeps
+        # the mtime and still makes a new file -- and a new git diff.
+        return {
+            p.name: (p.stat().st_mtime_ns, p.stat().st_ino)
+            for p in store.directory.iterdir()
+        }
+
     populated(store)
-    stamps = {p.name: p.stat().st_mtime_ns for p in store.directory.iterdir()}
+    before = stamps()
 
     assign(store, 218386, base_rev=1, condition="OCV")
 
-    assert {p.name: p.stat().st_mtime_ns for p in store.directory.iterdir()} == stamps
+    assert stamps() == before
 
 
 def test_concurrent_saves_from_many_threads_lose_nothing(store) -> None:

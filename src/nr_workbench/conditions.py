@@ -34,9 +34,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-#: A markdown table row: ``| 218393 | full Q | -0.5 mA/cm2 |``.
-_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
-
 
 @dataclass
 class Conditions:
@@ -68,32 +65,34 @@ def from_table(markdown: str, run: str) -> str | None:
     """
     if not markdown or not run:
         return None
+    from nr_workbench.sample_md import (
+        CONDITION_HEADERS,
+        RUN_HEADERS,
+        column,
+        table_cells,
+    )
+
     header: list[str] = []
     for line in markdown.splitlines():
-        match = _ROW.match(line)
-        if not match:
+        cells = table_cells(line)
+        if cells is None:
             continue
-        cells = [c.strip() for c in match.group(1).split("|")]
         lowered = [c.lower() for c in cells]
-        if "run" in lowered:
+        if column(lowered, RUN_HEADERS) is not None:
             header = lowered
             continue
         if not header or set("".join(cells)) <= set("-: "):
             continue
-        try:
-            run_at = header.index("run")
-        except ValueError:
-            continue
-        if run_at >= len(cells) or cells[run_at] != run:
+        run_at = column(header, RUN_HEADERS)
+        if run_at is None or run_at >= len(cells) or cells[run_at] != run:
             continue
         # A column called "condition" is authoritative, *including when its
         # cell is empty*: falling through to another column then reported the
         # Type ("full Q") as the condition, and that reached the ISAAC record.
-        for name in ("condition", "conditions"):
-            if name in header:
-                at = header.index(name)
-                value = cells[at] if at < len(cells) else ""
-                return value or None
+        at = column(header, CONDITION_HEADERS)
+        if at is not None:
+            value = cells[at] if at < len(cells) else ""
+            return value or None
         # No condition column: a "notes" column, else the last cell, which is
         # where a free-text note lands in practice.
         if "notes" in header and header.index("notes") < len(cells):

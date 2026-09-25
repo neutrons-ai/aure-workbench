@@ -166,5 +166,8 @@ def apply() -> Any:
 
 @experiment_api.post("/samples/<sample_id>/adopt")
 def adopt(sample_id: str) -> Any:
-    """Adopt or pull a sample's sample.md: ``{"rewrite": bool}``."""
-    return jsonify(data().adopt(sample_id, _body().get("rewrite", False)))
+    """Adopt or pull a sample's sample.md: ``{"plan_id", "rewrite": bool}``."""
+    body = _body()
+    return jsonify(
+        data().adopt(sample_id, body.get("rewrite", False), body.get("plan_id"))
+    )

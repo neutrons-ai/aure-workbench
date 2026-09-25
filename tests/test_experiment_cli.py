@@ -190,6 +190,89 @@ def test_adopt_then_rewrite_puts_a_hand_written_sample_in_the_catalog(
     assert rows[234277]["sample"] == "Sample6"
 
 
+def test_apply_write_exits_non_zero_when_a_copy_fails(expt: Path, monkeypatch) -> None:
+    """A script must not read a run that failed to copy as applied."""
+    from nr_workbench.experiment.sources.local import LocalDirectorySource
+
+    nrw("experiment", "assign", "234277", "--sample", "Sample6", "--root", str(expt))
+
+    def unreadable(self, listed, *, max_bytes):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(LocalDirectorySource, "read_bytes", unreadable)
+
+    result = CliRunner().invoke(
+        main, ["experiment", "apply", "--write", "--root", str(expt)]
+    )
+
+    assert result.exit_code == 1
+    assert "run 234277 was not copied" in result.output
+    assert not list((expt / "samples/Sample6/data/steady").glob("REFL_*"))
+
+
+def conflict(lock: Path) -> bytes:
+    """Leave the scaffold lock as a merge would, and return its bytes."""
+    lock.write_text(
+        "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    return lock.read_bytes()
+
+
+def test_adopt_rewrite_on_a_conflicted_lock_changes_nothing(expt: Path) -> None:
+    """Refused before the catalog changes: adopted-but-not-rewritten is half done."""
+    from nr_workbench.experiment.store import ParquetCatalogStore
+
+    md = expt / "samples" / "Sample6" / "sample.md"
+    md.parent.mkdir(parents=True)
+    md.write_text(
+        "# Cu/Pt\n\n## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n| 234277 | full Q | OCV |\n"
+    )
+    lock = expt / ".nrw" / "scaffold.lock.json"
+    locked, written = conflict(lock), md.read_bytes()
+
+    result = CliRunner().invoke(
+        main,
+        ["experiment", "adopt", "Sample6", "--write", "--rewrite", "--root", str(expt)],
+    )
+
+    assert result.exit_code == 1
+    assert "conflict markers" in result.output
+    assert lock.read_bytes() == locked
+    assert md.read_bytes() == written
+    assert ParquetCatalogStore.for_project(expt).load().runs == {}
+
+
+def test_status_names_a_misspelled_setting_and_the_folder_it_fell_back_to(
+    project: Path,
+) -> None:
+    """A typo in nrw.toml looks exactly like an empty beamtime unless it is said."""
+    with (project / "nrw.toml").open("a", encoding="utf-8") as handle:
+        handle.write('\n[experiment.source]\nlocaton = "/data/elsewhere"\n')
+
+    payload = status(project)
+
+    messages = [p["message"] for p in payload["problems"]]
+    assert any("locaton" in m for m in messages)
+    assert payload["reachable"] is False
+    assert any("data mount" in m for m in messages)
+    assert payload["source"]["path"].startswith("/SNS/REF_L/IPTS-00001/")
+
+
+def test_sample_new_is_refused_on_a_conflicted_lock(project: Path, monkeypatch) -> None:
+    lock = project / ".nrw" / "scaffold.lock.json"
+    locked = conflict(lock)
+    monkeypatch.chdir(project)
+
+    result = CliRunner().invoke(main, ["sample", "new", "Sample9"])
+
+    assert result.exit_code != 0
+    assert "conflict markers" in result.output
+    assert lock.read_bytes() == locked
+    assert not (project / "samples" / "Sample9").exists()
+
+
 def test_rewrite_without_write_is_refused(expt: Path) -> None:
     result = CliRunner().invoke(
         main, ["experiment", "adopt", "--rewrite", "--root", str(expt)]

@@ -80,12 +80,18 @@ def observe(source) -> tuple[dict, dict]:
     return runs, {k: v.status for k, v in snapshot.runs.items()}
 
 
+#: The run measured after RUNS. Its reduced file is the evidence that they
+#: have finished; nothing in these tests assigns it.
+NEXT_RUN = 234290
+
+
 @pytest.fixture
 def folder(tmp_path: Path) -> Path:
-    """A facility folder with two complete new_reduction runs."""
+    """A facility folder with two complete new_reduction runs, and the next one."""
     reduced = tmp_path / "facility" / "new_reduction"
     for run in RUNS:
         write_autoreduced(reduced, run, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    write_autoreduced(reduced, NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     return reduced
 
 
@@ -126,6 +132,10 @@ def applier(project: Path, context: RenderContext, source) -> Applier:
     return Applier(project, context, source)
 
 
+def folder_of(applier: Applier) -> Path:
+    return Path(applier.source.path)
+
+
 def steady(project: Path, sample: str = "Sample6") -> Path:
     return project / "samples" / sample / "data" / "steady"
 
@@ -147,7 +157,7 @@ def test_apply_copies_complete_runs_and_renders_sample_md(
 
     plan, report = applier.apply(catalog)
 
-    names = sorted(p.name for p in folder.iterdir())
+    names = sorted(p.name for p in folder.iterdir() if str(NEXT_RUN) not in p.name)
     assert sorted(p.name for p in steady(project).glob("REFL_*")) == names
     for name in names:
         assert (steady(project) / name).read_bytes() == (folder / name).read_bytes()
@@ -171,8 +181,15 @@ def test_copies_are_dated_now_not_when_the_facility_wrote_them(
 def test_apply_twice_second_run_writes_nothing(applier: Applier, project: Path) -> None:
     catalog = catalog_for(*RUNS)
     applier.apply(catalog)
+
+    def stamp(path: Path) -> tuple[int, int]:
+        # The inode as well: os.replace makes a new one even within the second
+        # a coarse filesystem clock cannot tell apart.
+        info = path.stat()
+        return (info.st_mtime_ns, info.st_ino)
+
     stamps = {
-        p: p.stat().st_mtime_ns
+        p: stamp(p)
         for p in [*project.rglob("*")]
         if p.is_file() and ".nrw/cache" not in p.as_posix()
     }
@@ -182,8 +199,7 @@ def test_apply_twice_second_run_writes_nothing(applier: Applier, project: Path) 
     assert not plan.writes
     assert set(actions(plan).values()) == {Action.UNCHANGED}
     assert report.done == []
-    after = {p: p.stat().st_mtime_ns for p in stamps}
-    assert after == stamps
+    assert {p: stamp(p) for p in stamps} == stamps
 
 
 def test_downstream_scan_reads_the_applied_sample(
@@ -330,16 +346,19 @@ def test_apply_destination_symlink_target_not_modified(
     applier: Applier, project: Path, tmp_path: Path
 ) -> None:
     """`nrw import` symlinks data; writing through one writes the facility's file."""
-    outside = tmp_path / "facility-file.txt"
-    outside.write_text("the original\n")
-    steady(project).mkdir(parents=True)
     name = "REFL_234277_1_234277_autoreduction.dat"
+    # The same bytes as the source, so a digest comparison would call it a
+    # match and record it: only the link check stands between them.
+    outside = tmp_path / "facility-file.dat"
+    outside.write_bytes((folder_of(applier) / name).read_bytes())
+    steady(project).mkdir(parents=True)
     (steady(project) / name).symlink_to(outside)
 
     plan, _ = applier.apply(catalog_for(234277))
 
-    assert actions(plan)[name] is Action.CONFLICT
-    assert outside.read_text() == "the original\n"
+    chosen = next(f for f in plan.samples[0].files if f.name == name)
+    assert chosen.action is Action.CONFLICT and "symbolic link" in chosen.detail
+    assert name not in read_sources(project / "samples" / "Sample6")
 
 
 # --------------------------------------------------------------------------
@@ -352,6 +371,7 @@ def test_apply_copy_fails_midway_no_partial_run_visible(
 ) -> None:
     source = InMemorySource(fail_reads_after=1)
     source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    source.add_segments(NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     applier = Applier(project, context, source)
 
     _, report = applier.apply(catalog_for(234277))
@@ -367,6 +387,7 @@ def test_apply_a_source_file_that_is_not_reduced_data_is_refused(
 ) -> None:
     source = InMemorySource()
     source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    source.add_segments(NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     source.files[
         "REFL_234277_2_234278_autoreduction.dat"
     ].data = b"<html>not data</html>"
@@ -386,7 +407,7 @@ def test_apply_a_file_over_the_size_cap_is_refused(
     _, report = applier.apply(catalog_for(234277))
 
     assert not any(steady(project).glob("REFL_*"))
-    assert report.failed
+    assert report.failed and "bytes" in report.failed[0].detail
 
 
 # --------------------------------------------------------------------------
@@ -412,6 +433,26 @@ def test_an_excluded_run_moves_out_of_every_readers_way_and_back(
     plan, _ = applier.apply(restored)
     assert {a for n, a in actions(plan).items() if "234280" in n} == {Action.RESTORE}
     assert sorted(scan_sample(project, "Sample6").steady) == list(RUNS)
+
+
+def test_applying_again_after_an_exclusion_is_a_no_op(
+    applier: Applier, project: Path
+) -> None:
+    """A copy already moved aside is not moved again.
+
+    Planning the move a second time finds its target taken and reports a
+    failure -- on every apply from then on, so ``--write`` never exits 0.
+    """
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    excluded = edit(catalog, 234280, include=False)
+    applier.apply(excluded)
+
+    plan, report = applier.apply(excluded)
+
+    assert not plan.writes
+    assert report.failed == []
+    assert not any(f.run == 234280 for f in plan.samples[0].files)
 
 
 def test_a_reassigned_run_leaves_the_old_sample_and_reaches_the_new(
@@ -594,8 +635,21 @@ def test_a_plan_reviewed_in_one_second_applies_in_the_next(
     from nr_workbench.experiment.render import project_context
 
     context = project_context(project)
-    applier = Applier(project, context, source)
+    # The precondition: if the timestamp stops coming through this module's
+    # `datetime`, the patch stops biting and this test stops testing anything.
+    from nr_workbench.experiment.render import plan_sample
+
+    def register() -> bytes:
+        return next(
+            f.content
+            for f in plan_sample(project, context, "Sample6", catalog=catalog)
+            if f.relpath.endswith("sample.yaml")
+        )
+
     catalog = catalog_for(*RUNS)
+    assert register() != register()
+
+    applier = Applier(project, context, source)
     plan = applier.plan(catalog)
     runs, statuses = observe(source)
 
@@ -604,3 +658,155 @@ def test_a_plan_reviewed_in_one_second_applies_in_the_next(
     )
 
     assert len(report.done) == 6
+
+
+# --------------------------------------------------------------------------
+# Never overwrite, on every path
+# --------------------------------------------------------------------------
+
+
+def test_restoring_a_run_never_overwrites_a_file_put_back_by_hand(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    excluded = edit(catalog, 234280, include=False)
+    applier.apply(excluded)
+    name = "REFL_234280_1_234280_autoreduction.dat"
+    (steady(project) / name).write_text("# put back by hand\n")
+
+    _, report = applier.apply(edit(excluded, 234280, include=True))
+
+    assert (steady(project) / name).read_text() == "# put back by hand\n"
+    assert any(f.name == name and "already exists" in f.detail for f in report.failed)
+
+
+def test_a_file_appearing_between_review_and_apply_is_not_overwritten(
+    applier: Applier, project: Path, context: RenderContext, source
+) -> None:
+    """The window a plan cannot see: a hand copy made after review."""
+    catalog = catalog_for(234277)
+    plan = applier.plan(catalog)
+    runs, statuses = observe(source)
+    name = "REFL_234277_2_234278_autoreduction.dat"
+    steady(project).mkdir(parents=True, exist_ok=True)
+
+    original = apply_module._place
+
+    def racing_place(part: Path, target: Path) -> None:
+        if target.name == name:
+            target.write_text("# arrived meanwhile\n")
+        original(part, target)
+
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch.context() as patch:
+        patch.setattr(apply_module, "_place", racing_place)
+        report = apply(
+            project,
+            catalog,
+            runs,
+            statuses,
+            source,
+            context,
+            expected_plan_id=plan.plan_id,
+        )
+
+    assert (steady(project) / name).read_text() == "# arrived meanwhile\n"
+    # Whole or not at all: none of the run's files stayed.
+    assert not list(steady(project).glob("REFL_234277_1_*"))
+    assert all(f.run == 234277 for f in report.failed) and len(report.failed) == 3
+
+
+def test_a_rename_failing_midway_leaves_no_partial_run(
+    applier: Applier, project: Path, monkeypatch
+) -> None:
+    calls = {"n": 0}
+    original = apply_module._place
+
+    def failing(part: Path, target: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("disk full")
+        original(part, target)
+
+    monkeypatch.setattr(apply_module, "_place", failing)
+
+    _, report = applier.apply(catalog_for(234277))
+
+    assert not list(steady(project).glob("REFL_234277_*"))
+    assert len(report.failed) == 3 and "disk full" in report.failed[0].detail
+    assert not read_sources(project / "samples" / "Sample6")
+
+
+# --------------------------------------------------------------------------
+# The beamline's normal failures
+# --------------------------------------------------------------------------
+
+
+def test_with_the_source_gone_copies_stay_and_missing_runs_are_named(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    catalog = catalog_for(234277)
+    applier.apply(catalog)
+    # 234280 is assigned after the mount went away: it was never copied.
+    catalog = apply_changes(
+        catalog, runs=[RunChange(RunKey(234280), 0, {"sample_id": "Sample6"})], now=NOW
+    )
+    folder.rename(folder.with_name("unmounted"))
+
+    plan = applier.plan(catalog)
+
+    kinds = {f.name: f.action for f in plan.samples[0].files}
+    assert {a for n, a in kinds.items() if "234277" in n} == {Action.UNCHANGED}
+    assert kinds["run 234280"] is Action.SOURCE_MISSING
+    assert Action.MOVE_OUT not in kinds.values()
+
+
+def test_a_copy_deleted_by_hand_is_a_conflict_not_a_silent_recopy(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(234277)
+    applier.apply(catalog)
+    name = "REFL_234277_2_234278_autoreduction.dat"
+    (steady(project) / name).unlink()
+
+    plan, _ = applier.apply(catalog)
+
+    assert actions(plan)[name] is Action.CONFLICT
+    assert not (steady(project) / name).exists()
+
+
+def test_an_unassigned_copy_moves_out_as_no_longer_assigned(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+
+    plan, _ = applier.apply(edit(catalog, 234280, sample_id=None))
+
+    for_run = [f for f in plan.samples[0].files if f.run == 234280]
+    # Each file once, as a move: not also "not copied by nrw; left alone",
+    # which would contradict the move on the review page.
+    assert [f.action for f in for_run] == [Action.MOVE_OUT] * 3
+    assert "no longer assigned" in for_run[0].detail
+    assert not list(steady(project).glob("REFL_234280_*"))
+
+
+def test_one_broken_sample_does_not_stop_the_others(
+    applier: Applier, project: Path
+) -> None:
+    catalog = apply_changes(
+        catalog_for(234277),
+        runs=[RunChange(RunKey(234280), 0, {"sample_id": "Sample7"})],
+        now=NOW,
+    )
+    record = project / "samples" / "Sample6" / "data" / "sources.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+
+    applier.apply(catalog)
+
+    assert len(list(steady(project, "Sample7").glob("REFL_234280_*"))) == 3
+    assert record.read_text() == "{not json"
+    assert not list(steady(project).glob("REFL_*"))

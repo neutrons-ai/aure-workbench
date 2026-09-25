@@ -5,8 +5,12 @@ of a run when its reduced files appear, but other feeds know sooner and know
 different things: the SNS web monitor (monitor.sns.gov) reports each run as it
 is acquired, before any reduction exists, and Tiled can announce runs whatever
 their data source. A run a feed announces with no files yet is *awaiting
-reduction* -- a state the folder alone can never show -- and a later run the
-feed announces is evidence the one before it has finished.
+reduction* -- a state the folder alone can never show.
+
+**An announcement is not evidence that the run before it has finished.** It
+says the next acquisition started; the previous run's last segment may still
+be reducing. Only a later run with *reduced files* counts (see
+:mod:`nr_workbench.experiment.status`), and a new feed must not change that.
 
 A feed returns a snapshot of every run it currently knows, not a delta:
 :class:`~nr_workbench.experiment.live.LiveInventory` works out what changed,

@@ -40,7 +40,8 @@ import json
 import os
 import shutil
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -132,8 +133,13 @@ class CatalogStore(Protocol):
         """The current catalog; empty when none has been written yet."""
         ...
 
-    def problems(self) -> list[Problem]:
-        """Anything the last load recovered from, in words a person can act on."""
+    def load_report(self) -> tuple[Catalog, tuple[Problem, ...]]:
+        """The catalog and what reading it recovered from, together.
+
+        Returned together, not kept on the store: the web server shares one
+        store across request threads, and a problem remembered from "the last
+        load" would be another thread's load by the time it was asked for.
+        """
         ...
 
     def update(
@@ -145,6 +151,32 @@ class CatalogStore(Protocol):
     ) -> Catalog:
         """Apply edits against the latest catalog and store the result."""
         ...
+
+
+class CatalogUnavailableError(CatalogError):
+    """The configured kind of catalog store is not available."""
+
+
+def open_store(root: Path, kind: str = "parquet") -> ParquetCatalogStore:
+    """The catalog store ``[experiment.catalog] kind`` names.
+
+    Raises:
+        CatalogUnavailableError: For a planned or unknown kind. Deliberately not
+            a fallback to the local parquet store: edits meant for a facility
+            service would be written into the project instead, where nobody
+            else would see them.
+    """
+    if kind == "parquet":
+        return ParquetCatalogStore.for_project(root)
+    if kind == "api":
+        raise CatalogUnavailableError(
+            '[experiment.catalog] kind = "api" is planned but not implemented '
+            "yet; see docs/experiment-sources.md. The catalog is not editable "
+            'until it is, or until kind = "parquet".'
+        )
+    raise CatalogUnavailableError(
+        f'[experiment.catalog] kind = {kind!r} is not known. Known: "parquet".'
+    )
 
 
 #: One lock per catalog directory per process, for the web server's threads.
@@ -175,7 +207,6 @@ class ParquetCatalogStore:
         self.directory = Path(directory)
         self.cache_dir = Path(cache_dir)
         self.git_root = git_root
-        self._problems: list[Problem] = []
 
     @classmethod
     def for_project(cls, root: Path) -> ParquetCatalogStore:
@@ -206,10 +237,6 @@ class ParquetCatalogStore:
             for name in (RUNS_FILE, SAMPLES_FILE, MANIFEST_FILE)
         )
 
-    def problems(self) -> list[Problem]:
-        """What the last :meth:`load` recovered from."""
-        return list(self._problems)
-
     def load(self) -> Catalog:
         """Read the catalog.
 
@@ -223,10 +250,49 @@ class ParquetCatalogStore:
             CatalogUnmergedError: Git reports ``experiment/`` unmerged.
             CatalogVersionError: The catalog was written by a newer nrw.
         """
-        self._problems = []
+        return self.load_report()[0]
+
+    def load_report(self) -> tuple[Catalog, tuple[Problem, ...]]:
+        """Read the catalog, and say what reading it recovered from.
+
+        Taken under the same locks as a save. A save replaces three files one
+        after another, and a read landing between two of them would see a
+        manifest that does not match its tables -- and report an interrupted
+        save that is merely in progress.
+
+        Raises:
+            CatalogError: As for :meth:`load`.
+        """
+        with self._reading():
+            return self._load_unlocked()
+
+    @contextmanager
+    def _reading(self) -> Iterator[None]:
+        """The save lock, for a read. Skipped where it cannot be taken.
+
+        A catalog on a read-only mount -- a colleague's project, opened to look
+        -- has nowhere to put the lock file. Refusing to read it would be
+        worse than the race the lock guards against.
+        """
+        from nr_workbench.provenance.index import _locked
+
+        with _thread_lock(self.directory):
+            try:
+                context = _locked(self.cache_dir / "catalog")
+                context.__enter__()
+            except OSError:
+                yield
+                return
+            try:
+                yield
+            finally:
+                context.__exit__(None, None, None)
+
+    def _load_unlocked(self) -> tuple[Catalog, tuple[Problem, ...]]:
+        problems: list[Problem] = []
         self._refuse_if_unmerged()
         if not self.exists():
-            return Catalog()
+            return (Catalog(), ())
 
         manifest = self._read_manifest(self.directory / MANIFEST_FILE)
         runs_path = self.directory / RUNS_FILE
@@ -243,7 +309,7 @@ class ParquetCatalogStore:
                     "or from a backup; nrw will not save over it until then."
                 )
             runs_path, samples_path = recovered
-            self._problems.append(
+            problems.append(
                 Problem(
                     "catalog",
                     "The last save of the catalog was interrupted. Showing the "
@@ -252,7 +318,7 @@ class ParquetCatalogStore:
                 )
             )
         elif manifest is None:
-            self._problems.append(
+            problems.append(
                 Problem(
                     "catalog",
                     f"{self.directory.name}/{MANIFEST_FILE} is missing, so an "
@@ -263,12 +329,13 @@ class ParquetCatalogStore:
 
         runs = _read_table(runs_path, "runs")
         samples = _read_table(samples_path, "samples")
-        return Catalog(
+        catalog = Catalog(
             runs={entry.key: entry for entry in map(_run_from_row, runs)},
             samples={
                 entry.sample_id: entry for entry in map(_sample_from_row, samples)
             },
         )
+        return (catalog, tuple(problems))
 
     # ------------------------------------------------------------------
     # Writing
@@ -302,14 +369,13 @@ class ParquetCatalogStore:
         run_changes, sample_changes = list(runs), list(samples)
 
         with _thread_lock(self.directory), _locked(self.cache_dir / "catalog"):
-            current = self.load()
+            current, _ = self._load_unlocked()
             updated = apply_changes(
                 current, runs=run_changes, samples=sample_changes, now=stamp
             )
             if _same(current, updated):
                 return current
             self._write(updated, stamp)
-            self._problems = []
             return updated
 
     def _write(self, catalog: Catalog, stamp: str) -> None:
@@ -563,7 +629,9 @@ def _text(row: dict[str, Any], name: str) -> str:
 
 
 def _extra(row: dict[str, Any], known: tuple[str, ...]) -> dict[str, Any]:
-    return {k: v for k, v in row.items() if k not in known and v is not None}
+    # Nulls kept: a column a newer nrw wrote, null in every row, must still be
+    # a column after an older nrw saves.
+    return {k: v for k, v in row.items() if k not in known}
 
 
 # ---------------------------------------------------------------------------

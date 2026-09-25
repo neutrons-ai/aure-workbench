@@ -47,7 +47,7 @@ def run_serve(
     except ProjectNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    loopback = is_loopback(host) or host == "localhost"
+    loopback = is_loopback(host)
     if debug and not loopback:
         raise click.ClickException(
             f"--debug with --host {host} would let anyone who can reach this port "
@@ -94,11 +94,11 @@ def run_serve(
     if reason:
         click.echo(f"  {reason}")
     else:
-        click.echo("  To edit the experiment, open this link in your browser once:")
+        click.echo("  To edit the experiment, open this link in your browser:")
         click.echo(f"    http://{shown}:{port}/auth/{token}")
         click.echo(
-            "  Keep it private: anyone with it can change the catalog. Without it\n"
-            "  the pages are view-only."
+            "  It works once, for one browser, and is kept out of the request log.\n"
+            "  Without it the pages are view-only."
         )
     if not loopback:
         click.echo(

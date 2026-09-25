@@ -43,6 +43,42 @@ class _Unavailable:
         raise OSError(self.problem.message)
 
 
+class _UnavailableStore:
+    """Stands in for a catalog store that could not be opened.
+
+    Every read and write raises, so the page shows the catalog as unreadable
+    and refuses edits, rather than editing somewhere nobody else will look.
+    """
+
+    def __init__(self, root: Path, kind: str, reason: str) -> None:
+        from nr_workbench.project.layout import ProjectLayout
+
+        self.kind = kind
+        self.reason = reason
+        self.directory = ProjectLayout(root=root).experiment_dir
+
+    def describe(self) -> dict[str, Any]:
+        return {"kind": self.kind, "exists": False, "unavailable": self.reason}
+
+    def exists(self) -> bool:
+        return False
+
+    def _refuse(self) -> Any:
+        from nr_workbench.experiment.store import CatalogUnavailableError
+
+        raise CatalogUnavailableError(self.reason)
+
+    def load(self) -> Any:
+        return self._refuse()
+
+    def load_report(self) -> Any:
+        return self._refuse()
+
+    def update(self, **kwargs: Any) -> Any:
+        del kwargs
+        return self._refuse()
+
+
 class Workspace:
     """The experiment of one project.
 
@@ -53,7 +89,7 @@ class Workspace:
     def __init__(self, root: Path) -> None:
         from nr_workbench.experiment.feeds import FeedUnavailableError, open_feed
         from nr_workbench.experiment.sources import SourceUnavailableError, open_source
-        from nr_workbench.experiment.store import ParquetCatalogStore
+        from nr_workbench.experiment.store import CatalogError, open_store
         from nr_workbench.project.config import ProjectConfigError, load_config
 
         self.root = Path(root).resolve()
@@ -66,15 +102,13 @@ class Workspace:
         self.config: ExperimentConfig = experiment_config(project)
         problems.extend(self.config.problems)
 
-        if self.config.catalog_kind != "parquet":
-            problems.append(
-                Problem(
-                    "config",
-                    f"[experiment.catalog] kind = {self.config.catalog_kind!r} is "
-                    "not implemented; the catalog is kept in experiment/*.parquet.",
-                )
+        try:
+            self.store: Any = open_store(self.root, self.config.catalog_kind)
+        except CatalogError as exc:
+            self.store = _UnavailableStore(
+                self.root, self.config.catalog_kind, str(exc)
             )
-        self.store = ParquetCatalogStore.for_project(self.root)
+            problems.append(Problem("catalog", str(exc)))
 
         try:
             self.source: Any = open_source(self.config.source, ipts=self.config.ipts)

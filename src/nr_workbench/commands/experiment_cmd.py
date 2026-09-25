@@ -77,8 +77,8 @@ def run_status(*, root: str | None = None, as_json: bool = False) -> None:
         *snapshot.feed.problems,
     ]
     try:
-        catalog = workspace.store.load()
-        problems.extend(workspace.store.problems())
+        catalog, recovered = workspace.store.load_report()
+        problems.extend(recovered)
     except CatalogError as exc:
         from nr_workbench.experiment.model import Catalog
         from nr_workbench.problems import Problem

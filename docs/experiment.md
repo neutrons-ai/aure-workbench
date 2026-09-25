@@ -19,13 +19,17 @@ nrw serve
 ```
   http://127.0.0.1:8765/experiment      the experiment's runs
 
-  To edit the experiment, open this link in your browser once:
+  To edit the experiment, open this link in your browser:
     http://127.0.0.1:8765/auth/9f0c…
+  It works once, for one browser, and is kept out of the request log.
+  Without it the pages are view-only.
 ```
 
-Open the `/auth/…` link once. It lets *this browser* make changes. Without it
-the page is view-only, which is on purpose: an analysis node is shared, and
-anyone logged in to it can reach `127.0.0.1`. Keep the link to yourself.
+The `/auth/…` link lets *this browser* make changes. Without it the page is
+view-only, which is on purpose: an analysis node is shared, and anyone logged in
+to it can reach `127.0.0.1`. The link stops working once it has been used, so a
+copy left in scrollback or pasted into a chat opens nothing. To edit from a
+second browser, restart `nrw serve` for a new link.
 
 The same organization is available from the command line, for scripts and for
 anyone who prefers it:
@@ -78,15 +82,24 @@ segments landed 15 and then 52 minutes apart. Five quiet minutes after the
 first segment, it looks finished, and a copy made then is a third of a
 measurement. It fits perfectly well, which is the problem.
 
-So *complete* needs evidence the run ended. There are two kinds:
+So *complete* needs evidence the run ended, and one kind counts: **a later run
+has been reduced.** Once the instrument has moved on and the next run's files
+exist, this one is not getting more segments.
 
-- **All planned segments are present.** The `new_reduction` header says how many
-  segments the reduction template planned.
-- **A later run has been reduced**, when the header does not say how many were
-  planned.
+- **The planned segment count can only say "not yet".** When the
+  `new_reduction` header says three segments were planned and two are here,
+  the run is not complete, however much later data has arrived. When all three
+  are here, that alone does not make it complete either: nobody has yet checked
+  on a real file that the *first* segment's header already carries the whole
+  plan. If it does not, a header read after segment 1 says "1 of 1" and would
+  call a third of a measurement finished.
+- **A run the feed announces does not count as the later run.** The
+  announcement means the next acquisition started. This run's last segment may
+  still be reducing.
 
-A settled run with neither kind of evidence is *unconfirmed*. If the measurement
-really was stopped early, tick "use run N as it is" when you review apply
+A settled run without that evidence is *unconfirmed*. The last run of a
+beamtime always is, because nothing comes after it. If the measurement is really
+over, or was stopped early, tick "use run N as it is" when you review apply
 (`--confirm N` on the command line).
 
 ## Organizing

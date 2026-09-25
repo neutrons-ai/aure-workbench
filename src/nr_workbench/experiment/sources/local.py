@@ -20,10 +20,12 @@ Three things this is careful about, because the folder is shared:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat as stat_module
 import threading
 from collections import OrderedDict
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -64,8 +66,6 @@ class LocalDirectorySource:
         self.ipts = normalize_ipts(ipts)
         self._headers: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
         self._lock = threading.Lock()
-        #: How many times the folder has been listed; one per poll, by design.
-        self.listings = 0
 
     def describe(self) -> dict[str, Any]:
         """Kind and location, for the page."""
@@ -107,7 +107,6 @@ class LocalDirectorySource:
             return self._unreachable(f"{self.path} cannot be read by this account.")
         except OSError as exc:
             return self._unreachable(f"{self.path} cannot be listed: {exc}")
-        self.listings += 1
 
         files: dict[int, list[tuple[SourceFile, os.stat_result]]] = {}
         unrecognized: list[str] = []
@@ -248,7 +247,11 @@ class LocalDirectorySource:
                 "experiment."
             )
 
-        thetas = tuple(h.theta for f, h in readable if f.segment is not None)
+        # One per file, None where unknown: positions must line up with files.
+        thetas = tuple(
+            None if isinstance(h, str) or f.segment is None else h.theta
+            for f, h in headers
+        )
         return SourceRun(
             key=RunKey(run),
             files=tuple(f for f, _ in members),
@@ -265,8 +268,17 @@ class LocalDirectorySource:
         )
 
     def _header(self, source_file: SourceFile) -> Any:
-        """The file's header, or the reason it could not be read. Cached."""
-        from nr_workbench.instrument.header import HeaderError, read_header
+        """The file's header, or the reason it could not be read. Cached.
+
+        Opened the way :meth:`read_bytes` opens files -- refusing a link, and
+        checking it is still the file listed -- because a name that was a
+        plain file at listing time can be a link to anything by now.
+        """
+        from nr_workbench.instrument.header import (
+            MAX_HEADER_BYTES,
+            HeaderError,
+            read_header_bytes,
+        )
 
         key = (source_file.name, source_file.version)
         with self._lock:
@@ -274,10 +286,14 @@ class LocalDirectorySource:
                 self._headers.move_to_end(key)
                 return self._headers[key]
         assert self.path is not None
+        path = self.path / source_file.name
         try:
-            value: Any = read_header(self.path / source_file.name)
+            data = self._open_listed(source_file, MAX_HEADER_BYTES)
+            value: Any = read_header_bytes(data, path)
         except HeaderError as exc:
             value = str(exc).split(": ", 1)[-1]
+        except SourceChangedError as exc:
+            value = str(exc)
         except OSError as exc:
             value = f"header cannot be read ({exc})"
         with self._lock:
@@ -298,42 +314,66 @@ class LocalDirectorySource:
                 it was listed, or while it was being read.
             SourceFileTooLarge: It is bigger than ``max_bytes``.
             OSError: It cannot be opened -- including because it is now a
-                symbolic link, which ``O_NOFOLLOW`` refuses.
+                symbolic link, which ``O_NOFOLLOW`` refuses with ``ELOOP``.
         """
-        if self.path is None or canonical_name(file.name) is None:
-            raise SourceChangedError(f"{file.name} is not a file this source listed")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(self.path / file.name, flags)
-        try:
-            before = os.fstat(descriptor)
-            if (
-                not stat_module.S_ISREG(before.st_mode)
-                or _version(before) != file.version
-            ):
-                raise SourceChangedError(
-                    f"{file.name} changed after it was listed; it is probably "
-                    "being rewritten by the reduction."
-                )
+        with self._opened(file) as (descriptor, before):
             if before.st_size > max_bytes:
                 raise SourceFileTooLarge(
                     f"{file.name} is {before.st_size} bytes, more than a reduced "
                     f"file could be ({max_bytes})."
                 )
-            chunks = []
-            remaining = max_bytes + 1
-            while remaining > 0:
-                chunk = os.read(descriptor, min(65536, remaining))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            data = b"".join(chunks)
+            data = _read_up_to(descriptor, max_bytes + 1)
             after = os.fstat(descriptor)
-        finally:
-            os.close(descriptor)
         if _version(after) != file.version or len(data) != before.st_size:
             raise SourceChangedError(f"{file.name} changed while it was being read.")
         return data
+
+    def _open_listed(self, file: SourceFile, limit: int) -> bytes:
+        """The first *limit* bytes of a listed file, opened as safely as a copy."""
+        with self._opened(file) as (descriptor, _):
+            return _read_up_to(descriptor, limit)
+
+    @contextlib.contextmanager
+    def _opened(self, file: SourceFile) -> Iterator[tuple[int, os.stat_result]]:
+        """Open a listed file without following links, if it is still that file.
+
+        Raises:
+            SourceChangedError: It is not a canonical name, not a regular file,
+                or not the version listed.
+            OSError: It cannot be opened -- including because it is now a
+                symbolic link, which ``O_NOFOLLOW`` refuses with ``ELOOP``.
+        """
+        if self.path is None or canonical_name(file.name) is None:
+            raise SourceChangedError(f"{file.name} is not a file this source listed")
+        # O_NONBLOCK too: a name swapped for a FIFO would otherwise block the
+        # open itself, forever, on a worker thread.
+        flags = (
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        )
+        descriptor = os.open(self.path / file.name, flags)
+        try:
+            info = os.fstat(descriptor)
+            if not stat_module.S_ISREG(info.st_mode) or _version(info) != file.version:
+                raise SourceChangedError(
+                    f"{file.name} changed after it was listed; it is probably "
+                    "being rewritten by the reduction."
+                )
+            yield (descriptor, info)
+        finally:
+            os.close(descriptor)
+
+
+def _read_up_to(descriptor: int, limit: int) -> bytes:
+    """Read at most *limit* bytes from an open descriptor."""
+    chunks = []
+    remaining = limit
+    while remaining > 0:
+        chunk = os.read(descriptor, min(65536, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 def _version(info: os.stat_result) -> str:
