@@ -252,9 +252,14 @@
         $("s-lines").textContent = payload.lines;
         $("s-lines").classList.remove("d-none");
       } else if (payload.kind === "TomlConflictError") {
-        // nrw.toml changed since the page loaded it: show what it says now.
-        message(error.message + " The settings were reloaded; make the change again.", "warning");
-        await reload();
+        // nrw.toml changed since the page loaded it: show what it says now,
+        // and only then say so.
+        try {
+          await reload();
+          message(error.message + " The settings were reloaded; make the change again.", "warning");
+        } catch (_) {
+          message(error.message + " Reload the page to see what nrw.toml says now.", "warning");
+        }
       } else {
         message(error.message, error.status === 409 ? "warning" : "danger");
       }
