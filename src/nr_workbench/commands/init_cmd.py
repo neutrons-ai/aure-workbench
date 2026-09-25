@@ -508,4 +508,5 @@ def _report(
         click.echo()
         click.echo("Next:")
         click.echo("  nrw doctor              check the environment")
+        click.echo("  nrw serve               set the IPTS and data folder, and watch the runs")
         click.echo("  nrw sample new <ID>     create a sample and its data folders")

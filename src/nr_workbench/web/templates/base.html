@@ -7,7 +7,9 @@
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <link rel="stylesheet" href="{{ url_for('static', filename='nrw.css') }}">
+  {% block plotly %}
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  {% endblock %}
 </head>
 <body>
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom">
@@ -17,6 +19,7 @@
       <a class="nav-link" href="{{ url_for('experiment') }}">Experiment</a>
       <a class="nav-link" href="{{ url_for('index') }}">Samples</a>
       <a class="nav-link" href="{{ url_for('fits') }}">Fits</a>
+      <a class="nav-link" href="{{ url_for('settings_page') }}">Settings</a>
     </div>
     {% block navextra %}{% endblock %}
   </div>
@@ -34,11 +37,13 @@
   {% block content %}{% endblock %}
 </main>
 
+{% block plotly_check %}
 <script{% if csp_nonce %} nonce="{{ csp_nonce }}"{% endif %}>
   if (typeof Plotly === "undefined") {
     document.getElementById("offline-warning").classList.remove("d-none");
   }
 </script>
+{% endblock %}
 <script src="{{ url_for('static', filename='nrw.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>

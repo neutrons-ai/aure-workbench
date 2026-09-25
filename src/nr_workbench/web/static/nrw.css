@@ -240,3 +240,16 @@ tr.fit-story > td > span + span::before {
 .expt-plan-list li {
   word-break: break-all;
 }
+
+/* Settings: a form, not a dashboard. */
+.settings {
+  max-width: 52rem;
+}
+
+.settings-short {
+  max-width: 18rem;
+}
+
+.settings-indent {
+  margin-left: 1.5rem;
+}

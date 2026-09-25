@@ -374,6 +374,7 @@ class ExperimentData:
         return {
             "schema": "nrw-experiment-page/1",
             "ipts": workspace.config.ipts,
+            "needs_setup": workspace.config.needs_setup,
             "source": workspace.source.describe(),
             "feed": workspace.feed.describe(),
             "catalog": {
@@ -720,6 +721,19 @@ class ExperimentData:
     # ------------------------------------------------------------------
     # Settings
     # ------------------------------------------------------------------
+
+    def needs_setup(self) -> bool:
+        """Whether nothing can be watched until someone sets the experiment up.
+
+        From ``nrw.toml`` alone, never the data mount.
+        """
+        from nr_workbench.experiment.config import experiment_config
+        from nr_workbench.project.config import ProjectConfigError, load_config
+
+        try:
+            return experiment_config(load_config(self.root)).needs_setup
+        except ProjectConfigError:
+            return True
 
     def settings(self) -> dict[str, Any]:
         """What the Settings page shows: values, defaults, choices and problems.

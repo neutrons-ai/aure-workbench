@@ -293,7 +293,14 @@ def _register_views(app: Flask) -> None:
                     "`nrw serve` for a new one.",
                 )
             abort(403, "This link is not valid for this server.")
-        response = make_response(redirect(url_for("experiment"), code=303))
+        # A project nobody has set up yet goes straight to Settings: that is
+        # the page the person opening the link after `nrw init` needs.
+        landing = (
+            "settings_page"
+            if app.config["NRW_EXPERIMENT"].needs_setup()
+            else "experiment"
+        )
+        response = make_response(redirect(url_for(landing), code=303))
         response.set_cookie(
             security.COOKIE,
             session,
@@ -317,16 +324,24 @@ def _register_views(app: Flask) -> None:
             csp_nonce=nonce,
         )
         response = make_response(page)
-        # 'unsafe-eval' because Plotly's WebGL traces (scattergl, which the
-        # reflectivity panel uses) compile their shaders through regl, which
-        # builds functions at run time. It admits no injected <script> tag and
-        # no inline handler -- the nonce still stops both.
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            f"script-src 'self' 'nonce-{nonce}' 'unsafe-eval' https://cdn.plot.ly; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "img-src 'self' data:; connect-src 'self'; "
-            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        response.headers["Content-Security-Policy"] = security.page_csp(nonce)
+        return response
+
+    @app.get("/settings")
+    def settings_page() -> Any:
+        """The IPTS, where the data is, and how new runs are noticed."""
+        nonce = secrets.token_urlsafe(16)
+        writer = security.can_write()
+        page = render_template(
+            "settings.html",
+            payload=app.config["NRW_EXPERIMENT"].settings(),
+            page_token=app.config["NRW_PAGE_TOKEN"] if writer else "",
+            writer=writer,
+            csp_nonce=nonce,
+        )
+        response = make_response(page)
+        response.headers["Content-Security-Policy"] = security.page_csp(
+            nonce, plotly=False
         )
         return response
 

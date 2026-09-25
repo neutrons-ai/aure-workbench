@@ -13,6 +13,11 @@
   <span id="expt-scan" class="small text-secondary ms-auto" aria-live="polite"></span>
 </div>
 
+<div id="expt-setup" class="alert alert-info py-2 d-none" role="status">
+  <strong>This experiment is not set up yet.</strong> Nothing can be watched
+  until nrw knows its IPTS and where its data is:
+  <a href="{{ url_for('settings_page') }}">open Settings</a>.
+</div>
 <div id="expt-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
 <div id="expt-message" class="alert py-2 d-none" role="alert"></div>
 <div id="expt-problems" class="alert alert-warning py-2 problem d-none">
@@ -145,5 +150,6 @@
   window.NRW_EXPERIMENT = {{ payload|nrwjson|safe }};
   window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
 </script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
 <script src="{{ url_for('static', filename='experiment.js') }}"></script>
 {% endblock %}

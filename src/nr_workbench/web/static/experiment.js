@@ -54,59 +54,12 @@
     plan: null,
   };
 
-  function $(id) {
-    return document.getElementById(id);
-  }
-
-  /* createElement with text and attributes; never innerHTML. */
-  function el(tag, props, children) {
-    const node = document.createElement(tag);
-    Object.entries(props || {}).forEach(function ([key, value]) {
-      if (value === undefined || value === null || value === false) return;
-      if (key === "text") node.textContent = value;
-      else if (key === "className") node.className = value;
-      else if (key in node && key !== "title") node[key] = value;
-      else node.setAttribute(key, value === true ? "" : String(value));
-    });
-    (children || []).forEach(function (child) {
-      if (child !== null && child !== undefined) {
-        node.append(typeof child === "string" ? document.createTextNode(child) : child);
-      }
-    });
-    return node;
-  }
-
-  async function api(method, path, body) {
-    const init = { method: method, credentials: "same-origin", headers: {} };
-    if (body !== undefined) {
-      init.headers["Content-Type"] = "application/json";
-      init.body = JSON.stringify(body);
-    }
-    if (method !== "GET") init.headers["X-NRW-Token"] = TOKEN;
-    const response = await fetch(path, init);
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (_) {
-      payload = null;
-    }
-    if (!response.ok) {
-      const error = new Error((payload && payload.error) || "HTTP " + response.status);
-      error.status = response.status;
-      throw error;
-    }
-    return payload;
-  }
+  const $ = window.NRWPage.$;
+  const el = window.NRWPage.el;
+  const api = window.NRWPage.client(TOKEN);
 
   function message(text, kind) {
-    const box = $("expt-message");
-    box.className = "alert py-2 alert-" + (kind || "info");
-    box.textContent = text;
-    if (kind === "success") {
-      setTimeout(function () {
-        box.classList.add("d-none");
-      }, 4000);
-    }
+    window.NRWPage.show($("expt-message"), text, kind);
   }
 
   async function failed(error, what) {
@@ -187,6 +140,8 @@
     const source = payload.source || {};
     $("expt-source").textContent =
       (source.kind || "") + "  " + (source.path || source.location || "");
+    // Nothing can be watched until someone says where the data is.
+    $("expt-setup").classList.toggle("d-none", !payload.needs_setup);
     const banner = $("expt-readonly");
     if (state.writable) {
       banner.classList.add("d-none");
@@ -216,13 +171,7 @@
   }
 
   function renderProblems(problems) {
-    const box = $("expt-problems");
-    const list = box.querySelector("ul");
-    list.replaceChildren();
-    (problems || []).forEach(function (problem) {
-      list.append(el("li", { text: problem.message }));
-    });
-    box.classList.toggle("d-none", !(problems || []).length);
+    window.NRWPage.renderProblems($("expt-problems"), problems);
   }
 
   /* ---------------------------------------------------------------- */

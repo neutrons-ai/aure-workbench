@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Settings — nr-workbench{% endblock %}
+
+{# This page plots nothing: no Plotly, and so no "plots unavailable" banner. #}
+{% block plotly %}{% endblock %}
+{% block plotly_check %}{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('experiment_api.settings') }}">API</a>
+{% endblock %}
+
+{% block content %}
+<div class="settings">
+  <div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
+    <h1 class="h4 mb-0">Settings</h1>
+    <span class="small text-secondary">saved in <code>nrw.toml</code>, which you can also edit by hand</span>
+  </div>
+
+  <div id="set-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
+  <div id="set-message" class="alert py-2 d-none" role="alert"></div>
+  <div id="set-problems" class="alert alert-warning py-2 problem d-none">
+    <strong>Notes on these settings</strong>
+    <ul class="mb-0 mt-1"></ul>
+  </div>
+
+  <form id="set-form" novalidate>
+    <section class="panel">
+      <div class="panel-head"><span>The experiment</span></div>
+      <div class="p-3">
+        <label class="form-label mb-1" for="s-ipts">IPTS</label>
+        <input id="s-ipts" class="form-control form-control-sm mono settings-short"
+               placeholder="e.g. IPTS-34347 or 34347" autocomplete="off" spellcheck="false">
+        <div id="s-ipts-hint" class="form-text"></div>
+        <label class="form-label mb-1 mt-3" for="s-label">Beamtime label</label>
+        <input id="s-label" class="form-control form-control-sm settings-short"
+               placeholder="e.g. april2026" autocomplete="off">
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>Where the data is</span></div>
+      <div class="p-3">
+        <div id="s-sources" role="radiogroup" aria-label="Data source"></div>
+        <div id="s-local" class="settings-indent">
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="radio" name="s-where" id="s-default" value="default">
+            <label class="form-check-label" for="s-default">
+              nrw's default location <span class="text-secondary">(provisional: it is expected to move)</span>
+            </label>
+            <div id="s-default-path" class="small mono text-secondary"></div>
+          </div>
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="radio" name="s-where" id="s-custom" value="custom">
+            <label class="form-check-label" for="s-custom">Another folder</label>
+          </div>
+          <input id="s-location" class="form-control form-control-sm mono mt-1"
+                 placeholder="e.g. /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+                 autocomplete="off" spellcheck="false" aria-label="Data folder">
+          <div class="form-text">A full path. <code>{ipts}</code> is filled in from the IPTS.</div>
+          <div class="d-flex gap-2 mt-2 align-items-center">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="s-check">Check folder</button>
+            <span id="s-check-status" class="small text-secondary" aria-live="polite"></span>
+          </div>
+          <div id="s-check-result" class="small mt-2"></div>
+          <details class="mt-2">
+            <summary class="small">Advanced</summary>
+            <label class="form-label mb-1 mt-2" for="s-settle">Settle time, in seconds</label>
+            <input id="s-settle" type="number" class="form-control form-control-sm settings-short">
+            <div class="form-text">
+              How long a run's files must be unchanged before they count as settled.
+              Blank follows nrw's default.
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>How new runs are noticed</span></div>
+      <div class="p-3">
+        <div id="s-feeds" role="radiogroup" aria-label="Watcher"></div>
+        <details class="mt-2">
+          <summary class="small">Advanced</summary>
+          <label class="form-label mb-1 mt-2" for="s-poll">Poll interval, in seconds</label>
+          <input id="s-poll" type="number" class="form-control form-control-sm settings-short">
+          <div class="form-text">How often the watcher looks while a page is open. Blank follows nrw's default.</div>
+        </details>
+      </div>
+    </section>
+
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <button type="submit" class="btn btn-sm btn-primary" id="s-save">Save</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('experiment') }}">Experiment page</a>
+      <span id="s-status" class="small text-secondary" aria-live="polite"></span>
+    </div>
+    <pre id="s-lines" class="small mt-2 p-2 border rounded d-none"></pre>
+    <details id="s-diff-box" class="mt-2 d-none">
+      <summary class="small">What changed in nrw.toml</summary>
+      <pre id="s-diff" class="small mt-1"></pre>
+    </details>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+  window.NRW_SETTINGS = {{ payload|nrwjson|safe }};
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
+<script src="{{ url_for('static', filename='settings.js') }}"></script>
+{% endblock %}

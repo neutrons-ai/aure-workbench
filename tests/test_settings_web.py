@@ -303,7 +303,7 @@ def test_checking_a_location_that_needs_the_ipts_without_one_is_a_400(
 ) -> None:
     from nr_workbench.project.settings import save
 
-    save(expt, {"ipts": ""})
+    save(expt, {"ipts": "", "source.location": None})
 
     response = check(writer, app, location="/SNS/REF_L/{ipts}/shared/x")
 
@@ -329,3 +329,115 @@ def test_a_read_only_server_refuses_settings_writes_itself(expt: Path, call) -> 
             call(data)
     finally:
         data.stop()
+
+
+# --------------------------------------------------------------------------
+# The page
+# --------------------------------------------------------------------------
+
+
+def test_the_settings_page_renders_and_its_payload_parses(app) -> None:
+    from .test_experiment_web import _embedded
+
+    response = app.test_client().get("/settings")
+
+    assert response.status_code == 200
+    payload = _embedded(response.get_data(as_text=True), "NRW_SETTINGS")
+    assert payload["schema"] == "nrw-settings/1"
+
+
+def test_the_settings_page_loads_no_plotly_and_signs_its_scripts(app) -> None:
+    import re
+
+    response = app.test_client().get("/settings")
+    html = response.get_data(as_text=True)
+    policy = response.headers["Content-Security-Policy"]
+
+    nonce = re.search(r"'nonce-([^']+)'", policy).group(1)
+    assert f'nonce="{nonce}"' in html
+    assert "cdn.plot.ly" not in policy and "unsafe-eval" not in policy
+    # Neither the library nor the check that would announce it missing.
+    assert "cdn.plot.ly" not in html and "typeof Plotly" not in html
+    assert "frame-ancestors 'none'" in policy
+
+
+def test_the_write_token_is_only_in_a_settings_page_for_a_link_holder(
+    app, writer
+) -> None:
+    from .test_experiment_web import _embedded
+
+    anonymous = app.test_client().get("/settings").get_data(as_text=True)
+    holder = writer.get("/settings").get_data(as_text=True)
+
+    assert _embedded(anonymous, "NRW_WRITE_TOKEN") == ""
+    assert _embedded(holder, "NRW_WRITE_TOKEN") == app.config["NRW_PAGE_TOKEN"]
+
+
+def test_a_hostile_label_cannot_break_out_of_the_settings_page(app, expt: Path) -> None:
+    from nr_workbench.project.settings import save
+
+    from .test_experiment_web import _embedded
+
+    hostile = "x</script><script>alert(1)</script><!--<script>"
+    save(expt, {"label": hostile})
+
+    html = app.test_client().get("/settings").get_data(as_text=True)
+
+    assert "<script>alert(1)" not in html
+    assert _embedded(html, "NRW_SETTINGS")["values"]["label"] == hostile
+
+
+def test_the_link_opens_settings_for_an_experiment_not_set_up(expt: Path) -> None:
+    from nr_workbench.project.settings import save
+
+    save(expt, {"ipts": "", "source.location": None})
+    app = make_app(expt)
+    try:
+        response = app.test_client().get(f"/auth/{TOKEN}")
+    finally:
+        app.config["NRW_EXPERIMENT"].stop()
+
+    assert response.status_code == 303
+    assert response.headers["Location"].endswith("/settings")
+
+
+def test_the_link_opens_the_experiment_once_it_is_set_up(app) -> None:
+    response = app.test_client().get(f"/auth/{TOKEN}")
+
+    assert response.headers["Location"].endswith("/experiment")
+
+
+def test_the_experiment_page_says_when_it_needs_setting_up(app, expt: Path) -> None:
+    from nr_workbench.project.settings import save
+
+    assert app.test_client().get("/api/experiment").get_json()["needs_setup"] is False
+
+    save(expt, {"ipts": "", "source.location": None})
+
+    assert app.test_client().get("/api/experiment").get_json()["needs_setup"] is True
+
+
+def test_serve_names_the_settings_page_and_says_when_setup_is_needed(
+    expt: Path, monkeypatch
+) -> None:
+    from nr_workbench.project.settings import save
+
+    from .test_experiment_web import _serve
+
+    ready = _serve(expt, monkeypatch=monkeypatch)
+    save(expt, {"ipts": "", "source.location": None})
+    unready = _serve(expt, monkeypatch=monkeypatch)
+
+    assert "/settings" in ready.output and "not set up yet" not in ready.output
+    assert "not set up yet" in unready.output and "It opens Settings" in unready.output
+
+
+def test_init_suggests_serve_to_set_the_experiment_up(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    result = CliRunner().invoke(main, ["init", str(tmp_path / "new")])
+
+    assert result.exit_code == 0, result.output
+    assert "nrw serve" in result.output

@@ -82,6 +82,31 @@ _LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
+def page_csp(nonce: str, *, plotly: bool = True) -> str:
+    """The Content-Security-Policy for a page that runs the app's own scripts.
+
+    Scripts only from this server, the page's nonce, and -- for a page that
+    plots -- Plotly's CDN, with ``'unsafe-eval'`` because its WebGL traces
+    (scattergl, which the reflectivity panel uses) compile their shaders
+    through regl, which builds functions at run time. That admits no injected
+    ``<script>`` tag and no inline handler: the nonce still stops both. A page
+    that does not plot gets neither.
+
+    Args:
+        nonce: This response's nonce, also set on its inline scripts.
+        plotly: Whether the page loads Plotly.
+    """
+    scripts = f"'self' 'nonce-{nonce}'"
+    if plotly:
+        scripts += " 'unsafe-eval' https://cdn.plot.ly"
+    return (
+        f"default-src 'self'; script-src {scripts}; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "img-src 'self' data:; connect-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    )
+
+
 def is_loopback(address: str | None) -> bool:
     """Whether an address is this machine's loopback, including IPv4-mapped."""
     if not address:
