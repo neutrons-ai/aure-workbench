@@ -144,3 +144,54 @@ class FeedUpdate:
 
     announcements: tuple[Announcement, ...] = ()
     problems: tuple[Problem, ...] = ()
+
+
+@dataclass(frozen=True)
+class Probe:
+    """A quick look at a folder, before choosing it as the data source.
+
+    Attributes:
+        reachable: Whether the folder could be listed at all.
+        runs: How many runs it holds.
+        first: The lowest run number, if any.
+        last: The highest, if any.
+        newest: The newest few runs, read in full, headers included -- so a
+            folder from another experiment shows as such.
+        unrecognized: Data files that match no reduced-file name.
+        other_files: Other files: plots, JSON, XML.
+        problems: What is wrong with it.
+    """
+
+    reachable: bool
+    runs: int = 0
+    first: int | None = None
+    last: int | None = None
+    newest: tuple[SourceRun, ...] = ()
+    unrecognized: int = 0
+    other_files: int = 0
+    problems: tuple[Problem, ...] = ()
+
+    def as_dict(self) -> dict[str, object]:
+        """Return the JSON form."""
+        return {
+            "reachable": self.reachable,
+            "runs": self.runs,
+            "first": self.first,
+            "last": self.last,
+            "newest": [
+                {
+                    "run": run.key.run,
+                    "title": run.title,
+                    "segments": list(run.segments),
+                    "n_segments": run.n_segments,
+                    "experiment": run.experiment,
+                    "problems": list(run.problems),
+                }
+                for run in self.newest
+            ],
+            "experiments": sorted({r.experiment for r in self.newest if r.experiment}),
+            "unrecognized": self.unrecognized,
+            "other_files": self.other_files,
+            "problems": [p.as_dict() for p in self.problems],
+        }
+

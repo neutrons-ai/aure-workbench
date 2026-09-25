@@ -141,7 +141,9 @@ def test_an_apply_reviewed_against_another_source_is_refused() -> None:
     context = RenderContext(project_name="p")
 
     def plan_id(source) -> str:
-        return plan_apply(Path("/nonexistent"), catalog, {}, {}, source, context).plan_id
+        return plan_apply(
+            Path("/nonexistent"), catalog, {}, {}, source, context
+        ).plan_id
 
     here, there = InMemorySource(), InMemorySource()
     there.describe = lambda: {"kind": "memory", "location": "elsewhere", "path": None}

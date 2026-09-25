@@ -20,6 +20,7 @@ from werkzeug.exceptions import HTTPException
 
 from nr_workbench.web import security
 from nr_workbench.web.experiment import (
+    CheckBusyError,
     ExperimentData,
     RequestError,
     RunNotListedError,
@@ -48,7 +49,14 @@ def _body() -> dict[str, Any]:
 
 
 def _error(exc: Exception, status: int) -> tuple[Any, int]:
-    return jsonify({"error": str(exc), "kind": type(exc).__name__}), status
+    payload: dict[str, Any] = {"error": str(exc), "kind": type(exc).__name__}
+    # What a person can do about it: the TOML to add by hand, or what to
+    # confirm and send again.
+    for detail in ("lines", "needs"):
+        value = getattr(exc, detail, None)
+        if value:
+            payload[detail] = value
+    return jsonify(payload), status
 
 
 @experiment_api.errorhandler(Exception)
@@ -65,6 +73,8 @@ def _map(exc: Exception) -> tuple[Any, int]:
     from nr_workbench.experiment.render import SampleRenderError
     from nr_workbench.experiment.store import CatalogError
     from nr_workbench.project.scaffold import LockProblemError
+    from nr_workbench.project.settings import NeedsConfirmation, SettingsError
+    from nr_workbench.project.tomlfile import TomlEditError
 
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code or 500
@@ -78,12 +88,15 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 AdoptRefused,
                 LockProblemError,
                 SampleRenderError,
+                NeedsConfirmation,
+                TomlEditError,
+                CheckBusyError,
             ),
             409,
         ),
         ((CatalogError,), 503),
         ((SourceTimeoutError,), 504),
-        ((RequestError, CatalogValidationError), 400),
+        ((RequestError, CatalogValidationError, SettingsError), 400),
     ):
         if isinstance(exc, kinds):
             return _error(exc, status)
@@ -192,3 +205,33 @@ def adopt(sample_id: str) -> Any:
     return jsonify(
         data().adopt(sample_id, body.get("rewrite", False), body.get("plan_id"))
     )
+
+
+# ---------------------------------------------------------------------------
+# Settings -- reading is open; saving and checking a folder are behind the gate
+# ---------------------------------------------------------------------------
+
+
+@experiment_api.get("/settings")
+def settings() -> Any:
+    """The IPTS, the data source and the watcher, as nrw.toml has them."""
+    return jsonify(data().settings())
+
+
+@experiment_api.put("/settings")
+def save_settings() -> Any:
+    """Save settings: ``{"revision", "changes": {...}, "confirmed": [...]}``."""
+    body = _body()
+    return jsonify(
+        data().save_settings(
+            body.get("revision"), body.get("changes"), body.get("confirmed")
+        )
+    )
+
+
+@experiment_api.post("/settings/check")
+def check_folder() -> Any:
+    """What a folder holds, before choosing it: ``{"location", "ipts"}``."""
+    body = _body()
+    return jsonify(data().check_folder(body.get("location"), body.get("ipts")))
+

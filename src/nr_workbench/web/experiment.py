@@ -105,6 +105,67 @@ class SourceTimeoutError(TimeoutError):
     """The data source did not answer in time -- usually a dead mount."""
 
 
+class CheckBusyError(Exception):
+    """Folder checks are already running -- usually stuck on a dead mount."""
+
+
+#: At most this many folder checks at once. A check stuck on a dead mount
+#: holds its place until the mount answers, so this also caps how many
+#: threads a person clicking "Check" repeatedly can leave waiting.
+_CHECKS = threading.BoundedSemaphore(2)
+
+
+def _in_daemon(function: Callable[[], Any]) -> Any:
+    """Run ``function`` on a daemon thread, waiting at most :data:`SOURCE_TIMEOUT`.
+
+    A daemon thread rather than the read pool: a pool's workers are joined
+    when the interpreter exits, so one stuck on a dead mount would make
+    stopping ``nrw serve`` hang as well.
+
+    Raises:
+        CheckBusyError: Two checks are already running.
+        SourceTimeoutError: It did not finish in time.
+    """
+    if not _CHECKS.acquire(blocking=False):
+        raise CheckBusyError(
+            "Two folder checks are already waiting for an answer -- the data "
+            "mount may be unavailable. Try again once they finish."
+        )
+    outcome: dict[str, Any] = {}
+    done = threading.Event()
+
+    def run() -> None:
+        try:
+            outcome["value"] = function()
+        except BaseException as exc:  # noqa: BLE001 - handed to the request
+            outcome["error"] = exc
+        finally:
+            done.set()
+            _CHECKS.release()
+
+    threading.Thread(target=run, name="nrw-folder-check", daemon=True).start()
+    if not done.wait(SOURCE_TIMEOUT):
+        raise SourceTimeoutError(
+            f"The folder did not answer within {SOURCE_TIMEOUT:.0f}s; the data "
+            "mount may be unavailable."
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
+
+def _ipts_in_path(root: Path) -> str | None:
+    """An IPTS the project's own path names, e.g. /SNS/REF_L/IPTS-34347/shared/x."""
+    from nr_workbench.project.settings import normalize_ipts
+
+    for part in root.parts:
+        if part.upper().startswith("IPTS-"):
+            found = normalize_ipts(part)
+            if found:
+                return found
+    return None
+
+
 def _bounded_call(
     pool: concurrent.futures.ThreadPoolExecutor,
     function: Callable[..., Any],
@@ -655,6 +716,162 @@ class ExperimentData:
             "rewritten": report.rewritten,
             "backup": report.backup,
         }
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
+    def settings(self) -> dict[str, Any]:
+        """What the Settings page shows: values, defaults, choices and problems.
+
+        Read from ``nrw.toml`` itself, never from the poller: the page exists
+        to change a folder that may not answer, and asking the poller would
+        start it listing that folder.
+        """
+        from nr_workbench.experiment.config import experiment_config
+        from nr_workbench.project import settings as project
+        from nr_workbench.project.config import ProjectConfigError, load_config
+        from nr_workbench.project.tomlfile import TomlEditError
+
+        problems: list[Problem] = []
+        current = None
+        try:
+            current = project.read(self.root)
+        except (TomlEditError, OSError) as exc:
+            problems.append(Problem("config", f"nrw.toml cannot be edited here: {exc}"))
+        try:
+            config = experiment_config(load_config(self.root))
+        except ProjectConfigError:
+            config = experiment_config(None)
+        problems.extend(config.problems)
+
+        chosen = current.experiment if current else {}
+        values: dict[str, Any] = {
+            "ipts": current.ipts if current else "",
+            "label": current.label if current else "",
+        }
+        defaults: dict[str, Any] = {}
+        for table, keys in project.EXPERIMENT_KEYS.items():
+            prefix = table.split(".", 1)[1]
+            for key, default in keys.items():
+                values[f"{prefix}.{key}"] = chosen.get(table, {}).get(key)
+                defaults[f"{prefix}.{key}"] = default
+        editable = current is not None
+        return {
+            "schema": "nrw-settings/1",
+            "revision": current.revision if current else None,
+            "editable": editable,
+            "writable": self.writable and editable,
+            "read_only_reason": self.why_read_only,
+            "values": values,
+            "defaults": defaults,
+            "effective": {
+                "ipts": config.ipts,
+                "location": config.source.location,
+                "path": str(config.source.path) if config.source.path else None,
+                "needs_setup": config.needs_setup,
+            },
+            "options": {
+                "source": [dataclasses.asdict(o) for o in project.SOURCE_OPTIONS],
+                "feed": [dataclasses.asdict(o) for o in project.FEED_OPTIONS],
+            },
+            "ranges": {
+                "source.settle_seconds": list(project.SETTLE_RANGE),
+                "feed.poll_seconds": list(project.POLL_RANGE),
+            },
+            "suggested_ipts": _ipts_in_path(self.root),
+            "catalogued_runs": self._catalogued_runs(),
+            "problems": [p.as_dict() for p in problems],
+        }
+
+    def save_settings(
+        self, revision: Any, changes: Any, confirmed: Any = None
+    ) -> dict[str, Any]:
+        """Save settings into ``nrw.toml``, as :func:`nr_workbench.project.settings.save`.
+
+        The running server follows the new file on its next request.
+
+        Raises:
+            RequestError: A malformed request (400).
+            SettingsError: A value is not allowed (400).
+            NeedsConfirmation: The change needs confirming first (409).
+            TomlConflictError: ``nrw.toml`` changed since the page loaded it (409).
+            TomlEditError: ``nrw.toml`` cannot be edited safely (409).
+        """
+        from nr_workbench.project.settings import save
+
+        self._require_writable()
+        if not isinstance(revision, str) or not revision:
+            raise RequestError("revision is required: load the settings before saving")
+        if not isinstance(changes, dict) or not changes:
+            raise RequestError("changes must be a non-empty object")
+        confirmed = [] if confirmed is None else confirmed
+        if not isinstance(confirmed, list) or not all(
+            isinstance(c, str) for c in confirmed
+        ):
+            raise RequestError("confirmed must be a list of names")
+        result = save(
+            self.root,
+            changes,
+            base_revision=revision,
+            confirmed=set(confirmed),
+            catalogued_runs=self._catalogued_runs(),
+        )
+        return {"result": result.as_dict(), "settings": self.settings()}
+
+    def check_folder(self, location: Any, ipts: Any = None) -> dict[str, Any]:
+        """What a folder holds, before it is chosen as the data source.
+
+        Behind the write gate, although it writes nothing: it lists whatever
+        path it is given.
+
+        Args:
+            location: The location to try, placeholders allowed; ``None`` for
+                nrw's default.
+            ipts: The IPTS to fill in, when the page is changing it too;
+                otherwise the project's.
+
+        Raises:
+            SettingsError: The location is not one that could be saved (400).
+            CheckBusyError: Checks are already running (409).
+            SourceTimeoutError: The folder did not answer in time (504).
+        """
+        from nr_workbench.experiment.config import experiment_config
+        from nr_workbench.experiment.sources.local import LocalDirectorySource
+        from nr_workbench.project.config import ProjectConfigError, load_config
+        from nr_workbench.project.settings import (
+            EXPERIMENT_KEYS,
+            SettingsError,
+            validate,
+        )
+
+        self._require_writable()
+        if location is None:
+            location = EXPERIMENT_KEYS["experiment.source"]["location"]
+        changes: dict[str, Any] = {"source.location": location}
+        if ipts is not None:
+            changes["ipts"] = ipts
+        edits, warnings = validate(self.root, changes)
+        text = str(edits["experiment.source"]["location"].value)
+        if "beamtime" in edits:
+            chosen = str(edits["beamtime"]["ipts"].value) or None
+        else:
+            try:
+                chosen = experiment_config(load_config(self.root)).ipts
+            except ProjectConfigError:
+                chosen = None
+        if "{ipts}" in text and not chosen:
+            raise SettingsError(
+                "This location is filled in from the IPTS; set the IPTS to check it."
+            )
+        path = Path(text.replace("{ipts}", chosen or ""))
+        source = LocalDirectorySource(path, text, ipts=chosen)
+        probe = _in_daemon(source.probe)
+        return {"location": text, "path": str(path), **probe.as_dict(), "warnings": warnings}
+
+    def _catalogued_runs(self) -> int:
+        catalog, _, _ = self._catalog(self._wired())
+        return len(catalog.runs)
 
     # ------------------------------------------------------------------
     # Helpers

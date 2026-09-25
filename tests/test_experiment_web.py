@@ -490,6 +490,7 @@ def test_reads_change_nothing_in_the_project(app, writer, expt: Path) -> None:
         "/api/experiment/runs/234277/curves",
         "/api/experiment/samples/Sample6/preview",
         "/api/experiment/apply",
+        "/api/experiment/settings",
         "/experiment",
     ):
         assert writer.get(path).status_code == 200, path

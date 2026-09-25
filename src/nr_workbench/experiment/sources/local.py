@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.arrival import fingerprint_entries, segment_problems
-from nr_workbench.experiment.inventory import Inventory, SourceFile, SourceRun
+from nr_workbench.experiment.inventory import Inventory, Probe, SourceFile, SourceRun
 from nr_workbench.experiment.model import RunKey, clean_title_snapshot
 from nr_workbench.experiment.sources import SourceChangedError, SourceFileTooLarge
 from nr_workbench.instrument.reduced import (
@@ -81,6 +81,64 @@ class LocalDirectorySource:
 
     def inventory(self) -> Inventory:
         """Every run in the folder, judged from one listing."""
+        listed = self._list()
+        if isinstance(listed, Inventory):
+            return listed
+        files, unrecognized, other, problems = listed
+        runs = {
+            RunKey(run): self._run(run, members)
+            for run, members in sorted(files.items())
+        }
+        return Inventory(
+            runs=runs,
+            unrecognized=tuple(unrecognized),
+            other_files=other,
+            reachable=True,
+            problems=tuple(problems),
+        )
+
+    def probe(self, *, header_runs: int = 5) -> Probe:
+        """A quick look at the folder before choosing it: one listing, few headers.
+
+        :meth:`inventory` reads the head of every file, which on a real
+        beamtime folder over NFS is tens of megabytes -- a poller's job, done
+        once and cached, not a button's. This lists the folder once and reads
+        only the newest runs' headers, enough to show what is there and to
+        notice a folder that belongs to another experiment.
+
+        Args:
+            header_runs: How many of the newest runs to read in full.
+        """
+        listed = self._list()
+        if isinstance(listed, Inventory):
+            return Probe(reachable=False, problems=listed.problems)
+        files, unrecognized, other, problems = listed
+        numbers = sorted(files)
+        newest = numbers[-header_runs:] if header_runs > 0 else []
+        return Probe(
+            reachable=True,
+            runs=len(numbers),
+            first=numbers[0] if numbers else None,
+            last=numbers[-1] if numbers else None,
+            newest=tuple(self._run(run, list(files[run])) for run in newest),
+            unrecognized=len(unrecognized),
+            other_files=other,
+            problems=tuple(problems),
+        )
+
+    def _list(
+        self,
+    ) -> (
+        Inventory
+        | tuple[dict[int, list[tuple[SourceFile, os.stat_result]]], list[str], int, list[Problem]]
+    ):
+        """One listing: each run's files, what was not recognised, and problems.
+
+        Returns:
+            The files by run, the unrecognised names, the count of other
+            files, and problems -- or an unreachable :class:`Inventory` when
+            the folder cannot be listed at all.
+        """
         if self.path is None:
             return Inventory(
                 reachable=False,
@@ -169,17 +227,7 @@ class LocalDirectorySource:
                 )
             )
 
-        runs = {
-            RunKey(run): self._run(run, members)
-            for run, members in sorted(files.items())
-        }
-        return Inventory(
-            runs=runs,
-            unrecognized=tuple(unrecognized),
-            other_files=other,
-            reachable=True,
-            problems=tuple(problems),
-        )
+        return files, unrecognized, other, problems
 
     def _unreachable(self, message: str) -> Inventory:
         return Inventory(reachable=False, problems=(Problem("source", message),))
