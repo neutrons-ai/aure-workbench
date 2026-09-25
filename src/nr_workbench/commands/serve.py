@@ -89,7 +89,9 @@ def run_serve(
     click.echo("")
     click.echo(f"  http://{shown}:{port}/")
     click.echo(f"  http://{shown}:{port}/experiment      the experiment's runs")
-    click.echo(f"  http://{shown}:{port}/settings        its IPTS, data folder and watcher")
+    click.echo(
+        f"  http://{shown}:{port}/settings        its IPTS, data folder and watcher"
+    )
     click.echo(f"  http://{shown}:{port}/api/overview    the same data as JSON")
     click.echo("")
     needs_setup = app.config["NRW_EXPERIMENT"].needs_setup()

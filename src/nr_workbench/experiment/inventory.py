@@ -220,4 +220,3 @@ class Probe:
             "other_files": self.other_files,
             "problems": [p.as_dict() for p in self.problems],
         }
-

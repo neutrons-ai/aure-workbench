@@ -130,7 +130,12 @@ class LocalDirectorySource:
         self,
     ) -> (
         Inventory
-        | tuple[dict[int, list[tuple[SourceFile, os.stat_result]]], list[str], int, list[Problem]]
+        | tuple[
+            dict[int, list[tuple[SourceFile, os.stat_result]]],
+            list[str],
+            int,
+            list[Problem],
+        ]
     ):
         """One listing: each run's files, what was not recognised, and problems.
 

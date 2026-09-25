@@ -777,4 +777,3 @@ def record_installed(
             entries[planned.relpath] = entry
             write_lock(lock_path, entries)
         return True
-

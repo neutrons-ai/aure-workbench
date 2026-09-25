@@ -62,6 +62,7 @@ _KNOWN_KEYS = {
     "catalog": {"kind"},
 }
 
+
 @dataclass(frozen=True)
 class SourceConfig:
     """Where the reduced data is read from.

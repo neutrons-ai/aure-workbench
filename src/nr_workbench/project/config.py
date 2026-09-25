@@ -121,8 +121,7 @@ def load_config(root: Path) -> ProjectConfig:
             # -- by following advice to "add [experiment.source]" to a file
             # where it is already written out.
             hint = (
-                " A table or key is set twice: keep one, and move its settings "
-                "into it."
+                " A table or key is set twice: keep one, and move its settings into it."
             )
         raise ProjectConfigError(
             f"{config_path} is not valid TOML: {exc}.{hint}"

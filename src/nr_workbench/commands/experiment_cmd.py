@@ -633,7 +633,8 @@ def _check(project: Path, changes: dict[str, Any]) -> dict[str, Any]:
         location = project_settings.EXPERIMENT_KEYS["experiment.source"]["location"]
     try:
         edits, _ = project_settings.validate(
-            project, {"source.location": location, "ipts": changes.get("ipts", config.ipts)}
+            project,
+            {"source.location": location, "ipts": changes.get("ipts", config.ipts)},
         )
     except project_settings.SettingsError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -672,7 +673,10 @@ def _echo_settings(view: dict[str, Any]) -> None:
     click.echo(f"  poll       {shown('feed.poll_seconds', ' s')}")
     coming = [
         f"{option['label']} ({side})"
-        for side, options in (("source", view["options"]["source"]), ("watcher", view["options"]["feed"]))
+        for side, options in (
+            ("source", view["options"]["source"]),
+            ("watcher", view["options"]["feed"]),
+        )
         for option in options
         if not option["available"]
     ]
@@ -701,10 +705,14 @@ def _echo_check(found: dict[str, Any]) -> None:
         for run in reversed(found["newest"]):
             segments = ",".join(map(str, run["segments"]))
             planned = f" of {run['n_segments']}" if run["n_segments"] else ""
-            click.echo(f"    {run['run']}  {run['title']}  segments {segments}{planned}")
+            click.echo(
+                f"    {run['run']}  {run['title']}  segments {segments}{planned}"
+            )
         if found["experiments"]:
             click.echo(f"  headers name {', '.join(found['experiments'])}")
     if found["unrecognized"]:
-        click.echo(f"  {found['unrecognized']} data file(s) with names nrw does not recognise")
+        click.echo(
+            f"  {found['unrecognized']} data file(s) with names nrw does not recognise"
+        )
     for problem in found["problems"]:
         click.secho(f"  ! {problem['message']}", fg="yellow")

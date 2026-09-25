@@ -535,7 +535,9 @@ def _plan_run(
             # No longer listed; or an artifact nrw copied before only the
             # files a fit reads were copied -- still nrw's, still checked.
             actions.append(
-                _already_copied(run, name, entry, listed_by_name.get(name), steady, source)
+                _already_copied(
+                    run, name, entry, listed_by_name.get(name), steady, source
+                )
             )
 
     may_copy, why_not = _may_copy(key, status, confirmed)

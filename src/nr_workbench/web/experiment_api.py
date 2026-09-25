@@ -234,4 +234,3 @@ def check_folder() -> Any:
     """What a folder holds, before choosing it: ``{"location", "ipts"}``."""
     body = _body()
     return jsonify(data().check_folder(body.get("location"), body.get("ipts")))
-

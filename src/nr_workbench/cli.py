@@ -1492,7 +1492,10 @@ def experiment_status_command(**kwargs: object) -> None:
     help="Follow nrw's default data location again (it is provisional).",
 )
 @click.option(
-    "--settle", type=float, default=None, help="Seconds a run's files must be unchanged."
+    "--settle",
+    type=float,
+    default=None,
+    help="Seconds a run's files must be unchanged.",
 )
 @click.option(
     "--poll", type=float, default=None, help="Seconds between looks at the data folder."
@@ -1503,7 +1506,9 @@ def experiment_status_command(**kwargs: object) -> None:
     is_flag=True,
     help="Change the IPTS even though the catalog already holds runs.",
 )
-@click.option("--write", is_flag=True, help="Save the change; without it, only show it.")
+@click.option(
+    "--write", is_flag=True, help="Save the change; without it, only show it."
+)
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def experiment_settings_command(**kwargs: object) -> None:

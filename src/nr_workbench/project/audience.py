@@ -191,7 +191,9 @@ def write(root: Path, audience: Audience) -> None:
 
     layout = ProjectLayout(root=Path(root))
     base = read_config(layout.config_file)
-    changes = {"audience": {key: Set(value) for key, value in audience.as_dict().items()}}
+    changes = {
+        "audience": {key: Set(value) for key, value in audience.as_dict().items()}
+    }
 
     text = base.text
     if not re.search(r"^[ \t]*\[audience\][ \t]*(#.*)?$", text, re.MULTILINE):

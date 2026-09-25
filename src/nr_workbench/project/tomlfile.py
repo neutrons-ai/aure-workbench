@@ -331,7 +331,9 @@ def edit(text: str, changes: Changes) -> str:
     appended: list[str] = []
     # Bottom to top, so that an insertion never moves a region still to come.
     regions = _regions(lines)
-    for table in sorted(changes, key=lambda t: -regions[t].header if t in regions else 0):
+    for table in sorted(
+        changes, key=lambda t: -regions[t].header if t in regions else 0
+    ):
         keys = changes[table]
         region = regions.get(table)
         if region is None:
@@ -341,7 +343,9 @@ def edit(text: str, changes: Changes) -> str:
                     "(dotted keys or an inline table). Make the change by hand:",
                     _hand_lines(table, keys),
                 )
-            block = [key_line(k, c.value) for k, c in keys.items() if isinstance(c, Set)]
+            block = [
+                key_line(k, c.value) for k, c in keys.items() if isinstance(c, Set)
+            ]
             if block:
                 appended.append("\n".join([f"[{table}]", *block]))
             continue

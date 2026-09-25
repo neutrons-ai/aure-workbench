@@ -332,7 +332,7 @@ def test_a_file_from_before_the_experiment_block_gets_nrws_block(project: Path) 
 
     after = toml.read_text(encoding="utf-8")
     assert after.startswith(older)
-    assert "[experiment.feed]\n# kind = \"directory\"\npoll_seconds = 10\n" in after
+    assert '[experiment.feed]\n# kind = "directory"\npoll_seconds = 10\n' in after
     assert "# [experiment.source]" in after
 
 
@@ -439,7 +439,9 @@ def test_a_value_that_is_not_allowed_is_refused_with_the_reason(
 
 
 @pytest.mark.parametrize("inside", ["samples", ".nrw", "experiment"])
-def test_a_data_location_inside_the_project_is_refused(project: Path, inside: str) -> None:
+def test_a_data_location_inside_the_project_is_refused(
+    project: Path, inside: str
+) -> None:
     from nr_workbench.project.settings import SettingsError, validate
 
     with pytest.raises(SettingsError, match=f"inside this project's {inside}/"):
@@ -488,7 +490,9 @@ def test_needs_setup_is_judged_without_the_data_mount(project: Path) -> None:
     assert not experiment_config(load_config(project)).needs_setup
 
 
-def test_a_save_never_writes_an_edit_its_proof_rejects(project: Path, monkeypatch) -> None:
+def test_a_save_never_writes_an_edit_its_proof_rejects(
+    project: Path, monkeypatch
+) -> None:
     """Whatever the block rewrite gets wrong, the proof after it stops the write."""
     from nr_workbench.project import tomlfile
     from nr_workbench.project.settings import save

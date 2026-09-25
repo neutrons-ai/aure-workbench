@@ -490,9 +490,7 @@ def test_uncommenting_the_scaffolded_experiment_block_changes_nothing(
     block = [line.removeprefix("#").removeprefix(" ") for line in lines[start:]]
     default = experiment_config(load_config(project))
 
-    toml.write_text(
-        "\n".join(lines[:start] + block) + "\n", encoding="utf-8"
-    )
+    toml.write_text("\n".join(lines[:start] + block) + "\n", encoding="utf-8")
     configured = experiment_config(load_config(project))
 
     assert "[experiment.feed]" in block and "[experiment.source]" in block

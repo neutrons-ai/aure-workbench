@@ -115,8 +115,11 @@ def test_read_config_gives_the_bytes_and_their_revision(tmp_path: Path) -> None:
     "content,message",
     [
         (b"\xef\xbb\xbf" + BASE.encode(), "byte order mark"),
-        (b"[beamtime]\nlabel = \"\xff\"\n", "not UTF-8"),
-        ((BASE + "<<<<<<< HEAD\nx = 1\n=======\nx = 2\n>>>>>>> b\n").encode(), "conflict"),
+        (b'[beamtime]\nlabel = "\xff"\n', "not UTF-8"),
+        (
+            (BASE + "<<<<<<< HEAD\nx = 1\n=======\nx = 2\n>>>>>>> b\n").encode(),
+            "conflict",
+        ),
         (b"[beamtime\n", "not valid TOML"),
     ],
     ids=["bom", "not-utf8", "conflict-markers", "invalid"],
@@ -329,7 +332,10 @@ def test_replace_block_declines_unless_the_block_is_there_exactly_once(
 def test_replace_block_keeps_windows_line_endings() -> None:
     text = "a = 1\r\n# [f]\r\n# x = 1\r\n"
 
-    assert replace_block(text, "# [f]\n# x = 1", "[f]\nx = 2") == "a = 1\r\n[f]\r\nx = 2\r\n"
+    assert (
+        replace_block(text, "# [f]\n# x = 1", "[f]\nx = 2")
+        == "a = 1\r\n[f]\r\nx = 2\r\n"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -337,7 +343,9 @@ def test_replace_block_keeps_windows_line_endings() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_write_config_replaces_the_file_and_keeps_the_previous_one(tmp_path: Path) -> None:
+def test_write_config_replaces_the_file_and_keeps_the_previous_one(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "nrw.toml"
     path.write_text(BASE, encoding="utf-8")
     cache, backups = tmp_path / ".nrw" / "cache", tmp_path / ".nrw" / "backups"

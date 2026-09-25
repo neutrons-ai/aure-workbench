@@ -318,7 +318,9 @@ class ExperimentData:
             stamp=stamp,
             revision=revision,
             workspace=workspace,
-            source=_BoundedSource(workspace.source, functools.partial(_bounded_call, pool)),
+            source=_BoundedSource(
+                workspace.source, functools.partial(_bounded_call, pool)
+            ),
             live=workspace.live(clock=self._clock, autostart=self._autostart),
             pool=pool,
         )
@@ -416,7 +418,11 @@ class ExperimentData:
             "scan": _scan(changes),
             "problems": [
                 p.as_dict()
-                for p in (*self._config_problems(), *catalog_problems, *changes.problems)
+                for p in (
+                    *self._config_problems(),
+                    *catalog_problems,
+                    *changes.problems,
+                )
             ],
         }
 
@@ -830,7 +836,12 @@ class ExperimentData:
         path = Path(text.replace("{ipts}", chosen or ""))
         source = LocalDirectorySource(path, text, ipts=chosen)
         probe = _in_daemon(source.probe)
-        return {"location": text, "path": str(path), **probe.as_dict(), "warnings": warnings}
+        return {
+            "location": text,
+            "path": str(path),
+            **probe.as_dict(),
+            "warnings": warnings,
+        }
 
     def _catalogued_runs(self) -> int:
         catalog, _, _ = self._catalog(self._wired())

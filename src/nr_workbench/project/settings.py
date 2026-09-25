@@ -187,7 +187,6 @@ def experiment_block(values: ExperimentValues) -> str:
     return "\n\n".join(blocks)
 
 
-
 # ---------------------------------------------------------------------------
 # Changing settings
 # ---------------------------------------------------------------------------
@@ -346,7 +345,9 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
         if name == "ipts":
             edits.setdefault("beamtime", {})["ipts"] = Set(_ipts(value))
         elif name == "label":
-            edits.setdefault("beamtime", {})["label"] = Set(_line(value, "label", MAX_LABEL))
+            edits.setdefault("beamtime", {})["label"] = Set(
+                _line(value, "label", MAX_LABEL)
+            )
         elif name == "source.kind":
             edits.setdefault("experiment.source", {})["kind"] = _kind(
                 value, SOURCE_OPTIONS, source["kind"], name
@@ -374,7 +375,9 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
             edits.setdefault("experiment.feed", {})["poll_seconds"] = (
                 Unset(feed["poll_seconds"])
                 if value is None
-                else Set(_seconds(value, POLL_RANGE, name), default=feed["poll_seconds"])
+                else Set(
+                    _seconds(value, POLL_RANGE, name), default=feed["poll_seconds"]
+                )
             )
     return edits, warnings
 
@@ -405,7 +408,9 @@ def _line(value: Any, name: str, limit: int) -> str:
     return text
 
 
-def _kind(value: Any, options: tuple[Option, ...], default: Value, name: str) -> Set | Unset:
+def _kind(
+    value: Any, options: tuple[Option, ...], default: Value, name: str
+) -> Set | Unset:
     if value is None or value == default:
         return Unset(default)
     option = next((o for o in options if o.kind == value), None)
@@ -530,7 +535,11 @@ def save(
 
     if "ipts" in changes and catalogued_runs and "ipts-change" not in confirmed:
         beamtime = document.get("beamtime")
-        before = normalize_ipts(beamtime.get("ipts")) if isinstance(beamtime, Mapping) else None
+        before = (
+            normalize_ipts(beamtime.get("ipts"))
+            if isinstance(beamtime, Mapping)
+            else None
+        )
         after = edits["beamtime"]["ipts"].value or None
         if after != before:
             raise NeedsConfirmation(
@@ -605,13 +614,21 @@ def _edited(text: str, document: Mapping[str, Any], edits: Changes) -> str:
     """Change only nrw's own lines of a file a person has edited."""
     from nr_workbench.project.tomlfile import edit, replace_block, verify
 
-    rest = {table: keys for table, keys in edits.items() if not table.startswith("experiment.")}
-    ours = {table: keys for table, keys in edits.items() if table.startswith("experiment.")}
+    rest = {
+        table: keys
+        for table, keys in edits.items()
+        if not table.startswith("experiment.")
+    }
+    ours = {
+        table: keys for table, keys in edits.items() if table.startswith("experiment.")
+    }
     new = text
     if ours:
         current = written_experiment(document)
         wanted = _apply(current, ours)
-        replaced = replace_block(new, experiment_block(current), experiment_block(wanted))
+        replaced = replace_block(
+            new, experiment_block(current), experiment_block(wanted)
+        )
         if replaced is not None:
             # The experiment block is still exactly nrw's: rewrite it as a unit.
             new = replaced
@@ -650,7 +667,8 @@ def _with(context: Any, edits: Changes) -> Any:
     ipts = beamtime["ipts"].value if "ipts" in beamtime else context.ipts
     label = beamtime["label"].value if "label" in beamtime else context.beamtime
     experiment = _apply(
-        context.experiment, {t: k for t, k in edits.items() if t.startswith("experiment.")}
+        context.experiment,
+        {t: k for t, k in edits.items() if t.startswith("experiment.")},
     )
     return dataclasses.replace(
         context, ipts=ipts or None, beamtime=label or None, experiment=experiment
@@ -667,7 +685,9 @@ def _planned(context: Any) -> dict[str, Any]:
     }
 
 
-def _keep_in_step(layout: Any, *, beamtime_changed: bool) -> tuple[list[str], list[str]]:
+def _keep_in_step(
+    layout: Any, *, beamtime_changed: bool
+) -> tuple[list[str], list[str]]:
     """Record nrw.toml as nrw's, and refresh README.md if it is untouched.
 
     Returns:
@@ -699,7 +719,9 @@ def _keep_in_step(layout: Any, *, beamtime_changed: bool) -> tuple[list[str], li
             return written, notes
         readme = planned["README.md"]
         target = layout.root / readme.relpath
-        outcome = classify(readme, target, load_lock(layout.scaffold_lock).get(readme.relpath))
+        outcome = classify(
+            readme, target, load_lock(layout.scaffold_lock).get(readme.relpath)
+        )
         if outcome is Outcome.UPGRADE:
             atomic_write_bytes(target, readme.content)
             record_installed(layout.root, readme)

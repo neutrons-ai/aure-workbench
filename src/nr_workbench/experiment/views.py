@@ -192,4 +192,3 @@ def ipts_in_path(root: Path) -> str | None:
             if found:
                 return found
     return None
-
