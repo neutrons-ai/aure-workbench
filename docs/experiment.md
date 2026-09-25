@@ -63,8 +63,9 @@ goes into `nrw.toml`, which you can also edit by hand.
 - **Where the data is.** Either nrw's default location (see below), shown
   resolved as you type the IPTS, or another folder. **Check folder** says what
   a folder holds before you choose it: how many runs and their range, the
-  newest runs, files it does not recognise, and the IPTS their headers name. A
-  folder whose headers name another experiment is flagged.
+  newest runs, files it does not recognise, and the IPTS their headers name.
+  A run whose headers name an experiment other than the IPTS on the page is
+  flagged, run by run.
 - **How new runs are noticed.** Files appearing in the data folder. The SNS web
   monitor and Tiled are listed as coming and cannot be chosen yet.
 - **Advanced**: the settle time and the poll interval.
@@ -80,7 +81,10 @@ catalog already holds runs asks first.
 
 `nrw experiment settings` does the same from the command line. With no options
 it shows each setting and whether it follows nrw's default. With options it
-shows the change as a diff, and `--write` saves it.
+shows the change as a diff, and `--write` saves it. `--check` looks at the
+folder first, as **Check folder** does, with the same 15-second deadline.
+`--json` prints one object, whichever options are given: `{"settings",
+"change", "check"}`, where `change` and `check` are `null` unless asked for.
 
 ## Where the runs come from
 

@@ -3109,3 +3109,77 @@ process lock plus an advisory lock in `.nrw/cache/`. It is re-entrant within a
 thread, because a second `flock` from the same thread would wait for itself.
 Dry runs take nothing, since `nrw init --check` must write nothing, not even a
 lock file.
+
+### 2026-09-25: a save landing between `nrw init`'s plan and its write was put back
+
+`nrw init` renders its plan from the files as they are, then writes it. A
+Settings save in between recorded `nrw.toml` as nrw's own, since it was the
+render with the new value. Init's plan, rendered before the save, then read as
+an UPGRADE and wrote the old values back, and nothing reported it. Now `nrw
+init` holds `scaffold.writing_scaffold` from planning to writing. Every writer
+of `nrw.toml` goes through `project/nrwtoml.write_as_nrw`, which holds the same
+lock from reading the file to recording what it wrote.
+
+Recording is the other half. A save marks the written bytes as nrw's only if
+the file was nrw's before (UNCHANGED or UPGRADE). Marking a hand-edited file as
+nrw's would make the next `nrw init` read it as untouched and upgrade it over
+the person's edits.
+
+### 2026-09-25: `True == 1`, so a proof by `==` proves too little
+
+`tomlfile.verify` proves an edit by parsing both versions and comparing them.
+In Python `True == 1` and `600 == 600.0`, so with `==` a setting that turned
+from a number into a flag, or from one number type into another, passed the
+proof. `verify` compares types as well. The only difference it accepts is the
+one nrw makes itself: a whole float is written as an integer.
+
+### 2026-09-25: a thread pool made `nrw serve` hang on exit
+
+This corrects "the one-time link works once, and reads have a deadline" above.
+The reads' two-worker pool had the flaw the folder check was built to avoid.
+`concurrent.futures` joins its workers when the interpreter exits, so one read
+stuck on a dead mount made stopping `nrw serve` hang: the deadline freed the
+request, not the process. Every bounded call now goes through
+`nr_workbench.bounded.Bounded`, which gives each call:
+
+- a daemon thread;
+- a deadline;
+- a fixed number of slots, and a call that finds them all taken is refused at
+  once rather than queued behind the mount.
+
+Reads get four slots and checks two. Each configuration of `nrw.toml` gets its
+own read slots, so reads stuck on the old folder's dead mount do not block the
+new folder too. `SOURCE_TIMEOUT` (15 s) lives in `experiment/sources`, shared by
+the page, the folder check and `nrw experiment settings --check`. The CLI no
+longer imports the web layer for it.
+
+### 2026-09-25: an edit can keep a file's size and modification time
+
+`nrw serve` stats `nrw.toml` on each request, and rebuilds what reads the data
+when the stat changes. Size and mtime are not enough. An edit made in place that
+keeps the length (one folder name for another the same length) and restores
+the mtime (`cp -p`, `rsync -t`, `touch -r`, a restore from backup) moves only
+the change time. A replace moves the inode. So the stamp is inode, size, mtime
+and ctime. A coarse file clock can still hide an edit made within one tick of
+the previous write (a few milliseconds on Linux). That is why a save also tells
+the server directly (`ExperimentData.reload`) instead of relying on the stamp.
+
+### 2026-09-25: `pre-commit run --files $files` checks nothing in zsh
+
+zsh does not split an unquoted variable into words. So `files=$(git diff
+--name-only); pre-commit run --files $files` passes the whole list as one file
+name, which matches nothing, and every hook reports as skipped. That looked
+like a clean run for ten commits, until `--all-files` found fifteen unformatted
+files. Use `pre-commit run --all-files`, which is what CI runs, or `${=files}`
+in zsh. Run it twice: the first run may fix files, and only the second shows
+they are clean. The venv's ruff can be newer than the pinned hook and format
+differently; the hook's version is the one that counts.
+
+### 2026-09-25: a fourth defect only a browser found
+
+The browser test of the Settings page (`tests/test_settings_page_browser.py`)
+failed one run in three, and the fault was the page's. After a conflict it said
+"The settings were reloaded" and only then reloaded them. For a moment the
+message was false, and the form still held the refused change. It now reloads
+first, and says so only if the reload worked. The API tests could not see it:
+the server's answers were right, and only their order on the page was wrong.

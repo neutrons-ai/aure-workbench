@@ -71,8 +71,16 @@ Rules a source must keep:
 - **Never raise for missing data.** An unreachable source is an `Inventory` with
   `reachable=False` and a problem saying why.
 - **`read_bytes` raises `SourceChangedError`** if the file is no longer the
-  version listed. It is called from a bounded worker pool with a timeout, so a
-  slow source costs a request a timeout, not a thread.
+  version listed. It is called under a deadline (`nr_workbench.bounded.Bounded`,
+  with `SOURCE_TIMEOUT` from `experiment/sources`), so a slow source costs a
+  request a timeout, not a thread.
+- **`probe()` is optional, and cheap.** It backs the Settings page's **Check
+  folder** and `nrw experiment settings --check`: a look at a source *before*
+  it is chosen. It lists once and reads only the newest few runs, never the full
+  inventory, and returns a `Probe`. A source without it is refused as "cannot be
+  checked yet". The check builds the source exactly as the watcher would
+  (`experiment.workspace.check_source`), so it reads the place that would be
+  watched and no other.
 
 **Where Tiled keeps an experiment.** On the facility server an experiment is a
 container at `projects/isaac/IPTS-<n>/`. It can be browsed at
@@ -94,6 +102,7 @@ location = "https://tiled.ornl.gov/projects/isaac/{ipts}"
   runs, maps each to a `SourceRun`, and takes the version from Tiled's own
   revision or etag.
 - `read_bytes()` fetches the file as it was written, not a re-serialized array.
+- `probe()` looks at the container's newest few runs, for **Check folder**.
 
 The in-memory source in `tests/experiment_fixtures.py` is the second
 implementation that keeps this interface from quietly becoming folder-shaped.
