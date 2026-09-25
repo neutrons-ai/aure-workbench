@@ -62,17 +62,23 @@ def test_the_settings_say_what_is_set_what_is_default_and_what_is_coming(
 
 
 def test_reading_the_settings_does_not_start_the_poller(expt: Path) -> None:
-    app = make_app_without_a_scan(expt)
-    try:
-        app.test_client().get("/api/experiment/settings")
+    from .experiment_fixtures import scan_threads
 
-        wiring = app.config["NRW_EXPERIMENT"]._wiring
-        assert wiring is None or wiring.live._thread is None
+    app = make_polling_app(expt)
+    try:
+        before = scan_threads()
+
+        page = app.test_client().get("/settings")
+        api = app.test_client().get("/api/experiment/settings")
+
+        assert (page.status_code, api.status_code) == (200, 200)
+        assert scan_threads() - before == set()
     finally:
         app.config["NRW_EXPERIMENT"].stop()
 
 
-def make_app_without_a_scan(root: Path):
+def make_polling_app(root: Path):
+    """An app whose poller starts on the first request that asks, as in `nrw serve`."""
     from nr_workbench.web.app import create_app
 
     return create_app(root, token=TOKEN, autostart=True)
@@ -277,10 +283,12 @@ def test_a_file_nrw_cannot_edit_answers_with_the_lines_to_add(
     app, writer, expt: Path
 ) -> None:
     toml = expt / "nrw.toml"
+    text = toml.read_text(encoding="utf-8")
+    # The active table only: "# [experiment.source]" contains the header too.
+    active = "\n[experiment.source]\n"
+    assert text.count(active) == 1
     toml.write_text(
-        toml.read_text(encoding="utf-8").replace(
-            "[experiment.source]", "[experiment.source]\nsettle_seconds = '''300'''"
-        ),
+        text.replace(active, active + "settle_seconds = '''300'''\n"),
         encoding="utf-8",
     )
 

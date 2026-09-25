@@ -304,3 +304,12 @@ class InMemoryFeed:
         del inventory  # a remote feed knows what it knows
         self.polls += 1
         return FeedUpdate(announcements=tuple(self.announced))
+
+
+def scan_threads() -> set[threading.Thread]:
+    """The background pollers running now, known by the name their thread has."""
+    return {
+        t
+        for t in threading.enumerate()
+        if t.name == "nrw-experiment-scan" and t.is_alive()
+    }

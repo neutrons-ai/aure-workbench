@@ -9,6 +9,7 @@ back byte for byte, or every later `init` reads the project as hand-edited.
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import os
 import tomllib
 from pathlib import Path
@@ -29,6 +30,21 @@ from nr_workbench.project.settings import (
 def nrw(root: Path, monkeypatch, *args: str):
     monkeypatch.chdir(root)
     return CliRunner().invoke(main, list(args))
+
+
+def changed_lines(before: str, after: str) -> list[tuple[list[str], list[str]]]:
+    """Each change, in order: the lines taken out and the lines put in their place.
+
+    Everything between two changes is equal, in order -- which a comparison of
+    line sets cannot say: it misses a line moved, or one written twice.
+    """
+    old, new = before.splitlines(), after.splitlines()
+    matcher = difflib.SequenceMatcher(a=old, b=new, autojunk=False)
+    return [
+        (old[i1:i2], new[j1:j2])
+        for op, i1, i2, j1, j2 in matcher.get_opcodes()
+        if op != "equal"
+    ]
 
 
 def rendered_nrw_toml(root: Path, **overrides) -> str:
@@ -159,12 +175,12 @@ def test_an_unedited_older_nrw_toml_upgrades_to_the_new_render(
 # --------------------------------------------------------------------------
 
 
-def init_check_is_clean(project: Path) -> bool:
-    result = CliRunner().invoke(main, ["init", str(project), "--check"])
-    return result.exit_code == 0
+def init_check(project: Path):
+    """``nrw init --check``: exit code 0 when it would change nothing."""
+    return CliRunner().invoke(main, ["init", str(project), "--check"])
 
 
-def test_after_any_sequence_of_saves_init_check_reports_nothing_to_do(
+def test_after_each_save_of_a_mixed_sequence_init_check_reports_nothing_to_do(
     project: Path,
 ) -> None:
     from nr_workbench.project.settings import save
@@ -180,7 +196,8 @@ def test_after_any_sequence_of_saves_init_check_reports_nothing_to_do(
         result = save(project, step)
 
         assert result.changed, step
-        assert init_check_is_clean(project), step
+        checked = init_check(project)
+        assert checked.exit_code == 0, (step, checked.output)
     config = load_config(project)
     assert config.ipts == "IPTS-34347"
     assert config.raw["experiment"]["source"] == {"settle_seconds": 120}
@@ -199,15 +216,58 @@ def test_a_save_changes_no_byte_outside_the_managed_lines(project: Path) -> None
     save(project, {"ipts": "IPTS-7", "source.location": "/data/x"})
 
     after = toml.read_text(encoding="utf-8")
-    removed = [line for line in edited.splitlines() if line not in after.splitlines()]
-    added = [line for line in after.splitlines() if line not in edited.splitlines()]
-    assert removed == [
-        'ipts = "IPTS-00001"',
-        "# [experiment.source]",
-        '# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"',
+    assert changed_lines(edited, after) == [
+        (['ipts = "IPTS-00001"'], ['ipts = "IPTS-7"']),
+        (["# [experiment.source]"], ["[experiment.source]"]),
+        (
+            ['# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"'],
+            ['location = "/data/x"'],
+        ),
     ]
-    assert added == ['ipts = "IPTS-7"', "[experiment.source]", 'location = "/data/x"']
-    assert "# our own note" in after
+
+
+def test_a_save_on_a_windows_file_keeps_its_line_endings(project: Path) -> None:
+    """Each line ends as the file's lines did, or every line reads as changed."""
+    from nr_workbench.project.settings import save
+
+    toml = project / "nrw.toml"
+    windows = toml.read_bytes().replace(b"\n", b"\r\n")
+    windows = windows.replace(b"[conventions]", b"# our note\r\n[conventions]")
+    toml.write_bytes(windows)
+
+    save(project, {"ipts": "IPTS-7", "source.location": "/data/x"})
+
+    after = toml.read_bytes()
+    assert b"\n" not in after.replace(b"\r\n", b"")
+    assert changed_lines(windows.decode(), after.decode()) == [
+        (['ipts = "IPTS-00001"'], ['ipts = "IPTS-7"']),
+        (["# [experiment.source]"], ["[experiment.source]"]),
+        (
+            ['# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"'],
+            ['location = "/data/x"'],
+        ),
+    ]
+    assert load_config(project).raw["experiment"]["source"] == {"location": "/data/x"}
+
+
+def test_a_save_on_a_file_without_a_final_newline_keeps_its_last_line(
+    project: Path,
+) -> None:
+    from nr_workbench.project.settings import save
+
+    toml = project / "nrw.toml"
+    text = toml.read_text(encoding="utf-8").rstrip("\n") + "\n# the last word"
+    toml.write_text(text, encoding="utf-8")
+
+    save(project, {"feed.poll_seconds": 20})
+
+    after = toml.read_text(encoding="utf-8")
+    assert "\n# the last word" in after
+    assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 20}
+    assert changed_lines(text, after) == [
+        (["# [experiment.feed]"], ["[experiment.feed]"]),
+        (["# poll_seconds = 30"], ["poll_seconds = 20"]),
+    ]
 
 
 def test_a_save_over_a_file_edited_since_it_was_read_is_a_conflict(
@@ -304,7 +364,8 @@ def test_saving_the_ipts_refreshes_an_untouched_readme(project: Path) -> None:
 
     assert "README.md" in result.written
     assert "IPTS-4242" in (project / "README.md").read_text(encoding="utf-8")
-    assert init_check_is_clean(project)
+    checked = init_check(project)
+    assert checked.exit_code == 0, checked.output
 
 
 def test_a_hand_edited_readme_is_left_alone_and_said_so(project: Path) -> None:
@@ -415,13 +476,18 @@ def test_an_ipts_is_saved_in_one_form(project: Path, value, expected: str) -> No
         ("label", "\ud800", "not text"),
         ("label", "two\nlines", "one line"),
         ("label", "x" * 101, "longer than"),
+        ("label", "a\u2028b", "one line"),
+        ("label", "a\u0085b", "one line"),
         ("source.location", "data/new_reduction", "not a full path"),
         ("source.location", "~/data", "full path"),
         ("source.location", "/data/\x00x", "one line"),
         ("source.location", "/" + "d" * 1024, "longer than"),
         ("source.location", "", "empty"),
         ("source.settle_seconds", 5, "from 10 to 3600"),
+        ("source.settle_seconds", 9.9, "from 10 to 3600"),
         ("source.settle_seconds", 3601, "from 10 to 3600"),
+        ("feed.poll_seconds", 4.9, "from 5 to 600"),
+        ("feed.poll_seconds", 601, "from 5 to 600"),
         ("source.settle_seconds", True, "number of seconds"),
         ("feed.poll_seconds", float("nan"), "number of seconds"),
         ("feed.poll_seconds", "30", "number of seconds"),
@@ -438,6 +504,34 @@ def test_a_value_that_is_not_allowed_is_refused_with_the_reason(
 
     with pytest.raises(SettingsError, match=message):
         validate(project, {name: value})
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("label", "x" * 100),
+        ("source.location", "/" + "d" * 1023),
+        ("source.settle_seconds", 10),
+        ("source.settle_seconds", 3600),
+        ("feed.poll_seconds", 5),
+        ("feed.poll_seconds", 600),
+        ("feed.poll_seconds", 7.5),
+    ],
+)
+def test_a_value_at_the_edge_of_what_is_allowed_is_saved_as_given(
+    project: Path, name: str, value
+) -> None:
+    from nr_workbench.project.settings import validate
+
+    edits, _ = validate(project, {name: value})
+
+    table, key = {
+        "label": ("beamtime", "label"),
+        "source.location": ("experiment.source", "location"),
+        "source.settle_seconds": ("experiment.source", "settle_seconds"),
+        "feed.poll_seconds": ("experiment.feed", "poll_seconds"),
+    }[name]
+    assert edits[table][key].value == value
 
 
 @pytest.mark.parametrize("inside", ["samples", ".nrw", "experiment"])
@@ -507,9 +601,8 @@ def test_a_save_never_writes_an_edit_its_proof_rejects(
     before = toml.read_bytes()
     real = tomlfile.replace_block
 
-    def careless(text, old, new):
-        replaced = real(text, old, new)
-        return replaced.replace('label = "june2026"', 'label = "oops"')
+    def careless(*args):
+        return real(*args).replace('label = "june2026"', 'label = "oops"')
 
     monkeypatch.setattr(nrwtoml, "replace_block", careless)
 
@@ -548,7 +641,8 @@ def test_a_save_on_an_unedited_older_file_leaves_the_upgrade_to_init(
     assert toml.read_text(encoding="utf-8") == rendered_nrw_toml(project)
     assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 10}
     assert not (project / "nrw.toml.nrw-new").exists()
-    assert init_check_is_clean(project)
+    checked = init_check(project)
+    assert checked.exit_code == 0, checked.output
 
 
 @pytest.mark.parametrize(
@@ -661,18 +755,16 @@ def test_nrw_audience_on_an_untouched_older_file_leaves_init_nothing_beside_it(
     assert load_config(project).raw["audience"]["statistics"] == "expert"
 
 
-OLDER_BLOCK = """# The experiment: where its runs are read from, and how new ones are noticed.
-# The location is PROVISIONAL. Uncomment and edit to point somewhere else.
-#
-# [experiment.source]
+#: The block as an earlier nrw wrote it: a `#` line between the tables, and a
+#: note on the feed's kind.
+OLDER_BLOCK = """# [experiment.source]
 # kind = "local"
 # location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
 # settle_seconds = 300
 #
 # [experiment.feed]
 # kind = "directory"   # a run is noticed when its reduced files appear
-# poll_seconds = 30
-"""
+# poll_seconds = 30"""
 
 
 def test_an_older_commented_block_is_switched_on_where_it_stands(project: Path) -> None:
@@ -681,7 +773,9 @@ def test_an_older_commented_block_is_switched_on_where_it_stands(project: Path) 
 
     toml = project / "nrw.toml"
     text = toml.read_text(encoding="utf-8")
-    text = text[: text.index("# The experiment:")] + OLDER_BLOCK
+    ours = experiment_block({})  # found as nrw renders it, wherever it stands
+    assert text.count(ours) == 1
+    text = text.replace(ours, OLDER_BLOCK)
     text = text.replace("[conventions]", "# our note\n[conventions]")
     toml.write_text(text, encoding="utf-8")
 

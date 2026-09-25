@@ -18,7 +18,7 @@ from nr_workbench.experiment.model import RunKey
 from nr_workbench.project.settings import save
 from nr_workbench.web.experiment import ExperimentData
 
-from .experiment_fixtures import write_autoreduced
+from .experiment_fixtures import scan_threads, write_autoreduced
 
 
 @pytest.fixture
@@ -75,13 +75,14 @@ def test_a_request_holding_the_old_poller_does_not_restart_it(
     try:
         old = data.live
         save(project, {"source.location": str(folders[1])})
-        data.overview()
+        data.overview()  # starts the new poller
+        running = scan_threads()
 
         old.changes(None)
 
         # Not "started and stopped at once": no thread at all, for a retired
-        # poller whoever asks it.
-        assert old._thread is None
+        # poller, whoever asks it.
+        assert scan_threads() - running == set()
         assert data.live is not old
     finally:
         data.stop()
@@ -90,13 +91,15 @@ def test_a_request_holding_the_old_poller_does_not_restart_it(
 def test_the_source_and_the_poller_come_from_one_configuration(
     data: ExperimentData, project: Path, folders
 ) -> None:
-    def consistent() -> bool:
-        wiring = data._wired()
-        return wiring.live.source is wiring.workspace.source is wiring.source._source
+    """A run the poller lists is one the source can read: a quick look finds it."""
+    assert runs_shown(data) == [234277]
+    assert len(data.curves(234277)["curves"]) == 3
 
-    assert consistent()
     save(project, {"source.location": str(folders[1])})
-    assert consistent()
+
+    assert runs_shown(data) == [234400]
+    looked = data.curves(234400)
+    assert len(looked["curves"]) == 3 and looked["problems"] == []
 
 
 def test_a_touch_without_a_change_keeps_the_same_poller(

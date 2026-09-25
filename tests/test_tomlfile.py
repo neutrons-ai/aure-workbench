@@ -377,7 +377,17 @@ def test_write_config_refuses_a_file_changed_since_it_was_read(tmp_path: Path) -
     assert path.read_text(encoding="utf-8").endswith("# edited by hand\n")
 
 
-def test_two_saves_in_one_second_keep_both_backups(tmp_path: Path) -> None:
+def test_two_saves_in_one_second_keep_both_backups(tmp_path: Path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    from nr_workbench.project import tomlfile
+
+    class OneSecond(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 9, 25, 12, 0, 0, tzinfo=tz or UTC)
+
+    monkeypatch.setattr(tomlfile, "datetime", OneSecond)
     path = tmp_path / "nrw.toml"
     path.write_text(BASE, encoding="utf-8")
     kwargs = {"cache_dir": tmp_path / "cache", "backups_dir": tmp_path / "backups"}
@@ -385,6 +395,9 @@ def test_two_saves_in_one_second_keep_both_backups(tmp_path: Path) -> None:
     first = write_config(path, read_config(path), BASE + "# 1\n", **kwargs)
     second = write_config(path, read_config(path), BASE + "# 2\n", **kwargs)
 
+    stamp = "20260925T120000Z-"
+    assert first.parent.name.startswith(stamp)
+    assert second.parent.name.startswith(stamp)
     assert first != second
     assert first.read_text(encoding="utf-8") == BASE
     assert second.read_text(encoding="utf-8") == BASE + "# 1\n"
