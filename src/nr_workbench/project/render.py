@@ -17,8 +17,13 @@ from typing import Any
 from jinja2 import StrictUndefined, Template
 
 from nr_workbench import __version__
+from nr_workbench.arrival import DEFAULT_SETTLE_SECONDS
 from nr_workbench.harness import DEFAULT_HARNESSES, agent_dirs, resolve
-from nr_workbench.project.config import CONTRACT_VERSION
+from nr_workbench.project.config import (
+    CONTRACT_VERSION,
+    DEFAULT_EXPERIMENT_LOCATION,
+    DEFAULT_EXPERIMENT_POLL_SECONDS,
+)
 from nr_workbench.project.scaffold import PlannedFile
 
 #: Bump when a template's *content* changes, so existing projects pick it up on
@@ -160,10 +165,13 @@ class RenderContext:
                 for harness in resolve(self.harnesses)
                 if harness.vscode_extension
             ],
-            # The scaffolded nrw.toml documents the experiment's default data
-            # location. Rendered from the one constant, not copied into the
-            # template, because the location is provisional and will move.
-            "experiment_location": _default_experiment_location(),
+            # The scaffolded nrw.toml documents the experiment's defaults.
+            # Rendered from the constants the code uses, not copied into the
+            # template: the location is provisional and will move, and a
+            # documented default that differs from the real one misleads.
+            "experiment_location": DEFAULT_EXPERIMENT_LOCATION,
+            "experiment_settle_seconds": DEFAULT_SETTLE_SECONDS,
+            "experiment_poll_seconds": DEFAULT_EXPERIMENT_POLL_SECONDS,
             # Always defined, so StrictUndefined still catches a typo in a
             # template rather than rendering an empty section.
             "managed": self.prose.managed,
@@ -173,14 +181,6 @@ class RenderContext:
             "fits_to_perform": self.prose.fits_to_perform,
             "measurements": list(self.prose.measurements),
         }
-
-
-def _default_experiment_location() -> str:
-    # Function-local: project/ sits below experiment/, and this is the one
-    # value it needs from there.
-    from nr_workbench.experiment.config import DEFAULT_LOCATION
-
-    return DEFAULT_LOCATION
 
 
 def templates_root() -> Path:

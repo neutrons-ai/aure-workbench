@@ -41,6 +41,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.fsutil import atomic_write_bytes
+from nr_workbench.project.layout import ProjectLayout
+
 LOCK_SCHEMA = "nrw-scaffold-lock/1"
 
 #: Suffix used when we refuse to clobber a user-edited file.
@@ -260,10 +263,15 @@ def write_lock(lock_path: Path, entries: Mapping[str, dict[str, Any]]) -> None:
         "updated": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "files": dict(sorted(entries.items())),
     }
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = lock_path.with_suffix(lock_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(lock_path)
+    # A unique temp file per write: `nrw serve` applies on request threads
+    # while a terminal may run `nrw sample new`, and one shared ".tmp" name let
+    # two writers rename each other's half-written lock into place.
+    atomic_write_bytes(lock_path, (json.dumps(document, indent=2) + "\n").encode())
+
+
+def _stamp() -> str:
+    """A backup directory's name: the time now, UTC, to the second."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def classify(
@@ -439,16 +447,14 @@ def apply_scaffold(
             rebuild would keep neither side's samples.
     """
     root = Path(root).resolve()
-    lock_path = lock_path or (root / ".nrw" / "scaffold.lock.json")
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
     trouble = lock_problem(lock_path)
     if trouble and (not rebuild_lock or _has_conflict_markers(lock_path)):
         raise LockProblemError(trouble)
     lock = load_lock(lock_path)
     updated_lock = dict(lock)
 
-    backup_root = (
-        root / ".nrw" / "backups" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    )
+    backup_root = ProjectLayout(root=root).backups_dir / _stamp()
     results: list[FileResult] = []
 
     for planned in planned_files:
@@ -620,7 +626,7 @@ def replace_owned(
         LockProblemError: If the lock cannot be safely written.
     """
     root = Path(root).resolve()
-    lock_path = lock_path or (root / ".nrw" / "scaffold.lock.json")
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
     trouble = lock_problem(lock_path)
     if trouble:
         raise LockProblemError(trouble)
@@ -628,9 +634,7 @@ def replace_owned(
     target = root / planned.relpath
     backup: Path | None = None
     if target.exists():
-        backup_root = (
-            root / ".nrw" / "backups" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        )
+        backup_root = ProjectLayout(root=root).backups_dir / _stamp()
         _backup(target, root, backup_root)
         backup = backup_root / planned.relpath
     _write(target, planned.content)
@@ -654,7 +658,7 @@ def forget(root: Path, relpath: str, *, lock_path: Path | None = None) -> bool:
         LockProblemError: If the lock cannot be safely written.
     """
     root = Path(root).resolve()
-    lock_path = lock_path or (root / ".nrw" / "scaffold.lock.json")
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
     trouble = lock_problem(lock_path)
     if trouble:
         raise LockProblemError(trouble)

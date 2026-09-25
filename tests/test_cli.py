@@ -142,6 +142,28 @@ def test_skills_list_without_a_project_suggests_bundled(tmp_path, monkeypatch) -
     assert "--bundled" in result.output
 
 
+@pytest.mark.parametrize(
+    "args", [["skills", "add", "metal-oxide-interfaces"], ["skills", "sync"]]
+)
+def test_skills_over_a_conflicted_lock_say_why_and_change_nothing(
+    project, monkeypatch, args
+) -> None:
+    """Writing a few skills' entries over it would drop every other file's."""
+    lock = project / ".nrw" / "scaffold.lock.json"
+    lock.write_text(
+        "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    conflicted = lock.read_bytes()
+    monkeypatch.chdir(project)
+
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 1
+    assert "conflict markers" in result.output
+    assert lock.read_bytes() == conflicted
+
+
 def test_skills_path_prints_an_existing_directory() -> None:
     from pathlib import Path
 

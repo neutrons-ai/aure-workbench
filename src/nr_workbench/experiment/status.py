@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nr_workbench.agent.watch import settle_state
+from nr_workbench.arrival import settle_state
 from nr_workbench.experiment.inventory import SourceRun
 
 #: Every state a run can be in, in the order the page lists them.

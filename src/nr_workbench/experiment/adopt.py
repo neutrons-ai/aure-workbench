@@ -45,6 +45,7 @@ from nr_workbench.experiment.render import (
     sample_md_relpath,
 )
 from nr_workbench.problems import Problem
+from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import MeasurementRow, RenderContext, SampleProse
 from nr_workbench.project.scaffold import (
     Outcome,
@@ -506,7 +507,7 @@ def plan_adopt(
     )
 
     relpath = sample_md_relpath(sample_id)
-    lock = load_lock(root / ".nrw" / "scaffold.lock.json")
+    lock = load_lock(ProjectLayout(root=root).scaffold_lock)
     outcome: Outcome | None = None
     try:
         now_md = next(
@@ -626,7 +627,6 @@ def adopt(
     if rewrite:
         # Checked before the catalog changes: a rewrite refused afterwards
         # would leave the catalog adopted and the file not.
-        from nr_workbench.project.layout import ProjectLayout
         from nr_workbench.project.scaffold import lock_problem
 
         trouble = lock_problem(ProjectLayout(root=Path(root)).scaffold_lock)

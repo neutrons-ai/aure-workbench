@@ -209,7 +209,7 @@ class InMemorySource:
         return {"kind": self.kind, "location": "memory", "path": None}
 
     def inventory(self) -> Inventory:
-        from nr_workbench.agent.watch import fingerprint_entries
+        from nr_workbench.arrival import fingerprint_entries
         from nr_workbench.instrument.reduced import ReducedName, canonical_name
 
         self.inventories += 1

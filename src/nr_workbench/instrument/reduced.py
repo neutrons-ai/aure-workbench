@@ -38,6 +38,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 #: The complete curve: every segment spliced into one file.
 COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
@@ -299,3 +300,50 @@ def disagreement(path: str | Path) -> str | None:
 def disagreements(paths: Iterable[str | Path]) -> list[str]:
     """:func:`disagreement` over several paths, empty when all agree."""
     return [msg for msg in (disagreement(p) for p in paths) if msg]
+
+
+class ReducedDataError(ValueError):
+    """Bytes that are not a reduced reflectivity file, whatever they are named."""
+
+
+def reduced_table(data: bytes) -> Any:
+    """Parse a reduced file's bytes into its table: Q, R, dR, and dQ if present.
+
+    One parser for everything that is handed bytes rather than a path -- the
+    Experiment page's quick look and apply's check before it copies -- so a
+    file the page can plot is exactly a file apply will copy, and the reverse.
+
+    Args:
+        data: The file's content.
+
+    Returns:
+        A two-dimensional ``numpy`` array, one row per point.
+
+    Raises:
+        ReducedDataError: The bytes contain NUL, do not parse as a numeric
+            table, or have fewer than three columns. The message reads as a
+            predicate of the file: ``f"{name} {exc}"``.
+    """
+    import io
+
+    import numpy as np
+
+    if b"\x00" in data:
+        raise ReducedDataError("contains NUL bytes, so it is not a reduced text file")
+    # Said here rather than left to numpy, which warns on stderr for an empty
+    # table -- and silencing a warning is process-wide, in a threaded server.
+    if not any(
+        line.strip() and not line.lstrip().startswith(b"#")
+        for line in data.splitlines()
+    ):
+        raise ReducedDataError("has no data rows")
+    try:
+        table = np.loadtxt(io.BytesIO(data), ndmin=2)
+    except ValueError as exc:
+        raise ReducedDataError(f"is not reduced data ({exc})") from exc
+    if table.size == 0 or table.shape[1] < 3:
+        columns = table.shape[1] if table.size else 0
+        raise ReducedDataError(
+            f"has {columns} column(s); reduced data has at least Q, R and dR"
+        )
+    return table

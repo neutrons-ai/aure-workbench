@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import shutil
 import threading
 from collections.abc import Iterable, Iterator
@@ -55,7 +54,9 @@ from nr_workbench.experiment.model import (
     SampleContext,
     apply_changes,
 )
+from nr_workbench.fsutil import advisory_lock, atomic_write_bytes
 from nr_workbench.problems import Problem
+from nr_workbench.provenance.hashing import sha256_file_or_none
 
 #: Written into every table and the manifest.
 SCHEMA_ID = "nrw-experiment/1"
@@ -274,11 +275,9 @@ class ParquetCatalogStore:
         -- has nowhere to put the lock file. Refusing to read it would be
         worse than the race the lock guards against.
         """
-        from nr_workbench.provenance.index import _locked
-
         with _thread_lock(self.directory):
             try:
-                context = _locked(self.cache_dir / "catalog")
+                context = advisory_lock(self.cache_dir / "catalog")
                 context.__enter__()
             except OSError:
                 yield
@@ -363,12 +362,10 @@ class ParquetCatalogStore:
             CatalogValidationError: An edit breaks a rule.
             RecordConflict: A record changed since the editor loaded it.
         """
-        from nr_workbench.provenance.index import _locked
-
         stamp = now or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         run_changes, sample_changes = list(runs), list(samples)
 
-        with _thread_lock(self.directory), _locked(self.cache_dir / "catalog"):
+        with _thread_lock(self.directory), advisory_lock(self.cache_dir / "catalog"):
             current, _ = self._load_unlocked()
             updated = apply_changes(
                 current, runs=run_changes, samples=sample_changes, now=stamp
@@ -702,13 +699,6 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _file_sha(path: Path) -> str | None:
-    try:
-        return _sha(path.read_bytes())
-    except OSError:
-        return None
-
-
 def _hashes(manifest: dict[str, Any]) -> tuple[Any, Any]:
     tables = manifest.get("tables") if isinstance(manifest.get("tables"), dict) else {}
     return tuple(
@@ -725,17 +715,17 @@ def _matches(manifest: dict[str, Any], runs_path: Path, samples_path: Path) -> b
         return False
     for key, path in (("runs", runs_path), ("samples", samples_path)):
         entry = tables.get(key)
-        if not isinstance(entry, dict) or entry.get("sha256") != _file_sha(path):
+        if not isinstance(entry, dict) or entry.get("sha256") != sha256_file_or_none(
+            path
+        ):
             return False
     return True
 
 
 def _replace(target: Path, data: bytes, scratch: Path) -> None:
-    """Write ``data`` to ``target`` atomically, via a unique temp file."""
-    scratch.mkdir(parents=True, exist_ok=True)
-    temp = scratch / f".{target.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    with temp.open("wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp, target)
+    """Write ``data`` to ``target`` atomically, with the temp file in *scratch*.
+
+    Its own function so that a test can fail the second of a save's three
+    replacements and check what a reader finds.
+    """
+    atomic_write_bytes(target, data, scratch=scratch)

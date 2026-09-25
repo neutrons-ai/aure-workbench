@@ -16,11 +16,10 @@ same moment must not interleave a line.
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import Iterator
-from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
+
+from nr_workbench.fsutil import advisory_lock
 
 INDEX_FILENAME = "index.jsonl"
 
@@ -29,32 +28,6 @@ INDEX_FILENAME = "index.jsonl"
 EVENT_FIT = "fit"
 EVENT_PROMOTE = "promote"
 EVENT_SUPERSEDE = "supersede"
-
-
-@contextmanager
-def _locked(path: Path) -> Iterator[None]:
-    """Hold an advisory lock for the duration of a write.
-
-    Falls back to no locking where ``fcntl`` is unavailable (Windows). A lost
-    append is worse than a slow one, but an unavailable lock is not a reason to
-    refuse to record anything.
-    """
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - Windows
-        yield
-        return
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(path.suffix + ".lock")
-    handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
-    try:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
-    finally:
-        with suppress(OSError):
-            fcntl.flock(handle, fcntl.LOCK_UN)
-        os.close(handle)
 
 
 def _hash_of(fit_id: str) -> str:
@@ -88,7 +61,7 @@ class FitIndex:
         """
         payload = {"event": event, **entry}
         line = json.dumps(payload, separators=(",", ":"), default=str)
-        with _locked(self.path):
+        with advisory_lock(self.path):
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
@@ -113,7 +86,7 @@ class FitIndex:
         Returns:
             Number of entries removed.
         """
-        with _locked(self.path):
+        with advisory_lock(self.path):
             if not self.path.is_file():
                 return 0
             kept: list[str] = []

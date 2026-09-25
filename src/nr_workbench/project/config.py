@@ -20,6 +20,20 @@ CONFIG_FILENAME = "nrw.toml"
 #: Bumped when the on-disk contract changes in a way that needs migration.
 CONTRACT_VERSION = 1
 
+#: Where REF_L's ``new_reduction`` pipeline writes reduced runs: the default
+#: for ``[experiment.source] location``, with ``{ipts}`` from ``[beamtime]``.
+#:
+#: **Provisional.** This is where the pipeline writes today, and it is expected
+#: to move -- which is why it is one constant rather than a string repeated in
+#: the docs, the template and the code. It lives here, beside the loader of
+#: ``nrw.toml``, so the scaffold can write it without importing the experiment
+#: package; :mod:`nr_workbench.experiment.config` reads it from here.
+DEFAULT_EXPERIMENT_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+
+#: Seconds between polls of the experiment's feed and data source while
+#: someone is watching the page.
+DEFAULT_EXPERIMENT_POLL_SECONDS = 30
+
 #: BL-4B conventions -- see skills/reflectometry/refl-bl4b-instrument.
 #:
 #: **The glob and dq entries are descriptive; nothing reads them.** The

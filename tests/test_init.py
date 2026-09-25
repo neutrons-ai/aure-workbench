@@ -15,6 +15,7 @@ from nr_workbench.commands.init_cmd import plan_project_files
 from nr_workbench.commands.sample import plan_sample_files, validate_sample_id
 from nr_workbench.project.layout import SAMPLE_SUBDIRS, ProjectLayout
 from nr_workbench.project.render import RenderContext
+from nr_workbench.project.scaffold import LockProblemError
 
 #: The scaffold's own files. A golden list rather than a loose assertion,
 #: because the classic packaging failure is a file silently vanishing from the
@@ -171,6 +172,27 @@ def test_init_keeps_a_narrowed_harness_set_on_a_later_run(tmp_path: Path) -> Non
         f"a re-run should be clean, not pending: {second.output}"
     )
     assert not (tmp_path / ".github" / "agents").exists()
+
+
+def test_init_over_a_conflicted_lock_says_why_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """The refusal is the point; a traceback made it look like a crash."""
+    runner = CliRunner()
+    assert runner.invoke(main, ["init", str(tmp_path)]).exit_code == 0
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    lock.write_text(
+        "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    conflicted = lock.read_bytes()
+
+    result = runner.invoke(main, ["init", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "conflict markers" in result.output
+    assert not isinstance(result.exception, LockProblemError)
+    assert lock.read_bytes() == conflicted
 
 
 def test_init_adds_a_harness_without_disturbing_the_existing_one(

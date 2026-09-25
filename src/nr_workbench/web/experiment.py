@@ -38,7 +38,9 @@ from nr_workbench.experiment.model import (
     validate_sample_id,
 )
 from nr_workbench.experiment.status import STATES
+from nr_workbench.experiment.views import run_row, sample_card, unmanaged_card
 from nr_workbench.problems import Problem
+from nr_workbench.project.layout import ProjectLayout
 
 #: Seconds a request may wait for the data source.
 SOURCE_TIMEOUT = 15.0
@@ -76,6 +78,20 @@ class _BoundedSource:
 
     def read_bytes(self, file: Any, *, max_bytes: int) -> bytes:
         return self._bounded(self._source.read_bytes, file, max_bytes=max_bytes)
+
+
+class RequestError(ValueError):
+    """The request cannot be carried out as sent; the message says what to fix.
+
+    Its own class so the API answers 400 for *this*, and not for any
+    ``ValueError`` at all: a ``UnicodeDecodeError`` from a file, or a bug, is
+    a ``ValueError`` too, and calling that "your request was wrong" would
+    hide it from the log.
+    """
+
+
+class RunNotListedError(LookupError):
+    """The data source does not list the run asked about."""
 
 
 class WritesDisabledError(PermissionError):
@@ -228,7 +244,7 @@ class ExperimentData:
         """A run's reflectivity, straight from the data source, for a quick look.
 
         Raises:
-            FileNotFoundError: If the source does not list the run.
+            RunNotListedError: If the source does not list the run.
             SourceTimeoutError: If the source does not answer in time.
         """
         from nr_workbench.experiment.apply import MAX_FILE_BYTES
@@ -237,7 +253,7 @@ class ExperimentData:
         key = RunKey.parse(run)
         view = self.live.snapshot().runs.get(key)
         if view is None or view.source is None:
-            raise FileNotFoundError(f"The data source does not list run {key.run}.")
+            raise RunNotListedError(f"The data source does not list run {key.run}.")
         curves = []
         problems = []
         source = self.source
@@ -278,7 +294,7 @@ class ExperimentData:
         """The sample.md the catalog would write, and where the file stands.
 
         Raises:
-            ValueError: If the sample id is not usable.
+            CatalogValidationError: If the sample id is not usable.
         """
         from nr_workbench.experiment.render import (
             SampleRenderError,
@@ -308,7 +324,7 @@ class ExperimentData:
                 "sample": sample_id,
                 "problems": [Problem("sample", str(exc)).as_dict()],
             }
-        lock = load_lock(self.root / ".nrw" / "scaffold.lock.json")
+        lock = load_lock(ProjectLayout(root=self.root).scaffold_lock)
         outcome = classify(planned, path, lock.get(relpath))
         text = planned.content.decode("utf-8")
         return {
@@ -368,23 +384,26 @@ class ExperimentData:
                 taken from the request.
 
         Raises:
-            ValueError: A malformed request or a rule broken (400).
+            RequestError: A malformed request (400).
+            CatalogValidationError: A rule broken (400).
             RecordConflict: A record changed since the page loaded it (409).
         """
         self._require_writable()
         if not isinstance(changes, list) or not changes:
-            raise ValueError("expected a non-empty list of run changes")
+            raise RequestError("expected a non-empty list of run changes")
         snapshot = self.live.snapshot()
         run_changes = []
         for item in changes:
             if not isinstance(item, dict):
-                raise ValueError("each change must be an object")
+                raise RequestError("each change must be an object")
             key = RunKey.parse(_required(item, "run"))
             fields = item.get("fields")
             if not isinstance(fields, dict) or not fields:
-                raise ValueError(f"run {key.run}: 'fields' must be a non-empty object")
+                raise RequestError(
+                    f"run {key.run}: 'fields' must be a non-empty object"
+                )
             if {"title", "start_time"} & set(fields):
-                raise ValueError(
+                raise RequestError(
                     "title and start_time come from the data source, not the page"
                 )
             view = snapshot.runs.get(key)
@@ -394,7 +413,8 @@ class ExperimentData:
                     "start_time": view.source.start_time,
                     **fields,
                 }
-            run_changes.append(RunChange(key, _rev(item.get("base_rev", 0)), fields))
+            # base_rev is checked where the catalog changes, not here as well.
+            run_changes.append(RunChange(key, item.get("base_rev", 0), fields))
         catalog = self.workspace.store.update(runs=run_changes)
         return {
             "runs": [
@@ -408,29 +428,30 @@ class ExperimentData:
         """Record edits to a sample's context, or remove it.
 
         Raises:
-            ValueError: A malformed request or a rule broken (400).
+            RequestError: A malformed request (400).
+            CatalogValidationError: A rule broken (400).
             RecordConflict: The record changed since the page loaded it (409).
         """
         self._require_writable()
         validate_sample_id(sample_id)
         if not isinstance(payload, dict):
-            raise ValueError("expected an object")
+            raise RequestError("expected an object")
         delete = payload.get("delete", False)
         if not isinstance(delete, bool):
-            raise ValueError("delete must be true or false")
+            raise RequestError("delete must be true or false")
         if delete and (self.root / "samples" / sample_id).exists():
-            raise ValueError(
+            raise RequestError(
                 f"samples/{sample_id}/ exists, so the catalog keeps managing it. "
                 f"Use `nrw experiment release {sample_id}` to make sample.md "
                 "yours instead."
             )
         fields = payload.get("fields", {})
         if not isinstance(fields, dict):
-            raise ValueError("'fields' must be an object")
+            raise RequestError("'fields' must be an object")
         catalog = self.workspace.store.update(
             samples=[
                 SampleChange(
-                    sample_id, _rev(payload.get("base_rev", 0)), fields, delete=delete
+                    sample_id, payload.get("base_rev", 0), fields, delete=delete
                 )
             ]
         )
@@ -448,7 +469,7 @@ class ExperimentData:
         """Carry out a reviewed plan, after a fresh look at the source.
 
         Raises:
-            ValueError: A malformed request.
+            RequestError: A malformed request.
             ApplyError: The plan changed, another apply is running, or
                 something must be fixed first (409).
             SourceTimeoutError: The source did not answer in time.
@@ -457,7 +478,7 @@ class ExperimentData:
 
         self._require_writable()
         if not isinstance(plan_id, str) or not plan_id:
-            raise ValueError("plan_id is required: review the plan before applying")
+            raise RequestError("plan_id is required: review the plan before applying")
         catalog = self._catalog_or_raise()
         # A fresh poll, not the last snapshot: completeness is judged now. In
         # the pool, because the poll itself lists the source.
@@ -483,9 +504,9 @@ class ExperimentData:
         self._require_writable()
         validate_sample_id(sample_id)
         if not isinstance(rewrite, bool):
-            raise ValueError("rewrite must be true or false")
+            raise RequestError("rewrite must be true or false")
         if not isinstance(plan_id, str) or not plan_id:
-            raise ValueError("plan_id is required: review the adoption first")
+            raise RequestError("plan_id is required: review the adoption first")
         context = self.workspace.render_context()
         plan = plan_adopt(self.root, self._catalog_or_raise(), sample_id, context)
         report = adopt(
@@ -559,70 +580,16 @@ class ExperimentData:
             ) from exc
 
     def _row(self, key: RunKey, view: Any, catalog: Catalog) -> dict[str, Any]:
-        entry = catalog.runs.get(key)
-        source = view.source if view is not None else None
-        status = view.status if view is not None else None
-        return {
-            "key": key.slug(),
-            "run": key.run,
-            "kind": key.kind,
-            "state": status.state if status else "not listed",
-            "reason": status.reason if status else "the data source does not list it",
-            "complete": bool(status and status.complete),
-            "title": (source.title if source else "") or (entry.title if entry else ""),
-            "start_time": (source.start_time if source else "")
-            or (entry.start_time if entry else ""),
-            "segments": list(source.segments) if source else [],
-            "n_segments": source.n_segments if source else None,
-            "thetas": [round(t, 3) if t is not None else None for t in source.thetas]
-            if source
-            else [],
-            "announced": view is not None and view.announcement is not None,
-            "sample": entry.sample_id if entry else None,
-            "measurement": entry.measurement if entry else "",
-            "condition": entry.condition if entry else "",
-            "include": entry.include if entry else True,
-            "note": entry.note if entry else "",
-            "rev": entry.rev if entry else 0,
-        }
+        return run_row(key, view, catalog.runs.get(key))
 
     def _samples(self, catalog: Catalog) -> list[dict[str, Any]]:
-        from nr_workbench.project.layout import ProjectLayout
-
         managed = catalog.sample_ids()
-        cards = []
-        for sample_id in managed:
-            context = catalog.context_for(sample_id)
-            runs = catalog.runs_for(sample_id)
-            cards.append(
-                {
-                    "id": sample_id,
-                    "managed": True,
-                    "on_disk": (
-                        self.root / "samples" / sample_id / "sample.md"
-                    ).is_file(),
-                    "title": context.title,
-                    "description": context.description,
-                    "details": context.details,
-                    "mounting": context.mounting,
-                    "measurement_conditions": context.measurement_conditions,
-                    "fits_to_perform": context.fits_to_perform,
-                    "rev": context.rev,
-                    "runs": [e.key.run for e in runs if e.include],
-                    "excluded": [e.key.run for e in runs if not e.include],
-                }
-            )
-        for sample_id in ProjectLayout(root=self.root).list_samples():
-            if sample_id not in managed:
-                cards.append(
-                    {
-                        "id": sample_id,
-                        "managed": False,
-                        "on_disk": True,
-                        "runs": [],
-                        "excluded": [],
-                    }
-                )
+        cards = [sample_card(self.root, catalog, sample_id) for sample_id in managed]
+        cards.extend(
+            unmanaged_card(sample_id)
+            for sample_id in ProjectLayout(root=self.root).list_samples()
+            if sample_id not in managed
+        )
         return cards
 
 
@@ -637,21 +604,15 @@ def _scan(changes: Any) -> dict[str, Any]:
 
 def _required(item: dict[str, Any], name: str) -> Any:
     if name not in item:
-        raise ValueError(f"'{name}' is required")
+        raise RequestError(f"'{name}' is required")
     return item[name]
-
-
-def _rev(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"base_rev must be a whole number, not {value!r}")
-    return value
 
 
 def _sample_list(samples: Any) -> list[str] | None:
     if samples in (None, []):
         return None
     if not isinstance(samples, list) or not all(isinstance(s, str) for s in samples):
-        raise ValueError("samples must be a list of sample ids")
+        raise RequestError("samples must be a list of sample ids")
     return [validate_sample_id(s) for s in samples]
 
 
@@ -659,5 +620,5 @@ def _run_keys(runs: Any) -> set[RunKey]:
     if runs in (None, []):
         return set()
     if not isinstance(runs, list):
-        raise ValueError("confirmed must be a list of run numbers")
+        raise RequestError("confirmed must be a list of run numbers")
     return {RunKey.parse(run) for run in runs}

@@ -76,8 +76,8 @@ dq_convention = "per-file, read from the header"
 # [experiment.source]
 # kind = "local"
 # location = "{{ experiment_location }}"
-# settle_seconds = 300
+# settle_seconds = {{ experiment_settle_seconds }}
 #
 # [experiment.feed]
 # kind = "directory"   # a run is noticed when its reduced files appear
-# poll_seconds = 30
+# poll_seconds = {{ experiment_poll_seconds }}

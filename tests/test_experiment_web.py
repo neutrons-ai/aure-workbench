@@ -114,6 +114,29 @@ def test_overview_lists_runs_with_their_states(app) -> None:
     assert states == {234277: "complete", 234280: "complete", 234283: "unconfirmed"}
 
 
+def test_the_page_and_the_command_line_describe_a_run_identically(
+    app, writer, expt: Path
+) -> None:
+    """A script reading `status --json` sees what a person sees on the page."""
+    import json
+
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    assert assign(writer, app).status_code == 200
+    page = app.test_client().get("/api/experiment").get_json()
+
+    result = CliRunner().invoke(
+        main, ["experiment", "status", "--root", str(expt), "--json"]
+    )
+    cli = json.loads(result.output)
+
+    assert cli["runs"] == page["runs"]
+    managed = [card for card in page["samples"] if card["managed"]]
+    assert cli["samples"] == managed
+
+
 def test_curves_come_from_the_source_segment_by_segment(app) -> None:
     payload = app.test_client().get("/api/experiment/runs/234277/curves").get_json()
 
@@ -129,6 +152,33 @@ def test_curves_for_an_unlisted_run_are_404(app) -> None:
     assert (
         app.test_client().get("/api/experiment/runs/999999/curves").status_code == 404
     )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+        PermissionError(13, "Permission denied", "/private/path"),
+        FileNotFoundError(2, "No such file", "/private/path"),
+    ],
+    ids=["a ValueError", "a PermissionError", "a FileNotFoundError"],
+)
+def test_an_unexpected_error_is_a_logged_500_not_the_callers_fault(
+    app, monkeypatch, caplog, error: Exception
+) -> None:
+    """Once mapped to 400, 403 and 404 by class alone, and never logged."""
+
+    def broken():
+        raise error
+
+    monkeypatch.setattr(app.config["NRW_EXPERIMENT"], "overview", broken)
+    with caplog.at_level("ERROR"):
+        response = app.test_client().get("/api/experiment")
+
+    assert response.status_code == 500
+    assert response.get_json()["kind"] == "InternalError"
+    assert "/private/path" not in response.get_data(as_text=True)
+    assert any(record.exc_info for record in caplog.records)
 
 
 # --------------------------------------------------------------------------
@@ -327,6 +377,26 @@ def test_a_rule_broken_is_a_400_with_the_reason(app, writer) -> None:
 
     assert response.status_code == 400
     assert "'|'" in response.get_json()["error"]
+
+
+@pytest.mark.parametrize("base_rev", [True, -1, "0", 1.5])
+def test_a_malformed_base_rev_is_a_400_and_changes_nothing(
+    app, writer, expt: Path, base_rev
+) -> None:
+    """Checked once, where the catalog changes; `True` is an int in Python."""
+    response = writer.put(
+        "/api/experiment/runs",
+        json={
+            "changes": [
+                {"run": 234277, "base_rev": base_rev, "fields": {"condition": "OCV"}}
+            ]
+        },
+        headers=write_headers(app),
+    )
+
+    assert response.status_code == 400
+    assert "whole number" in response.get_json()["error"]
+    assert not (expt / "experiment" / "catalog.json").exists()
 
 
 def test_the_page_cannot_set_the_title_it_came_from_the_source(app, writer) -> None:

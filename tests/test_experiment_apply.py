@@ -7,6 +7,7 @@ say that it did not.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -453,6 +454,25 @@ def test_applying_again_after_an_exclusion_is_a_no_op(
     assert not plan.writes
     assert report.failed == []
     assert not any(f.run == 234280 for f in plan.samples[0].files)
+
+
+def test_a_key_a_newer_nrw_wrote_in_the_copy_record_survives_a_rewrite(
+    applier: Applier, project: Path
+) -> None:
+    """The record is committed and shared; an older nrw must not strip it."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    path = project / "samples" / "Sample6" / "data" / "sources.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    name = next(n for n in document["files"] if "234280" in n)
+    document["files"][name]["verified_by"] = "a newer nrw"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    applier.apply(edit(catalog, 234280, include=False))
+
+    entry = json.loads(path.read_text(encoding="utf-8"))["files"][name]
+    assert entry["location"] == "excluded"
+    assert entry["verified_by"] == "a newer nrw"
 
 
 def test_a_reassigned_run_leaves_the_old_sample_and_reaches_the_new(

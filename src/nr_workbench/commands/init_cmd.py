@@ -12,6 +12,7 @@ import click
 from nr_workbench.harness import DEFAULT_HARNESSES, resolve
 from nr_workbench.project.render import RenderContext, render_tree
 from nr_workbench.project.scaffold import (
+    LockProblemError,
     Outcome,
     PlannedFile,
     ScaffoldReport,
@@ -235,24 +236,32 @@ def run_init(
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
+    from nr_workbench.experiment.render import SampleRenderError
+
     for sample_id in sample_ids:
         try:
             planned.extend(_plan_sample(root, context, sample_id))
-        except Exception as exc:
+        except (SampleRenderError, ValueError) as exc:
+            # A catalog that cannot be read, or an unusable sample id: both
+            # are the person's to fix, and neither is worth a traceback.
             raise click.ClickException(str(exc)) from exc
 
     diffs: list[str] = []
-    report = apply_scaffold(
-        root,
-        planned,
-        # `init` plans the whole project, so it may rebuild a damaged lock --
-        # that is how a project recovers. Conflict markers are still refused.
-        rebuild_lock=True,
-        dry_run=check,
-        show_diff=show_diff,
-        force=force,
-        diff_sink=diffs if show_diff else None,
-    )
+    try:
+        report = apply_scaffold(
+            root,
+            planned,
+            # `init` plans the whole project, so it may rebuild a damaged lock
+            # -- that is how a project recovers. Conflict markers are still
+            # refused: they mean two people's entries, and the merge is theirs.
+            rebuild_lock=True,
+            dry_run=check,
+            show_diff=show_diff,
+            force=force,
+            diff_sink=diffs if show_diff else None,
+        )
+    except LockProblemError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if show_diff:
         for diff in diffs:

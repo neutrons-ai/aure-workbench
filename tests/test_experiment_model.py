@@ -469,3 +469,32 @@ def test_experiment_config_reads_a_scaffolded_project(project: Path) -> None:
     assert config.source.path == Path(
         "/SNS/REF_L/IPTS-00001/shared/autoreduce/new_reduction"
     )
+
+
+def test_uncommenting_the_scaffolded_experiment_block_changes_nothing(
+    project: Path,
+) -> None:
+    """What nrw.toml documents as the defaults must be the defaults.
+
+    A documented value that differs from the real one is worse than none: it is
+    the first thing anyone reads when a run is not being picked up.
+    """
+    from nr_workbench.project.config import load_config
+
+    toml = project / "nrw.toml"
+    text = toml.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    start = lines.index("# [experiment.source]")
+    block = []
+    for line in lines[start:]:
+        if not line.startswith("#"):
+            break
+        block.append(line.removeprefix("#").removeprefix(" "))
+    default = experiment_config(load_config(project))
+
+    toml.write_text(text + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+    configured = experiment_config(load_config(project))
+
+    assert "[experiment.feed]" in block and "[experiment.source]" in block
+    assert configured == default
+    assert configured.problems == ()

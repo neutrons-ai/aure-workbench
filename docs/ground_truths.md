@@ -2928,7 +2928,7 @@ Recorded from the user, not derivable from the code:
 - **The location is provisional.** The default data location,
   `/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction`, is where REF_L's
   `new_reduction` pipeline writes today, and is expected to move. It is one
-  constant (`experiment.config.DEFAULT_LOCATION`), rendered into the
+  constant (`project.config.DEFAULT_EXPERIMENT_LOCATION`), rendered into the
   scaffolded `nrw.toml` rather than copied.
 - **The IPTS is used verbatim.** Its digits are kept as written: `int()` would
   turn IPTS-00001 into IPTS-1, a different directory.
@@ -2985,3 +2985,32 @@ narrower table shape than a reader does is also a way in: prose the guard
 accepts would be read as measurements. The shared vocabulary (`RUN_HEADERS`,
 `CONDITION_HEADERS`, `table_cells`) now lives in `nr_workbench/sample_md.py`,
 and all four use it.
+
+### 2026-09-25: two refactors the design review asked for, and why they wait
+
+The review's structural findings were fixed in place:
+
+- `nr_workbench/arrival.py` holds what `nrw agent watch` and the Experiment page
+  share, so the experiment's data layer no longer imports the agent.
+- `fsutil.py` has the one advisory lock and the one atomic write. The shared
+  scaffold lock is now written through a unique temp file. A single `.tmp`
+  name let a request thread and a terminal rename each other's half-written
+  lock.
+- One builder for a run's row and a sample's card (`experiment/views.py`).
+- The copy record is typed (`CopyEntry`), and keeps keys it does not know.
+- The API maps only the errors nrw raises on purpose. Anything else is a
+  logged 500, not a 400 blamed on the caller.
+
+Two refactors were deliberately left for later:
+
+- **Splitting `experiment/apply.py` (about 1,100 lines) into a package**
+  (plan, copy, move, record). The seams are visible: `_plan_run`,
+  `_copy_runs`, `_move`, `read_sources`/`write_sources`. But every piece
+  shares the `FileAction` vocabulary and the same safety argument. Splitting
+  it before the tNR series copy arrives would pick the boundaries twice.
+- **A service layer between the surfaces and the experiment package.** The
+  command line and `web/experiment.py` each still wire up the workspace, the
+  poller and the catalog. With two surfaces, that is two short call sequences,
+  and the error-mapping differences between them are real (a script's exit
+  code versus a status code). A third surface, such as an agent tool, is the
+  point where a shared service pays for itself.

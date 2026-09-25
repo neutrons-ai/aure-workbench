@@ -19,6 +19,7 @@ import dataclasses
 from pathlib import Path
 
 from nr_workbench.experiment.model import Catalog
+from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import MeasurementRow, RenderContext, SampleProse
 from nr_workbench.project.samples import plan_sample_files
 from nr_workbench.project.scaffold import PlannedFile, load_lock
@@ -81,7 +82,7 @@ def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
 
 def lock_owner(root: Path, sample_id: str) -> str | None:
     """Who the scaffold lock says wrote this sample's ``sample.md``, if anyone."""
-    entry = load_lock(Path(root) / ".nrw" / "scaffold.lock.json").get(
+    entry = load_lock(ProjectLayout(root=Path(root)).scaffold_lock).get(
         sample_md_relpath(sample_id), {}
     )
     owner = entry.get("owner") if isinstance(entry, dict) else None

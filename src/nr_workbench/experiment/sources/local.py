@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from nr_workbench.agent.watch import fingerprint_entries, segment_problems
+from nr_workbench.arrival import fingerprint_entries, segment_problems
 from nr_workbench.experiment.config import normalize_ipts
 from nr_workbench.experiment.inventory import Inventory, SourceFile, SourceRun
 from nr_workbench.experiment.model import RunKey, clean_title_snapshot

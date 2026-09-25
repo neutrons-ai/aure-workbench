@@ -143,12 +143,12 @@ def read_reduced_bytes(data: bytes, *, label: str, name: str) -> Curve:
     Raises:
         DataFormatError: If the bytes are not a reduced file.
     """
-    import io
+    from nr_workbench.instrument.reduced import ReducedDataError, reduced_table
 
     try:
-        table = np.loadtxt(io.BytesIO(data), ndmin=2)
-    except ValueError as exc:
-        raise DataFormatError(f"Cannot read {name}: {exc}") from exc
+        table = reduced_table(data)
+    except ReducedDataError as exc:
+        raise DataFormatError(f"{name} {exc}") from exc
     return _reduced_curve(table, label=label, name=name, source=name)
 
 

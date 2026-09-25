@@ -34,8 +34,8 @@ kept and the catalog's version is written beside it as ``sample.md.nrw-new``.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
-import io
 import json
 import os
 import secrets
@@ -56,7 +56,10 @@ from nr_workbench.experiment.render import (
     sample_md_relpath,
 )
 from nr_workbench.experiment.status import RunStatus
+from nr_workbench.fsutil import advisory_lock, atomic_write_bytes
+from nr_workbench.instrument.reduced import reduced_table
 from nr_workbench.problems import Problem
+from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import RenderContext
 from nr_workbench.project.scaffold import (
     Outcome,
@@ -66,10 +69,15 @@ from nr_workbench.project.scaffold import (
     load_lock,
     lock_problem,
 )
+from nr_workbench.provenance.hashing import sha256_file_or_none
 
 #: The record of what nrw copied into a sample, beside the data.
 SOURCES_FILE = "sources.json"
 SOURCES_SCHEMA = "nrw-sources/1"
+
+#: Where a sample's steady-state data is, under ``data/`` -- what every reader
+#: of the sample looks at.
+STEADY_DIR = "steady"
 
 #: Where excluded and reassigned runs are moved, under ``data/``.
 EXCLUDED_DIR = "excluded"
@@ -124,6 +132,10 @@ WRITING_ACTIONS = frozenset(
 ATTENTION_ACTIONS = frozenset(
     {Action.SOURCE_CHANGED, Action.LOCAL_EDITED, Action.CONFLICT, Action.SOURCE_MISSING}
 )
+
+#: The scaffold's verdicts on ``sample.md`` that mean the catalog cannot reach
+#: it: edited by hand since nrw wrote it, or never written by nrw at all.
+UNREACHABLE_SAMPLE_MD = frozenset({Outcome.DRIFTED, Outcome.UNTRACKED})
 
 
 @dataclass(frozen=True)
@@ -187,6 +199,20 @@ class SamplePlan:
             or self.sample_md in (Outcome.CREATE, Outcome.UPGRADE, Outcome.DRIFTED)
         )
 
+    @property
+    def needs_attention(self) -> bool:
+        """Whether a person must look before this sample is in step.
+
+        Includes a ``sample.md`` the catalog cannot reach. Nothing *failed*
+        there, but reporting success would read as "in step" when the file
+        still says what it said before.
+        """
+        return (
+            bool(self.problems)
+            or any(f.action in ATTENTION_ACTIONS for f in self.files)
+            or self.sample_md in UNREACHABLE_SAMPLE_MD
+        )
+
     def as_dict(self) -> dict[str, Any]:
         """Return the JSON form."""
         return {
@@ -196,6 +222,7 @@ class SamplePlan:
             "sample_md": str(self.sample_md) if self.sample_md else None,
             "sample_md_detail": self.sample_md_detail,
             "writes": self.writes,
+            "needs_attention": self.needs_attention,
             "problems": [p.as_dict() for p in self.problems],
         }
 
@@ -221,11 +248,17 @@ class ApplyPlan:
         """Whether applying changes anything on disk."""
         return any(sample.writes for sample in self.samples)
 
+    @property
+    def needs_attention(self) -> bool:
+        """Whether a person must look at anything in this plan."""
+        return bool(self.problems) or any(s.needs_attention for s in self.samples)
+
     def as_dict(self) -> dict[str, Any]:
         """Return the JSON form."""
         return {
             "plan_id": self.plan_id,
             "writes": self.writes,
+            "needs_attention": self.needs_attention,
             "samples": [s.as_dict() for s in self.samples],
             "problems": [p.as_dict() for p in self.problems],
         }
@@ -288,7 +321,7 @@ def plan_apply(
     """
     root = Path(root)
     problems: list[Problem] = []
-    lock_path = root / ".nrw" / "scaffold.lock.json"
+    lock_path = ProjectLayout(root=root).scaffold_lock
     trouble = lock_problem(lock_path)
     if trouble:
         problems.append(Problem("scaffold", trouble))
@@ -379,7 +412,7 @@ def _plan_sample(
 
     sample_dir = root / "samples" / sample_id
     creates = not (sample_dir / "sample.md").exists()
-    steady = sample_dir / "data" / "steady"
+    steady = sample_dir / "data" / STEADY_DIR
     record = read_sources(sample_dir)
 
     wanted = {
@@ -396,8 +429,8 @@ def _plan_sample(
 
     # nrw's own copies of runs that no longer belong here: move them aside.
     for name, entry in sorted(record.items()):
-        key = RunKey(entry["run"])
-        if key in wanted or entry.get("location") == EXCLUDED_DIR:
+        key = RunKey(entry.run)
+        if key in wanted or entry.location == EXCLUDED_DIR:
             continue
         other = catalog.runs.get(key)
         if other is None or other.sample_id is None:
@@ -412,7 +445,7 @@ def _plan_sample(
                 name,
                 Action.MOVE_OUT,
                 f"run {key.run} is {why}; its copy moves to data/{EXCLUDED_DIR}/{key.run}/",
-                sha256=entry.get("sha256"),
+                sha256=entry.sha256,
             )
         )
 
@@ -471,13 +504,13 @@ def _plan_run(
     listed: SourceRun | None,
     status: RunStatus | None,
     steady: Path,
-    record: Mapping[str, Mapping[str, Any]],
+    record: Mapping[str, CopyEntry],
     source: Any,
     confirmed: set[RunKey],
 ) -> list[FileAction]:
     """What happens to one assigned, included run's files."""
     run = key.run
-    recorded = {n: e for n, e in record.items() if e.get("run") == run}
+    recorded = {n: e for n, e in record.items() if e.run == run}
     actions: list[FileAction] = []
 
     if listed is None:
@@ -548,20 +581,20 @@ def _may_copy(
 def _already_copied(
     run: int,
     name: str,
-    entry: Mapping[str, Any],
+    entry: CopyEntry,
     listed: SourceFile | None,
     steady: Path,
     source: Any,
 ) -> FileAction:
     """A file nrw copied earlier: is it still what nrw copied, and is the source?"""
-    if entry.get("location") == EXCLUDED_DIR:
+    if entry.location == EXCLUDED_DIR:
         return FileAction(
             run,
             name,
             Action.RESTORE,
             f"run {run} is included again; its copy moves back from data/{EXCLUDED_DIR}/",
             listed,
-            entry.get("sha256"),
+            entry.sha256,
         )
     target = steady / name
     if not target.is_file() or target.is_symlink():
@@ -572,15 +605,15 @@ def _already_copied(
             "nrw copied this file, but it is no longer here as a plain file; "
             "remove its entry from data/sources.json to copy it again",
         )
-    local = _file_sha(target)
-    if local != entry.get("sha256"):
+    local = sha256_file_or_none(target)
+    if local != entry.sha256:
         return FileAction(
             run,
             name,
             Action.LOCAL_EDITED,
             "the copy has been edited since nrw copied it; left alone",
         )
-    if listed is None or listed.version == entry.get("source_version"):
+    if listed is None or listed.version == entry.source_version:
         return FileAction(run, name, Action.UNCHANGED, "", listed, local)
     # The listing says the source file changed. Only its bytes can say whether
     # it really did: a new inode or ctime alone (another client, a restore) is
@@ -626,7 +659,7 @@ def _hand_copied(
             Action.CONFLICT,
             f"already here, and the source cannot be read ({exc})",
         )
-    local = _file_sha(target)
+    local = sha256_file_or_none(target)
     if local == fresh:
         return FileAction(
             run,
@@ -736,9 +769,9 @@ def apply(
             "Another apply is already running. Wait for it, then review again."
         )
     try:
-        from nr_workbench.provenance.index import _locked
-
-        with _locked(Path(root) / ".nrw" / "cache" / "apply"):
+        with advisory_lock(
+            ProjectLayout(root=Path(root)).experiment_cache_dir / "apply"
+        ):
             plan = plan_apply(
                 root,
                 catalog,
@@ -774,7 +807,7 @@ def _apply_sample(
         apply_scaffold(root, list(plan.scaffold))
         report.sample_md[plan.sample_id] = str(plan.sample_md)
 
-    steady = sample_dir / "data" / "steady"
+    steady = sample_dir / "data" / STEADY_DIR
     steady.mkdir(parents=True, exist_ok=True)
     record = read_sources(sample_dir)
     try:
@@ -792,17 +825,24 @@ def _apply_sample(
 
 
 def _record_matches(
-    plan: SamplePlan, record: dict[str, dict[str, Any]], report: ApplyReport
+    plan: SamplePlan, record: dict[str, CopyEntry], report: ApplyReport
 ) -> None:
     """Record files found to hold exactly the source's bytes."""
     for action in plan.files:
-        if action.action is Action.RECORD and action.source is not None:
-            fresh = _record_entry(action.run, action.sha256, action.source, "steady")
-            if action.name in record:
+        if (
+            action.action is Action.RECORD
+            and action.source is not None
+            and action.sha256 is not None
+        ):
+            fresh = CopyEntry.copied(action.run, action.sha256, action.source)
+            earlier = record.get(action.name)
+            if earlier is not None:
                 # Same bytes under a new source version: nothing was copied,
                 # so when it *was* copied stays as it was.
-                fresh["copied_at"] = record[action.name].get(
-                    "copied_at", fresh["copied_at"]
+                fresh = dataclasses.replace(
+                    fresh,
+                    copied_at=earlier.copied_at or fresh.copied_at,
+                    extra=earlier.extra,
                 )
             record[action.name] = fresh
             report.done.append(action)
@@ -812,7 +852,7 @@ def _copy_runs(
     steady: Path,
     plan: SamplePlan,
     source: Any,
-    record: dict[str, dict[str, Any]],
+    record: dict[str, CopyEntry],
     report: ApplyReport,
 ) -> None:
     """Stage each run's files, check them, then rename them in together."""
@@ -830,7 +870,7 @@ def _copy_runs(
                 assert action.source is not None
                 try:
                     data = source.read_bytes(action.source, max_bytes=MAX_FILE_BYTES)
-                    _check_reduced(data)
+                    reduced_table(data)
                 except Exception as exc:  # noqa: BLE001 - the run is skipped, and says why
                     failure = f"{action.name}: {exc}"
                     break
@@ -878,9 +918,7 @@ def _copy_runs(
                     )
                 continue
             for action, digest in placed:
-                record[action.name] = _record_entry(
-                    run, digest, action.source, "steady"
-                )
+                record[action.name] = CopyEntry.copied(run, digest, action.source)
                 report.done.append(action)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -917,7 +955,7 @@ def _move(
     sample_dir: Path,
     steady: Path,
     plan: SamplePlan,
-    record: dict[str, dict[str, Any]],
+    record: dict[str, CopyEntry],
     report: ApplyReport,
 ) -> None:
     """Move copies out of, or back into, the data readers look at."""
@@ -933,7 +971,7 @@ def _move(
             origin, target, location = (
                 excluded / action.name,
                 steady / action.name,
-                "steady",
+                STEADY_DIR,
             )
         else:
             continue
@@ -957,22 +995,10 @@ def _move(
                 FileAction(action.run, action.name, action.action, f"not moved: {exc}")
             )
             continue
-        record[action.name] = {**record.get(action.name, {}), "location": location}
+        record[action.name] = dataclasses.replace(
+            record[action.name], location=location
+        )
         report.done.append(action)
-
-
-def _check_reduced(data: bytes) -> None:
-    """Refuse bytes that are not reduced data, whatever they are named."""
-    import numpy as np
-
-    if b"\x00" in data:
-        raise ValueError("contains NUL bytes, so it is not a reduced text file")
-    try:
-        table = np.loadtxt(io.BytesIO(data), ndmin=2)
-    except ValueError as exc:
-        raise ValueError(f"is not reduced data ({exc})") from exc
-    if table.size == 0 or table.shape[1] < 3:
-        raise ValueError("has fewer than the three columns (Q, R, dR) reduced data has")
 
 
 # ---------------------------------------------------------------------------
@@ -980,21 +1006,69 @@ def _check_reduced(data: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _record_entry(
-    run: int, sha256: str | None, source: SourceFile | None, location: str
-) -> dict[str, Any]:
-    return {
-        "run": run,
-        "kind": "steady",
-        "sha256": sha256,
-        "size": source.size if source else None,
-        "source_version": source.version if source else None,
-        "copied_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "location": location,
-    }
+@dataclass(frozen=True)
+class CopyEntry:
+    """What nrw copied into a sample, for one file.
+
+    Attributes:
+        run: The run the file belongs to.
+        sha256: Digest of the bytes copied: how a later edit of the copy is
+            noticed.
+        size: Their size, when the source listed it.
+        source_version: The source's identity of those bytes when they were
+            copied: how a re-reduction at the facility is noticed.
+        copied_at: When, UTC.
+        location: :data:`STEADY_DIR` or :data:`EXCLUDED_DIR`, where under
+            ``data/`` the copy is now.
+        kind: The run's kind; ``steady`` until tNR series are copied.
+        extra: Keys this version of nrw does not know, kept so that
+            rewriting the record never drops what a newer one wrote.
+    """
+
+    run: int
+    sha256: str
+    size: int | None = None
+    source_version: str | None = None
+    copied_at: str = ""
+    location: str = STEADY_DIR
+    kind: str = "steady"
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def copied(cls, run: int, sha256: str, source: SourceFile | None) -> CopyEntry:
+        """The entry for bytes placed in ``data/steady/`` now."""
+        return cls(
+            run=run,
+            sha256=sha256,
+            size=source.size if source else None,
+            source_version=source.version if source else None,
+            copied_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> CopyEntry:
+        """Read one entry of ``sources.json``, already checked by the caller."""
+        known = {f for f in cls.__dataclass_fields__ if f != "extra"}
+        return cls(
+            **{k: data[k] for k in known if k in data},
+            extra={k: v for k, v in data.items() if k not in known},
+        )
+
+    def as_json(self) -> dict[str, Any]:
+        """The entry as ``sources.json`` holds it."""
+        return {
+            **self.extra,
+            "run": self.run,
+            "kind": self.kind,
+            "sha256": self.sha256,
+            "size": self.size,
+            "source_version": self.source_version,
+            "copied_at": self.copied_at,
+            "location": self.location,
+        }
 
 
-def read_sources(sample_dir: Path) -> dict[str, dict[str, Any]]:
+def read_sources(sample_dir: Path) -> dict[str, CopyEntry]:
     """What nrw has copied into a sample, by file name. Empty if nothing yet.
 
     Raises:
@@ -1017,7 +1091,7 @@ def read_sources(sample_dir: Path) -> dict[str, dict[str, Any]]:
         raise ApplyRefused(f"{path.name} is not an nrw copy record.")
     if not isinstance(files, dict):
         raise ApplyRefused(f"{path.name} has no file list.")
-    record: dict[str, dict[str, Any]] = {}
+    record: dict[str, CopyEntry] = {}
     for name, entry in files.items():
         run = entry.get("run") if isinstance(entry, dict) else None
         if (
@@ -1030,30 +1104,26 @@ def read_sources(sample_dir: Path) -> dict[str, dict[str, Any]]:
                 f"{path.name}: the entry for {name!r} is not one nrw wrote. "
                 "Restore the file from git before applying."
             )
-        record[str(name)] = dict(entry)
+        try:
+            record[str(name)] = CopyEntry.from_json(entry)
+        except TypeError as exc:
+            raise ApplyRefused(
+                f"{path.name}: the entry for {name!r} is not one nrw wrote ({exc}). "
+                "Restore the file from git before applying."
+            ) from exc
     return record
 
 
-def write_sources(sample_dir: Path, record: Mapping[str, Mapping[str, Any]]) -> None:
+def write_sources(sample_dir: Path, record: Mapping[str, CopyEntry]) -> None:
     """Write the copy record atomically, only if it changed."""
     path = Path(sample_dir) / "data" / SOURCES_FILE
     document = {
         "schema": SOURCES_SCHEMA,
-        "files": {k: dict(record[k]) for k in sorted(record)},
+        "files": {k: record[k].as_json() for k in sorted(record)},
     }
     text = json.dumps(document, indent=2) + "\n"
     if path.exists() and path.read_text(encoding="utf-8") == text:
         return
     if not record and not path.exists():
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    temp.write_text(text, encoding="utf-8")
-    os.replace(temp, path)
-
-
-def _file_sha(path: Path) -> str | None:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
+    atomic_write_bytes(path, text.encode("utf-8"))

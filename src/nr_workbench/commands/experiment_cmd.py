@@ -68,6 +68,7 @@ def _echo_problems(problems: Any) -> None:
 def run_status(*, root: str | None = None, as_json: bool = False) -> None:
     """Report what the source holds, what the catalog says, and what is pending."""
     from nr_workbench.experiment.store import CatalogError
+    from nr_workbench.experiment.views import run_row, sample_card
 
     workspace = _workspace(root)
     snapshot, _, _ = _observed(workspace)
@@ -86,27 +87,10 @@ def run_status(*, root: str | None = None, as_json: bool = False) -> None:
         catalog = Catalog()
         problems.append(Problem("catalog", str(exc)))
 
-    runs = []
-    for key in sorted(set(snapshot.runs) | set(catalog.runs)):
-        view = snapshot.runs.get(key)
-        entry = catalog.runs.get(key)
-        source = view.source if view else None
-        runs.append(
-            {
-                "run": key.run,
-                "kind": key.kind,
-                "state": view.status.state if view else "not listed",
-                "reason": view.status.reason if view else "the source does not list it",
-                "sample": entry.sample_id if entry else None,
-                "measurement": entry.measurement if entry else "",
-                "condition": entry.condition if entry else "",
-                "include": entry.include if entry else True,
-                "title": (source.title if source else "")
-                or (entry.title if entry else ""),
-                "segments": list(source.segments) if source else [],
-                "n_segments": source.n_segments if source else None,
-            }
-        )
+    runs = [
+        run_row(key, snapshot.runs.get(key), catalog.runs.get(key))
+        for key in sorted(set(snapshot.runs) | set(catalog.runs))
+    ]
 
     payload = {
         "schema": "nrw-experiment-status/1",
@@ -117,14 +101,7 @@ def run_status(*, root: str | None = None, as_json: bool = False) -> None:
         "catalog": workspace.store.describe(),
         "runs": runs,
         "samples": [
-            {
-                "id": sample_id,
-                "title": catalog.context_for(sample_id).title or sample_id,
-                "runs": [e.key.run for e in catalog.runs_for(sample_id) if e.include],
-                "excluded": [
-                    e.key.run for e in catalog.runs_for(sample_id) if not e.include
-                ],
-            }
+            sample_card(workspace.root, catalog, sample_id)
             for sample_id in catalog.sample_ids()
         ],
         "problems": [p.as_dict() for p in problems],
@@ -171,7 +148,8 @@ def run_status(*, root: str | None = None, as_json: bool = False) -> None:
                 f", {len(sample['excluded'])} excluded" if sample["excluded"] else ""
             )
             click.echo(
-                f"  {sample['id']:<12} {len(sample['runs'])} run(s){excluded}  {sample['title']}"
+                f"  {sample['id']:<12} {len(sample['runs'])} run(s){excluded}  "
+                f"{sample['title'] or sample['id']}"
             )
     if problems:
         click.echo()
@@ -278,14 +256,10 @@ def run_apply(
 ) -> None:
     """Show, and with --write carry out, what applying the catalog would do."""
     from nr_workbench.agent.guard import refuse_if_agent
-    from nr_workbench.experiment.apply import (
-        ATTENTION_ACTIONS,
-        ApplyError,
-        apply,
-        plan_apply,
-    )
+    from nr_workbench.experiment.apply import ApplyError, apply, plan_apply
     from nr_workbench.experiment.model import CatalogValidationError, RunKey
     from nr_workbench.experiment.render import SampleRenderError
+    from nr_workbench.project.scaffold import LockProblemError
 
     if write:
         refuse_if_agent("experiment")
@@ -312,18 +286,9 @@ def run_apply(
         samples=list(samples) or None,
         confirmed=confirmed,
     )
-    # Anything a person must look at makes the exit code non-zero, including a
-    # sample.md the catalog's context cannot reach (hand-edited, or never
-    # nrw's): the command succeeding would otherwise read as "in step".
-    needs_attention = bool(plan.problems) or any(
-        sample.problems
-        or any(f.action in ATTENTION_ACTIONS for f in sample.files)
-        or (
-            sample.sample_md is not None
-            and sample.sample_md.value in ("drifted", "untracked")
-        )
-        for sample in plan.samples
-    )
+    # Anything a person must look at makes the exit code non-zero: the command
+    # succeeding would otherwise read as "in step".
+    needs_attention = plan.needs_attention
 
     if not write:
         if as_json:
@@ -348,7 +313,7 @@ def run_apply(
             samples=list(samples) or None,
             confirmed=confirmed,
         )
-    except ApplyError as exc:
+    except (ApplyError, LockProblemError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     if as_json:

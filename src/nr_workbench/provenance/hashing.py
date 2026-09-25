@@ -81,6 +81,19 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_file_or_none(path: Path) -> str | None:
+    """:func:`sha256_file`, or ``None`` when the file cannot be read.
+
+    For comparisons where an unreadable file is simply "not the same bytes":
+    a copy that has been deleted or locked is then an edited copy, and a
+    table that cannot be read does not match the manifest.
+    """
+    try:
+        return sha256_file(path)
+    except OSError:
+        return None
+
+
 class HashCache:
     """Memoizes file digests by ``(size, mtime_ns)``.
 

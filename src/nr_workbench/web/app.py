@@ -39,9 +39,6 @@ from nr_workbench.web.experiment import ExperimentData
 from nr_workbench.web.experiment_api import experiment_api
 from nr_workbench.web.project import ProjectData
 
-#: Methods that change nothing.
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
 
 def create_app(
     root: Path,
@@ -113,7 +110,7 @@ def create_app(
         # method anywhere else is refused, so a write route added outside the
         # blueprint cannot slip past the gate by accident.
         if (
-            request.method not in _SAFE_METHODS
+            request.method not in security.SAFE_METHODS
             and request.blueprint != "experiment_api"
         ):
             abort(405)

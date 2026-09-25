@@ -78,7 +78,8 @@ _REDACTOR = _RedactLink()
 #: Host names that mean "this machine" when the server is bound to loopback.
 _LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+#: Methods that change nothing, and so need no write access.
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def is_loopback(address: str | None) -> bool:
@@ -223,7 +224,7 @@ def refuse_unless_writer() -> None:
     blueprint, and -- as a second mechanism -- application-wide for any
     unsafe method on any other route.
     """
-    if request.method in _SAFE_METHODS:
+    if request.method in SAFE_METHODS:
         return
     config = current_app.config
     if not config.get("NRW_WRITABLE"):

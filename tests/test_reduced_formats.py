@@ -7,6 +7,7 @@ about it first, which made the files visible and let them flow into a
 `sigma`. Making one layer smarter made the failure less visible, not more.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -244,3 +245,34 @@ def test_the_reading_pattern_is_the_forgiving_one():
     """Pins why canonical_name exists: parse_segment_name alone lets these in."""
     assert reduced.parse_segment_name(PARTIAL + "\n") is not None
     assert reduced.parse_segment_name("REFL_0218386_1_218386_partial.txt") is not None
+
+
+# --------------------------------------------------------------------------
+# Reading reduced bytes: one parser for the quick look and for apply
+# --------------------------------------------------------------------------
+
+
+def test_reduced_table_reads_q_r_dr_and_dq() -> None:
+    table = reduced.reduced_table(
+        b"# header\n0.01 1.0 0.1 0.001\n0.02 0.5 0.05 0.002\n"
+    )
+
+    assert table.shape == (2, 4)
+    assert table[1, 1] == 0.5
+
+
+@pytest.mark.parametrize(
+    "data,message",
+    [
+        pytest.param(b"0.01 1.0 0.1\x00\n", "NUL", id="nul"),
+        pytest.param(b"<html>not data</html>\n", "is not reduced data", id="markup"),
+        pytest.param(b"0.01 1.0\n0.02 0.5\n", "2 column(s)", id="two-columns"),
+        pytest.param(b"# only a header\n", "has no data rows", id="empty"),
+    ],
+)
+def test_reduced_table_refuses_what_is_not_reduced_data(
+    data: bytes, message: str
+) -> None:
+    """The message reads after the file's name: "REFL_... has 2 column(s)"."""
+    with pytest.raises(reduced.ReducedDataError, match=re.escape(message)):
+        reduced.reduced_table(data)

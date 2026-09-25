@@ -19,7 +19,13 @@ from flask import Blueprint, current_app, jsonify, request
 from werkzeug.exceptions import HTTPException
 
 from nr_workbench.web import security
-from nr_workbench.web.experiment import ExperimentData, SourceTimeoutError
+from nr_workbench.web.experiment import (
+    ExperimentData,
+    RequestError,
+    RunNotListedError,
+    SourceTimeoutError,
+    WritesDisabledError,
+)
 
 experiment_api = Blueprint("experiment_api", __name__, url_prefix="/api/experiment")
 
@@ -37,7 +43,7 @@ def _gate() -> None:
 def _body() -> dict[str, Any]:
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
-        raise ValueError("the request body must be a JSON object")
+        raise RequestError("the request body must be a JSON object")
     return payload
 
 
@@ -47,10 +53,15 @@ def _error(exc: Exception, status: int) -> tuple[Any, int]:
 
 @experiment_api.errorhandler(Exception)
 def _map(exc: Exception) -> tuple[Any, int]:
-    """Turn each failure into an honest status code, as JSON."""
+    """Turn each failure into an honest status code, as JSON.
+
+    Only the errors nrw raises on purpose are mapped. Anything else is a bug,
+    or a failure nobody anticipated: it is logged with its traceback and
+    answered 500, never passed off as the caller's mistake.
+    """
     from nr_workbench.experiment.adopt import AdoptRefused
     from nr_workbench.experiment.apply import ApplyError
-    from nr_workbench.experiment.model import RecordConflict
+    from nr_workbench.experiment.model import CatalogValidationError, RecordConflict
     from nr_workbench.experiment.render import SampleRenderError
     from nr_workbench.experiment.store import CatalogError
     from nr_workbench.project.scaffold import LockProblemError
@@ -58,8 +69,8 @@ def _map(exc: Exception) -> tuple[Any, int]:
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code or 500
     for kinds, status in (
-        ((FileNotFoundError,), 404),
-        ((PermissionError,), 403),
+        ((RunNotListedError,), 404),
+        ((WritesDisabledError,), 403),
         (
             (
                 RecordConflict,
@@ -72,12 +83,22 @@ def _map(exc: Exception) -> tuple[Any, int]:
         ),
         ((CatalogError,), 503),
         ((SourceTimeoutError,), 504),
-        ((ValueError,), 400),
+        ((RequestError, CatalogValidationError), 400),
     ):
         if isinstance(exc, kinds):
             return _error(exc, status)
     current_app.logger.exception("Unhandled error in %s", request.path)
-    return _error(exc, 500)
+    # Not str(exc): an unexpected error's text can carry paths and data, and
+    # the log already has all of it.
+    return (
+        jsonify(
+            {
+                "error": "nrw hit an unexpected error; the server's log has the details.",
+                "kind": "InternalError",
+            }
+        ),
+        500,
+    )
 
 
 def _http_json(exc: HTTPException) -> tuple[Any, int]:

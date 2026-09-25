@@ -27,23 +27,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.arrival import DEFAULT_SETTLE_SECONDS
 from nr_workbench.problems import Problem
+from nr_workbench.project.config import (
+    DEFAULT_EXPERIMENT_LOCATION,
+    DEFAULT_EXPERIMENT_POLL_SECONDS,
+)
 
-#: Where REF_L's ``new_reduction`` pipeline writes reduced runs.
-#:
-#: **Provisional.** This is where the pipeline writes today, and it is expected
-#: to move -- which is why it is one constant rather than a string repeated in
-#: the docs, the template and the code. Override it per project with
-#: ``[experiment.source] location``.
-DEFAULT_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
-
-#: How long a run's files must be unchanged before they count as settled.
-#: Settled is necessary for complete, not sufficient -- see
+#: The defaults, under the names this module uses. Each is defined once, where
+#: something below this package needs it too: the settle time in
+#: :mod:`nr_workbench.arrival`, which ``nrw agent watch`` shares, and the
+#: location and poll interval in :mod:`nr_workbench.project.config`, which the
+#: scaffolded ``nrw.toml`` is rendered from. The location is provisional --
+#: see there. Settled is necessary for complete, not sufficient -- see
 #: :mod:`nr_workbench.experiment.status`.
-DEFAULT_SETTLE_SECONDS = 300.0
-
-#: Seconds between polls of the feed and the source while someone is watching.
-DEFAULT_POLL_SECONDS = 30.0
+DEFAULT_LOCATION = DEFAULT_EXPERIMENT_LOCATION
+DEFAULT_POLL_SECONDS = DEFAULT_EXPERIMENT_POLL_SECONDS
 
 #: The data sources nrw can read, and the ones that are planned.
 SOURCE_KINDS = ("local",)
