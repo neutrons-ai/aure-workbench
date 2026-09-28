@@ -408,3 +408,32 @@ def test_a_quote_in_a_title_still_makes_a_readable_register(
         (project / "samples" / "Sample6" / "sample.yaml").read_text()
     )
     assert register["title"] == 'Cu "thin" film & oxide'
+
+
+def test_sample_new_writes_the_sample_md_the_experiment_page_previews(
+    project: Path, monkeypatch
+) -> None:
+    """One context for both: the command used to build its own, dropping fields."""
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+    from nr_workbench.experiment.store import ParquetCatalogStore
+    from nr_workbench.web.experiment import ExperimentData
+
+    ParquetCatalogStore.for_project(project).update(
+        runs=[
+            RunChange(RunKey(218386), 0, {"sample_id": "Sample6", "condition": "OCV"})
+        ],
+        samples=[SampleChange("Sample6", 0, {"fits_to_perform": FITS})],
+        now=NOW,
+    )
+    previewed = ExperimentData(project, autostart=False).sample_preview("Sample6")
+    monkeypatch.chdir(project)
+
+    result = CliRunner().invoke(main, ["sample", "new", "Sample6"])
+
+    assert result.exit_code == 0, result.output
+    assert "written from the experiment catalog" in result.output
+    assert "nrw experiment apply --write" in result.output
+    written = (project / "samples" / "Sample6" / "sample.md").read_text("utf-8")
+    assert written == previewed["markdown"]

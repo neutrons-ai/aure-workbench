@@ -6,7 +6,6 @@ import click
 
 from nr_workbench.project.config import ProjectConfigError, load_config
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
-from nr_workbench.project.render import RenderContext
 
 # `plan_sample_files` and `validate_sample_id` live in project/samples.py so the
 # experiment catalog can plan samples without importing a command module. They
@@ -26,6 +25,10 @@ def run_sample_new(
 ) -> None:
     """Create ``samples/<sample_id>/`` with the standard layout.
 
+    A sample the experiment catalog has gets its ``sample.md`` from the
+    catalog, exactly as the Experiment page previews it: both render with the
+    project's own context.
+
     Args:
         sample_id: The sample identifier.
         title: Human-readable title for ``sample.md``.
@@ -34,10 +37,11 @@ def run_sample_new(
     Raises:
         click.ClickException: If there is no project here, or the ID is invalid.
     """
+    import dataclasses
+
     try:
         layout = ProjectLayout.discover()
-        config = load_config(layout.root)
-    except (ProjectNotFoundError, ProjectConfigError) as exc:
+    except ProjectNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 
     try:
@@ -45,20 +49,25 @@ def run_sample_new(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    context = RenderContext(
-        project_name=config.name,
-        facility=config.facility,
-        instrument=config.instrument,
-        beamtime=beamtime or config.beamtime,
-        ipts=config.ipts,
-    )
-
     # Through the one entry point that consults the experiment catalog: a
     # sample.md the catalog rendered must not be planned as the blank template.
-    from nr_workbench.experiment.render import SampleRenderError, plan_sample
+    from nr_workbench.experiment.render import (
+        SampleRenderError,
+        load_catalog,
+        plan_sample,
+        project_context,
+    )
 
     try:
-        planned = plan_sample(layout.root, context, sample_id, title=title)
+        # The project's own context -- the Experiment page's. This command
+        # used to build one of its own, and left the project's harnesses out.
+        context = project_context(layout.root)
+        if beamtime:
+            context = dataclasses.replace(context, beamtime=beamtime)
+        catalog = load_catalog(layout.root)
+        planned = plan_sample(
+            layout.root, context, sample_id, title=title, catalog=catalog
+        )
     except SampleRenderError as exc:
         raise click.ClickException(str(exc)) from exc
     try:
@@ -66,11 +75,14 @@ def run_sample_new(
     except LockProblemError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    managed = catalog.manages(sample_id)
     created = report.count(Outcome.CREATE)
     if created == 0:
         click.echo(f"Sample '{sample_id}' already exists at {layout.sample(sample_id)}")
     else:
         click.echo(f"Created sample '{sample_id}' ({created} file(s))")
+        if managed:
+            click.echo("  sample.md is written from the experiment catalog")
 
     if report.drifted:
         click.echo("  files you have edited were left alone:")
@@ -79,6 +91,15 @@ def run_sample_new(
 
     click.echo()
     click.echo("Next:")
+    if managed:
+        click.echo(
+            "  1. Describe the sample on the Experiment page (`nrw serve`), "
+            "where the catalog keeps it"
+        )
+        click.echo(
+            "  2. `nrw experiment apply --write` copies its runs into data/steady/"
+        )
+        return
     click.echo(f"  1. Describe the sample in samples/{sample_id}/sample.md")
     click.echo(
         f"  2. Copy reduced data into samples/{sample_id}/data/steady/ and data/tnr/"
