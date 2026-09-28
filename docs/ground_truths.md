@@ -3281,3 +3281,42 @@ Still open, and the same kind of thing: `nrw model new` assumes the dQ column
 is FWHM when a file does not say (`_dq_is_fwhm_from_headers`, with a warning).
 And the project template's `.github/copilot-instructions.md` says "`dQ` is FWHM,
 not sigma", which is false for `_autoreduction.dat`, whose 4th column is sigma.
+
+### 2026-09-28: what the review of "no angle is assumed" found
+
+Reading every angle from its file closed the obvious hole. The design, security
+and test reviews found eight quieter ones, each of which fitted a wrong angle,
+or the wrong data, without a word:
+
+- **The summed dataset was looked for two levels up** from a series' slices.
+  That is right for `data/tnr/<run>/`, and wrong for slices straight in
+  `data/tnr/`, which `nrw sample new` suggests. The check then found nothing,
+  so it checked nothing. It now looks beside the nearest `tnr` folder.
+- **A `reduction_json` series fell back to any sidecar** when none named its
+  run, and took the slices from that sidecar's run but the angle from its own.
+  The two must be one run; a mismatch is refused.
+- **`segments: auto` read past `sample.yaml`.** The register is where a person
+  fits a subset of a run's segments. `nrw model new` writes `auto` only when it
+  reads exactly the registered segments, and lists them otherwise.
+- **An unknown dQ label hid a good angle.** `read_header` raised on the label
+  before it returned the angle, so the file looked like it recorded none. They
+  are separate facts: `recorded_angle` is the one reader of an angle, for
+  resolving and scaffolding alike, and it skips the dQ check.
+- **A pipe named like a reduced file hung every header read**, now reached from
+  more commands. Header reads refuse anything that is not a regular file.
+- **A line break in a directory name broke out of a YAML comment** that the
+  scaffold writes, and the rest of the name became top-level keys of the spec,
+  such as `post_build`, whose Python the generated script runs. `\n`, `\r`,
+  U+0085, U+2028 and U+2029 all end a PyYAML comment. `problems.one_line`
+  escapes names at the two places they are written out.
+- **A stated angle was checked against the grouping tolerance**, 0.02 deg, so
+  0.435 passed for a file recording 0.45. The check now has its own tolerance,
+  0.005 deg, the precision of a value typed to two decimals.
+- **Segments 1 and 2 of a run planned with 3** passed the gap check and
+  resolved. When the headers agree on more segments than are on disk, the run
+  is refused, as the Experiment page already treats it as incomplete.
+
+The test review found why the lifecycle tests could not have caught any of
+this: their synthetic data recorded 0.45, 1.2 and 3.5, the very values that
+used to be assumed. A test angle must be one nobody would assume; the fixtures
+use 1.251.
