@@ -176,10 +176,12 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
             "location": config.source.location,
             "path": str(config.source.path) if config.source.path else None,
             "needs_setup": config.needs_setup,
+            "catalog_kind": config.catalog_kind,
         },
         "options": {
             "source": [dataclasses.asdict(o) for o in project.SOURCE_OPTIONS],
             "feed": [dataclasses.asdict(o) for o in project.FEED_OPTIONS],
+            "catalog": [dataclasses.asdict(o) for o in project.CATALOG_OPTIONS],
         },
         "ranges": {
             "source.settle_seconds": list(project.SETTLE_RANGE),

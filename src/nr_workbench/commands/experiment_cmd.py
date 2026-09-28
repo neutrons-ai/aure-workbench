@@ -675,11 +675,13 @@ def _echo_settings(view: dict[str, Any]) -> None:
     click.echo(f"  settle     {shown('source.settle_seconds', ' s')}")
     click.echo(f"  watcher    {shown('feed.kind')}")
     click.echo(f"  poll       {shown('feed.poll_seconds', ' s')}")
+    click.echo(f"  catalog    {effective['catalog_kind']}")
     coming = [
         f"{option['label']} ({side})"
         for side, options in (
             ("source", view["options"]["source"]),
             ("watcher", view["options"]["feed"]),
+            ("catalog", view["options"]["catalog"]),
         )
         for option in options
         if not option["available"]

@@ -61,6 +61,48 @@ def test_the_settings_say_what_is_set_what_is_default_and_what_is_coming(
     assert payload["effective"]["needs_setup"] is False
 
 
+def test_a_metadata_service_is_listed_as_coming_where_the_catalog_is_kept(
+    app,
+) -> None:
+    payload = app.test_client().get("/api/experiment/settings").get_json()
+
+    catalogs = {o["kind"]: o for o in payload["options"]["catalog"]}
+    assert {k: o["available"] for k, o in catalogs.items()} == {
+        "parquet": True,
+        "api": False,
+    }
+    assert catalogs["api"]["label"] == "A metadata service"
+    assert payload["effective"]["catalog_kind"] == "parquet"
+
+
+def test_the_planned_service_is_refused_by_name_never_replaced_by_files(
+    expt: Path,
+) -> None:
+    """Edits meant for everyone must not land in the project, where nobody looks."""
+    with (expt / "nrw.toml").open("a", encoding="utf-8") as handle:
+        handle.write('\n[experiment.catalog]\nkind = "api"\n')
+    app = make_app(expt)
+    client = app.test_client()
+    client.get(f"/auth/{TOKEN}")
+
+    overview = client.get("/api/experiment").get_json()
+    saved = client.put(
+        "/api/experiment/runs",
+        json={
+            "changes": [{"run": 234277, "base_rev": 0, "fields": {"sample_id": "S1"}}]
+        },
+        headers=write_headers(app),
+    )
+
+    said = [p["message"] for p in overview["problems"] if p["scope"] == "catalog"]
+    assert any("planned but not implemented" in m for m in said)
+    assert any("docs/experiment-sources.md" in m for m in said)
+    assert overview["writable"] is False
+    assert saved.status_code == 503
+    assert not (expt / "experiment" / "runs.parquet").exists()
+    app.config["NRW_EXPERIMENT"].reload()
+
+
 def test_reading_the_settings_does_not_start_the_poller(expt: Path) -> None:
     from .experiment_fixtures import scan_threads
 

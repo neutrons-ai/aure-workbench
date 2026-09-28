@@ -95,9 +95,29 @@ PLANNED_SOURCE_KINDS = tuple(o.kind for o in SOURCE_OPTIONS if not o.available)
 FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if o.available)
 PLANNED_FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if not o.available)
 
+#: Where the experiment's samples, runs and their conditions are kept. A
+#: metadata service is how they will be shared -- between projects, and with
+#: other programs -- rather than by several projects writing one set of files.
+CATALOG_OPTIONS = (
+    Option(
+        DEFAULT_CATALOG_KIND,
+        "Parquet files in this project",
+        True,
+        "Two tables and a manifest in experiment/, committed with the project.",
+    ),
+    Option(
+        "api",
+        "A metadata service",
+        False,
+        "Coming: samples, runs and their conditions kept by a facility service, "
+        "where everyone on the experiment -- and other programs -- read and "
+        "record them.",
+    ),
+)
+
 #: Where the catalog can be kept, and the ones that are planned.
-CATALOG_KINDS = (DEFAULT_CATALOG_KIND,)
-PLANNED_CATALOG_KINDS = ("api",)
+CATALOG_KINDS = tuple(o.kind for o in CATALOG_OPTIONS if o.available)
+PLANNED_CATALOG_KINDS = tuple(o.kind for o in CATALOG_OPTIONS if not o.available)
 
 #: The experiment keys nrw writes, by table, each with nrw's default. A key
 #: left unset follows the default -- which matters because the default

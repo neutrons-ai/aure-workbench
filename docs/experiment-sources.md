@@ -8,7 +8,7 @@ replaced without touching the others or the page:
 |---|---|---|---|
 | Where does the reduced data come from? | `DataSource` (`experiment/sources/`) | a local folder | Tiled |
 | How do we learn that a run exists? | `RunFeed` (`experiment/feeds/`) | files appearing in that folder | the SNS web monitor, Tiled |
-| Where is the organization kept? | `CatalogStore` (`experiment/store.py`) | parquet in the project | a facility service |
+| Where is the organization kept? | `CatalogStore` (`experiment/store.py`) | parquet in the project | a metadata service |
 
 They are configured independently in `nrw.toml` (`[experiment.source]`,
 `[experiment.feed]`, `[experiment.catalog]`), on the Settings page of
@@ -17,12 +17,12 @@ name, never replaced by the local folder: falling back would quietly watch a
 path nobody chose.
 
 **How a new kind reaches the page.** The Settings page and `nrw experiment
-settings` list every kind from one registry, `SOURCE_OPTIONS` and
-`FEED_OPTIONS` in `project/settings.py`: the built ones to choose from, the
-planned ones shown as coming. Adding a kind means building it, registering it
-in `open_source` or `open_feed`, and setting `available=True` on its `Option`.
-The kind lists the registries check, and every surface, follow from that one
-flag.
+settings` list every kind from one registry, `SOURCE_OPTIONS`, `FEED_OPTIONS`
+and `CATALOG_OPTIONS` in `project/experiment_schema.py`: the built ones to
+choose from, the planned ones shown as coming. Adding a kind means building
+it, registering it in `open_source`, `open_feed` or `open_store`, and setting
+`available=True` on its `Option`. The kind lists the registries check, and
+every surface, follow from that one flag.
 
 ## A measurement, and what a source lists
 
@@ -170,6 +170,34 @@ the record it was based on:
 
 A facility service holding the same tables should keep those semantics.
 Otherwise two people editing one experiment overwrite each other.
+
+### Planned: a metadata service
+
+The catalog is kept in the project, and committed with it. It is shared the
+way the project is: through git. Sharing it more widely -- between the projects
+of everyone on an experiment, and with other programs that record samples --
+is a metadata service's job, reached with `[experiment.catalog] kind = "api"`.
+That kind is refused by name today, and listed as coming on the Settings page
+and in `nrw experiment settings`.
+
+A store for it implements `CatalogStore` above, and must:
+
+- **Keep revisions.** Every record carries one, and an edit made against an
+  older one is refused with `RecordConflict`, never applied over the newer.
+- **Check what it is given.** Records written by other programs arrive
+  unchecked. Before a value is used, it must meet the rules `experiment/model.py`
+  applies to the page's own edits: sample ids that are safe as folder names,
+  one-line values without `|` or line breaks, and prose without headings or
+  comment markers. Every one of these is written into `sample.md`, which people
+  and the unattended agent read as the sample's truth.
+- **Answer within a deadline.** A page or command that waits for a service that
+  stopped answering must fail after a timeout, and say which service.
+- **Never fall back to the project's files.** An edit meant for everyone must not
+  land where nobody else looks.
+
+Sharing one set of parquet files between projects was built and withdrawn:
+files on a network mount do not make a database. See the 2026-09-28 entry in
+`docs/ground_truths.md`, and the branch `shared-catalog-attempt`.
 
 The parquet store's schema follows data-assembler's lakehouse split: run rows
 carry a nullable `sample_id`, and samples are their own table. Columns a store
