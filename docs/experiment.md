@@ -23,6 +23,10 @@ nrw serve
   http://127.0.0.1:8765/experiment      the experiment's runs
   http://127.0.0.1:8765/settings        its IPTS, data folder and watcher
 
+  Data folder  /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction  (nrw's default)
+  ! The data location /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction needs the
+    project's IPTS, and nrw.toml has none. …
+
   This experiment is not set up yet: nrw needs its IPTS, or the
   folder its reduced data is in, before it can watch anything.
 
