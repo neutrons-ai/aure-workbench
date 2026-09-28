@@ -50,6 +50,8 @@
     search: "",
     selected: new Set(),
     editing: null,
+    // The open sample's id, rev and the values the editor was filled with.
+    editorBase: null,
     writable: Boolean(initial.writable && TOKEN),
     confirmed: new Set(),
     plan: null,
@@ -93,7 +95,11 @@
 
   async function reload() {
     load(await api("GET", "/api/experiment"));
-    if (state.editing) openSample(state.editing);
+    // Keep what is being typed. The page reloads after a conflict, and when
+    // the catalog was saved elsewhere -- another tab, the command line, a
+    // `git pull` -- and refilling the editor then wiped an unsaved edit, or
+    // left stale values in it for the next save to write back.
+    if (state.editing) openSample(state.editing, true);
   }
 
   async function poll() {
@@ -422,20 +428,45 @@
     });
   }
 
-  async function openSample(id) {
+  /* What the editor showed when it was filled: a field that differs from it
+   * has been typed in, and is not the server's to replace. */
+  function shownValues(current) {
+    const values = {};
+    Object.entries(FIELDS).forEach(function ([name]) {
+      values[name] = current && current.managed ? current[name] || "" : "";
+      if (name === "mounting" && !values[name]) values[name] = "unknown";
+    });
+    return values;
+  }
+
+  async function openSample(id, keepTyping) {
+    const base = state.editorBase;
+    const same = Boolean(keepTyping && base && base.id === id);
     state.editing = id;
     renderSamples();
     const current = card(id);
+    const fresh = shownValues(current);
     $("expt-editor").classList.remove("d-none");
     $("expt-editor-title").textContent = "Sample " + id;
+    let typed = false;
     Object.entries(FIELDS).forEach(function ([name, field]) {
-      $(field).value = current && current.managed ? current[name] || "" : "";
-      if (name === "mounting" && !$(field).value) $(field).value = "unknown";
+      const edited = same && $(field).value !== base.values[name];
+      if (edited) typed = true;
+      else $(field).value = fresh[name];
       $(field).disabled = !state.writable || !(current && current.managed);
     });
     $("expt-save").disabled = !state.writable || !(current && current.managed);
-    $("expt-form-status").textContent =
-      current && !current.managed ? "Adopt this sample to edit it here." : "";
+    const moved = same && typed && current && (current.rev || 0) !== base.rev;
+    $("expt-form-status").textContent = moved
+      ? "This sample was saved somewhere else while you were editing. What you " +
+        "typed is kept; saving puts your version of the fields you changed over " +
+        "the saved ones."
+      : current && !current.managed
+        ? "Adopt this sample to edit it here."
+        : same
+          ? $("expt-form-status").textContent
+          : "";
+    state.editorBase = { id: id, rev: current ? current.rev || 0 : 0, values: fresh };
     $("expt-adopt-plan").classList.add("d-none");
     await refreshPreview(id);
   }
