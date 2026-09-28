@@ -275,7 +275,8 @@ def browser(tmp_path_factory) -> Iterator[Browser]:
     chrome = _chrome()
     if chrome is None:
         pytest.skip("no Chrome or Chromium here (set NRW_TEST_CHROME to use one)")
-    started = Browser(chrome, tmp_path_factory.mktemp("chrome-profile"))
+    profile = tmp_path_factory.mktemp("chrome-profile")
+    started = Browser(chrome, profile)
     try:
         try:
             started.send("Browser.getVersion")
@@ -284,6 +285,9 @@ def browser(tmp_path_factory) -> Iterator[Browser]:
         yield started
     finally:
         started.close()
+        # Thousands of files: left behind, they make a later pytest's clean-up
+        # of old temporary directories take seconds of every run.
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 @pytest.fixture
