@@ -714,9 +714,9 @@ Fill in the model spec at {spec_path} for sample {sample}.
      description, materials, stack, parameters
 
    Leave `states`, `series`, `thetas`, `data_dir`, `run` and `reduced_dir`
-   exactly as they are. Those were read from the data files' own headers and
-   are already correct -- the incident angles in particular are measured
-   values, not the nominal settings, so do not "tidy" 1.201 to 1.2.
+   exactly as they are, and add no angles. Each incident angle is read from its
+   data file's own header when the spec is resolved. A `null` angle is one no
+   file records, for the person who measured it to give -- never fill it in.
 
 4. Order the stack so the LAST entry is the medium the beam enters through.
    refl1d takes the last entry as the incident medium, so this order is the

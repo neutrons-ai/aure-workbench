@@ -10,6 +10,7 @@ from typing import Any
 import click
 
 from nr_workbench.instrument.reduced import find_segments
+from nr_workbench.problems import one_line
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
 
@@ -534,21 +535,19 @@ def _thetas_from_headers(paths: list[Path]) -> tuple[list[float | None], list[st
         ``(thetas, blank)`` -- the angle of each file in degrees, ``None``
         where it records none, and the names of those files.
     """
-    from nr_workbench.instrument.header import read_header
+    from nr_workbench.instrument.header import recorded_angle
 
     thetas: list[float | None] = []
     blank: list[str] = []
     for path in paths:
-        angle: float | None = None
-        try:
-            angle = read_header(path).theta
-        except Exception:  # noqa: BLE001 - an unreadable header records nothing
-            angle = None
+        # The same reader resolving the spec uses, so the two cannot disagree
+        # about whether a file records its angle.
+        angle = recorded_angle(path).theta
         if angle is None:
             blank.append(path.name)
             thetas.append(None)
         else:
-            thetas.append(round(float(angle), 4))
+            thetas.append(round(angle, 4))
     return thetas, blank
 
 
@@ -632,10 +631,10 @@ def _series_angle_is_recorded(root: Path, found_series) -> bool:
     from nr_workbench.instrument.header import theta_for_run
     from nr_workbench.spec.resolve import summed_dataset_dir
 
-    if found_series.run is None:
+    steady = summed_dataset_dir(found_series.directory)
+    if found_series.run is None or steady is None:
         return False
-    steady = root / summed_dataset_dir(found_series.directory)
-    theta, _ = theta_for_run(steady, found_series.run)
+    theta, _ = theta_for_run(root / steady, found_series.run)
     return theta is not None
 
 
@@ -647,9 +646,11 @@ def blank_angles_comment(blank: list[str]) -> str:
     """
     if not blank:
         return ""
+    # One line each, whatever the name: a line break in a directory name would
+    # end the comment and make the rest of the name keys of the spec.
     return (
         "# BLANK ANGLES. No header records the incident angle of:\n"
-        + "".join(f"#   {name}\n" for name in blank)
+        + "".join(f"#   {one_line(name)}\n" for name in blank)
         + "# Each is `null` below. Give it in degrees; `nrw model validate`\n"
         "# refuses this spec until then.\n"
         "#\n"
@@ -670,7 +671,7 @@ def warn_blank_angles(blank: list[str]) -> None:
         return
     click.secho(
         "  !  no incident angle recorded for: "
-        + ", ".join(blank[:6])
+        + ", ".join(one_line(name) for name in blank[:6])
         + ("" if len(blank) <= 6 else f" (+{len(blank) - 6} more)"),
         fg="yellow",
     )
@@ -708,12 +709,25 @@ def state_for_run(
     """
     run = measurement.run
     if measurement.partials:
-        paths = [root / measurement.partials[k] for k in sorted(measurement.partials)]
+        numbers = sorted(measurement.partials)
+        paths = [root / measurement.partials[k] for k in numbers]
         thetas, blank = _thetas_from_headers(paths)
-        block: dict[str, Any] = {"name": f"run{run}", "run": run, "segments": "auto"}
-        if blank:
-            block["thetas"] = thetas
-        block["data_dir"] = str(Path(next(iter(measurement.partials.values()))).parent)
+        directory = Path(measurement.partials[numbers[0]]).parent
+        block: dict[str, Any] = {"name": f"run{run}", "run": run}
+        if _is_every_segment_on_disk(root, directory, measurement):
+            block["segments"] = "auto"
+            if blank:
+                block["thetas"] = thetas
+            block["data_dir"] = str(directory)
+        else:
+            # The register lists some of the run's segments, not all: `auto`
+            # would read the rest too. Listed, each still takes its angle from
+            # its file -- or is a blank for a person, where none is recorded.
+            block["segments"] = [
+                {"file": measurement.partials[k]}
+                | ({"theta": None} if theta is None else {})
+                for k, theta in zip(numbers, thetas, strict=True)
+            ]
         return block, paths, blank
 
     if measurement.combined:
@@ -731,6 +745,24 @@ def state_for_run(
         return block, [path], blank
 
     raise ValueError(f"run {run} has no reduced files on disk")
+
+
+def _is_every_segment_on_disk(root: Path, directory: Path, measurement) -> bool:
+    """Whether a registered run's segments are exactly what ``segments: auto`` reads.
+
+    ``sample.yaml`` is where a person says "co-refine only these", so a run it
+    lists with a segment left out must not be written as ``auto``, which would
+    read every segment in the folder.
+    """
+    from nr_workbench.spec.resolve import segments_on_disk
+
+    registered = {k: Path(v) for k, v in measurement.partials.items()}
+    if any(path.parent != directory for path in registered.values()):
+        return False
+    on_disk = segments_on_disk(root / directory, measurement.run)
+    return {k: [p.name for p in paths] for k, paths in on_disk.items()} == {
+        k: [path.name] for k, path in registered.items()
+    }
 
 
 def _scaffold_document(

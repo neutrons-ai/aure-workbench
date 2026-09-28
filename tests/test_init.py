@@ -96,7 +96,13 @@ def test_a_fresh_nrw_toml_assumes_no_angles(tmp_path: Path) -> None:
             if isinstance(value, dict):
                 yield from keys(value, f"{prefix}{key}.")
 
-    assert [key for key in keys(document) if "theta" in key] == []
+    def about_angles(key: str) -> bool:
+        return "theta" in key.lower() or "angle" in key.lower()
+
+    assert [key for key in keys(document) if about_angles(key)] == []
+    from nr_workbench.project.config import DEFAULT_CONVENTIONS
+
+    assert [key for key in DEFAULT_CONVENTIONS if about_angles(key)] == []
 
 
 def test_init_writes_skills_to_repo_root_not_dot_claude(project: Path) -> None:

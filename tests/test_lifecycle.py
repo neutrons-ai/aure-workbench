@@ -20,8 +20,9 @@ pytestmark = pytest.mark.integration
 
 
 #: The angle each synthetic segment records, in degrees, as REF_L's header
-#: does (in radians). What was measured, for this data -- not a default.
-SEGMENT_ANGLES = (0.45, 1.2, 3.5)
+#: does (in radians). What was measured, for this data -- not a default, and
+#: the middle one is not the usual 1.2, so a test that sees it read the file.
+SEGMENT_ANGLES = (0.45, 1.251, 3.5)
 
 
 def write_partials(
@@ -249,6 +250,103 @@ def test_model_new_leaves_a_series_angle_blank_when_nothing_records_it(
     assert "#   100003 (series" in text
     assert refused.exit_code != 0
     assert "no file of run 100003 in samples/S1/data/steady" in refused.output
+
+
+def test_the_generated_fit_uses_the_angle_each_file_records(
+    project: Path, monkeypatch
+) -> None:
+    """The last place a wrong angle could come from: the probe the fit builds."""
+    import re
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    generated = run(
+        project, monkeypatch, "model", "generate", "samples/S1/models/m.yaml"
+    )
+    script = (project / "samples/S1/models/m.py").read_text(encoding="utf-8")
+
+    assert generated.exit_code == 0, generated.output
+    angles = {
+        Path(name).name: float(theta)
+        for name, theta in re.findall(
+            r"create_probe\(PROJECT_ROOT / '([^']+)', ([\d.]+)", script
+        )
+    }
+    assert angles["REFL_100001_2_100002_partial.txt"] == pytest.approx(1.251)
+    assert angles["r100003_t000000.txt"] == pytest.approx(0.6)
+
+
+def test_model_new_keeps_the_segments_sample_yaml_lists(
+    project: Path, monkeypatch
+) -> None:
+    """The register is where a person says "only these"; `auto` would read all."""
+    run(project, monkeypatch, "sample", "scan", "S1")
+    register = project / "samples/S1/sample.yaml"
+    document = yaml.safe_load(register.read_text(encoding="utf-8"))
+    entry = next(e for e in document["steady"] if e["run"] == 100001)
+    entry["segments"] = entry["segments"][:2]
+    register.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec_path = project / "samples/S1/models/m.yaml"
+    state = next(
+        s
+        for s in yaml.safe_load(spec_path.read_text(encoding="utf-8"))["states"]
+        if s["run"] == 100001
+    )
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
+
+    assert state["segments"] != "auto"
+    resolved = discover_measurements(load_spec(spec_path), project)[state["name"]]
+    assert [m.theta for m in resolved] == [pytest.approx(0.45), pytest.approx(1.251)]
+
+
+@pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "blank"])
+def test_a_combined_run_is_scaffolded_like_any_other(
+    tmp_path: Path, recorded: bool
+) -> None:
+    import math
+
+    from nr_workbench.commands.model import state_for_run
+    from nr_workbench.project.scan import SteadyMeasurement
+
+    steady = tmp_path / "samples/S1/data/steady"
+    steady.mkdir(parents=True)
+    name = "REFL_100001_combined_data_auto.txt"
+    meta = f'# Meta:{{"theta": {math.radians(0.5)!r}}}\n' if recorded else ""
+    (steady / name).write_text(meta + "0.01 1.0 0.1 0.001\n", encoding="utf-8")
+
+    block, _, blank = state_for_run(
+        tmp_path,
+        SteadyMeasurement(run=100001, combined=f"samples/S1/data/steady/{name}"),
+    )
+
+    if recorded:
+        assert "thetas" not in block and blank == []
+    else:
+        assert block["thetas"] == [None] and blank == [name]
+
+
+@pytest.mark.parametrize("breaker", ["\n", "\r", "\x85", "\u2028", "\u2029"], ids=repr)
+def test_a_directory_name_cannot_write_keys_into_the_spec(
+    tmp_path: Path, monkeypatch, breaker: str
+) -> None:
+    """Each ends a YAML comment; a name carrying one reaches the blank-angle note."""
+    root = fresh_project(tmp_path)
+    data = root / "samples/S1/data"
+    write_partials(data / "steady", 100001)
+    hostile = f"x{breaker}post_build: \"print('run')\"{breaker}#"
+    write_slices(data / "tnr" / hostile, 999999)
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (root / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+
+    from nr_workbench.spec.models import load_spec
+
+    assert created.exit_code == 0, created.output
+    assert "post_build" not in yaml.safe_load(text)
+    assert load_spec(root / "samples/S1/models/m.yaml").post_build is None
 
 
 def test_model_new_produces_a_spec_that_generates(project: Path, monkeypatch) -> None:

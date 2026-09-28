@@ -327,7 +327,9 @@ def test_agent_instructions_name_the_files_and_the_boundary() -> None:
     assert "skills/reflectometry/nrw-model-spec/SKILL.md" in text
     assert "Leave `states`, `series`, `thetas`" in text
     assert "nrw model validate" in text
-    assert 'do not "tidy" 1.201 to 1.2' in text
+    # the angles: none added, and a blank left for the person who measured it
+    assert "add no angles" in text
+    assert "never fill it in" in text
 
 
 # --------------------------------------------------------------------------

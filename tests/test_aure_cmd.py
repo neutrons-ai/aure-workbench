@@ -327,6 +327,41 @@ def test_import_keeps_the_measured_angles(sample: Path) -> None:
     assert 1.2 not in angles
 
 
+def test_import_leaves_a_blank_for_a_file_that_records_no_angle(sample: Path) -> None:
+    """The same rule as `nrw model new`: named, blank, and refused until given.
+
+    Every comment line goes: the old table line still records the angle as
+    TwoTheta once the `# Meta:` line alone is removed.
+    """
+    import yaml
+
+    steady = sample / "samples/Sample1/data/steady"
+    unrecorded = steady / "REFL_218386_2_218387_partial.txt"
+    unrecorded.write_text(
+        "".join(
+            line
+            for line in unrecorded.read_text(encoding="utf-8").splitlines(True)
+            if not line.startswith("#")
+        ),
+        encoding="utf-8",
+    )
+    output = _finished_run(sample)
+
+    imported = _run(
+        "aure", "import", str(output), "--sample", "Sample1", "--name", "first"
+    )
+    text = (sample / "samples/Sample1/models/first.yaml").read_text(encoding="utf-8")
+    checked = CliRunner().invoke(
+        main, ["model", "validate", "samples/Sample1/models/first.yaml"]
+    )
+
+    assert f"no incident angle recorded for: {unrecorded.name}" in imported.output
+    assert f"#   {unrecorded.name}" in text
+    assert yaml.safe_load(text)["states"][0]["thetas"] == [0.45, None, 3.5003]
+    assert checked.exit_code != 0
+    assert unrecorded.name in checked.output
+
+
 def test_import_orders_the_stack_for_the_geometry(sample: Path) -> None:
     """Back reflection puts the substrate last, and the validator says so
     independently -- from the ordering and the measured critical edge."""

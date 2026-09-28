@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -242,11 +244,17 @@ class ReducedHeader:
         }
 
 
-def read_header(path: Path) -> ReducedHeader:
+def read_header(path: Path, *, dq: bool = True) -> ReducedHeader:
     """Read the metadata a reduced file carries about itself.
+
+    Only a regular file is read. Opening a pipe waits for a writer, so a pipe
+    named like a reduced file -- in a folder anyone on the team can write --
+    would hang whatever asked; it is refused instead.
 
     Args:
         path: The reduced ASCII file.
+        dq: Read the ``dQ`` width convention too. ``False`` for a caller that
+            wants only the angle, which an unknown ``dQ`` label must not hide.
 
     Returns:
         What the header said. ``source`` is ``none`` and ``theta`` is ``None``
@@ -254,16 +262,65 @@ def read_header(path: Path) -> ReducedHeader:
         time-resolved slice, not an error.
 
     Raises:
-        HeaderError: If a ``# Meta:`` line is present but is not valid JSON, or
-            if the ``dQ`` column carries a width convention we do not know.
+        HeaderError: If a ``# Meta:`` line is present but is not valid JSON, if
+            the ``dQ`` column carries a width convention we do not know, or if
+            it is not a regular file.
         OSError: If the file cannot be read.
     """
     path = Path(path)
-    with path.open("rb") as handle:
-        return read_header_bytes(handle.read(MAX_HEADER_BYTES), path)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise HeaderError(f"{path}: not a regular file, so it was not read")
+        return read_header_bytes(handle.read(MAX_HEADER_BYTES), path, dq=dq)
 
 
-def read_header_bytes(data: bytes, path: Path) -> ReducedHeader:
+@dataclass(frozen=True)
+class RecordedAngle:
+    """What a reduced file records of its own angle, for a model spec.
+
+    Attributes:
+        theta: Incident angle in degrees, or ``None`` when it records none.
+        planned: How many angle segments its measurement was planned with,
+            when the header says.
+        why: Why there is no angle, when there is none.
+        missing: The file is not there at all.
+    """
+
+    theta: float | None
+    planned: int | None = None
+    why: str = ""
+    missing: bool = False
+
+
+def recorded_angle(path: Path) -> RecordedAngle:
+    """The incident angle *path* records about itself -- the one reader of it.
+
+    What resolving a model spec, scaffolding one, and finding a series' angle
+    all use, so that they cannot disagree about whether a file records one. An
+    unknown ``dQ`` label does not hide the angle: the two are separate facts,
+    and the label is reported where the convention is read.
+
+    Args:
+        path: The reduced file.
+
+    Returns:
+        The angle, or ``None`` and a reason a person can act on.
+    """
+    try:
+        header = read_header(path, dq=False)
+    except FileNotFoundError:
+        return RecordedAngle(None, why="the file is not there", missing=True)
+    except (HeaderError, OSError) as exc:
+        return RecordedAngle(None, why=f"its header cannot be read ({exc})")
+    if header.theta is None:
+        return RecordedAngle(
+            None, header.n_segments, why="its header records no incident angle"
+        )
+    return RecordedAngle(float(header.theta), header.n_segments)
+
+
+def read_header_bytes(data: bytes, path: Path, *, dq: bool = True) -> ReducedHeader:
     """:func:`read_header`, for a caller that has already read the file.
 
     The experiment's data source reads a shared folder, where a file can be
@@ -275,6 +332,7 @@ def read_header_bytes(data: bytes, path: Path) -> ReducedHeader:
             are read, whatever is passed.
         path: The file, for its name (which carries the segment in the
             ``new_reduction`` dialect) and for messages.
+        dq: Read the ``dQ`` width convention too; see :func:`read_header`.
 
     Returns:
         What the header said.
@@ -294,7 +352,8 @@ def read_header_bytes(data: bytes, path: Path) -> ReducedHeader:
 
     # Read first and unconditionally: the column titles sit *below* the JSON
     # block, so anything that returns on finding `# Meta:` would never see them.
-    _apply_dq_convention(header, lines, path)
+    if dq:
+        _apply_dq_convention(header, lines, path)
 
     for line in lines:
         if line.startswith(META_PREFIX):
@@ -646,31 +705,10 @@ def theta_for_run(steady_dir: Path, run: int) -> tuple[float | None, str | None]
         steady_dir.glob(f"REFL_{run}_combined*.txt")
     )
     for candidate in candidates:
-        try:
-            header = read_header(candidate)
-        except (HeaderError, OSError):
-            continue
-        if header.theta is not None:
-            return (header.theta, candidate.name)
+        recorded = recorded_angle(candidate)
+        if recorded.theta is not None:
+            return (recorded.theta, candidate.name)
     return (None, None)
-
-
-def thetas_for(paths: list[Path]) -> list[float | None]:
-    """Read the incident angle of each file, in order.
-
-    Args:
-        paths: Reduced files, in segment order.
-
-    Returns:
-        Angles in degrees, ``None`` for any file with no recorded angle.
-    """
-    angles: list[float | None] = []
-    for path in paths:
-        try:
-            angles.append(read_header(path).theta)
-        except (HeaderError, OSError):
-            angles.append(None)
-    return angles
 
 
 def _as_int(value: Any) -> int | None:

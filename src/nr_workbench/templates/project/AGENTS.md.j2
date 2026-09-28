@@ -174,14 +174,17 @@ the run that counts is the `nrw fit run` on the imported spec.
 
 **Modelling**
 
-`nrw model new` fills in the facts — runs, files, and each segment's incident
-angle read from its `# Meta:` header. It cannot fill in the stack. Run it with
-`--print-prompt` to get the exact instruction for that, including which skills
-to read; `--from-notes` does the same thing against a configured LLM endpoint.
+`nrw model new` fills in the facts — runs and files. It writes no angles: each
+one is read from its file's header when the spec is resolved. It cannot fill in
+the stack. Run it with `--print-prompt` to get the exact instruction for that,
+including which skills to read; `--from-notes` does the same thing against a
+configured LLM endpoint.
 
 Whichever route: **never edit `states`, `series`, `thetas`, `data_dir` or
-`run`.** Those are measured values, not defaults. In particular do not "tidy"
-a theta of 1.201 to 1.2 — it came from the file.
+`run`, and never add an angle.** A `null` angle is one that no file records. It
+is for the person who ran the measurement to give: ask them, and never fill it
+in from habit or from another run. A guessed angle sets the wavelength axis, and
+the fit absorbs the error into roughness rather than reporting it.
 
 | Task | Command |
 |---|---|

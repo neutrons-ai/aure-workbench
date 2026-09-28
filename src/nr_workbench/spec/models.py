@@ -371,6 +371,15 @@ class Trim(_Base):
         }
 
 
+def _incident_angle(value: float | None, where: str) -> float | None:
+    """An incident angle in degrees, or ``None`` for one read from its file."""
+    if value is not None and not 0 < value < 90:  # NaN fails this too
+        raise SpecError(
+            f"{where}: an incident angle is in degrees, between 0 and 90, not {value!r}"
+        )
+    return value
+
+
 class Segment(_Base):
     """One angle segment of a steady-state measurement.
 
@@ -382,6 +391,11 @@ class Segment(_Base):
 
     file: str
     theta: float | None = None
+
+    @field_validator("theta")
+    @classmethod
+    def _an_angle(cls, value: float | None) -> float | None:
+        return _incident_angle(value, "a segment's `theta`")
 
 
 class State(_Base):
@@ -419,11 +433,27 @@ class State(_Base):
             )
         return value
 
+    @field_validator("thetas")
+    @classmethod
+    def _angles(cls, value: list[float | None] | None) -> list[float | None] | None:
+        for angle in value or []:
+            _incident_angle(angle, "`thetas`")
+        return value
+
     @model_validator(mode="after")
     def _auto_needs_a_run(self) -> State:
         if self.segments == "auto" and self.run is None:
             raise SpecError(
                 f"state {self.name!r}: `segments: auto` needs a `run` number"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _thetas_are_for_auto(self) -> State:
+        if self.segments != "auto" and self.thetas is not None:
+            raise SpecError(
+                f"state {self.name!r}: `thetas` is for `segments: auto`; give "
+                "each listed segment its own `theta`, or none to read its file's"
             )
         return self
 
@@ -480,6 +510,11 @@ class Series(_Base):
     theta: float | None = None
     select: SeriesSelect = Field(default_factory=SeriesSelect)
     time_from: Literal["filename", "reduction_json"] = "filename"
+
+    @field_validator("theta")
+    @classmethod
+    def _an_angle(cls, value: float | None) -> float | None:
+        return _incident_angle(value, "a series' `theta`")
 
     @field_validator("name")
     @classmethod

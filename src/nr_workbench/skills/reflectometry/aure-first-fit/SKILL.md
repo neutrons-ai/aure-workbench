@@ -192,7 +192,7 @@ something independent supports it.
 | "chi-squared is 1.2, the model is right." | It means the curve is described, not that the structure is. A thin layer in the wrong basin also fits — that is what `thin-layer-degeneracy` is about — and a good chi-squared on a proposed stack is the most convincing wrong answer available. |
 | "AuRE already fitted it, so I don't need `nrw fit run`." | Then there is no fit record, no input hashes, no environment, and nothing `nrw whence` can trace a figure back to. The AuRE run is reconnaissance. |
 | "I'll re-run with more steps until chi-squared comes down." | If the residuals show fringes or a layer is pinned, more steps optimise the wrong model harder. Step 7 says which retry to reach for, and when the answer is to fix the description instead. |
-| "I'll tidy the angles in the imported spec — 1.201 should be 1.2." | It came from the file's `# Meta:` header. Theta sets the resolution through `dT = dq/q · tan(θ)`, so a "tidied" angle is absorbed into roughness. |
+| "I'll put the angles into the imported spec — 0.45, 1.2, 3.5." | It carries none on purpose: each is read from its file's header, and one you type is checked against it. A `null` is an angle no file records — ask the person who measured it. A guessed angle sets the wavelength axis and is absorbed into roughness. |
 
 ## Red Flags
 
