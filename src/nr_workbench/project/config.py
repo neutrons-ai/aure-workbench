@@ -48,15 +48,12 @@ DEFAULT_CATALOG_KIND = "parquet"
 #: :mod:`nr_workbench.instrument.reduced`, which is also what asks AuRE.
 #: Editing a glob here changes nothing, which is the trap this comment exists
 #: to spring: it is the first place anyone looks when a new filename is not
-#: found. ``standard_thetas`` and ``tnr_theta`` *are* read, by ``nrw
-#: reconcile``.
+#: found. There are no angles: each segment's is read from its file's header.
 DEFAULT_CONVENTIONS: dict[str, Any] = {
     "steady_state_glob": "REFL_{run}_combined_data_auto.txt",
     "partial_glob": "REFL_{run}_{seg}_{subrun}_partial.txt or _autoreduction.dat",
     "tnr_slice_glob": "r{run}_t{t_s:06d}.txt",
     "tnr_intervals_glob": "r{run}_*reduction.json",
-    "standard_thetas": [0.45, 1.2, 3.5],
-    "tnr_theta": 0.6,
     # No longer one value. `_partial.txt` writes the 4th column as FWHM and
     # `_autoreduction.dat` writes it as sigma; the two differ by 2.355 and a
     # fit hides the difference in roughness, so it is read per file from the

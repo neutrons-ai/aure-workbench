@@ -80,6 +80,25 @@ def test_init_produces_the_expected_file_set(
     assert installed_files(tmp_path) == expected_project_files()
 
 
+def test_a_fresh_nrw_toml_assumes_no_angles(tmp_path: Path) -> None:
+    """Each segment's angle is read from its own file.
+
+    ``nrw.toml`` once carried the group's usual settings (0.45, 1.2, 3.5 and
+    0.6). An angle taken from habit sets the fit's wavelength axis, and a wrong
+    one is absorbed into roughness rather than reported.
+    """
+    assert CliRunner().invoke(main, ["init", str(tmp_path)]).exit_code == 0
+    document = tomllib.loads((tmp_path / "nrw.toml").read_text(encoding="utf-8"))
+
+    def keys(table: dict, prefix: str = ""):
+        for key, value in table.items():
+            yield prefix + key
+            if isinstance(value, dict):
+                yield from keys(value, f"{prefix}{key}.")
+
+    assert [key for key in keys(document) if "theta" in key] == []
+
+
 def test_init_writes_skills_to_repo_root_not_dot_claude(project: Path) -> None:
     """Recorded decision: Copilot cannot read `.claude/skills/`, so skills live
     at the repo root and both assistants reach them by path."""

@@ -105,13 +105,11 @@ def run_reconcile(
             err=True,
         )
 
-    config = _config(layout)
     result = reconcile(
         sample,
         headers,
         markdown,
         series_runs={s.run for s in scan.series if s.run},
-        standard_thetas=list(getattr(config, "standard_thetas", []) or []),
     )
 
     payload = result.as_dict()
@@ -149,16 +147,6 @@ def _print_reconcile(result: Any) -> None:
         "  These are disagreements, not verdicts: sometimes the notes are "
         "wrong and sometimes the filing is."
     )
-
-
-def _config(layout: Any) -> Any:
-    """The project config, or None."""
-    from nr_workbench.project.config import ProjectConfigError, load_config
-
-    try:
-        return load_config(layout.root)
-    except (ProjectConfigError, OSError):
-        return None
 
 
 def run_overlap(

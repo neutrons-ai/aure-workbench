@@ -184,24 +184,6 @@ def test_a_documented_run_with_no_data_yet_is_only_information() -> None:
     assert found.worst == "ok", "waiting for data is not a problem"
 
 
-def test_an_unusual_angle_is_mentioned_but_not_alarming() -> None:
-    headers = [Header(sequence_id=218386, theta=0.5997, run_title="CuPt_OCV")]
-
-    found = reconcile("expt11", headers, HISTORICAL, standard_thetas=[0.45, 1.2, 3.5])
-
-    flagged = [f for f in found.findings if f.kind == "unusual-angle"]
-    assert [f.severity for f in flagged] == ["info"]
-
-
-def test_a_standard_angle_within_tolerance_is_not_flagged() -> None:
-    """Reduction records theta to four decimals; 3.5003 is 3.5."""
-    headers = [Header(sequence_id=218386, theta=3.5003, run_title="CuPt_OCV")]
-
-    found = reconcile("expt11", headers, HISTORICAL, standard_thetas=[0.45, 1.2, 3.5])
-
-    assert [f for f in found.findings if f.kind == "unusual-angle"] == []
-
-
 def test_the_templates_worked_example_is_not_a_documented_run() -> None:
     """The scaffolded sample.md ships an example table inside an HTML comment.
     Counting it reports every fresh sample as documenting three runs it does
