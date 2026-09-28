@@ -200,7 +200,8 @@ something independent supports it.
 - `sample_description` that names no ambient medium.
 - `back_reflection` absent on a sample measured in a liquid cell.
 - A first-fit spec promoted, or quoted in a report, without a second fit.
-- An imported spec whose `thetas` have been rounded to 0.45 / 1.2 / 3.5.
+- `thetas` typed into an imported spec. It carries none by design — each angle
+  is read from its file's header — so a typed list is a guess or a copy.
 - A run repeated with a bigger budget and no change to the description or the
   physics knobs — the same run, costing more.
 - A layer under ~30 Å reported without `--mode-enumeration` ever having been

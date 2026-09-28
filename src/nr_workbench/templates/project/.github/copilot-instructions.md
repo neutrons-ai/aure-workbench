@@ -76,8 +76,9 @@ it impossible to say which one produced a published figure. So:
 - Reduced files are 4 columns: `Q, R, dR, dQ`. **`dQ` is FWHM, not sigma.**
 - `REFL_{run}_combined_data_auto.txt` merges all angle segments; the per-segment
   angle is not recoverable from it.
-- `REFL_{run}_{seg}_{subrun}_partial.txt` is one segment. Standard thetas are
-  `[0.45, 1.2, 3.5]` degrees; tNR is usually a single angle at 0.6°.
+- `REFL_{run}_{seg}_{subrun}_partial.txt` is one segment. Each file records its
+  own incident angle in its header: read it, never assume one. A tNR run is one
+  angle, recorded in its summed dataset in `data/steady`.
 - tNR slices are `r{run}_t{seconds:06d}.txt` with a sibling reduction JSON that
   carries the interval structure.
 

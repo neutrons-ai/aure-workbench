@@ -182,10 +182,11 @@ it — which is a code-generation task, with a test, not a per-file inference.
 
 ## Rationalizations
 
-**"The angles are always 0.45, 1.2, 3.5."** They are on this beamline, usually.
+**"The angles are always 0.45, 1.2, 3.5."** They are not: angles are chosen per
+experiment, and even a repeat of the same settings records different numbers.
 The measured values for run 218386 are 0.4500, 1.2010, 3.5003, and for 218393
-they are 0.4499, 1.2009, 3.5002 — close, but different runs and different
-numbers. A two-segment measurement at other settings would be silently wrong.
+they are 0.4499, 1.2009, 3.5002. A measurement at other settings, fitted at
+those, would be silently wrong.
 
 **"0.6 is close enough to 0.5997."** It is, for that run. But you did not know
 it was 0.5997 until you read it, and the next run may not be.

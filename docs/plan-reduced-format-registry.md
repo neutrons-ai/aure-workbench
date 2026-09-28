@@ -141,3 +141,9 @@ raises an `unusual-angle` finding against the nominal 1.2. That predates this
 work — the v1 header carries the same measured value — and it is a judgement
 about this beamline's settings rather than a format question, so it was left
 alone rather than folded in here.
+
+**Resolved (2026-09-28): the angles are gone.** The finding never fired: both
+readers asked the config for an attribute it does not have, and got an empty
+list. `standard_thetas` and `tnr_theta` are removed from `nrw.toml`, with the
+check, and a spec reads every angle from its files -- see ground_truths.md,
+"no angle is assumed".

@@ -30,7 +30,7 @@ The four that matter:
 
 | | Convention here |
 |---|---|
-| Angles | 0.45°, 1.2°, 3.5° for full-Q; 0.6° for time-resolved |
+| Angles | chosen per experiment — **read from each file's header**, never assumed |
 | Resolution | **angular-only**: `dT = dQ/Q · tan(θ)`, `dL = 0` |
 | `dQ` column | **FWHM today** — stated in the column titles, and read, never assumed |
 | Normalisation | one direct-beam run per segment, recorded only in the template XML |

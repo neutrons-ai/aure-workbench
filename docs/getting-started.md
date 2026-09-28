@@ -308,17 +308,22 @@ That writes a valid spec with a placeholder stack and — because it read the
 same data — the two states, the series, and a `linear_in_time` constraint
 already wired between them. Replace the stack with the real one.
 
-**The angles come from the files, not from the usual settings.** Every reduced
-REF_L file carries a `# Meta:` JSON header recording its incident angle in
-radians, and `nrw model new` reads it: 0.4500, 1.2010, 3.5003 for run 218386
-rather than the nominal 0.45/1.2/3.5. It matters because theta sets the
-resolution through `dT = dq/q · tan(θ)`, so a wrong angle is absorbed into
-roughness instead of raising.
+**The angles come from the files, and only from the files.** Every reduced
+REF_L file carries a header recording its incident angle, and resolving the
+spec reads it: 0.4500, 1.2010, 3.5003 for run 218386. So the spec `nrw model
+new` writes has no angles in it at all — none to assume, and none to go stale.
+It matters because theta sets the wavelength axis, `wl = 4π·sin(θ)/q`, so a
+wrong angle is absorbed into roughness instead of raising.
 
 Time-resolved slices carry no header at all — but the same run is *also*
 reduced as a summed dataset into `data/steady`, and that file does. So the
 series angle is read from there: **0.5997°** for run 218389, not the 0.6 anyone
 would assume.
+
+A file that records no angle is left **blank** — a `null` in `thetas`, named in
+a comment at the top of the spec — and `nrw model validate` refuses the spec
+until you give it. An angle you do give for a file that records its own is
+checked against it.
 
 That summed dataset is deliberately left out of the fit. It is the sum of the
 very slices the series contributes, so including both would put the same
@@ -463,17 +468,15 @@ stack:                                      # ambient -> substrate
 probe: {resolution: angular_only, dq_is_fwhm: true}
 
 states:
-  # Angles read from each file's `# Meta:` header -- not the nominal settings.
-  - {name: ocv1, run: 218386, segments: auto, thetas: [0.45, 1.201, 3.5003],
-     data_dir: samples/Sample6/data/steady}
-  - {name: ocv2, run: 218393, segments: auto, thetas: [0.4499, 1.2009, 3.5002],
-     data_dir: samples/Sample6/data/steady}
+  # No angles: each is read from its file's header when the spec is resolved.
+  - {name: ocv1, run: 218386, segments: auto, data_dir: samples/Sample6/data/steady}
+  - {name: ocv2, run: 218393, segments: auto, data_dir: samples/Sample6/data/steady}
 
 series:
   - name: tnr
     run: 218389
     reduced_dir: samples/Sample6/data/tnr/218389
-    theta: 0.5997          # from run 218389's summed dataset in data/steady
+    # its angle, 0.5997, is read from run 218389's summed dataset in data/steady
     time_from: reduction_json
     select:
       labels: ["*_eis_*"]        # assess on all 116, co-refine the 15

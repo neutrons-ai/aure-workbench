@@ -3241,3 +3241,43 @@ same shared loopback.
 - **Give the slot back before waking the caller.** Otherwise a caller whose
   call has returned can call again at once, find the slot still taken, and be
   told "busy" by a source that answered.
+
+### 2026-09-28: no angle is assumed
+
+`nrw.toml` carried `standard_thetas = [0.45, 1.2, 3.5]` and `tnr_theta = 0.6`,
+and its comment said `nrw reconcile` read them, to flag a segment at an
+unexpected angle. It did not. Both readers wrote
+`getattr(config, "standard_thetas", [])`, but `ProjectConfig` keeps them inside
+`conventions`, so they always got the empty default, and the check never ran.
+**`getattr` with a default, on a typed object, turns a wrong attribute name
+into a silently empty value** -- nothing fails, and the comment beside it goes
+on saying it works.
+
+The live assumption was in the model spec. `State.thetas` defaulted to
+`[0.45, 1.2, 3.5]` and `Series.theta` to 0.6, so a hand-written spec that left
+them out was fitted at those angles, whatever was measured. With
+`segments: auto`, the list's length also chose how many segments were read.
+And `nrw model new` filled any angle a header did not record with the usual
+setting for that position. theta sets the wavelength axis
+(`wl = 4*pi*sin(theta)/q`), and `theta_offset` and `sample_broadening` depend
+on it; a wrong one is absorbed into roughness.
+
+Now:
+
+- The spec's angles come from the files. `segments: auto` is every segment on
+  disk, at the angle its header records; a series is at the angle of its
+  run's summed dataset in `data/steady`.
+- An angle a spec states is checked against the file's record, within the
+  0.02 deg resolve already uses to group angles. Where they agree, the file's
+  more precise value is used.
+- A file that records none is refused until the spec gives its angle.
+  `nrw model new` and `nrw aure import` leave it `null`, name the file in a
+  comment, and write no angles at all when every file records its own.
+- `nrw.toml`, the unusual-angle check and the unused geometry constants are
+  gone. The shipped skills and the project template's assistant instructions
+  no longer present the usual settings as a standard.
+
+Still open, and the same kind of thing: `nrw model new` assumes the dQ column
+is FWHM when a file does not say (`_dq_is_fwhm_from_headers`, with a warning).
+And the project template's `.github/copilot-instructions.md` says "`dQ` is FWHM,
+not sigma", which is false for `_autoreduction.dat`, whose 4th column is sigma.
