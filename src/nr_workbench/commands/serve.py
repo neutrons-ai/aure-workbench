@@ -94,6 +94,7 @@ def run_serve(
     )
     click.echo(f"  http://{shown}:{port}/api/overview    the same data as JSON")
     click.echo("")
+    _echo_data_folder(layout.root)
     needs_setup = app.config["NRW_SETTINGS"].needs_setup()
     if needs_setup:
         click.echo(
@@ -124,3 +125,21 @@ def run_serve(
             f"Cannot bind {host}:{port} -- {exc}. "
             "Another server may already be running; try --port."
         ) from exc
+
+
+def _echo_data_folder(root: Path) -> None:
+    """Which folder the Experiment page will watch, and anything wrong with that.
+
+    From nrw.toml alone, never the data mount. A location typed into a comment
+    once left the server on its default folder, and nothing it printed said so.
+    """
+    from nr_workbench.experiment.config import experiment_config_for
+    from nr_workbench.project.config import DEFAULT_EXPERIMENT_LOCATION
+
+    config = experiment_config_for(root)
+    folder = config.source.path or config.source.location
+    default = config.source.location == DEFAULT_EXPERIMENT_LOCATION
+    click.echo(f"  Data folder  {folder}" + ("  (nrw's default)" if default else ""))
+    for problem in config.problems:
+        click.secho(f"  ! {problem.message}", fg="yellow")
+    click.echo("")

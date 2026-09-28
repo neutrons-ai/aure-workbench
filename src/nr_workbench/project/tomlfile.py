@@ -311,6 +311,79 @@ def _regions(lines: list[str]) -> tuple[dict[str, _Region], dict[str, _Region]]:
     return regions, commented
 
 
+@dataclass(frozen=True)
+class CommentedSetting:
+    """A setting a person typed into a comment, where nothing reads it.
+
+    Attributes:
+        line: Its line number, counting from 1.
+        table: The table it is under, e.g. ``experiment.source``.
+        key: The setting.
+        text: The line as written.
+        table_commented: Whether the table's own header is commented out too.
+    """
+
+    line: int
+    table: str
+    key: str
+    text: str
+    table_commented: bool
+
+
+def settings_in_comments(
+    text: str,
+    managed: Mapping[str, Mapping[str, Value]],
+    document: Mapping[str, Any],
+) -> list[CommentedSetting]:
+    """Settings typed into a comment, where nrw cannot read them.
+
+    Every placeholder nrw writes shows the setting's default -- ``# location =
+    "<default>"``. A commented line in one of nrw's tables holding any other
+    value was typed by a person, and nearly always meant to set it: editing the
+    value "shown beside it" in the comment, and missing that a comment is not
+    read, leaves nrw on its default with nothing said. A setting the file does
+    set is not reported: the comment is then only a note beside it.
+
+    Args:
+        text: The file.
+        managed: Each table nrw writes, and its settings' defaults.
+        document: The file, parsed: what is actually set.
+    """
+    lines = text.splitlines()
+    try:
+        regions, commented = _regions(lines)
+    except TomlEditError:
+        return []  # a table declared twice: load_config says so already
+    found: list[CommentedSetting] = []
+    for table, defaults in managed.items():
+        active = _lookup(document, table)
+        for region, table_commented in (
+            (commented.get(table), True),
+            (regions.get(table), False),
+        ):
+            if region is None:
+                continue
+            for index in range(region.header + 1, region.end):
+                body = lines[index].strip()
+                if not body.startswith("#"):
+                    continue
+                match = _KEY.match(body.lstrip("#").strip())
+                if match is None or match["key"] not in defaults:
+                    continue
+                key = match["key"]
+                if isinstance(active, Mapping) and key in active:
+                    continue
+                try:
+                    value = tomllib.loads(f"v = {match['value']}")["v"]
+                except tomllib.TOMLDecodeError:
+                    continue
+                if not _same(value, defaults[key]):
+                    found.append(
+                        CommentedSetting(index + 1, table, key, body, table_commented)
+                    )
+    return sorted(found, key=lambda setting: setting.line)
+
+
 def _name(match: re.Match[str] | None) -> str | None:
     return re.sub(r"[ \t]*\.[ \t]*", ".", match.group("name")) if match else None
 

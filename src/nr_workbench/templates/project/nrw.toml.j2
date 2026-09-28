@@ -70,8 +70,10 @@ dq_convention = "per-file, read from the header"
 # setting that changes nothing is never silently accepted.
 #
 # A setting left commented out follows nrw's default, shown beside it; once
-# one of a table's settings is set, the table is written out. Edit that table
-# rather than adding a second one: TOML allows each table once. The default
+# one of a table's settings is set, the table is written out. To set one by
+# hand, remove the `# ` from its line AND from its table's `[...]` line: a value
+# typed inside a comment is not read. Edit that table rather than adding a
+# second one: TOML allows each table once. The default
 # location is PROVISIONAL: it is where REF_L's new_reduction pipeline writes
 # today, and it is expected to move. `{ipts}` is filled from [beamtime] ipts.
 # The "directory" feed notices a run when its reduced files appear.

@@ -192,6 +192,7 @@ def experiment_config(project: Any) -> ExperimentConfig:
         ),
     )
     catalog_kind = _kind(sections["catalog"], "catalog", DEFAULT_CATALOG_KIND, problems)
+    problems.extend(_settings_in_comments(project, document))
     return ExperimentConfig(
         ipts=ipts,
         source=source,
@@ -199,6 +200,43 @@ def experiment_config(project: Any) -> ExperimentConfig:
         catalog_kind=catalog_kind,
         problems=tuple(problems),
     )
+
+
+def _settings_in_comments(project: Any, document: dict[str, Any]) -> list[Problem]:
+    """A setting typed into a comment in ``nrw.toml``: said, not silently ignored.
+
+    The template shows each setting's default in a comment. Typing a folder over
+    that default, without removing the ``#``, leaves nrw on its default location
+    -- with nothing on any page to say why.
+    """
+    from nr_workbench.problems import one_line
+    from nr_workbench.project.tomlfile import settings_in_comments
+
+    root = getattr(project, "root", None)
+    if root is None:
+        return []
+    try:
+        text = (Path(root) / "nrw.toml").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []  # load_config has read it already; this is a hint, not a gate
+    problems = []
+    for found in settings_in_comments(text, EXPERIMENT_KEYS, document):
+        switch_on = (
+            f"remove the `#` from that line and from the `# [{found.table}]` "
+            "line above it"
+            if found.table_commented
+            else "remove the `#` from that line"
+        )
+        problems.append(
+            Problem(
+                "config",
+                f"nrw.toml line {found.line} gives `{found.key}` in a comment "
+                f"({one_line(found.text)}), so it is not read and nrw's default is "
+                f"used instead. To set it, {switch_on} -- or set it on the "
+                "Settings page.",
+            )
+        )
+    return problems
 
 
 def _source(

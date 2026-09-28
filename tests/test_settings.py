@@ -852,3 +852,125 @@ def test_a_hand_typed_setting_out_of_range_is_said_not_used(project: Path) -> No
 
     assert config.feed.poll_seconds == 30
     assert any("from 5 to 600" in p.message for p in config.problems)
+
+
+# --------------------------------------------------------------------------
+# A value typed into a comment is said, not silently ignored
+# --------------------------------------------------------------------------
+
+#: The block as a person left it: the folder typed over the placeholder's
+#: default, and neither `#` removed -- so nrw watched its default location.
+TYPED_IN_A_COMMENT = """# [experiment.source]
+# kind = "local"
+# location = "/data/IPTS-37787/test"
+# settle_seconds = 300
+
+# [experiment.feed]
+# kind = "directory"
+# poll_seconds = 30"""
+
+
+def typed_into_a_comment(project: Path) -> Path:
+    toml = project / "nrw.toml"
+    text = toml.read_text(encoding="utf-8")
+    ours = experiment_block({})
+    assert text.count(ours) == 1
+    toml.write_text(text.replace(ours, TYPED_IN_A_COMMENT), encoding="utf-8")
+    return toml
+
+
+def test_nrws_own_placeholders_are_not_settings_typed_in_a_comment(
+    project: Path,
+) -> None:
+    from nr_workbench.project.tomlfile import settings_in_comments
+
+    text = (project / "nrw.toml").read_text(encoding="utf-8")
+
+    assert settings_in_comments(text, EXPERIMENT_KEYS, tomllib.loads(text)) == []
+
+
+def test_a_folder_typed_into_a_commented_line_is_named_with_the_fix(
+    project: Path,
+) -> None:
+    """It once left `nrw serve` on the default location with nothing said."""
+    from nr_workbench.experiment.config import experiment_config_for
+
+    toml = typed_into_a_comment(project)
+    line = (
+        toml.read_text(encoding="utf-8")
+        .splitlines()
+        .index('# location = "/data/IPTS-37787/test"')
+    )
+
+    config = experiment_config_for(project)
+
+    assert config.source.location != "/data/IPTS-37787/test"  # still not read
+    [problem] = [p for p in config.problems if "in a comment" in p.message]
+    assert f"line {line + 1} gives `location` in a comment" in problem.message
+    assert "and from the `# [experiment.source]` line above it" in problem.message
+
+
+def test_switching_the_line_on_as_the_message_says_is_the_whole_fix(
+    project: Path,
+) -> None:
+    from nr_workbench.experiment.config import experiment_config_for
+
+    toml = typed_into_a_comment(project)
+    text = toml.read_text(encoding="utf-8")
+    text = text.replace("# [experiment.source]", "[experiment.source]")
+    text = text.replace('# location = "/data/', 'location = "/data/')
+    toml.write_text(text, encoding="utf-8")
+
+    config = experiment_config_for(project)
+
+    assert config.source.location == "/data/IPTS-37787/test"
+    assert not [p for p in config.problems if "in a comment" in p.message]
+
+
+def test_a_comment_beside_a_setting_that_is_set_is_only_a_note(project: Path) -> None:
+    """What a save through the Settings page leaves: the old line, and the key."""
+    from nr_workbench.experiment.config import experiment_config_for
+    from nr_workbench.project.settings import save
+
+    typed_into_a_comment(project)
+    save(project, {"source.location": "/data/IPTS-37787/test"})
+
+    config = experiment_config_for(project)
+
+    assert config.source.location == "/data/IPTS-37787/test"
+    assert not [p for p in config.problems if "in a comment" in p.message]
+
+
+def test_a_commented_value_under_a_table_that_is_written_out_is_named(
+    project: Path,
+) -> None:
+    from nr_workbench.experiment.config import experiment_config_for
+    from nr_workbench.project.settings import save
+
+    save(project, {"source.location": "/data/x"})
+    toml = project / "nrw.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8").replace(
+            "# settle_seconds = 300", "# settle_seconds = 120"
+        ),
+        encoding="utf-8",
+    )
+
+    [problem] = [
+        p
+        for p in experiment_config_for(project).problems
+        if "in a comment" in p.message
+    ]
+    assert "gives `settle_seconds` in a comment" in problem.message
+    assert "remove the `#` from that line --" in problem.message
+
+
+def test_nrw_experiment_settings_names_the_commented_folder(
+    project: Path, monkeypatch
+) -> None:
+    typed_into_a_comment(project)
+
+    result = nrw(project, monkeypatch, "experiment", "settings")
+
+    assert result.exit_code == 0, result.output
+    assert "gives `location` in a comment" in result.output

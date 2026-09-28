@@ -608,6 +608,33 @@ def test_serve_names_the_settings_page_and_says_when_setup_is_needed(
     assert "not set up yet" in unready.output and "It opens Settings" in unready.output
 
 
+def test_serve_says_which_folder_it_watches_and_why_it_is_the_default(
+    expt: Path, monkeypatch
+) -> None:
+    """A folder typed into a comment once went unmentioned at start-up."""
+    from nr_workbench.project.settings import save
+
+    from .test_experiment_web import _serve
+
+    configured = _serve(expt, monkeypatch=monkeypatch)
+    save(expt, {"source.location": None})
+    toml = expt / "nrw.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8").replace(
+            '# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"',
+            '# location = "/data/typed/here"',
+        ),
+        encoding="utf-8",
+    )
+    defaulted = _serve(expt, monkeypatch=monkeypatch)
+
+    assert "Data folder  " in configured.output
+    assert "(nrw's default)" not in configured.output
+    assert "Data folder  /SNS/REF_L/IPTS-00001/" in defaulted.output
+    assert "(nrw's default)" in defaulted.output
+    assert "gives `location` in a comment" in defaulted.output
+
+
 def test_init_suggests_serve_to_set_the_experiment_up(tmp_path: Path) -> None:
     from click.testing import CliRunner
 

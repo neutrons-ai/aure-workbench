@@ -3320,3 +3320,23 @@ The test review found why the lifecycle tests could not have caught any of
 this: their synthetic data recorded 0.45, 1.2 and 3.5, the very values that
 used to be assumed. A test angle must be one nobody would assume; the fixtures
 use 1.251.
+
+### 2026-09-28: a folder typed into a comment
+
+A project's `nrw serve` kept watching nrw's default location. Its `nrw.toml`
+had the folder typed over the placeholder -- `# location = "/Volumes/…/test"`
+-- under a `# [experiment.source]` still commented out. The template said "a
+setting left commented out follows nrw's default, shown beside it", and editing
+the value shown beside it, without removing the `#`, is the natural mistake.
+Nothing said so: no problem on any page, and `nrw serve` did not print the
+folder it would watch.
+
+**The project's own rule -- a setting that changes nothing is never silently
+accepted -- only covered what the parser saw.** A comment is invisible to the
+parser, so the check has to read the text. Every placeholder nrw writes shows
+the default, so a commented setting with any other value was typed by a
+person. `tomlfile.settings_in_comments` finds these, and the pages,
+`nrw experiment status` and `settings`, and `nrw serve` at start-up all report
+them, with the line and how to switch it on. `nrw serve` now also prints the
+data folder, marked when it is nrw's default. The template says to remove the
+`#` from both the setting's line and its table's.
