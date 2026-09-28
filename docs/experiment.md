@@ -219,7 +219,9 @@ nrw experiment adopt Sample6 --write --rewrite  # and lets the catalog write sam
 ```
 
 Its sections become the sample's context and its measurement table becomes the
-run assignments. Anything with no place in the catalog, such as your own
+run assignments. Runs you assigned to the sample on the page that its table
+leaves out are kept as they are: the file never listed them, so leaving one out
+is not removing it. Anything with no place in the catalog, such as your own
 `## Notes` section or a comment you wrote, is listed as a **leftover**. A
 leftover blocks `--rewrite`, because the rewrite would lose it.
 

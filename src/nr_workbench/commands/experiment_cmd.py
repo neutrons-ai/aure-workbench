@@ -470,6 +470,11 @@ def _echo_adopt(plan: Any, *, show_diff: bool) -> None:
             f"  on disk but not in the table (not assigned): "
             f"{', '.join(map(str, plan.undocumented))}"
         )
+    if plan.kept:
+        click.echo(
+            f"  in the catalog but not in the table (kept): "
+            f"{', '.join(map(str, plan.kept))}"
+        )
     if plan.in_step:
         click.echo("  the catalog would render this file exactly; no rewrite needed")
     if show_diff and plan.diff:

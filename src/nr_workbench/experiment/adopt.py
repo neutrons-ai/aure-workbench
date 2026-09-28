@@ -39,8 +39,10 @@ from nr_workbench.experiment.model import (
     clean_prose,
 )
 from nr_workbench.experiment.render import (
+    CATALOG_OWNER,
     MOUNTING_SENTENCES,
     SampleRenderError,
+    lock_owner,
     plan_sample,
     sample_md_relpath,
 )
@@ -113,6 +115,10 @@ class AdoptPlan:
         undocumented: Runs whose files are in the sample but not in its
             table. Reported, not assigned: assigning them would be a claim
             nobody made.
+        kept: Runs the catalog assigns to the sample that a file it did not
+            write leaves out -- assigned on the page after the file was
+            written, say. Kept as the catalog has them: that file never listed
+            them, so leaving one out is not removing it.
         sample_md: The scaffold's view of the file as it stands, against the
             catalog as it is now: ``UNTRACKED`` for a file nrw never wrote,
             ``DRIFTED`` for one edited by hand since.
@@ -128,6 +134,7 @@ class AdoptPlan:
     run_changes: tuple[RunChange, ...] = ()
     sample_change: SampleChange | None = None
     undocumented: tuple[int, ...] = ()
+    kept: tuple[int, ...] = ()
     sample_md: Outcome | None = None
     in_step: bool = False
     diff: str = ""
@@ -148,6 +155,7 @@ class AdoptPlan:
             "context": dict(self.sample_change.changes) if self.sample_change else {},
             "leftovers": list(self.parsed.leftovers),
             "undocumented": list(self.undocumented),
+            "kept": list(self.kept),
             "sample_md": str(self.sample_md) if self.sample_md else None,
             "in_step": self.in_step,
             "diff": self.diff,
@@ -489,10 +497,20 @@ def plan_adopt(
                 },
             )
         )
-    # A row removed from the table by hand means the run is not used here.
-    for entry in catalog.runs_for(sample_id):
-        if entry.include and entry.key.run not in listed:
-            run_changes.append(RunChange(entry.key, entry.rev, {"include": False}))
+    # A row removed from the table by hand means the run is not used here --
+    # in a table the catalog wrote. A sample.md written by hand never listed
+    # the runs assigned to its sample on the page afterwards, and adopting it
+    # used to exclude every one of them.
+    missing = [
+        entry
+        for entry in catalog.runs_for(sample_id)
+        if entry.include and entry.key.run not in listed
+    ]
+    kept: tuple[int, ...] = ()
+    if lock_owner(root, sample_id) == CATALOG_OWNER:
+        run_changes.extend(RunChange(e.key, e.rev, {"include": False}) for e in missing)
+    else:
+        kept = tuple(entry.key.run for entry in missing)
 
     current = catalog.samples.get(sample_id)
     base = current or catalog.context_for(sample_id)
@@ -553,6 +571,7 @@ def plan_adopt(
         run_changes=tuple(run_changes),
         sample_change=sample_change,
         undocumented=undocumented,
+        kept=kept,
         sample_md=outcome,
         in_step=in_step,
         diff=diff,

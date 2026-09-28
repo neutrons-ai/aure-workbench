@@ -382,6 +382,32 @@ def test_pull_a_row_removed_by_hand_excludes_the_run(
     assert RunChange(RunKey(218393), 1, {"include": False}) in plan.run_changes
 
 
+def test_adopting_a_hand_written_file_keeps_the_runs_assigned_on_the_page(
+    project: Path, context: RenderContext
+) -> None:
+    """Its table was written before those runs were assigned, and never listed
+    them: leaving them out is not removing them."""
+    store = ParquetCatalogStore.for_project(project)
+    store.update(
+        runs=[
+            RunChange(RunKey(218386), 0, {"sample_id": "Sample6"}),
+            RunChange(RunKey(218393), 0, {"sample_id": "Sample6"}),
+        ],
+        now=NOW,
+    )
+    write_sample(
+        project,
+        "# Sample6\n\n## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n| 218386 | full Q | OCV |\n",
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert plan.kept == (218393,)
+    assert not [c for c in plan.run_changes if c.changes.get("include") is False]
+    assert plan.as_dict()["kept"] == [218393]
+
+
 # --------------------------------------------------------------------------
 # The scaffold helpers
 # --------------------------------------------------------------------------

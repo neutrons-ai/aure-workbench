@@ -591,6 +591,11 @@
         text: "In the data but not in the table (not assigned): " +
           plan.undocumented.join(", "),
       }) : null,
+      plan.kept.length ? el("p", {
+        className: "text-secondary",
+        text: "In the catalog but not in this file's table (kept as the catalog has them): " +
+          plan.kept.join(", "),
+      }) : null,
       el("div", { className: "d-flex gap-2" }, [keep, rewrite]),
     ].filter(Boolean));
   }
