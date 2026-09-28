@@ -512,8 +512,9 @@ def run_aure_import(
     from nr_workbench.aure_setup import SetupError, choose_run
     from nr_workbench.commands.model import (
         _emit_spec,
+        blank_angles_comment,
         state_for_run,
-        warn_assumed_angles,
+        warn_blank_angles,
     )
     from nr_workbench.project.scan import load_register, scan_sample
 
@@ -548,7 +549,7 @@ def run_aure_import(
         )
     try:
         chosen = choose_run(found, inferred)
-        block, _, assumed = state_for_run(layout.root, found.steady[chosen])
+        block, _, blank = state_for_run(layout.root, found.steady[chosen])
     except (SetupError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -569,11 +570,13 @@ def run_aure_import(
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        _provenance_header(layout, target, Path(output_dir)) + _emit_spec(document),
+        _provenance_header(layout, target, Path(output_dir))
+        + blank_angles_comment(blank)
+        + _emit_spec(document),
         encoding="utf-8",
     )
     click.echo(f"Wrote {target.relative_to(layout.root)}")
-    warn_assumed_angles(assumed)
+    warn_blank_angles(blank)
 
     # Anything AuRE's fit had that this spec does not. Silence here would mean
     # an unconstrained spec quoting the chi-squared of a constrained fit.

@@ -305,20 +305,26 @@ def test_import_records_that_aure_proposed_the_stack(sample: Path) -> None:
 def test_import_keeps_the_measured_angles(sample: Path) -> None:
     """Theta sets the resolution; the nominal 0.45/1.2/3.5 would be wrong.
 
-    AuRE does not report the angles back, so they are re-read from the files'
-    own headers at import -- this is what says that happened.
+    AuRE does not report the angles back. The imported spec carries none: each
+    is read from its file's own header when the spec is resolved.
     """
     import yaml
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
 
     output = _finished_run(sample)
 
     _run("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
-    document = yaml.safe_load(
-        (sample / "samples/Sample1/models/first.yaml").read_text()
-    )
+    path = sample / "samples/Sample1/models/first.yaml"
+    state = yaml.safe_load(path.read_text())["states"][0]
+    angles = [
+        m.theta for m in discover_measurements(load_spec(path), sample)[state["name"]]
+    ]
 
-    assert 1.201 in document["states"][0]["thetas"]
-    assert 1.2 not in document["states"][0]["thetas"]
+    assert "thetas" not in state
+    assert 1.201 in [round(angle, 3) for angle in angles]
+    assert 1.2 not in angles
 
 
 def test_import_orders_the_stack_for_the_geometry(sample: Path) -> None:

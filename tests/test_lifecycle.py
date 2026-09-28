@@ -19,17 +19,28 @@ from nr_workbench.cli import main
 pytestmark = pytest.mark.integration
 
 
-def write_partials(directory: Path, run: int, segments: int = 3) -> None:
-    """Write plausible REF_L partial files for one run."""
+#: The angle each synthetic segment records, in degrees, as REF_L's header
+#: does (in radians). What was measured, for this data -- not a default.
+SEGMENT_ANGLES = (0.45, 1.2, 3.5)
+
+
+def write_partials(
+    directory: Path, run: int, segments: int = 3, angles: tuple[float, ...] = ()
+) -> None:
+    """Write plausible REF_L partial files for one run, each recording its angle."""
+    import math
+
     directory.mkdir(parents=True, exist_ok=True)
+    angles = angles or SEGMENT_ANGLES
     for segment in range(1, segments + 1):
+        meta = f'# Meta:{{"theta": {math.radians(angles[segment - 1])!r}}}\n'
         rows = "\n".join(
             f"{0.01 + 0.001 * i:.6f} {1e-3 / (i + 1):.6e} {1e-4:.6e} {2e-4:.6e}"
             for i in range(30)
         )
         (
             directory / f"REFL_{run}_{segment}_{run + segment - 1}_partial.txt"
-        ).write_text(rows + "\n", encoding="utf-8")
+        ).write_text(meta + rows + "\n", encoding="utf-8")
 
 
 def write_slices(directory: Path, run: int, count: int = 6, step: int = 240) -> None:
@@ -56,6 +67,9 @@ def project(tmp_path: Path) -> Path:
     write_partials(data / "steady", 100001)
     write_partials(data / "steady", 100005)
     write_slices(data / "tnr" / "100003", 100003)
+    # The same run, summed, as the reduction also writes it: the slices carry
+    # no header, so this is where the series' angle is recorded.
+    write_partials(data / "steady", 100003, segments=1, angles=(0.6,))
     return root
 
 
@@ -75,7 +89,8 @@ def test_scan_registers_what_is_on_disk(project: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)[0]
-    assert payload["steady_runs"] == [100001, 100005]
+    # 100003 too: the series' run, summed, as the reduction also writes it.
+    assert payload["steady_runs"] == [100001, 100003, 100005]
     assert len(payload["series"]) == 1
     assert payload["series"][0]["n_slices"] == 6
 
@@ -87,7 +102,7 @@ def test_scan_writes_sample_yaml(project: Path, monkeypatch) -> None:
 
     document = yaml.safe_load((project / "samples" / "S1" / "sample.yaml").read_text())
     assert document["schema"] == "nrw-sample/1"
-    assert [entry["run"] for entry in document["steady"]] == [100001, 100005]
+    assert [entry["run"] for entry in document["steady"]] == [100001, 100003, 100005]
 
 
 def test_scan_detects_a_uniform_time_step(project: Path, monkeypatch) -> None:
@@ -161,6 +176,79 @@ def test_model_new_produces_a_spec_that_validates(project: Path, monkeypatch) ->
     checked = run(project, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
 
     assert checked.exit_code == 0, checked.output
+
+
+def test_model_new_writes_no_angles_when_every_file_records_its_own(
+    project: Path, monkeypatch
+) -> None:
+    """Each is read from its file when the spec is resolved: no copy to go stale."""
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (project / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+    document = yaml.safe_load(text)
+
+    assert [state.get("thetas") for state in document["states"]] == [None, None]
+    assert "theta" not in document["series"][0]
+    assert "BLANK" not in text
+
+
+def fresh_project(tmp_path: Path) -> Path:
+    root = tmp_path / "proj"
+    result = CliRunner().invoke(main, ["init", str(root), "--sample", "S1"])
+    assert result.exit_code == 0, result.output
+    return root
+
+
+def test_model_new_leaves_a_blank_for_a_file_that_records_no_angle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Never a guess: the spec is refused until a person gives the angle."""
+    root = fresh_project(tmp_path)
+    steady = root / "samples/S1/data/steady"
+    write_partials(steady, 100001)
+    unrecorded = steady / "REFL_100001_2_100002_partial.txt"
+    unrecorded.write_text(
+        "".join(line for line in unrecorded.read_text().splitlines(True)[1:]),
+        encoding="utf-8",
+    )
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec_path = root / "samples/S1/models/m.yaml"
+    text = spec_path.read_text(encoding="utf-8")
+    refused = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+
+    assert created.exit_code == 0, created.output
+    assert f"no incident angle recorded for: {unrecorded.name}" in created.output
+    assert f"#   {unrecorded.name}" in text
+    assert yaml.safe_load(text)["states"][0]["thetas"] == [0.45, None, 3.5]
+    assert refused.exit_code != 0
+    assert unrecorded.name in refused.output
+
+    document = yaml.safe_load(text)
+    document["states"][0]["thetas"][1] = 1.2  # a person fills in the blank
+    spec_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    filled = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+    assert filled.exit_code == 0, filled.output
+
+
+def test_model_new_leaves_a_series_angle_blank_when_nothing_records_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Slices carry no header; with no summed dataset, nothing on disk says."""
+    root = fresh_project(tmp_path)
+    data = root / "samples/S1/data"
+    write_partials(data / "steady", 100001)
+    write_partials(data / "steady", 100005)
+    write_slices(data / "tnr" / "100003", 100003)
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (root / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+    refused = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+
+    assert created.exit_code == 0, created.output
+    assert yaml.safe_load(text)["series"][0]["theta"] is None
+    assert "#   100003 (series" in text
+    assert refused.exit_code != 0
+    assert "no file of run 100003 in samples/S1/data/steady" in refused.output
 
 
 def test_model_new_produces_a_spec_that_generates(project: Path, monkeypatch) -> None:

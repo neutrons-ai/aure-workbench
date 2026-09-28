@@ -427,7 +427,7 @@ def to_spec(
         raise ImportError_(
             "A model spec needs at least one state. Pass the state block for "
             "the run AuRE fitted -- `commands.model.state_for_run` builds it "
-            "from the files on disk, with the angles read from their headers."
+            "from the files on disk, leaving each angle to its file's header."
         )
     stack = ordered_stack(model)
     names = _unique_names(stack)

@@ -435,9 +435,15 @@ def test_from_notes_merges_a_proposal_and_records_who_made_it(
     assert "PLACEHOLDER" not in written
     document = yaml.safe_load(written)
     assert [layer["name"] for layer in document["stack"]] == ["THF", "Cu", "Si"]
-    # and the measured angles are still the ones read from the headers,
-    # rounded but not rounded to the nominal settings
-    assert document["states"][0]["thetas"] == [0.4499, 1.2009]
+    # and the angles are still the files' own: the spec carries none, so no
+    # proposal can have changed them, and resolving reads each header.
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
+
+    assert "thetas" not in document["states"][0]
+    spec = load_spec(root / "samples/Sample1/models/m.yaml")
+    resolved = discover_measurements(spec, root)["run100001"]
+    assert [round(m.theta, 4) for m in resolved] == [0.4499, 1.2009]
 
 
 def test_from_notes_keeps_the_placeholder_when_the_reply_is_unusable(
