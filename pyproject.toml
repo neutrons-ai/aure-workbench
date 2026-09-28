@@ -115,9 +115,6 @@ dev = [
   "ruff>=0.15",
   "pre-commit>=3.4",
   "pip-audit>=2.7",
-  # Speaks the DevTools protocol to headless Chrome in the browser tests
-  # (tests/test_settings_page_browser.py); they skip without it.
-  "websockets>=13",
 ]
 docs = ["mkdocs-material>=9.5", "sphinx>=7.2", "myst-parser>=2.0"]
 all = ["nr-workbench[nexus,isaac,dev,docs]"]

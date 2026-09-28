@@ -48,7 +48,7 @@ def make_app(root: Path, **kwargs):
 def app(expt: Path):
     app = make_app(expt)
     yield app
-    app.config["NRW_EXPERIMENT"].stop()
+    app.config["NRW_EXPERIMENT"].reload()
 
 
 @pytest.fixture
@@ -171,7 +171,7 @@ def test_the_quick_look_plots_the_segments_not_the_combined_curve(
             if r["run"] == 234277
         )
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
     assert [c["label"] for c in body["curves"]] == ["234277#1", "234277#2", "234277#3"]
     assert [round(c["theta"], 2) for c in body["curves"]] == [0.45, 1.25, 3.5]
@@ -869,6 +869,133 @@ def test_an_apply_on_a_dead_mount_is_a_504(app, writer, dead_mount) -> None:
 
     assert response.status_code == 504 and response.is_json
     assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize("how", ["replaced with its times kept", "chmod"])
+def test_a_file_touched_but_not_changed_can_still_be_read(
+    app, expt: Path, how: str
+) -> None:
+    """Its size and mtime as they were, its inode or change time not."""
+    import shutil
+
+    from nr_workbench.project.config import load_config
+
+    folder = Path(load_config(expt).raw["experiment"]["source"]["location"])
+    target = folder / "REFL_234277_1_234277_autoreduction.dat"
+    before = target.stat()
+    if how == "chmod":
+        target.chmod(0o640)
+    else:  # what `rsync -t` and `cp -p` do
+        copy = target.with_name("incoming.part")
+        shutil.copy2(target, copy)
+        os.replace(copy, target)
+    after = target.stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)
+    app.config["NRW_EXPERIMENT"].live.scan_once()
+
+    looked = app.test_client().get("/api/experiment/runs/234277/curves").get_json()
+
+    assert looked["problems"] == []
+    assert len(looked["curves"]) == 3
+
+
+def short_deadline(app, monkeypatch):
+    """The app's reads, rebuilt with a deadline a test can wait out, and listed once."""
+    from nr_workbench.web import experiment as experiment_module
+
+    monkeypatch.setattr(experiment_module, "SOURCE_TIMEOUT", 0.3)
+    data = app.config["NRW_EXPERIMENT"]
+    data.reload()
+    data.live.scan_once()
+    return data
+
+
+def test_an_apply_while_the_poller_is_stuck_on_a_dead_mount_is_a_504(
+    app, writer, monkeypatch
+) -> None:
+    """The background poll holds its lock while it waits; apply says so, not a 500."""
+    import threading
+
+    from nr_workbench.experiment.sources.local import LocalDirectorySource
+
+    assert assign(writer, app).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    data = short_deadline(app, monkeypatch)
+    gate, entered = threading.Event(), threading.Event()
+    real = LocalDirectorySource.inventory
+
+    def stuck(self):
+        entered.set()
+        gate.wait(30)
+        return real(self)
+
+    monkeypatch.setattr(LocalDirectorySource, "inventory", stuck)
+    poll = threading.Thread(target=data.live.scan_once, daemon=True)
+    poll.start()
+    assert entered.wait(5)  # the poll now holds the scan lock
+    try:
+        started = time.monotonic()
+        response = writer.post(
+            "/api/experiment/apply",
+            json={"plan_id": plan["plan_id"]},
+            headers=write_headers(app),
+        )
+        waited = time.monotonic() - started
+    finally:
+        gate.set()
+        poll.join(timeout=5)
+
+    assert response.status_code == 504, response.get_json()
+    assert "poll of the data source has been running" in response.get_json()["error"]
+    assert waited < 5
+
+
+def test_quick_looks_cannot_use_up_the_reads_an_apply_needs(
+    app, writer, expt: Path, monkeypatch
+) -> None:
+    """Anyone who can see the pages can ask for a quick look; only a link holder applies."""
+    import threading
+
+    from nr_workbench.experiment.sources.local import LocalDirectorySource
+    from nr_workbench.web.experiment import READ_SLOTS
+
+    assert assign(writer, app).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    short_deadline(app, monkeypatch)
+    gate = threading.Event()
+    real = LocalDirectorySource.read_bytes
+    hung: list[str] = []
+
+    def read_bytes(self, file, *, max_bytes):
+        if len(hung) < READ_SLOTS:  # the first few hang, as on a dead mount
+            hung.append(file.name)
+            gate.wait(30)
+        return real(self, file, max_bytes=max_bytes)
+
+    monkeypatch.setattr(LocalDirectorySource, "read_bytes", read_bytes)
+    viewer = app.test_client()
+    try:
+        looks = [
+            viewer.get("/api/experiment/runs/234277/curves") for _ in range(READ_SLOTS)
+        ]
+        busy = viewer.get("/api/experiment/runs/234277/curves")
+        applied = writer.post(
+            "/api/experiment/apply",
+            json={"plan_id": plan["plan_id"]},
+            headers=write_headers(app),
+        )
+    finally:
+        gate.set()
+        for thread in threading.enumerate():
+            if thread.name == "nrw-source-read":
+                thread.join(timeout=5)
+
+    assert [look.status_code for look in looks] == [504] * READ_SLOTS
+    # Said once, for the request -- not once per segment in a 200.
+    assert busy.status_code == 409 and busy.get_json()["kind"] == "Busy"
+    assert applied.status_code == 200, applied.get_json()
+    steady = expt / "samples" / "Sample6" / "data" / "steady"
+    assert len(list(steady.glob("REFL_234277_*"))) == 3
 
 
 # --------------------------------------------------------------------------

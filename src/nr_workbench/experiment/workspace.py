@@ -206,7 +206,8 @@ def check_source(
 
     The one check behind the Settings page's "Check folder" and ``nrw
     experiment settings --check``. A setting the change leaves out keeps the
-    value ``nrw.toml`` gives it; only the IPTS and the location matter.
+    value ``nrw.toml`` gives it; only the IPTS, the source's kind and its
+    location matter.
 
     Args:
         root: Project root.
@@ -224,7 +225,11 @@ def check_source(
     from nr_workbench.project.config import ProjectConfigError
     from nr_workbench.project.settings import SettingsError
 
-    wanted = {k: v for k, v in changes.items() if k in ("ipts", "source.location")}
+    wanted = {
+        k: v
+        for k, v in changes.items()
+        if k in ("ipts", "source.kind", "source.location")
+    }
     try:
         source, config, warnings = candidate_source(root, wanted)
     except (ProjectConfigError, SourceUnavailableError) as exc:

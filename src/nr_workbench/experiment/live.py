@@ -24,9 +24,10 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
+from nr_workbench.bounded import TimedOut
 from nr_workbench.experiment.inventory import (
     Announcement,
     FeedUpdate,
@@ -282,13 +283,14 @@ class LiveInventory:
         poll to finish and then polls again.
 
         Raises:
-            TimeoutError: The poll already under way did not finish in time --
-                usually a data mount that has stopped answering.
+            TimedOut: The poll already under way did not finish in time --
+                usually a data mount that has stopped answering. The same
+                failure as a read that timed out, so it is answered the same.
         """
         if not self._scan_lock.acquire(timeout=timeout):
-            raise TimeoutError(
-                f"a poll of the data source has been running for more than "
-                f"{timeout:.0f}s"
+            raise TimedOut(
+                f"A poll of the data source has been running for more than "
+                f"{timeout:g}s; the data mount may be unavailable."
             )
         try:
             return self._scan_locked()
@@ -351,7 +353,14 @@ class LiveInventory:
             view = RunView(key, run, announced.get(key.run), status, generation)
             old = previous.runs.get(key)
             if old is not None and old.signature() == view.signature():
-                view = old
+                # Nothing worth sending, so it keeps its generation -- but it
+                # keeps this listing's files, not the last one's. A file can
+                # get a new inode or change time with its size and mtime as
+                # they were (a chmod, `rsync -t`, a hard link), and every read
+                # checks the version it was listed with: with the old listing
+                # kept, the run could be neither looked at nor applied until
+                # something else about it changed.
+                view = replace(view, changed=old.changed)
             else:
                 changed = True
             views[key] = view

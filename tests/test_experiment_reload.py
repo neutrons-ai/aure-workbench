@@ -35,7 +35,7 @@ def data(project: Path, folders):
     save(project, {"source.location": str(folders[0])})
     experiment = ExperimentData(project, autostart=False)
     yield experiment
-    experiment.stop()
+    experiment.reload()
 
 
 def runs_shown(data: ExperimentData) -> list[int]:
@@ -85,7 +85,7 @@ def test_a_request_holding_the_old_poller_does_not_restart_it(
         assert scan_threads() - running == set()
         assert data.live is not old
     finally:
-        data.stop()
+        data.reload()
 
 
 def test_the_source_and_the_poller_come_from_one_configuration(

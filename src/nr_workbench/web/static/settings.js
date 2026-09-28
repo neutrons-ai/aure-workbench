@@ -326,8 +326,11 @@
     status.textContent = "checking…";
     $("s-check").disabled = true;
     const body = { location: $("s-default").checked ? null : $("s-location").value.trim() };
+    // Whatever the save would change about the source, the check reads too.
     const ipts = $("s-ipts").value.trim();
     if (ipts !== (shown.values.ipts || "")) body.ipts = ipts;
+    const kind = checked("s-source");
+    if (kind && kind !== effective("source.kind")) body.kind = kind;
     try {
       const found = await api("POST", "/api/experiment/settings/check", body);
       status.textContent = "";

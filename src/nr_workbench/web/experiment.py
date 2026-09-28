@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nr_workbench.bounded import Bounded, TimedOut
+from nr_workbench.bounded import Bounded, Busy, TimedOut
 from nr_workbench.experiment.model import (
     Catalog,
     RunChange,
@@ -50,8 +50,13 @@ from nr_workbench.experiment.views import (
 from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
 
-#: Reads of the data source that may be waiting at once, per configuration.
+#: Reads of the data source that may be waiting at once, per configuration:
+#: quick looks and plan reviews, which anyone who can see the pages may ask for.
 READ_SLOTS = 4
+
+#: Apply's own reads, apart from those: an apply is started only with the
+#: link, one at a time, so nobody who can only view the pages can use them up.
+APPLY_SLOTS = 2
 
 #: Most files one run's quick look reads. A run has three or four; a folder
 #: anyone on the team can write to could hold a thousand under one run number.
@@ -127,11 +132,12 @@ class _Wiring:
             one of them even within one tick of a coarse clock.
         revision: Its sha256, to tell an edit from a touch.
         workspace: Source, feed and catalog store built from it.
-        source: The source, every byte read bounded.
+        source: The source, every byte read bounded, for anyone's reads.
         live: The background poller over that source.
         reads: The deadline and the slots those reads run under -- this
             wiring's own, so reads stuck on the old folder's dead mount do not
             also take the new folder's.
+        applying: Apply's deadline and slots, apart from everyone else's.
     """
 
     stamp: tuple[int, int, int, int] | None
@@ -140,10 +146,11 @@ class _Wiring:
     source: _BoundedSource
     live: Any
     reads: Bounded
+    applying: Bounded
 
-    def bounded(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        """Run ``function`` under this wiring's deadline."""
-        return self.reads.run(function, *args, **kwargs)
+    def source_for_apply(self) -> _BoundedSource:
+        """The source, every byte read under apply's own slots."""
+        return _BoundedSource(self.workspace.source, self.applying.run)
 
     def close(self) -> None:
         """Retire it: its poller stops for good."""
@@ -247,13 +254,7 @@ class ExperimentData:
 
         workspace = Workspace(self.root)
         reads = Bounded(
-            slots=READ_SLOTS,
-            timeout=SOURCE_TIMEOUT,
-            busy=(
-                "Reads of the data source are already waiting for an answer -- "
-                "the data mount may be unavailable."
-            ),
-            name="nrw-source-read",
+            slots=READ_SLOTS, timeout=SOURCE_TIMEOUT, name="nrw-source-read"
         )
         return _Wiring(
             stamp=stamp,
@@ -262,6 +263,9 @@ class ExperimentData:
             source=_BoundedSource(workspace.source, reads.run),
             live=workspace.live(clock=self._clock, autostart=self._autostart),
             reads=reads,
+            applying=Bounded(
+                slots=APPLY_SLOTS, timeout=SOURCE_TIMEOUT, name="nrw-apply-read"
+            ),
         )
 
     @property
@@ -289,8 +293,6 @@ class ExperimentData:
             wiring, self._wiring = self._wiring, None
         if wiring is not None:
             wiring.close()
-
-    stop = reload
 
     def catalogued_runs(self) -> int | None:
         """How many runs the catalog holds; ``None`` when it cannot be read."""
@@ -426,8 +428,8 @@ class ExperimentData:
             try:
                 data = source.read_bytes(source_file, max_bytes=MAX_FILE_BYTES)
                 curve = read_reduced_bytes(data, label=label, name=source_file.name)
-            except SourceTimeoutError:
-                raise
+            except (SourceTimeoutError, Busy):
+                raise  # the source, not this segment: said once, for the request
             except Exception as exc:  # noqa: BLE001 - one unreadable segment is a finding
                 problems.append(Problem(f"curve:{label}", str(exc)).as_dict())
                 continue
@@ -635,15 +637,17 @@ class ExperimentData:
             raise RequestError("plan_id is required: review the plan before applying")
         catalog = self._catalog_or_raise(w)
         # A fresh poll, not the last snapshot: completeness is judged now.
-        # Under the deadline, because the poll itself lists the source.
-        snapshot = w.bounded(w.live.scan_fresh, SOURCE_TIMEOUT)
+        # Under the deadline, because the poll itself lists the source. The
+        # wait for a poll already under way gets half of it, so a poller stuck
+        # on a dead mount is what the answer names.
+        snapshot = w.applying.run(w.live.scan_fresh, w.applying.timeout / 2)
         runs, statuses = self._observed(snapshot)
         report = apply(
             self.root,
             catalog,
             runs,
             statuses,
-            w.source,
+            w.source_for_apply(),
             w.workspace.render_context(),
             expected_plan_id=plan_id,
             samples=_sample_list(samples),

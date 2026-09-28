@@ -8,20 +8,25 @@ be edited. Each also fails on any script error or security violation the page
 raises, which is how a broken nonce or a typo in settings.js would show.
 
 Headless Chrome, driven over the DevTools protocol against an in-process
-server. Skipped where there is no Chrome, or no ``websockets`` to speak the
-protocol with (it is not a dependency of nr-workbench).
+server. The protocol runs over two pipes (``--remote-debugging-pipe``), never
+a port: a DevTools port answers anyone on the machine, and on a shared
+analysis node another account could drive this browser while the tests run --
+open ``file://`` pages, and read whatever the developer can. Skipped where
+there is no Chrome, and on Windows, where the pipes are not file descriptors.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import secrets
+import select
 import shutil
-import subprocess
+import signal
 import threading
 import time
-import urllib.request
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,9 +38,12 @@ from nr_workbench.project.config import load_config
 
 from .experiment_fixtures import write_autoreduced
 
-pytestmark = pytest.mark.integration
-
-TOKEN = "browser-token"
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.name == "nt", reason="Chrome's DevTools pipes need POSIX descriptors"
+    ),
+]
 
 
 def _chrome() -> str | None:
@@ -56,8 +64,134 @@ def _chrome() -> str | None:
 # --------------------------------------------------------------------------
 
 
+def _pipe_above(low: int) -> tuple[int, int]:
+    """A pipe whose two ends are numbered above ``low``.
+
+    Chrome's ends are placed on descriptors 3 and 4. Were one of them already
+    3 or 4, placing the other could overwrite it first.
+    """
+    import fcntl
+
+    ends = []
+    for end in os.pipe():
+        if end > low:
+            ends.append(end)
+        else:
+            ends.append(fcntl.fcntl(end, fcntl.F_DUPFD_CLOEXEC, low + 1))
+            os.close(end)
+    return ends[0], ends[1]
+
+
+class Browser:
+    """Headless Chrome, spoken to over two pipes.
+
+    With ``--remote-debugging-pipe`` Chrome reads the protocol on its
+    descriptor 3 and answers on 4, each message ending in a NUL byte. Each tab
+    is a session on that one connection (``Target.attachToTarget`` with
+    ``flatten``), its messages carrying its ``sessionId``.
+    """
+
+    def __init__(self, chrome: str, profile: Path) -> None:
+        commands, self._commands = _pipe_above(4)  # Chrome reads, we write
+        self._replies, replies = _pipe_above(4)  # Chrome writes, we read
+        flags = [
+            "--headless=new",
+            "--remote-debugging-pipe",
+            f"--user-data-dir={profile}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--window-size=1300,1000",
+        ]
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            flags.append("--no-sandbox")  # Chrome refuses root otherwise (containers)
+        # posix_spawn, not subprocess: it can place the two ends exactly, and
+        # safely with the server's threads running, which preexec_fn cannot.
+        self.pid = os.posix_spawn(
+            chrome,
+            [chrome, *flags, "about:blank"],
+            dict(os.environ),
+            file_actions=[
+                (os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0),
+                (os.POSIX_SPAWN_OPEN, 1, os.devnull, os.O_WRONLY, 0),
+                (os.POSIX_SPAWN_OPEN, 2, os.devnull, os.O_WRONLY, 0),
+                (os.POSIX_SPAWN_DUP2, commands, 3),
+                (os.POSIX_SPAWN_DUP2, replies, 4),
+            ],
+        )
+        os.close(commands)
+        os.close(replies)
+        self._buffer = b""
+        self._next = 0
+        self._pages: dict[str, Page] = {}
+
+    def send(
+        self, method: str, *, session: str | None = None, **params: Any
+    ) -> dict[str, Any]:
+        """One command, and its answer; events that arrive meanwhile go to their tab."""
+        self._next += 1
+        ident = self._next
+        message: dict[str, Any] = {"id": ident, "method": method, "params": params}
+        if session is not None:
+            message["sessionId"] = session
+        data = memoryview(json.dumps(message).encode() + b"\0")
+        while data:
+            data = data[os.write(self._commands, data) :]
+        deadline = time.monotonic() + 30
+        while True:
+            reply = self._receive(deadline)
+            if reply.get("id") == ident:
+                if "error" in reply:
+                    raise RuntimeError(f"{method}: {reply['error']}")
+                return reply.get("result", {})
+            page = self._pages.get(reply.get("sessionId", ""))
+            if page is not None:
+                page.note(reply)
+
+    def _receive(self, deadline: float) -> dict[str, Any]:
+        while b"\0" not in self._buffer:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("Chrome did not answer in time")
+            readable, _, _ = select.select([self._replies], [], [], left)
+            if readable:
+                chunk = os.read(self._replies, 1 << 16)
+                if not chunk:
+                    raise ConnectionError("Chrome closed its end of the pipe")
+                self._buffer += chunk
+        message, _, self._buffer = self._buffer.partition(b"\0")
+        return json.loads(message)
+
+    def open(self) -> Page:
+        target = self.send("Target.createTarget", url="about:blank")["targetId"]
+        session = self.send("Target.attachToTarget", targetId=target, flatten=True)[
+            "sessionId"
+        ]
+        page = Page(self, session, target)
+        self._pages[session] = page
+        for domain in ("Runtime", "Page", "Log"):
+            page.send(f"{domain}.enable")
+        return page
+
+    def close_page(self, page: Page) -> None:
+        self._pages.pop(page.session, None)
+        self.send("Target.closeTarget", targetId=page.target)
+
+    def close(self) -> None:
+        """Close the pipes, which ends Chrome; kill it if it lingers."""
+        for end in (self._commands, self._replies):
+            os.close(end)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if os.waitpid(self.pid, os.WNOHANG)[0]:
+                return
+            time.sleep(0.05)
+        os.kill(self.pid, signal.SIGKILL)
+        os.waitpid(self.pid, 0)
+
+
 class Page:
-    """One tab, driven over the DevTools protocol.
+    """One tab.
 
     Collects what would tell a person the page is broken: uncaught script
     errors, ``console.error``, and anything the browser itself logs as an
@@ -65,25 +199,16 @@ class Page:
     Failed requests are not collected: a 409 the page shows is the point.
     """
 
-    def __init__(self, connection: Any) -> None:
-        self._ws = connection
-        self._next = 0
+    def __init__(self, browser: Browser, session: str, target: str) -> None:
+        self.browser = browser
+        self.session = session
+        self.target = target
         self.errors: list[str] = []
 
     def send(self, method: str, **params: Any) -> dict[str, Any]:
-        self._next += 1
-        ident = self._next
-        self._ws.send(json.dumps({"id": ident, "method": method, "params": params}))
-        deadline = time.monotonic() + 30
-        while True:
-            message = json.loads(self._ws.recv(timeout=deadline - time.monotonic()))
-            if message.get("id") == ident:
-                if "error" in message:
-                    raise RuntimeError(f"{method}: {message['error']}")
-                return message.get("result", {})
-            self._note(message)
+        return self.browser.send(method, session=self.session, **params)
 
-    def _note(self, message: dict[str, Any]) -> None:
+    def note(self, message: dict[str, Any]) -> None:
         method, params = message.get("method"), message.get("params", {})
         if method == "Runtime.exceptionThrown":
             detail = params["exceptionDetails"]
@@ -145,68 +270,39 @@ class Page:
 
 
 @pytest.fixture(scope="module")
-def devtools(tmp_path_factory) -> Iterator[int]:
-    """A headless Chrome for this module's tests; yields its DevTools port."""
-    pytest.importorskip("websockets.sync.client")
+def browser(tmp_path_factory) -> Iterator[Browser]:
+    """A headless Chrome for this module's tests."""
     chrome = _chrome()
     if chrome is None:
         pytest.skip("no Chrome or Chromium here (set NRW_TEST_CHROME to use one)")
-    profile = tmp_path_factory.mktemp("chrome-profile")
-    command = [
-        chrome,
-        "--headless=new",
-        "--remote-debugging-port=0",
-        f"--user-data-dir={profile}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-extensions",
-        "--window-size=1300,1000",
-    ]
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        command.append("--no-sandbox")  # Chrome refuses root otherwise (containers)
-    process = subprocess.Popen(
-        [*command, "about:blank"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    started = Browser(chrome, tmp_path_factory.mktemp("chrome-profile"))
     try:
-        # Port 0 lets Chrome choose; it writes the one it chose here.
-        active = profile / "DevToolsActivePort"
-        deadline = time.monotonic() + 30
-        while not (active.exists() and len(active.read_text().splitlines()) >= 2):
-            if time.monotonic() > deadline or process.poll() is not None:
-                pytest.skip("Chrome did not start its DevTools server")
-            time.sleep(0.1)
-        yield int(active.read_text().splitlines()[0])
-    finally:
-        process.terminate()
         try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
+            started.send("Browser.getVersion")
+        except (TimeoutError, ConnectionError) as exc:
+            pytest.skip(f"Chrome did not start: {exc}")
+        yield started
+    finally:
+        started.close()
 
 
 @pytest.fixture
-def page(devtools: int) -> Iterator[Page]:
+def page(browser: Browser) -> Iterator[Page]:
     """A fresh tab; the test fails if the page raised an error in it."""
-    from websockets.sync.client import connect
-
-    request = urllib.request.Request(
-        f"http://127.0.0.1:{devtools}/json/new?about:blank", method="PUT"
-    )
-    with urllib.request.urlopen(request, timeout=10) as response:
-        target = json.load(response)
+    tab = browser.open()
     try:
-        with connect(target["webSocketDebuggerUrl"], max_size=None) as connection:
-            tab = Page(connection)
-            for domain in ("Runtime", "Page", "Log"):
-                tab.send(f"{domain}.enable")
-            yield tab
-            assert tab.errors == []
+        yield tab
+        assert tab.errors == []
     finally:
-        urllib.request.urlopen(
-            f"http://127.0.0.1:{devtools}/json/close/{target['id']}", timeout=10
-        ).close()
+        browser.close_page(tab)
+
+
+@dataclass(frozen=True)
+class Site:
+    """A served project: its address, and the one-time link `nrw serve` prints."""
+
+    url: str
+    link: str
 
 
 @pytest.fixture
@@ -230,27 +326,33 @@ def facility(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def serve(fresh: Path) -> Iterator[str]:
-    """The project served on a free port, as `nrw serve` would; yields its URL."""
+def site(fresh: Path) -> Iterator[Site]:
+    """The project served on a free port, as `nrw serve` would.
+
+    Its link is as unguessable as `nrw serve`'s: the server listens on the
+    machine's loopback, which other accounts on it can reach.
+    """
     from werkzeug.serving import make_server
 
     from nr_workbench.web.app import create_app
 
-    app = create_app(fresh, token=TOKEN, autostart=False)
+    token = secrets.token_urlsafe(24)
+    app = create_app(fresh, token=token, autostart=False)
     server = make_server("127.0.0.1", 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    url = f"http://127.0.0.1:{server.server_port}"
     try:
-        yield f"http://127.0.0.1:{server.server_port}"
+        yield Site(url=url, link=f"{url}/auth/{token}")
     finally:
         server.shutdown()
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
 
-def open_settings(page: Page, base: str) -> None:
+def open_settings(page: Page, site: Site) -> None:
     """Open the one-time link, then Settings, and wait for it to be editable."""
-    page.goto(f"{base}/auth/{TOKEN}")
-    page.goto(f"{base}/settings")
+    page.goto(site.link)
+    page.goto(f"{site.url}/settings")
     page.wait_for("!document.getElementById('s-save').disabled", what="editable")
 
 
@@ -264,9 +366,9 @@ def location_of(facility: Path) -> str:
 
 
 def test_the_link_lands_on_settings_and_the_default_path_follows_the_ipts(
-    page: Page, serve: str
+    page: Page, site: Site
 ) -> None:
-    page.goto(f"{serve}/auth/{TOKEN}")
+    page.goto(site.link)
     page.wait_for("location.pathname === '/settings'", what="landing on Settings")
     page.wait_for("!document.getElementById('s-save').disabled", what="editable")
     assert "needs the IPTS" in page.text("s-default-path")
@@ -277,9 +379,9 @@ def test_the_link_lands_on_settings_and_the_default_path_follows_the_ipts(
 
 
 def test_a_folder_check_shows_what_the_server_found_run_by_run(
-    page: Page, serve: str, facility: Path
+    page: Page, site: Site, facility: Path
 ) -> None:
-    open_settings(page, serve)
+    open_settings(page, site)
     page.type("s-ipts", "34347")
     page.type("s-location", location_of(facility))
 
@@ -296,10 +398,10 @@ def test_a_folder_check_shows_what_the_server_found_run_by_run(
 
 
 def test_a_refused_value_says_why_and_writes_nothing_and_a_good_one_saves(
-    page: Page, serve: str, fresh: Path, facility: Path
+    page: Page, site: Site, fresh: Path, facility: Path
 ) -> None:
     before = (fresh / "nrw.toml").read_bytes()
-    open_settings(page, serve)
+    open_settings(page, site)
     page.type("s-poll", "1")
 
     page.click("s-save")
@@ -327,9 +429,9 @@ def test_a_refused_value_says_why_and_writes_nothing_and_a_good_one_saves(
 
 
 def test_a_hand_edit_while_the_page_is_open_is_kept_and_the_page_reloads(
-    page: Page, serve: str, fresh: Path
+    page: Page, site: Site, fresh: Path
 ) -> None:
-    open_settings(page, serve)
+    open_settings(page, site)
     toml = fresh / "nrw.toml"
     toml.write_text(
         toml.read_text(encoding="utf-8").replace(
@@ -361,7 +463,7 @@ def test_a_hand_edit_while_the_page_is_open_is_kept_and_the_page_reloads(
 
 
 def test_a_change_the_server_wants_confirmed_is_asked_once_and_sent_again(
-    page: Page, serve: str, fresh: Path
+    page: Page, site: Site, fresh: Path
 ) -> None:
     from nr_workbench.experiment.model import RunChange, RunKey
     from nr_workbench.experiment.workspace import Workspace
@@ -371,7 +473,7 @@ def test_a_change_the_server_wants_confirmed_is_asked_once_and_sent_again(
     Workspace(fresh).store.update(
         runs=[RunChange(RunKey(234277), 0, {"sample_id": "Sample1"})]
     )
-    open_settings(page, serve)
+    open_settings(page, site)
     page.js("window.asked = []; window.confirm = m => (window.asked.push(m), false)")
     page.type("s-ipts", "34348")
 
@@ -396,7 +498,7 @@ def test_a_change_the_server_wants_confirmed_is_asked_once_and_sent_again(
 
 
 def test_a_file_nrw_cannot_edit_shows_the_lines_to_add_and_keeps_the_form(
-    page: Page, serve: str, fresh: Path
+    page: Page, site: Site, fresh: Path
 ) -> None:
     toml = fresh / "nrw.toml"
     toml.write_text(
@@ -405,7 +507,7 @@ def test_a_file_nrw_cannot_edit_shows_the_lines_to_add_and_keeps_the_form(
         encoding="utf-8",
     )
     before = toml.read_bytes()
-    open_settings(page, serve)
+    open_settings(page, site)
     page.type("s-settle", "60")
 
     page.click("s-save")

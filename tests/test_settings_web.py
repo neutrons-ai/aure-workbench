@@ -74,7 +74,7 @@ def test_reading_the_settings_does_not_start_the_poller(expt: Path) -> None:
         assert (page.status_code, api.status_code) == (200, 200)
         assert scan_threads() - before == set()
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
 
 def make_polling_app(root: Path):
@@ -96,7 +96,7 @@ def test_an_ipts_in_the_projects_path_is_offered(tmp_path: Path, monkeypatch) ->
     try:
         payload = app.test_client().get("/api/experiment/settings").get_json()
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
     assert payload["suggested_ipts"] == "IPTS-34347"
     assert payload["effective"]["needs_setup"] is True
@@ -242,11 +242,22 @@ def test_two_saves_at_the_same_moment_write_one_and_refuse_the_other(
 def test_an_apply_reviewed_before_the_data_folder_changed_is_refused(
     app, writer, expt: Path, tmp_path: Path
 ) -> None:
-    """The same run, in another folder: the reviewed plan is not this one."""
+    """The very same files, in another folder: the reviewed plan is not this one.
+
+    Hard links, made before the review, so every file's version -- inode,
+    size and times -- is the same in both folders, and only the source itself
+    tells the two plans apart.
+    """
+    import os
+
     from .test_experiment_web import assign
 
+    facility = Path(load_config(expt).raw["experiment"]["source"]["location"])
     elsewhere = tmp_path / "elsewhere"
-    write_autoreduced(elsewhere, 234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
+    elsewhere.mkdir()
+    for path in facility.glob("REFL_*"):
+        os.link(path, elsewhere / path.name)
+    app.config["NRW_EXPERIMENT"].live.scan_once()  # linking touched each inode
     assert assign(writer, app).status_code == 200
     plan = writer.get("/api/experiment/apply").get_json()
     assert plan["writes"]
@@ -257,6 +268,9 @@ def test_an_apply_reviewed_before_the_data_folder_changed_is_refused(
         changes={"source.location": str(elsewhere)},
     )
     assert moved.status_code == 200, moved.get_json()
+    # The new folder's poller has looked once, as it would have by the time
+    # anyone clicked: a run is settled only once it is seen unchanged twice.
+    app.config["NRW_EXPERIMENT"].live.scan_once()
 
     response = writer.post(
         "/api/experiment/apply",
@@ -265,6 +279,7 @@ def test_an_apply_reviewed_before_the_data_folder_changed_is_refused(
     )
 
     assert response.status_code == 409
+    assert response.get_json()["kind"] == "PlanChanged"
     assert not (expt / "samples" / "Sample6").exists()
 
 
@@ -402,6 +417,16 @@ def test_checking_is_refused_without_the_link(app, tmp_path: Path) -> None:
     response = check(app.test_client(), app, location=str(tmp_path))
 
     assert response.status_code == 403
+
+
+def test_a_check_reads_the_kind_of_source_the_save_would_set(
+    app, writer, tmp_path: Path
+) -> None:
+    """Not the kind nrw.toml has now: a check must read what would be watched."""
+    response = check(writer, app, location=str(tmp_path), kind="tiled")
+
+    assert response.status_code == 400
+    assert "not available yet" in response.get_json()["error"]
 
 
 def test_checking_a_folder_inside_the_project_is_a_400(app, writer, expt: Path) -> None:
@@ -546,7 +571,7 @@ def test_the_link_opens_settings_for_an_experiment_not_set_up(expt: Path) -> Non
     try:
         response = app.test_client().get(f"/auth/{TOKEN}")
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
     assert response.status_code == 303
     assert response.headers["Location"].endswith("/settings")
@@ -603,7 +628,7 @@ def test_a_malformed_nrw_toml_does_not_cost_the_one_time_link(expt: Path) -> Non
         (expt / "nrw.toml").write_text('beamtime = "oops"\n', encoding="utf-8")
         response = app.test_client().get(f"/auth/{TOKEN}")
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
     assert response.status_code == 303
     assert response.headers["Location"].endswith("/settings")
@@ -623,7 +648,7 @@ def test_the_landing_page_is_chosen_before_the_link_is_spent(
     try:
         response = app.test_client().get(f"/auth/{TOKEN}")
     finally:
-        app.config["NRW_EXPERIMENT"].stop()
+        app.config["NRW_EXPERIMENT"].reload()
 
     assert response.status_code == 303
     assert response.headers["Location"].endswith("/settings")

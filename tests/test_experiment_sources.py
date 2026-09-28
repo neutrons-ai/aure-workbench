@@ -192,6 +192,21 @@ def test_a_pipe_named_like_data_is_reported_and_never_opened(tmp_path: Path) -> 
     assert any("not plain files" in p.message for p in inventory.problems)
 
 
+def test_names_from_a_shared_folder_are_reported_escaped(tmp_path: Path) -> None:
+    """They reach terminals: an escape sequence in one could rewrite the screen."""
+    folder = tmp_path / "reduced"
+    write_autoreduced(folder, 234277, [1])
+    (folder / "\x1b]0;spoofed\x07.dat").mkdir()  # a folder named like data
+    (folder / "odd\x1b[2J.txt").write_text("x")  # a name nrw does not know
+    (folder / "link\x1b[1m.dat").symlink_to(folder / "odd\x1b[2J.txt")
+
+    problems = source_for(folder, ipts="IPTS-00001").inventory().problems
+
+    said = " ".join(p.message for p in problems)
+    assert "\x1b" not in said
+    assert said.count("\\x1b") == 3  # still named, so a person can find them
+
+
 def test_a_check_reports_a_link_named_like_data_and_does_not_count_it(
     tmp_path: Path,
 ) -> None:

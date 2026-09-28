@@ -239,6 +239,10 @@ def save_settings() -> Any:
 
 @experiment_api.post("/settings/check")
 def check_folder() -> Any:
-    """What a folder holds, before choosing it: ``{"location", "ipts"}``."""
+    """What a folder holds, before choosing it: ``{"location", "ipts", "kind"}``."""
     body = _body()
-    return jsonify(settings_data().check_folder(body.get("location"), body.get("ipts")))
+    return jsonify(
+        settings_data().check_folder(
+            body.get("location"), body.get("ipts"), body.get("kind")
+        )
+    )

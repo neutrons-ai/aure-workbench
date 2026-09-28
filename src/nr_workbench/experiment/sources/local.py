@@ -230,7 +230,7 @@ class LocalDirectorySource:
             problems.append(
                 Problem(
                     "source",
-                    f"{len(links)} symbolic link(s) not followed, e.g. {links[0]}. "
+                    f"{len(links)} symbolic link(s) not followed, e.g. {links[0]!r}. "
                     "A link in a shared folder can point anywhere this account "
                     "can read, so nrw never copies through one.",
                 )
@@ -240,7 +240,7 @@ class LocalDirectorySource:
                 Problem(
                     "source",
                     f"{len(special)} item(s) named like reduced data are not plain "
-                    f"files (e.g. {special[0]}): a folder, a pipe or a device, "
+                    f"files (e.g. {special[0]!r}): a folder, a pipe or a device, "
                     "which nrw never reads.",
                 )
             )
@@ -258,7 +258,7 @@ class LocalDirectorySource:
                 Problem(
                     "source",
                     f"{len(listed.unrecognized)} data file(s) match no known "
-                    f"reduced-file name, e.g. {listed.unrecognized[0]}. If this "
+                    f"reduced-file name, e.g. {listed.unrecognized[0]!r}. If this "
                     "is a new reduction format, instrument/reduced.py is where "
                     "nrw learns it.",
                 )

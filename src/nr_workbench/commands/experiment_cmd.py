@@ -639,7 +639,9 @@ def _check(project: Path, changes: dict[str, Any]) -> dict[str, Any]:
     from nr_workbench.experiment.workspace import check_source
     from nr_workbench.project.settings import SettingsError
 
-    once = Bounded(slots=1, timeout=SOURCE_TIMEOUT, busy="", name="nrw-folder-check")
+    once = Bounded(
+        slots=1, timeout=SOURCE_TIMEOUT, name="nrw-folder-check", what="The folder"
+    )
     try:
         return check_source(project, changes, run=once.run)
     except (SettingsError, TimedOut) as exc:

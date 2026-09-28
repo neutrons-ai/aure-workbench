@@ -56,6 +56,22 @@ def test_a_late_call_times_out_and_holds_its_slot_until_it_returns() -> None:
     assert runner.run(lambda: "started") == "started"
 
 
+def test_back_to_back_calls_on_one_slot_are_never_busy() -> None:
+    """The slot is back before the caller wakes, so its next call finds it free.
+
+    Switching threads as often as the interpreter allows, so a caller woken
+    before the slot was given back would be seen.
+    """
+    runner = bounded(slots=1)
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for _ in range(2000):
+            runner.run(lambda: None)
+    finally:
+        sys.setswitchinterval(interval)
+
+
 def test_a_call_that_cannot_start_gives_its_slot_back(monkeypatch) -> None:
     runner = bounded(slots=1)
 

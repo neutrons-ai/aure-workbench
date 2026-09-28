@@ -34,15 +34,30 @@ class Bounded:
     Args:
         slots: How many calls may run at once.
         timeout: Seconds a caller waits for one.
-        busy: What :class:`Busy` says when the slots are all taken.
         name: Name for the threads, for a stack dump of a stuck server.
+        what: What the calls wait on, as the messages name it.
+        busy: What :class:`Busy` says when the slots are all taken; by
+            default, that earlier calls to ``what`` are still waiting.
     """
 
-    def __init__(self, *, slots: int, timeout: float, busy: str, name: str) -> None:
+    def __init__(
+        self,
+        *,
+        slots: int,
+        timeout: float,
+        name: str,
+        what: str = "The data source",
+        busy: str | None = None,
+    ) -> None:
         self._slots = threading.BoundedSemaphore(slots)
         self.timeout = timeout
-        self._busy = busy
         self._name = name
+        self._what = what
+        self._busy = busy or (
+            f"Earlier calls to {what[:1].lower()}{what[1:]} are still waiting for "
+            "an answer -- the data mount may be unavailable. Try again once they "
+            "finish."
+        )
 
     def run(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """``function(*args, **kwargs)``, if it finishes within the deadline.
@@ -63,8 +78,11 @@ class Bounded:
             except BaseException as exc:  # noqa: BLE001 - handed to the caller
                 outcome["error"] = exc
             finally:
-                done.set()
+                # The slot first: a caller woken first could call again at
+                # once, find its own slot still taken, and be told "busy" by a
+                # source that answered.
                 self._slots.release()
+                done.set()
 
         try:
             threading.Thread(target=call, name=self._name, daemon=True).start()
@@ -73,7 +91,7 @@ class Bounded:
             raise
         if not done.wait(self.timeout):
             raise TimedOut(
-                f"The data source did not answer within {self.timeout:.0f}s; the "
+                f"{self._what} did not answer within {self.timeout:.0f}s; the "
                 "data mount may be unavailable."
             )
         if "error" in outcome:

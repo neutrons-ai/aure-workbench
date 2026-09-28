@@ -58,11 +58,12 @@ class SettingsData:
         self.checks = Bounded(
             slots=2,
             timeout=SOURCE_TIMEOUT,
+            name="nrw-folder-check",
+            what="The folder",
             busy=(
-                "Two folder checks are already waiting for an answer -- the data "
+                "Folder checks are already waiting for an answer -- the data "
                 "mount may be unavailable. Try again once they finish."
             ),
-            name="nrw-folder-check",
         )
 
     def needs_setup(self) -> bool:
@@ -126,7 +127,9 @@ class SettingsData:
             self._on_saved()
         return {"result": result.as_dict(), "settings": self.settings()}
 
-    def check_folder(self, location: Any, ipts: Any = None) -> dict[str, Any]:
+    def check_folder(
+        self, location: Any, ipts: Any = None, kind: Any = None
+    ) -> dict[str, Any]:
         """What a folder holds, before it is chosen as the data source.
 
         Behind the write gate, although it writes nothing: it lists whatever
@@ -138,6 +141,8 @@ class SettingsData:
             location: The location to try, placeholders allowed; ``None`` for
                 nrw's default.
             ipts: The IPTS to fill in, when the page is changing it too.
+            kind: The source kind, when the page is changing it too: a check
+                reads what the save would watch, and no other.
 
         Raises:
             SettingsError: The location is not one that could be saved (400).
@@ -150,6 +155,8 @@ class SettingsData:
         changes: dict[str, Any] = {"source.location": location}
         if ipts is not None:
             changes["ipts"] = ipts
+        if kind is not None:
+            changes["source.kind"] = kind
         return check_source(self.root, changes, run=self.checks.run)
 
     def _require_writable(self) -> None:
