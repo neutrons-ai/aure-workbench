@@ -3340,3 +3340,48 @@ person. `tomlfile.settings_in_comments` finds these, and the pages,
 them, with the line and how to switch it on. `nrw serve` now also prints the
 data folder, marked when it is nrw's default. The template says to remove the
 `#` from both the setting's line and its table's.
+
+### 2026-09-28: a shared catalog was built, reviewed, and withdrawn
+
+The catalog was moved beside the data, so that the projects of everyone on an
+experiment, and other programs, would share one set of parquet files. The
+attempt is on branch `shared-catalog-attempt` (8f18ba5..2d581f4), and was
+withdrawn before it was merged.
+
+**Why.** It turned plain files on a network mount into a database. A
+single-writer store had to learn:
+
+- detecting writes by other programs, and accepting or restoring them;
+- compare-and-swap saves;
+- a history of its own, because git no longer kept one;
+- group permissions for several accounts, and lock timeouts for NFS;
+- deadlines for a mount that stops answering;
+- moving existing projects over.
+
+That came to about 8,500 lines. The design, security and test reviews then
+found the bugs in exactly those seams:
+
+- rows written by another program reached `sample.md`, and so the unattended
+  agent's task, with none of the checks the page makes;
+- a share from the terminal left `nrw serve` writing a stray catalog in the
+  project;
+- a save queued behind a share was lost to it;
+- the tests could not tell which catalog a write had landed in;
+- the agent guard did not know the new commands.
+
+Each could be fixed, but all of them are the cost of the same choice.
+
+**Decision.** The catalog stays in the project's `experiment/`, shared the way
+the project is: through git. Sharing it between projects is a metadata
+service's job. That service is planned as `[experiment.catalog] kind =
+"api"`, listed as coming like Tiled and the web monitor. What a service store
+must do is in `docs/experiment-sources.md`. It is also what these reviews
+found: check records from elsewhere before rendering them, refuse stale edits
+by revision, answer within a deadline, and never fall back to local files.
+
+**Kept from the attempt**, because each fixes something in the project-local
+design too:
+
+- the sample editor keeps what was typed when the page reloads;
+- adopting a hand-written `sample.md` keeps the runs assigned on the page;
+- `nrw sample new` renders with the project's own context.
