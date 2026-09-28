@@ -376,11 +376,12 @@ class Segment(_Base):
 
     Attributes:
         file: Path to the reduced data, relative to the project root.
-        theta: Incident angle in degrees -- theta, not two-theta.
+        theta: Incident angle in degrees -- theta, not two-theta. Left out, it
+            is read from the file's header; given, it is checked against it.
     """
 
     file: str
-    theta: float
+    theta: float | None = None
 
 
 class State(_Base):
@@ -391,8 +392,13 @@ class State(_Base):
         condition: Free text, e.g. "OCV before EIS". Carried into the record.
         run: Run number, used to resolve ``segments: auto``.
         kind: ``partials`` (one file per angle) or ``combined``.
-        segments: Explicit segment list, or ``auto`` to resolve from ``run``.
-        thetas: Angles for ``segments: auto``.
+        segments: Explicit segment list, or ``auto`` to resolve from ``run``:
+            every segment of the run in ``data_dir``.
+        thetas: Angles for ``segments: auto``, in degrees, one per segment.
+            Left out -- or ``null`` in a place -- each is read from its file's
+            header; one given is checked against it. There is no default: an
+            angle assumed from habit sets the fit's wavelength axis, and a
+            wrong one is absorbed into the fit rather than reported.
         data_dir: Directory holding the files, relative to the project root.
     """
 
@@ -401,7 +407,7 @@ class State(_Base):
     run: int | None = None
     kind: StateKind = "partials"
     segments: list[Segment] | Literal["auto"] = "auto"
-    thetas: list[float] = Field(default_factory=lambda: [0.45, 1.2, 3.5])
+    thetas: list[float | None] | None = None
     data_dir: str | None = None
 
     @field_validator("name")
@@ -457,7 +463,10 @@ class Series(_Base):
         condition: Free text, e.g. "during EIS".
         run: Run number.
         reduced_dir: Directory of reduced slices, relative to the project root.
-        theta: Incident angle in degrees. tNR is a single angle.
+        theta: Incident angle in degrees; tNR is a single angle. The slices
+            carry no header, so left out it is read from the run's summed
+            dataset in the sample's ``data/steady``; given, it is checked
+            against that.
         select: Which slices to include.
         time_from: Where slice times come from. ``filename`` parses
             ``r<run>_t<seconds>.txt``; ``reduction_json`` reads the sidecar,
@@ -468,7 +477,7 @@ class Series(_Base):
     condition: str = ""
     run: int | None = None
     reduced_dir: str
-    theta: float = 0.6
+    theta: float | None = None
     select: SeriesSelect = Field(default_factory=SeriesSelect)
     time_from: Literal["filename", "reduction_json"] = "filename"
 

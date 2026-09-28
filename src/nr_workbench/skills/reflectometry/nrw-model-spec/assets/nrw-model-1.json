@@ -469,27 +469,34 @@
     },
     "Segment": {
       "additionalProperties": false,
-      "description": "One angle segment of a steady-state measurement.\n\nAttributes:\n    file: Path to the reduced data, relative to the project root.\n    theta: Incident angle in degrees -- theta, not two-theta.",
+      "description": "One angle segment of a steady-state measurement.\n\nAttributes:\n    file: Path to the reduced data, relative to the project root.\n    theta: Incident angle in degrees -- theta, not two-theta. Left out, it\n        is read from the file's header; given, it is checked against it.",
       "properties": {
         "file": {
           "title": "File",
           "type": "string"
         },
         "theta": {
-          "title": "Theta",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Theta"
         }
       },
       "required": [
-        "file",
-        "theta"
+        "file"
       ],
       "title": "Segment",
       "type": "object"
     },
     "Series": {
       "additionalProperties": false,
-      "description": "A time-resolved measurement: a state with a time axis.\n\nAttributes:\n    name: Identifier used in paths, ``in`` lists and ``constraints.series``.\n    condition: Free text, e.g. \"during EIS\".\n    run: Run number.\n    reduced_dir: Directory of reduced slices, relative to the project root.\n    theta: Incident angle in degrees. tNR is a single angle.\n    select: Which slices to include.\n    time_from: Where slice times come from. ``filename`` parses\n        ``r<run>_t<seconds>.txt``; ``reduction_json`` reads the sidecar,\n        which is the only source that also carries interval types.",
+      "description": "A time-resolved measurement: a state with a time axis.\n\nAttributes:\n    name: Identifier used in paths, ``in`` lists and ``constraints.series``.\n    condition: Free text, e.g. \"during EIS\".\n    run: Run number.\n    reduced_dir: Directory of reduced slices, relative to the project root.\n    theta: Incident angle in degrees; tNR is a single angle. The slices\n        carry no header, so left out it is read from the run's summed\n        dataset in the sample's ``data/steady``; given, it is checked\n        against that.\n    select: Which slices to include.\n    time_from: Where slice times come from. ``filename`` parses\n        ``r<run>_t<seconds>.txt``; ``reduction_json`` reads the sidecar,\n        which is the only source that also carries interval types.",
       "properties": {
         "name": {
           "title": "Name",
@@ -517,9 +524,16 @@
           "type": "string"
         },
         "theta": {
-          "default": 0.6,
-          "title": "Theta",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Theta"
         },
         "select": {
           "$ref": "#/$defs/SeriesSelect"
@@ -617,7 +631,7 @@
     },
     "State": {
       "additionalProperties": false,
-      "description": "A steady-state measurement of the sample under one condition.\n\nAttributes:\n    name: Identifier used in paths and ``in`` lists.\n    condition: Free text, e.g. \"OCV before EIS\". Carried into the record.\n    run: Run number, used to resolve ``segments: auto``.\n    kind: ``partials`` (one file per angle) or ``combined``.\n    segments: Explicit segment list, or ``auto`` to resolve from ``run``.\n    thetas: Angles for ``segments: auto``.\n    data_dir: Directory holding the files, relative to the project root.",
+      "description": "A steady-state measurement of the sample under one condition.\n\nAttributes:\n    name: Identifier used in paths and ``in`` lists.\n    condition: Free text, e.g. \"OCV before EIS\". Carried into the record.\n    run: Run number, used to resolve ``segments: auto``.\n    kind: ``partials`` (one file per angle) or ``combined``.\n    segments: Explicit segment list, or ``auto`` to resolve from ``run``:\n        every segment of the run in ``data_dir``.\n    thetas: Angles for ``segments: auto``, in degrees, one per segment.\n        Left out -- or ``null`` in a place -- each is read from its file's\n        header; one given is checked against it. There is no default: an\n        angle assumed from habit sets the fit's wavelength axis, and a\n        wrong one is absorbed into the fit rather than reported.\n    data_dir: Directory holding the files, relative to the project root.",
       "properties": {
         "name": {
           "title": "Name",
@@ -666,11 +680,26 @@
           "title": "Segments"
         },
         "thetas": {
-          "items": {
-            "type": "number"
-          },
-          "title": "Thetas",
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thetas"
         },
         "data_dir": {
           "anyOf": [

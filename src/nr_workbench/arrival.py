@@ -13,6 +13,7 @@ caller's judgement -- see :mod:`nr_workbench.experiment.status`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -40,13 +41,9 @@ def segment_problems(measurement: Any) -> str:
         The reason, or an empty string when the segments look like one run.
     """
     run = measurement.run
-    segments = sorted(measurement.partials)
-    if segments and segments != list(range(1, len(segments) + 1)):
-        return (
-            f"run {run} has angle segments {segments}, which are not "
-            "contiguous from 1. A segment is missing, or a file from another "
-            "run landed here."
-        )
+    gap = segment_gap(run, measurement.partials)
+    if gap:
+        return gap
 
     mismatched = _subrun_mismatches(measurement)
     if mismatched:
@@ -57,6 +54,27 @@ def segment_problems(measurement: Any) -> str:
             "the same measurement."
         )
 
+    return ""
+
+
+def segment_gap(run: int, segments: Iterable[int]) -> str:
+    """Why a run's segment numbers are not one whole measurement, or ``""``.
+
+    Only the numbering: 1, 2, 3 with none missing. Split out because resolving
+    a model spec needs this and not the subrun check beside it -- the subrun
+    usually, but not always, follows from the run number.
+
+    Args:
+        run: The run number, for the message.
+        segments: The segment numbers present.
+    """
+    numbers = sorted(segments)
+    if numbers and numbers != list(range(1, len(numbers) + 1)):
+        return (
+            f"run {run} has angle segments {numbers}, which are not "
+            "contiguous from 1. A segment is missing, or a file from another "
+            "run landed here."
+        )
     return ""
 
 
