@@ -27,10 +27,11 @@
     "clock-skew": "text-bg-danger",
     "not listed": "text-bg-light",
   };
+  /* sample.md is written by Apply, never by saving a sample: say when. */
   const MD_STATE = {
-    create: ["will be created", "text-bg-info"],
+    create: ["created when you apply", "text-bg-info"],
     unchanged: ["in step", "text-bg-success"],
-    upgrade: ["will be updated", "text-bg-info"],
+    upgrade: ["updated when you apply", "text-bg-info"],
     drifted: ["edited by hand", "text-bg-warning"],
     untracked: ["not written by nrw", "text-bg-warning"],
   };
