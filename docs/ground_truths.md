@@ -3147,7 +3147,8 @@ request, not the process. Every bounded call now goes through
 - a fixed number of slots, and a call that finds them all taken is refused at
   once rather than queued behind the mount.
 
-Reads get four slots and checks two. Each configuration of `nrw.toml` gets its
+Reads get four slots, apply two of its own, and checks two. Each configuration
+of `nrw.toml` gets its
 own read slots, so reads stuck on the old folder's dead mount do not block the
 new folder too. `SOURCE_TIMEOUT` (15 s) lives in `experiment/sources`, shared by
 the page, the folder check and `nrw experiment settings --check`. The CLI no
@@ -3183,3 +3184,60 @@ failed one run in three, and the fault was the page's. After a conflict it said
 message was false, and the form still held the refused change. It now reloads
 first, and says so only if the reload worked. The API tests could not see it:
 the server's answers were right, and only their order on the page was wrong.
+
+### 2026-09-26: the poller kept an old listing, and every read checked its versions
+
+A run's signature, which decides whether it changed, is built from its files'
+names, sizes and mtimes. Each file's version, which a read checks before it
+trusts the bytes, also carries the inode and the change time. When a poll found
+the signature unchanged, it kept the previous poll's record of the run, and with
+it the old versions. Anything that gives a file a new inode or change time but
+keeps its size and mtime then made the run unreadable: a quick look failed on
+every file, and apply refused to copy it, until something else about the run
+changed. That covers `chmod`, a hard link, and `rsync -t` or `cp -p` replacing
+the file. A poll now keeps its own listing and reuses only the old generation,
+so the page is not sent a change that shows nothing new.
+
+It was found by a test that failed to fail. To prove that a plan names its data
+source, the web test hard-linked the same files into a second folder, so that
+only the source would differ. The plan ids still differed without the source,
+because the review's plan held versions from before the links were made.
+
+### 2026-09-26: a DevTools port answers every account on the machine
+
+The first browser test started Chrome with `--remote-debugging-port`. That
+opens the DevTools protocol on loopback with no authentication, and on a shared
+analysis node another account could drive the test's browser while it ran:
+open `file://` pages, and read whatever the developer can. The test now uses
+`--remote-debugging-pipe`, so Chrome speaks the protocol on its descriptors 3
+and 4 and opens no port at all. That needs no `websockets` dependency, and had
+three traps:
+
+- `subprocess` cannot put a descriptor on a chosen number.
+- `preexec_fn` could, but it is unsafe with the test server's threads running.
+- Wrapping Chrome in `sh -c 'exec ... 3<&N'` needs N below 10: POSIX promises
+  only descriptors 0 to 9 in a redirection, and dash, Ubuntu's `/bin/sh`, keeps
+  to that.
+
+`os.posix_spawn` with `POSIX_SPAWN_DUP2` does it exactly. The pipe's ends are
+raised above 4 first, so placing one on 3 cannot overwrite the other. Each
+test's one-time link has a random token too: the in-process server is on the
+same shared loopback.
+
+### 2026-09-26: `TimeoutError` is not `TimedOut`, and other lessons from Bounded
+
+- **The API maps only nrw's own `TimedOut` to 504.** `Bounded` passes on
+  whatever the call raised. Apply's fresh poll waits for a poll already under
+  way, and on a dead mount the background poller holds that lock. The wait
+  raised a plain `TimeoutError`, which reached the page as a 500 "unexpected
+  error", with a traceback in the log. It now raises `TimedOut`. It also gets
+  half of the deadline, so a stuck poller is what the answer names.
+- **Viewers must not share a writer's slots.** Anyone who can see the pages
+  can ask for quick looks, and those shared four slots with apply. Four hung
+  reads made apply fail at once. Apply now has slots of its own, and only a
+  link holder can start an apply, one at a time. A quick look that finds its
+  own slots full answers 409 once, rather than a 200 carrying the same
+  sentence for every segment.
+- **Give the slot back before waking the caller.** Otherwise a caller whose
+  call has returned can call again at once, find the slot still taken, and be
+  told "busy" by a source that answered.
