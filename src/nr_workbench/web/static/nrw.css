@@ -262,9 +262,10 @@ tr.fit-story > td > span + span::before {
   text-decoration: none;
 }
 
+/* The type chooser at the width of its short names: "Add a type…" is only
+   ever read in the open list. */
 .expt-measurement .expt-type-field .form-select {
-  width: auto;
-  min-width: 6.5rem;
+  width: 6.5rem;
 }
 
 .expt-bulk .expt-type-field .form-control {

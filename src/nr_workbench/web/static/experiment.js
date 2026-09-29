@@ -543,7 +543,7 @@
       }
       const type = typeField(value("measurement"), "type of run " + row.run);
       const condition = el("input", {
-        className: "form-control form-control-sm",
+        className: "form-control form-control-sm mb-1",
         placeholder: "condition",
         "aria-label": "condition of run " + row.run,
         "data-field": "condition",
@@ -581,13 +581,15 @@
       condition.disabled = !editable;
       note.disabled = !editable;
       good.disabled = !editable;
+      // The condition on a line of its own: in the rail's width it is the
+      // field that needs the room ("-0.5 mA/cm2 after 2 h").
       const item = el("div", { className: "expt-measurement" }, [
-        el("div", { className: "d-flex gap-1 align-items-center mb-1" }, [
+        el("div", { className: "d-flex gap-2 align-items-center mb-1" }, [
           el("span", { className: "mono", text: String(row.run) }),
           type,
-          condition,
-          el("div", { className: "form-check form-switch mb-0 ms-1" }, [good, said]),
+          el("div", { className: "form-check form-switch mb-0 ms-auto" }, [good, said]),
         ]),
+        condition,
         note,
       ]);
       item.dataset.key = row.key;
