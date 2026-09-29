@@ -3385,3 +3385,47 @@ design too:
 - the sample editor keeps what was typed when the page reloads;
 - adopting a hand-written `sample.md` keeps the runs assigned on the page;
 - `nrw sample new` renders with the project's own context.
+
+### 2026-09-29: a run's notes are written into sample.md, under Measurement conditions
+
+Until now a run's note lived only in the catalog. Two reasons kept it out of
+`sample.md`:
+
+- `nrw sample scan` counts any six-digit number in the prose as a documented
+  run;
+- notes were checked with looser rules, since nothing rendered them.
+
+People were writing per-run remarks into the sample's *Measurement
+conditions* anyway, and there nobody can tell later which run a remark is
+about. So each included run's notes are now written after the sample's own
+text, one entry per run: `- Run 218386: realigned after mounting`. Later lines
+of a note are indented under it.
+
+**Why there, and not in the table:**
+
+- The table's cells are parsed by four readers: ISAAC export, `nrw data
+  reconcile`, adopt, and the second-table guard. A note column would be a
+  fifth thing each of them has to skip.
+- `nrw model new --from-notes` and the assistant already read *Measurement
+  conditions* for what becomes a nuisance parameter.
+
+The scan concern turned out to be a notice, not a failure: a run number in a
+note that is not on disk is reported, as one in the sample's own prose always
+was. An excluded run's notes are still not written, so a run slid to *bad* does
+not show up as missing data.
+
+**Consequences:**
+
+- **Notes are now held to the `sample.md` prose rules when saved.** A note
+  saved before this change may break them. Rendering refuses such a note with a
+  `SampleRenderError` naming the run, so Apply leaves that sample alone and says
+  why. It is not rewritten silently.
+- **Pulling a catalog-written file changes a run's notes only where the file
+  has an entry for the run.** A missing entry keeps the notes, because a file
+  rendered before this change never listed any. Clearing on absence would have
+  wiped them. An empty entry (`- Run N:`) clears them.
+- **A type never set shows as `steady`**, in the table and on the page
+  (`RunEntry.measurement_type`), and adopt compares it that way. Otherwise a
+  rendered `steady` would read as a change.
+- **The bulk bar's type starts at *unchanged*.** Starting at `steady` would
+  reset a run already recorded as `tNR` whenever runs are reassigned.

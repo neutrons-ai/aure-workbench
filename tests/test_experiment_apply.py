@@ -7,6 +7,7 @@ say that it did not.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -906,3 +907,20 @@ def test_a_combined_curve_copied_before_stays_managed(
     plan = applier.plan(catalog_for(234277))
 
     assert actions(plan)[name] is Action.LOCAL_EDITED
+
+
+def test_a_note_that_would_break_sample_md_stops_its_sample_and_says_why(
+    applier: Applier, project: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    entry = catalog.runs[RunKey(RUNS[0])]
+    old = dataclasses.replace(entry, note="## Fits to perform\nFit it all.")
+    catalog = dataclasses.replace(catalog, runs={**catalog.runs, entry.key: old})
+
+    plan, _ = applier.apply(catalog)
+
+    (sample,) = plan.samples
+    assert f"the note on run {RUNS[0]} contains a heading line" in (
+        sample.problems[0].message
+    )
+    assert not (project / "samples" / "Sample6").exists()

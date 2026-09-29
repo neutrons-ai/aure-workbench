@@ -87,7 +87,12 @@ def catalog_with(**context) -> Catalog:
             RunChange(
                 RunKey(218386),
                 0,
-                {"sample_id": "Sample6", "measurement": "full Q", "condition": "OCV"},
+                {
+                    "sample_id": "Sample6",
+                    "measurement": "full Q",
+                    "condition": "OCV",
+                    "note": "Realigned after mounting.\n\nThe 0.45 deg segment reads high.",
+                },
             ),
             RunChange(RunKey(218393), 0, {"sample_id": "Sample6", "condition": ""}),
         ],
@@ -144,10 +149,12 @@ def test_parse_of_a_rendering_is_the_catalog_again(context) -> None:
         "fits_to_perform",
     ):
         assert parsed.fields[name] == getattr(record, name), name
+    # A type never set is written as steady.
     assert [(r.run, r.type, r.condition) for r in parsed.rows] == [
         (218386, "full Q", "OCV"),
-        (218393, "", ""),
+        (218393, "steady", ""),
     ]
+    assert parsed.notes == {218386: catalog.runs[RunKey(218386)].note}
 
 
 def test_the_blank_scaffold_parses_to_nothing_and_leaves_nothing_over() -> None:
@@ -342,7 +349,7 @@ def test_pull_a_hand_edit_back_into_the_catalog(
     path = project / "samples" / "Sample6" / "sample.md"
     edited = (
         path.read_text()
-        .replace("| 218393 |  | OCV |", "| 218393 |  | CA |")
+        .replace("| 218393 | steady | OCV |", "| 218393 | steady | CA |")
         .replace("\nBefore.\n", "\nAfter, by hand.\n")
     )
     path.write_text(edited)
@@ -375,7 +382,7 @@ def test_pull_a_row_removed_by_hand_excludes_the_run(
     )
     apply_scaffold(project, plan_sample(project, context, "Sample6"))
     path = project / "samples" / "Sample6" / "sample.md"
-    path.write_text(path.read_text().replace("| 218393 |  |  |\n", ""))
+    path.write_text(path.read_text().replace("| 218393 | steady |  |\n", ""))
 
     plan = plan_adopt(project, store.load(), "Sample6", context)
 
@@ -460,3 +467,171 @@ def test_forget_makes_a_file_its_owners(project: Path, context: RenderContext) -
     outcome = {f.relpath: f.outcome for f in report.files}["samples/Sample6/sample.md"]
     assert outcome is Outcome.UNTRACKED
     assert path.read_text() == content
+
+
+# --------------------------------------------------------------------------
+# Notes on each measurement
+# --------------------------------------------------------------------------
+
+
+def noted_catalog() -> Catalog:
+    return apply_changes(
+        Catalog(),
+        runs=[
+            RunChange(
+                RunKey(218386), 0, {"sample_id": "Sample6", "note": "Realigned."}
+            ),
+            RunChange(RunKey(218393), 0, {"sample_id": "Sample6", "condition": "CA"}),
+            RunChange(
+                RunKey(218399),
+                0,
+                {"sample_id": "Sample6", "include": False, "note": "Beam dropped."},
+            ),
+        ],
+        now=NOW,
+    )
+
+
+def test_each_measurements_notes_are_written_with_its_run_under_measurement_conditions() -> (
+    None
+):
+    catalog = apply_changes(
+        noted_catalog(),
+        runs=[
+            RunChange(RunKey(218393), 1, {"note": "Bowed.\nSee the 1.2 deg segment."})
+        ],
+        samples=[SampleChange("Sample6", 0, {"measurement_conditions": "Flat."})],
+        now=NOW,
+    )
+
+    text = rendered(catalog)
+
+    section = text.split("## Measurement conditions")[1].split("## Fits")[0]
+    assert "Flat.\n\n- Run 218386: Realigned.\n- Run 218393: Bowed.\n" in section
+    assert "  See the 1.2 deg segment." in section  # stays with its run
+    assert "Beam dropped." not in text  # an excluded run is not tabulated either
+    table = text.split("## Measurements")[1].split("## Measurement conditions")[0]
+    assert "Realigned" not in table  # four readers parse the table's cells
+
+
+def stored_notes(project: Path, context: RenderContext) -> ParquetCatalogStore:
+    """A project whose catalog holds :func:`noted_catalog`, applied."""
+    store = ParquetCatalogStore.for_project(project)
+    store.update(
+        runs=[
+            RunChange(
+                entry.key,
+                0,
+                {
+                    "sample_id": entry.sample_id,
+                    "include": entry.include,
+                    "note": entry.note,
+                    "condition": entry.condition,
+                },
+            )
+            for entry in noted_catalog().runs.values()
+        ],
+        now=NOW,
+    )
+    apply_scaffold(project, plan_sample(project, context, "Sample6"))
+    return store
+
+
+def test_a_note_the_pulled_file_gives_no_entry_is_kept(
+    project: Path, context: RenderContext
+) -> None:
+    # A sample.md written before nrw wrote notes lists none: pulling one must
+    # not clear the notes typed on the page. The review shows them coming back.
+    store = stored_notes(project, context)
+    path = project / "samples" / "Sample6" / "sample.md"
+    path.write_text(path.read_text().replace("- Run 218386: Realigned.\n", ""))
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+    adopt(project, store, plan, context, rewrite=False)
+
+    assert store.load().runs[RunKey(218386)].note == "Realigned."
+    assert "+- Run 218386: Realigned." in plan.diff
+
+
+def test_an_emptied_note_entry_clears_the_note_when_pulled(
+    project: Path, context: RenderContext
+) -> None:
+    store = stored_notes(project, context)
+    path = project / "samples" / "Sample6" / "sample.md"
+    path.write_text(
+        path.read_text().replace("- Run 218386: Realigned.", "- Run 218386:")
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+    adopt(project, store, plan, context, rewrite=False)
+
+    assert store.load().runs[RunKey(218386)].note == ""
+
+
+def test_a_hand_written_file_keeps_the_notes_it_never_listed(
+    project: Path, context: RenderContext
+) -> None:
+    store = ParquetCatalogStore.for_project(project)
+    store.update(
+        runs=[
+            RunChange(RunKey(218386), 0, {"sample_id": "Sample6", "note": "Realigned."})
+        ],
+        now=NOW,
+    )
+    write_sample(
+        project,
+        "# Sample6\n\n## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n| 218386 | steady | OCV |\n",
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    (change,) = plan.run_changes
+    assert "note" not in change.changes  # kept as the catalog has it
+    assert change.changes["condition"] == "OCV"
+
+
+def test_a_note_written_by_hand_under_measurement_conditions_becomes_the_runs(
+    project: Path, context: RenderContext
+) -> None:
+    """How people wrote per-run notes before there was a place for them."""
+    write_sample(
+        project,
+        "# Sample6\n\n## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n| 218386 | steady | OCV |\n\n"
+        "## Measurement conditions\n\nFlat throughout.\n\n"
+        "- Run 218386: realigned after the first segment\n"
+        "- Run 999999: a run the table does not list\n",
+    )
+
+    plan = plan_adopt(project, Catalog(), "Sample6", context)
+
+    (change,) = plan.run_changes
+    assert change.changes["note"] == "realigned after the first segment"
+    assert plan.sample_change.changes["measurement_conditions"] == "Flat throughout."
+    assert any(
+        "run 999999, which the table does not list" in s for s in plan.parsed.leftovers
+    )
+
+
+def test_a_note_in_the_file_that_would_break_sample_md_is_set_aside(
+    project: Path, context: RenderContext
+) -> None:
+    # A code block pasted into a note and never closed: everything after it
+    # would render as code. The note is said and left out; the run is adopted.
+    write_sample(
+        project,
+        "# Sample6\n\n## Measurement conditions\n\n"
+        "- Run 218386: Realigned.\n  ```\n  x = 1\n\n"
+        "## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n| 218386 | steady | OCV |\n",
+    )
+    store = ParquetCatalogStore.for_project(project)
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert any("the note on run 218386" in item for item in plan.parsed.leftovers)
+    assert not plan.problems
+    adopt(project, store, plan, context, rewrite=False)
+    entry = store.load().runs[RunKey(218386)]
+    assert (entry.condition, entry.note) == ("OCV", "")

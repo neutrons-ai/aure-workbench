@@ -285,6 +285,12 @@
     select.append(el("option", { value: "__new__", text: "new sample…" }));
     if (current) select.value = current;
     $("expt-new-sample").classList.toggle("d-none", select.value !== "__new__");
+    // Rebuilt with the types now in use, keeping whatever was chosen. It
+    // starts at "unchanged": a type never set is steady anyway, and choosing
+    // steady here would reset runs already recorded as tNR.
+    const slot = $("expt-type-slot");
+    const chosen = slot.firstChild ? slot.firstChild.typeValue() : "";
+    slot.replaceChildren(typeField(chosen, "measurement type", "type (unchanged)"));
   }
 
   async function editRuns(fields, what) {
@@ -317,7 +323,7 @@
       return;
     }
     const fields = { sample_id: sample };
-    const type = $("expt-type").value.trim();
+    const type = $("expt-type-slot").firstChild.typeValue();
     const condition = $("expt-condition").value.trim();
     if (type) fields.measurement = type;
     if (condition) fields.condition = condition;
@@ -428,6 +434,169 @@
     });
   }
 
+  const NEW_TYPE = "__new__";
+
+  /* The types to offer: the built-in ones first, then every other type this
+   * experiment already uses -- the types in use are the list. */
+  function typeChoices(extra) {
+    const builtIn = state.payload.measurement_types || [];
+    const others = new Set();
+    state.rows.forEach(function (row) {
+      if (row.measurement) others.add(row.measurement);
+    });
+    if (extra) others.add(extra);
+    builtIn.forEach(function (type) {
+      others.delete(type);
+    });
+    return builtIn.concat(Array.from(others).sort());
+  }
+
+  /* A type chooser, with "Add a type…" opening a box to type a new one. */
+  function typeField(selected, label, unchanged) {
+    const select = el("select", { className: "form-select form-select-sm", "aria-label": label });
+    if (unchanged) select.append(el("option", { value: "", text: unchanged }));
+    typeChoices(selected).forEach(function (type) {
+      select.append(el("option", { value: type, text: type }));
+    });
+    select.append(el("option", { value: NEW_TYPE, text: "Add a type…" }));
+    select.value = selected || "";
+    const other = el("input", {
+      className: "form-control form-control-sm d-none",
+      placeholder: "new type",
+      "aria-label": "new " + label,
+    });
+    select.addEventListener("change", function () {
+      other.classList.toggle("d-none", select.value !== NEW_TYPE);
+      if (select.value === NEW_TYPE) other.focus();
+    });
+    const field = el("span", { className: "d-flex gap-1 expt-type-field" }, [select, other]);
+    field.typeValue = function () {
+      return select.value === NEW_TYPE ? other.value.trim() : select.value;
+    };
+    field.disable = function (off) {
+      select.disabled = off;
+      other.disabled = off;
+    };
+    return field;
+  }
+
+  /* The runs of one sample, in run order. */
+  function sampleRuns(id) {
+    return Array.from(state.rows.values()).filter(function (row) {
+      return row.sample === id;
+    }).sort(function (a, b) {
+      return a.run - b.run;
+    });
+  }
+
+  /* What one run's row in the editor shows, as the server has it. */
+  function runValues(row) {
+    return {
+      measurement: row.measurement || "",
+      condition: row.condition || "",
+      note: row.note || "",
+      include: row.include !== false,
+    };
+  }
+
+  /* What is in each run's row of the editor now, by run key. */
+  function typedRuns() {
+    const out = {};
+    document.querySelectorAll("#f-measurements .expt-measurement").forEach(function (item) {
+      out[item.dataset.key] = {
+        measurement: item.querySelector(".expt-type-field").typeValue(),
+        condition: item.querySelector("[data-field=condition]").value,
+        note: item.querySelector("[data-field=note]").value,
+        include: item.querySelector("[data-field=include]").checked,
+      };
+    });
+    return out;
+  }
+
+  /* The sample's measurements, one per run: its type and condition, which
+   * sample.md's table writes, and the notes on it, which go under
+   * Measurement conditions with the run named. What was typed and not saved
+   * is kept, as the fields above are. Returns what each run showed fresh. */
+  function renderMeasurements(id, base, same, editable) {
+    const typed = same ? typedRuns() : {};
+    const box = $("f-measurements");
+    box.replaceChildren();
+    const rows = sampleRuns(id);
+    if (!rows.length) {
+      box.append(el("p", {
+        className: "text-secondary mb-0",
+        text: "No runs yet: select runs above and assign them to this sample.",
+      }));
+    }
+    const fresh = {};
+    let kept = false;
+    rows.forEach(function (row) {
+      fresh[row.key] = runValues(row);
+      const shown = (base && base.runs && base.runs[row.key]) || null;
+      const mine = typed[row.key] || {};
+      function value(name) {
+        if (same && shown && mine[name] !== undefined && mine[name] !== shown[name]) {
+          kept = true;
+          return mine[name];
+        }
+        return fresh[row.key][name];
+      }
+      const type = typeField(value("measurement"), "type of run " + row.run);
+      const condition = el("input", {
+        className: "form-control form-control-sm",
+        placeholder: "condition",
+        "aria-label": "condition of run " + row.run,
+        "data-field": "condition",
+      });
+      condition.value = value("condition");
+      const note = el("textarea", {
+        className: "form-control form-control-sm",
+        rows: 1,
+        placeholder: "notes on this measurement",
+        "aria-label": "notes on run " + row.run,
+        "data-field": "note",
+      });
+      note.value = value("note");
+      // Good (used) by default. A bad run slid off is excluded: left out of
+      // sample.md's table, and moved out of data/steady by the next apply.
+      const good = el("input", {
+        className: "form-check-input",
+        type: "checkbox",
+        role: "switch",
+        id: "f-good-" + row.run,
+        "aria-label": "run " + row.run + " is good",
+        "data-field": "include",
+      });
+      good.checked = value("include");
+      const said = el("label", {
+        className: "form-check-label small",
+        htmlFor: "f-good-" + row.run,
+      });
+      function describe() {
+        said.textContent = good.checked ? "good" : "bad: not used";
+        item.classList.toggle("expt-measurement-bad", !good.checked);
+      }
+      good.addEventListener("change", describe);
+      type.disable(!editable);
+      condition.disabled = !editable;
+      note.disabled = !editable;
+      good.disabled = !editable;
+      const item = el("div", { className: "expt-measurement" }, [
+        el("div", { className: "d-flex gap-1 align-items-center mb-1" }, [
+          el("span", { className: "mono", text: String(row.run) }),
+          type,
+          condition,
+          el("div", { className: "form-check form-switch mb-0 ms-1" }, [good, said]),
+        ]),
+        note,
+      ]);
+      item.dataset.key = row.key;
+      describe();
+      box.append(item);
+    });
+    return { fresh: fresh, kept: kept };
+  }
+
   /* What the editor showed when it was filled: a field that differs from it
    * has been typed in, and is not the server's to replace. */
   function shownValues(current) {
@@ -456,7 +625,16 @@
       $(field).disabled = !state.writable || !(current && current.managed);
     });
     $("expt-save").disabled = !state.writable || !(current && current.managed);
-    const moved = same && typed && current && (current.rev || 0) !== base.rev;
+    const measured = renderMeasurements(
+      id, base, same, state.writable && Boolean(current && current.managed)
+    );
+    typed = typed || measured.kept;
+    const runMoved = same && sampleRuns(id).some(function (row) {
+      const was = base.runs && base.runs[row.key];
+      return was && was.rev !== row.rev;
+    });
+    const moved = same && typed && current &&
+      ((current.rev || 0) !== base.rev || runMoved);
     $("expt-form-status").textContent = moved
       ? "This sample was saved somewhere else while you were editing. What you " +
         "typed is kept; saving puts your version of the fields you changed over " +
@@ -466,7 +644,13 @@
         : same
           ? $("expt-form-status").textContent
           : "";
-    state.editorBase = { id: id, rev: current ? current.rev || 0 : 0, values: fresh };
+    const runs = {};
+    sampleRuns(id).forEach(function (row) {
+      runs[row.key] = Object.assign({ rev: row.rev }, measured.fresh[row.key]);
+    });
+    state.editorBase = {
+      id: id, rev: current ? current.rev || 0 : 0, values: fresh, runs: runs,
+    };
     $("expt-adopt-plan").classList.add("d-none");
     await refreshPreview(id);
   }
@@ -505,20 +689,48 @@
       const value = $(field).value;
       if ((current[name] || "") !== value) fields[name] = value;
     });
-    if (!Object.keys(fields).length) {
+    // Each run's type, condition and notes, sent only where they changed.
+    const runChanges = [];
+    Object.entries(typedRuns()).forEach(function ([key, values]) {
+      const row = state.rows.get(key);
+      if (!row) return;
+      const changed = {};
+      if (values.measurement && values.measurement !== (row.measurement || "")) {
+        changed.measurement = values.measurement;
+      }
+      if (values.condition !== (row.condition || "")) changed.condition = values.condition;
+      if (values.note !== (row.note || "")) changed.note = values.note;
+      if (values.include !== (row.include !== false)) changed.include = values.include;
+      if (Object.keys(changed).length) {
+        runChanges.push({ run: row.run, base_rev: row.rev, fields: changed });
+      }
+    });
+    if (!Object.keys(fields).length && !runChanges.length) {
       $("expt-form-status").textContent = "Nothing changed.";
       return;
     }
     try {
-      const result = await api(
-        "PUT", "/api/experiment/samples/" + encodeURIComponent(id),
-        { base_rev: current.rev || 0, fields: fields }
-      );
-      state.samples = result.samples;
-      state.catalogVersion = result.catalog_version;
-      renderSamples();
+      if (runChanges.length) {
+        const saved = await api("PUT", "/api/experiment/runs", { changes: runChanges });
+        saved.runs.forEach(function (row) {
+          state.rows.set(row.key, row);
+        });
+        state.samples = saved.samples;
+        state.catalogVersion = saved.catalog_version;
+        renderRuns();
+        renderBulk();  // a type added here is a choice there now
+      }
+      if (Object.keys(fields).length) {
+        const result = await api(
+          "PUT", "/api/experiment/samples/" + encodeURIComponent(id),
+          { base_rev: current.rev || 0, fields: fields }
+        );
+        state.samples = result.samples;
+        state.catalogVersion = result.catalog_version;
+      }
+      // Refilled from what the server now holds, which is what was typed.
+      await openSample(id);
       $("expt-form-status").textContent = "Saved. Apply writes it into sample.md.";
-      await refreshPreview(id);
     } catch (error) {
       if (error.status === 400) $("expt-form-status").textContent = error.message;
       else await failed(error, "Saving");

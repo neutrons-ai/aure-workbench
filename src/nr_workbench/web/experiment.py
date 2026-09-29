@@ -34,6 +34,7 @@ from typing import Any
 
 from nr_workbench.bounded import Bounded, Busy, TimedOut
 from nr_workbench.experiment.model import (
+    MEASUREMENT_TYPES,
     Catalog,
     RunChange,
     RunKey,
@@ -338,6 +339,7 @@ class ExperimentData:
             "writable": self.writable and readable,
             "read_only_reason": self.why_read_only,
             "states": list(STATES),
+            "measurement_types": list(MEASUREMENT_TYPES),
             "cursor": changes.cursor,
             "scan": _scan(changes),
             "runs": [rows[k] for k in sorted(rows)],

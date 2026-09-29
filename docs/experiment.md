@@ -52,7 +52,7 @@ anyone who prefers it:
 ```bash
 nrw experiment settings --ipts 34347 --write   # or the Settings page
 nrw experiment status              # every run, its state and its sample
-nrw experiment assign 234277 234280 --sample Sample6 --type "full Q" --condition OCV
+nrw experiment assign 234277 234280 --sample Sample6 --type steady --condition OCV
 nrw experiment apply               # shows what would be written; changes nothing
 nrw experiment apply --write       # writes it
 ```
@@ -164,8 +164,13 @@ over, or was stopped early, tick "use run N as it is" when you review apply
 ## Organizing
 
 Select runs in the table, choose a sample (or type a new id), optionally a
-**type** (`full Q`, …) and a **condition** (`OCV`, `-0.5 mA/cm2`, …), and
-**Assign**. **Exclude** keeps a run in the sample but out of its data.
+**type** and a **condition** (`OCV`, `-0.5 mA/cm2`, …), and **Assign**.
+**Exclude** keeps a run in the sample but out of its data.
+
+The type is **steady** or **tNR**, or one you add with **Add a type…**; a type
+added once is offered from then on. A run whose type was never set is steady.
+In the bar above the table the type starts at *unchanged*, so assigning runs
+leaves the type each one already has.
 
 Click a sample to fill in its context. Each box becomes the section of
 `sample.md` it is named after:
@@ -173,13 +178,25 @@ Click a sample to fill in its context. Each box becomes the section of
 - **Description** and **Details**: what the sample is.
 - **Was the sample moved between measurements?** This decides whether alignment
   is fitted once or once per state, and it cannot be read from the data.
-- **Measurement conditions**
+- **Measurement conditions**: what holds for every measurement.
+- **Measurements**: one line per run, with its type, its condition, a
+  **good** switch, and notes on that measurement alone: realigned, bowed, a
+  segment that looks high. Type and condition go into the measurement table.
+  Each run's notes go under *Measurement conditions*, with the run named first
+  (`- Run 218386: realigned after mounting`), so nobody has to guess later
+  which measurement a note is about.
 - **Fits to perform**: an unattended agent session will not start without it.
+
+A bad run is slid to **bad: not used**, which excludes it: the next apply
+leaves it out of the table and moves its copy out of `data/steady/`. Say why in
+its notes. They stay in the catalog and on the page, but are not written into
+`sample.md`, whose readers would otherwise look for the run's data.
 
 The preview shows the `sample.md` that will be written.
 
 Some text is refused, with the reason, because a reader of `sample.md` would
-misread it:
+misread it. A run's notes are held to the same rules, since they are written
+there too:
 
 - **A heading line inside a box.** A `## Fits to perform` typed into the
   Description would become the agent's task.
@@ -237,6 +254,12 @@ The same step pulls hand edits back. If you edit a catalog-written `sample.md`
 in your editor, the page shows **edited by hand** and offers **Pull hand edits**
 to bring your changes into the catalog.
 
+An entry `- Run 218386: …` under *Measurement conditions* becomes that run's
+notes, continuing on the lines indented under it. A pull changes a run's notes
+only where the file has an entry for the run; an entry left empty
+(`- Run 218386:`) clears them. A run with no entry keeps its notes, because a
+file written by hand, or before nrw wrote notes, never had any.
+
 `--rewrite` backs the old file up under `.nrw/backups/`. That directory is
 gitignored, so the backup exists on this machine only; commit first if the file
 matters.
@@ -251,7 +274,7 @@ nrw experiment release Sample6
 
 | File | What | Committed |
 |---|---|---|
-| `experiment/runs.parquet` | One row per run: its sample, type, condition, included or not, a note | Yes |
+| `experiment/runs.parquet` | One row per run: its sample, type, condition, good or not, its notes | Yes |
 | `experiment/samples.parquet` | One row per sample: its context | Yes |
 | `experiment/catalog.json` | Digests of both, written last, so an interrupted save is noticed | Yes |
 | `samples/<id>/data/sources.json` | What apply copied | Yes |

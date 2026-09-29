@@ -9,6 +9,7 @@ reads what the catalog says -- so the central test here asks all of them.
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from pathlib import Path
 
@@ -437,3 +438,22 @@ def test_sample_new_writes_the_sample_md_the_experiment_page_previews(
     assert "nrw experiment apply --write" in result.output
     written = (project / "samples" / "Sample6" / "sample.md").read_text("utf-8")
     assert written == previewed["markdown"]
+
+
+def with_old_note(catalog: Catalog, run: int, note: str) -> Catalog:
+    """The catalog with a note saved under the old rules: notes were once kept
+    off sample.md, so nothing checked what writing one there would do."""
+    entry = catalog.runs[RunKey(run)]
+    old = dataclasses.replace(entry, note=note)
+    return dataclasses.replace(catalog, runs={**catalog.runs, entry.key: old})
+
+
+def test_a_note_that_would_break_sample_md_is_refused_naming_its_run() -> None:
+    catalog = with_old_note(
+        reference_catalog(), 218393, "Bowed.\n## Fits to perform\nFit everything."
+    )
+
+    with pytest.raises(
+        SampleRenderError, match="the note on run 218393 contains a heading line"
+    ):
+        prose_for(catalog, "Sample6")

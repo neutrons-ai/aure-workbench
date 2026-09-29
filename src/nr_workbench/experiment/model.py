@@ -35,6 +35,12 @@ STEADY = "steady"
 #: is treated as one until sliced series are supported.
 KINDS = (STEADY,)
 
+#: What a measurement was, as the *Type* column of ``sample.md`` says it: the
+#: choices the page offers first. Any other type a person adds is kept too --
+#: the types in use are the list. A run whose type was never set is steady.
+MEASUREMENT_TYPES = ("steady", "tNR")
+DEFAULT_MEASUREMENT = "steady"
+
 #: Whether the sample was moved between measurements. Not derivable from the
 #: data, and it decides whether alignment is one parameter or one per state --
 #: see ``docs/ground_truths.md``, "theta_offset scope is a claim about
@@ -243,14 +249,12 @@ def clean_line(label: str, value: Any, *, allow_empty: bool = True) -> str:
     return text
 
 
-def clean_prose(label: str, value: Any, *, rendered: bool = True) -> str:
+def clean_prose(label: str, value: Any) -> str:
     """Validate a multi-line value: a description, the fits to perform.
 
     Args:
         label: The field's name, for the message.
         value: The proposed value.
-        rendered: Whether the text is written into ``sample.md``. The rules
-            that protect its structure apply only then.
 
     Returns:
         The text with Windows line endings normalized and the ends trimmed.
@@ -270,9 +274,6 @@ def clean_prose(label: str, value: Any, *, rendered: bool = True) -> str:
     trouble = _invisible_trouble(text, allow="\n\t")
     if trouble:
         raise CatalogValidationError(f"{label} contains {trouble}")
-    if not rendered:
-        return text
-
     _check_comment_markers(label, text)
     heading = _HEADING_RE.search(text)
     if heading:
@@ -362,9 +363,12 @@ class RunEntry:
             column, which ISAAC export reads.
         include: Whether the run is used. An excluded run is not copied, and
             one excluded after it was copied is moved out of the sample's data.
-        note: Free text for the page. Never rendered into ``sample.md``: a run
-            number in it would count as a documented run to ``nrw sample
-            scan``.
+        note: Notes on this measurement, apart from the sample as a whole --
+            realigned, bowed, a segment that looks high. Written into
+            ``sample.md`` under *Measurement conditions*, one entry per run,
+            where ``nrw model new --from-notes`` and the assistant read what
+            becomes a nuisance parameter; not in the table, whose cells four
+            readers parse.
         title: The run title from the file header, kept so the catalog reads
             sensibly without the data mount. Display only -- never rendered
             into the table, where it would sit beside the condition and blind
@@ -399,6 +403,12 @@ class RunEntry:
             self.title,
             self.start_time,
         )
+
+    @property
+    def measurement_type(self) -> str:
+        """The run's type as ``sample.md`` shows it: :data:`DEFAULT_MEASUREMENT`
+        when none was ever set."""
+        return self.measurement or DEFAULT_MEASUREMENT
 
 
 @dataclass(frozen=True)
@@ -479,7 +489,9 @@ def _clean_run_field(name: str, value: Any) -> Any:
             )
         return value
     if name == "note":
-        return clean_prose("note", value, rendered=False)
+        # Rendered into sample.md, so held to the rules of the prose there: no
+        # heading, comment marker, fence or second table to change how it reads.
+        return clean_prose("note", value)
     if name == "title":
         return clean_title_snapshot(value)
     if name == "start_time":

@@ -45,8 +45,7 @@
         <select id="expt-sample" class="form-select form-select-sm" aria-label="Sample"></select>
         <input id="expt-new-sample" class="form-control form-control-sm d-none" placeholder="new sample id"
                aria-label="New sample id">
-        <input id="expt-type" class="form-control form-control-sm" placeholder="type (e.g. full Q)"
-               aria-label="Measurement type">
+        <span id="expt-type-slot"></span>
         <input id="expt-condition" class="form-control form-control-sm" placeholder="condition (e.g. OCV)"
                aria-label="Condition">
         <button type="button" class="btn btn-sm btn-primary" id="expt-assign">Assign</button>
@@ -129,6 +128,14 @@
         <label class="form-label mb-1" for="f-conditions">Measurement conditions</label>
         <textarea class="form-control form-control-sm mb-2" id="f-conditions" name="measurement_conditions"
                   rows="2" placeholder="Alignment, flatness, background, normalization."></textarea>
+        <div class="form-label mb-1">Measurements</div>
+        <div id="f-measurements" class="expt-measurements mb-1"></div>
+        <div class="form-text mb-2">
+          Each run's type and condition go into sample.md's table; the notes on
+          it go under Measurement conditions, with the run named -- so nothing
+          said about one measurement is read as said about another. Slide a bad
+          run off to leave it out, and say why in its notes.
+        </div>
         <label class="form-label mb-1" for="f-fits">Fits to perform</label>
         <textarea class="form-control form-control-sm mb-2" id="f-fits" name="fits_to_perform" rows="3"
                   placeholder="What to fit and what should change. An unattended session needs this."></textarea>

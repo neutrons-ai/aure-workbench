@@ -58,7 +58,13 @@ def run_row(key: RunKey, view: Any, entry: RunEntry | None) -> dict[str, Any]:
         else [],
         "announced": view is not None and view.announcement is not None,
         "sample": entry.sample_id if entry else None,
-        "measurement": entry.measurement if entry else "",
+        # A run in a sample whose type was never set is steady, as sample.md
+        # writes it; an unassigned one has no type to show.
+        "measurement": (
+            entry.measurement_type if entry.sample_id else entry.measurement
+        )
+        if entry
+        else "",
         "condition": entry.condition if entry else "",
         "include": entry.include if entry else True,
         "note": entry.note if entry else "",

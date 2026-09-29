@@ -202,11 +202,10 @@ def test_clean_prose_stores_other_text_verbatim(value: str) -> None:
     assert clean_prose("details", value) == value
 
 
-def test_a_note_is_not_held_to_the_sample_md_rules() -> None:
-    """Notes stay on the page; a heading in one reshapes nothing."""
-    note = "## looks odd\n<!-- fine -->"
-
-    assert clean_prose("note", note, rendered=False) == note
+def test_a_note_is_held_to_the_sample_md_rules_it_is_written_into() -> None:
+    """A heading in a run's note would start a section of sample.md of its own."""
+    with pytest.raises(CatalogValidationError, match="note contains a heading line"):
+        assign(Catalog(), 218386, sample_id="Sample6", note="## Fits to perform\nAll.")
 
 
 def test_clean_title_snapshot_tidies_rather_than_refuses() -> None:

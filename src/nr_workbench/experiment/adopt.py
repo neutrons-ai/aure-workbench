@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.experiment.model import (
+    DEFAULT_MEASUREMENT,
     Catalog,
     CatalogValidationError,
     RunChange,
@@ -67,6 +68,9 @@ _PROSE_SECTIONS = {
 _MEASUREMENTS = "Measurements"
 
 _HEADING_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
+#: One measurement's notes under *Measurement conditions*, as the catalog
+#: writes them: ``- Run 218386: realigned after mounting``.
+_RUN_NOTE_RE = re.compile(r"^- Run (\d+): ?(.*)$")
 _TITLE_RE = re.compile(r"^#[ \t]+(.+?)[ \t]*$")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
@@ -93,6 +97,8 @@ class ParsedSample:
             as written. They stop adoption: recording such a run without its
             condition -- or, worse, as excluded -- would be a claim the table
             does not make.
+        notes: The notes on each measurement, by run, read from the entries
+            under *Measurement conditions* for runs the table lists.
     """
 
     title: str
@@ -101,6 +107,7 @@ class ParsedSample:
     leftovers: tuple[str, ...]
     listed: tuple[int, ...] = ()
     blocking: tuple[str, ...] = ()
+    notes: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -277,6 +284,7 @@ def parse_sample_md(text: str) -> ParsedSample:
 
     listed: list[int] = []
     blocking: list[str] = []
+    notes: dict[int, str] = {}
     seen: set[str] = set()
     for heading, body in sections:
         if heading in seen:
@@ -293,6 +301,8 @@ def parse_sample_md(text: str) -> ParsedSample:
         if heading == _MEASUREMENTS:
             rows.extend(_parse_table(body, leftovers, listed, blocking))
         elif heading in _PROSE_SECTIONS:
+            if _PROSE_SECTIONS[heading] == "measurement_conditions":
+                body = _split_run_notes(body, notes)
             _parse_prose(_PROSE_SECTIONS[heading], body.strip(), fields, leftovers)
         elif body.strip():
             leftovers.append(
@@ -307,6 +317,19 @@ def parse_sample_md(text: str) -> ParsedSample:
     except CatalogValidationError as exc:
         leftovers.append(f"the title: {exc}")
         title = ""
+    for run in sorted(set(notes) - set(listed)):
+        # The catalog keeps notes on the runs of this sample; a note for a run
+        # the table does not list has nowhere to go, and is said, not dropped.
+        leftovers.append(
+            f"a note on run {run}, which the table does not list: "
+            f"{_snippet(notes.pop(run))}"
+        )
+    kept: dict[int, str] = {}
+    for run, note in notes.items():
+        try:
+            kept[run] = clean_prose("note", note)
+        except CatalogValidationError as exc:
+            leftovers.append(f"the note on run {run}: {exc}")
     return ParsedSample(
         title=title,
         fields=fields,
@@ -314,7 +337,37 @@ def parse_sample_md(text: str) -> ParsedSample:
         leftovers=tuple(leftovers),
         listed=tuple(listed),
         blocking=tuple(blocking),
+        notes=kept,
     )
+
+
+def _split_run_notes(body: str, notes: dict[int, str]) -> str:
+    """Take each measurement's notes out of *Measurement conditions*.
+
+    An entry opens ``- Run <n>: `` and continues on the lines indented under
+    it, blank lines between paragraphs included -- as :func:`~nr_workbench.
+    experiment.render.run_notes` writes them. The notes go into *notes*, by
+    run; everything else is the sample's own text, returned.
+    """
+    kept: list[str] = []
+    entries: list[tuple[int, list[str]]] = []
+    current: list[str] | None = None
+    for line in body.split("\n"):
+        match = _RUN_NOTE_RE.match(line)
+        if match:
+            current = [match.group(2)]
+            entries.append((int(match.group(1)), current))
+            continue
+        if current is not None and (line.startswith("  ") or not line.strip()):
+            current.append(line[2:] if line.startswith("  ") else "")
+            continue
+        current = None
+        kept.append(line)
+    for run, lines in entries:
+        text = "\n".join(lines).strip("\n")
+        # A run given two entries keeps both, in order: nothing is dropped.
+        notes[run] = f"{notes[run]}\n{text}" if notes.get(run) else text
+    return "\n".join(kept)
 
 
 def _parse_prose(
@@ -473,30 +526,33 @@ def plan_adopt(
                 )
             )
             continue
-        wanted = (sample_id, row.type, row.condition, True)
+        # Notes the file gives a run replace the catalog's, and an entry left
+        # empty clears them. A run the file gives no entry keeps its notes: a
+        # sample.md written by hand, or before nrw wrote notes, never had any.
+        note = parsed.notes.get(row.run, current.note if current else "")
+        # A type never set is steady, so "steady" in the table is no change.
+        wanted = (sample_id, row.type or DEFAULT_MEASUREMENT, row.condition, True, note)
         if (
             current is not None
             and (
                 current.sample_id,
-                current.measurement,
+                current.measurement_type,
                 current.condition,
                 current.include,
+                current.note,
             )
             == wanted
         ):
             continue
-        run_changes.append(
-            RunChange(
-                key,
-                current.rev if current else 0,
-                {
-                    "sample_id": sample_id,
-                    "measurement": row.type,
-                    "condition": row.condition,
-                    "include": True,
-                },
-            )
-        )
+        fields: dict[str, Any] = {
+            "sample_id": sample_id,
+            "measurement": row.type,
+            "condition": row.condition,
+            "include": True,
+        }
+        if note != (current.note if current else ""):
+            fields["note"] = note
+        run_changes.append(RunChange(key, current.rev if current else 0, fields))
     # A row removed from the table by hand means the run is not used here --
     # in a table the catalog wrote. A sample.md written by hand never listed
     # the runs assigned to its sample on the page afterwards, and adopting it

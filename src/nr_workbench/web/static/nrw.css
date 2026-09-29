@@ -241,6 +241,36 @@ tr.fit-story > td > span + span::before {
   word-break: break-all;
 }
 
+/* The sample's measurements, in the editor: one run per block, its type and
+   condition on one line and the notes on it below. */
+.expt-measurement {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+
+.expt-measurement:last-child {
+  border-bottom: 0;
+}
+
+.expt-measurement-bad .mono,
+.expt-measurement-bad .form-check-label {
+  color: var(--bs-secondary-color);
+  text-decoration: line-through;
+}
+
+.expt-measurement-bad .form-check-label {
+  text-decoration: none;
+}
+
+.expt-measurement .expt-type-field .form-select {
+  width: auto;
+  min-width: 6.5rem;
+}
+
+.expt-bulk .expt-type-field .form-control {
+  min-width: 7rem;
+}
+
 /* Settings: a form, not a dashboard. */
 .settings {
   max-width: 52rem;

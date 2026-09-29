@@ -16,9 +16,15 @@ joined by a ``sample.md.nrw-new``.
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Iterable
 from pathlib import Path
 
-from nr_workbench.experiment.model import Catalog
+from nr_workbench.experiment.model import (
+    Catalog,
+    CatalogValidationError,
+    RunEntry,
+    clean_prose,
+)
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import MeasurementRow, RenderContext, SampleProse
 from nr_workbench.project.samples import plan_sample_files
@@ -52,24 +58,32 @@ def sample_md_relpath(sample_id: str) -> str:
     return f"samples/{sample_id}/sample.md"
 
 
+#: How one measurement's notes open under *Measurement conditions*: the run
+#: named first, so no reader has to guess which measurement a note is about.
+RUN_NOTE_PREFIX = "- Run {run}: "
+
+
 def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
     """What the catalog writes into one sample's ``sample.md``.
 
-    Only included runs are tabulated, one row each, in run order. Notes and run
-    titles are never written: a run number in a note would count as a
-    documented run, and a title beside the condition would blind ``nrw data
-    reconcile``'s check that the two agree.
+    Only included runs are tabulated, one row each, in run order, a type never
+    set shown as steady. Each included run's notes follow the sample's own
+    *Measurement conditions*, one entry per run (see :func:`run_notes`). Run
+    titles are never written: a title beside the condition would blind ``nrw
+    data reconcile``'s check that the two agree.
     """
     context = catalog.context_for(sample_id)
+    included = [entry for entry in catalog.runs_for(sample_id) if entry.include]
     rows = tuple(
-        MeasurementRow(entry.key.run, entry.measurement, entry.condition)
-        for entry in catalog.runs_for(sample_id)
-        if entry.include
+        MeasurementRow(entry.key.run, entry.measurement_type, entry.condition)
+        for entry in included
     )
-    conditions = context.measurement_conditions
-    sentence = MOUNTING_SENTENCES.get(context.mounting)
-    if sentence:
-        conditions = sentence + (f"\n\n{conditions}" if conditions else "")
+    parts = [
+        MOUNTING_SENTENCES.get(context.mounting, ""),
+        context.measurement_conditions,
+        run_notes(included),
+    ]
+    conditions = "\n\n".join(part for part in parts if part)
     return SampleProse(
         managed=True,
         description=context.description,
@@ -78,6 +92,35 @@ def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
         fits_to_perform=context.fits_to_perform,
         measurements=rows,
     )
+
+
+def run_notes(entries: Iterable[RunEntry]) -> str:
+    """The notes on each measurement, one entry per run, in the given order.
+
+    ``- Run 218386: realigned after mounting``. A note of several lines
+    continues indented, so it stays with its run for a reader, and for
+    :func:`~nr_workbench.experiment.adopt.parse_sample_md` reading it back.
+
+    Raises:
+        SampleRenderError: A note breaks a rule of the prose in ``sample.md``,
+            as one saved before notes were written there may: a heading in it
+            would start a section of its own. It is refused, not rewritten.
+    """
+    lines: list[str] = []
+    for entry in entries:
+        if not entry.note:
+            continue
+        try:
+            note = clean_prose(f"the note on run {entry.key.run}", entry.note)
+        except CatalogValidationError as exc:
+            raise SampleRenderError(
+                f"sample.md cannot be written: {str(exc).rstrip('.')}. "
+                "Edit the note on the Experiment page."
+            ) from exc
+        first, *rest = note.split("\n")
+        lines.append(RUN_NOTE_PREFIX.format(run=entry.key.run) + first)
+        lines.extend(f"  {line}" if line else "" for line in rest)
+    return "\n".join(lines)
 
 
 def lock_owner(root: Path, sample_id: str) -> str | None:

@@ -118,3 +118,134 @@ def test_what_you_typed_survives_a_save_of_the_same_sample_made_elsewhere(
     )
     saved = ParquetCatalogStore.for_project(project).load().samples["S1"]
     assert (saved.title, saved.description) == ("Their title", "typed by me")
+
+
+def open_s1(page: Page, site: Site) -> None:
+    page.goto(site.link)
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".some(b => b.textContent.includes('S1'))",
+        what="the sample list",
+    )
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S1')).click()"
+    )
+    page.wait_for(
+        "document.querySelector('#f-measurements .expt-measurement') !== null"
+        " && !document.querySelector('#f-measurements select').disabled",
+        what="the sample's measurements",
+    )
+
+
+def in_row(selector: str) -> str:
+    return f"document.querySelector('#f-measurements .expt-measurement {selector}')"
+
+
+def test_each_runs_type_condition_notes_and_good_switch_are_saved(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_s1(page, site)
+    assert page.js(in_row("select") + ".value") == "steady"  # never set: steady
+    assert page.js(in_row("[data-field=include]") + ".checked") is True
+
+    page.js(
+        f"{{ const s = {in_row('select')}; s.value = '__new__';"
+        " s.dispatchEvent(new Event('change')); }"
+    )
+    page.js(f"{in_row('.expt-type-field input')}.value = 'grazing'")
+    page.js(f"{in_row('[data-field=condition]')}.value = 'OCV'")
+    page.js(f"{in_row('[data-field=note]')}.value = 'Beam dropped halfway.'")
+    page.js(
+        f"{{ const g = {in_row('[data-field=include]')}; g.checked = false;"
+        " g.dispatchEvent(new Event('change')); }"
+    )
+    assert "bad" in page.js(in_row(".form-check-label") + ".textContent")
+    page.click("expt-save")
+
+    page.wait_for(
+        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
+        what="the save",
+    )
+    entry = ParquetCatalogStore.for_project(project).load().runs[RunKey(234277)]
+    assert (entry.measurement, entry.condition, entry.note, entry.include) == (
+        "grazing",
+        "OCV",
+        "Beam dropped halfway.",
+        False,
+    )
+    # The type added is a choice from now on, in the bulk bar too.
+    assert page.js(
+        "Array.from(document.querySelectorAll('#expt-type-slot option'))"
+        ".some(o => o.value === 'grazing')"
+    )
+
+
+def test_a_run_changed_elsewhere_keeps_the_notes_being_typed(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_s1(page, site)
+    page.js(f"{in_row('[data-field=note]')}.value = 'realigned after mounting'")
+    store = ParquetCatalogStore.for_project(project)
+    entry = store.load().runs[RunKey(234277)]
+    store.update(runs=[RunChange(entry.key, entry.rev, {"condition": "CA"})])
+
+    page.click("expt-save")  # meets the conflict, and the page reloads
+
+    page.wait_for(
+        in_row("[data-field=condition]") + ".value === 'CA'",
+        what="the reload with the condition saved elsewhere",
+    )
+    assert page.js(in_row("[data-field=note]") + ".value") == "realigned after mounting"
+    assert "saved somewhere else" in page.js(
+        "document.getElementById('expt-form-status').textContent"
+    )
+    page.click("expt-save")
+    page.wait_for(
+        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
+        what="the second save",
+    )
+    saved = ParquetCatalogStore.for_project(project).load().runs[RunKey(234277)]
+    assert (saved.condition, saved.note) == ("CA", "realigned after mounting")
+
+
+def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
+    page: Page, site: Site, project: Path
+) -> None:
+    store = ParquetCatalogStore.for_project(project)
+    entry = store.load().runs[RunKey(234277)]
+    store.update(runs=[RunChange(entry.key, entry.rev, {"measurement": "tNR"})])
+    page.goto(site.link)
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "document.querySelector('#expt-runs tbody input[type=checkbox]') !== null",
+        what="the runs",
+    )
+
+    def assign_selected() -> None:
+        page.js(
+            "{ const b = document.querySelector('#expt-runs tbody input[type=checkbox]');"
+            " if (!b.checked) { b.checked = true; b.dispatchEvent(new Event('change')); } }"
+        )
+        page.js(
+            "{ const s = document.getElementById('expt-sample'); s.value = 'S1';"
+            " s.dispatchEvent(new Event('change')); }"
+        )
+        page.click("expt-assign")
+        page.wait_for(
+            "document.getElementById('expt-message').textContent.startsWith('Assigned')",
+            what="the assignment",
+        )
+        page.js("document.getElementById('expt-message').textContent = ''")
+
+    assign_selected()  # the type chooser left at "unchanged"
+    assert store.load().runs[RunKey(234277)].measurement == "tNR"
+
+    page.js(
+        "{ const b = document.querySelector('#expt-runs tbody input[type=checkbox]');"
+        " b.checked = true; b.dispatchEvent(new Event('change'));"
+        " const t = document.querySelector('#expt-type-slot select'); t.value = 'steady'; }"
+    )
+    assign_selected()
+    assert store.load().runs[RunKey(234277)].measurement == "steady"
