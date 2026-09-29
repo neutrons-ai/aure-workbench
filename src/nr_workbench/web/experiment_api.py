@@ -294,3 +294,12 @@ def current_job() -> Any:
 def cancel_job(job_id: str) -> Any:
     """Stop the running job."""
     return jsonify(models_data().cancel(job_id))
+
+
+@experiment_api.post("/samples/<sample_id>/models/quick-fit")
+def quick_fit(sample_id: str) -> Any:
+    """A quick fit with AuRE, recorded as a fit of the spec it proposes: ``{"name", "run"}``."""
+    body = _body()
+    return jsonify(
+        models_data().quick_fit(sample_id, body.get("name"), body.get("run"))
+    ), 202

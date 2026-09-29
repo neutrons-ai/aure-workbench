@@ -77,6 +77,18 @@
     if (why) list.append(el("p", { className: "text-secondary mb-0 mt-1", text: why }));
     $("expt-model-name").disabled = Boolean(why);
     $("expt-model-create").disabled = Boolean(why);
+    // AuRE fits one measurement: which, when there is a choice.
+    const runs = $("expt-model-run");
+    const chosen = runs.value;
+    runs.replaceChildren();
+    (payload.runs || []).forEach(function (run) {
+      runs.append(el("option", { value: String(run), text: "run " + run }));
+    });
+    if (chosen && (payload.runs || []).map(String).includes(chosen)) runs.value = chosen;
+    runs.classList.toggle("d-none", (payload.runs || []).length < 2);
+    const quick = $("expt-model-quick");
+    quick.disabled = Boolean(why) || !payload.aure;
+    quick.title = why || (payload.aure ? "" : "AuRE is not installed where nrw serve runs.");
   }
 
   async function load(id) {
@@ -125,6 +137,31 @@
     } catch (error) {
       $("expt-model-status").textContent = error.message;
       $("expt-model-create").disabled = false;
+    }
+  });
+
+  $("expt-model-quick").addEventListener("click", async function () {
+    const id = shown;
+    const name = $("expt-model-name").value.trim();
+    if (!id) return;
+    if (!name) {
+      $("expt-model-status").textContent = "Give the model a name.";
+      return;
+    }
+    const body = { name: name };
+    const runs = $("expt-model-run");
+    if (!runs.classList.contains("d-none") && runs.value) body.run = Number(runs.value);
+    $("expt-model-quick").disabled = true;
+    try {
+      const started = await api("POST", modelsPath(id) + "/quick-fit", body);
+      $("expt-model-name").value = "";
+      $("expt-model-status").textContent =
+        "AuRE is proposing a stack for " + name + "; the Fit panel follows it.";
+      follow(started.job);
+    } catch (error) {
+      $("expt-model-status").textContent = error.message;
+    } finally {
+      load(id);  // the buttons as the sample now stands
     }
   });
 

@@ -247,6 +247,32 @@ that one. A name is a plain name (letters, digits, `.`, `-`, `_`), because it
 becomes the spec's filename. As with every change on the page, only a browser
 that opened the link `nrw serve` printed can write one.
 
+### A quick fit with AuRE
+
+**Quick fit with AuRE** writes a new model whose stack is proposed rather than
+a placeholder. AuRE reads the sample's *Description* and *Details* (and *Fits
+to perform*, as a hypothesis) in `sample.md`. It proposes layers, and fits one
+run on its quick budget. Choose the run when the sample has more than one:
+AuRE's first fit is one measurement.
+
+AuRE's own run is reconnaissance: the fit that counts is the one `nrw fit run`
+records. So the page goes on to import the spec AuRE proposed, generate its
+script, and fit it with amoeba from AuRE's values. That fit is the one in
+**Fits**. The whole job is the five commands you could type yourself:
+
+```bash
+nrw aure new <sample> --name=<name> --run=<run>
+nrw aure run samples/<id>/aure/<name>/setup.yaml --budget=quick
+nrw aure import samples/<id>/aure/<name>/output --sample=<id> --name=<name>
+nrw model generate samples/<id>/models/<name>.yaml
+nrw fit run samples/<id>/models/<name>.py --method=amoeba
+```
+
+AuRE needs a language-model endpoint. Without one, the job stops at `aure run`
+and says how to set one; `nrw check-llm` checks what is configured. AuRE's
+working files stay in `samples/<id>/aure/<name>/`. A name already used for a
+model or an AuRE run is refused.
+
 ### Fitting a model
 
 **Fit…** beside a spec starts a fit of it. Choose the fitter:

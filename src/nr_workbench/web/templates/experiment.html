@@ -103,11 +103,22 @@
       </div>
       <div class="p-3 small">
         <div id="expt-models-list" class="mb-2"></div>
-        <form id="expt-model-form" class="d-flex gap-2 align-items-center" novalidate>
+        <form id="expt-model-form" class="d-flex flex-wrap gap-2 align-items-center" novalidate>
           <input class="form-control form-control-sm expt-model-name" id="expt-model-name"
                  placeholder="model name, e.g. oxide" aria-label="new model name" maxlength="64">
           <button type="submit" class="btn btn-sm btn-outline-primary" id="expt-model-create">New model</button>
+          <span class="text-secondary">or</span>
+          <select id="expt-model-run" class="form-select form-select-sm expt-model-run d-none"
+                  aria-label="run for AuRE to fit"></select>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="expt-model-quick">Quick fit with AuRE</button>
         </form>
+        <div class="form-text">
+          <strong>New model</strong> writes a spec with a placeholder stack, for
+          you to edit. <strong>Quick fit with AuRE</strong> has AuRE propose the
+          stack from sample.md's Description and fit one run on a quick budget;
+          the spec it proposes is then fitted from AuRE's values and recorded in
+          Fits. It needs a language-model endpoint (<code>nrw check-llm</code>).
+        </div>
         <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
         <pre id="expt-model-output" class="expt-output small mt-2 mb-0 d-none"></pre>
         <form id="expt-fit-form" class="expt-fit d-none mt-3" novalidate>

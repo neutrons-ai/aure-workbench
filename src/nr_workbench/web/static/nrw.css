@@ -310,3 +310,6 @@ tr.fit-story > td > span + span::before {
 .expt-job-log {
   max-height: 24rem;
 }
+.expt-model-run {
+  max-width: 9rem;
+}

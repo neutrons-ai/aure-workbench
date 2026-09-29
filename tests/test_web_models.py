@@ -25,6 +25,33 @@ TOKEN = "t" * 32
 ORIGIN = "http://localhost"
 
 
+@pytest.fixture(autouse=True)
+def empty_home(tmp_path: Path, monkeypatch) -> None:
+    """Give the nrw processes these tests start an empty home, as conftest
+    gives this one: a child reads ``~/.nrw`` and ``~/.aure`` afresh, and a
+    developer's real endpoint key there would make a test bill for a call."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+
+def serial(*args: str) -> list[str]:
+    """The real command, with a fit on one CPU.
+
+    ``nrw fit run`` takes every core by default -- a pool of twenty processes
+    here -- and a test's fit doing that starves the browser tests running on
+    the other workers until their pages time out loading.
+    """
+    if args[:2] == ("fit", "run"):
+        args = (*args, "--parallel=1")
+    return models_module.nrw_command(*args)
+
+
+@pytest.fixture(autouse=True)
+def serial_fits(monkeypatch) -> None:
+    monkeypatch.setattr(jobs_module, "nrw_command", serial)
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Path:
     """A project whose sample S1 holds two steady runs; S2 has no data."""
@@ -200,6 +227,7 @@ def job_ended(client, timeout: float = 120) -> dict:
     raise AssertionError("the job did not end")
 
 
+@pytest.mark.integration
 def test_a_fit_started_from_the_page_is_recorded_as_nrw_fit_run_records_it(
     app, writer, project: Path
 ) -> None:
@@ -301,3 +329,114 @@ def test_fitting_needs_the_link(app, project: Path) -> None:
 
     assert response.status_code == 403
     assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+# --------------------------------------------------------------------------
+# A quick fit with AuRE
+# --------------------------------------------------------------------------
+
+
+def quick(client, app, sample: str, body: dict):
+    return client.post(
+        f"/api/experiment/samples/{sample}/models/quick-fit",
+        json=body,
+        headers={"X-NRW-Token": app.config["NRW_PAGE_TOKEN"], "Origin": ORIGIN},
+    )
+
+
+@pytest.mark.integration
+def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    import json
+
+    from nr_workbench.provenance.index import FitIndex
+
+    from .test_aure_cmd import FITTED
+
+    (project / "samples" / "S1" / "sample.md").write_text(
+        "# S1\n\n## Description\n\nTi and Cu on silicon, in d8-THF.\n",
+        encoding="utf-8",
+    )
+    # Every step is the real command but AuRE's run, which needs a language
+    # model: that one writes what a finished run leaves.
+    finished = json.dumps(
+        {
+            "success": True,
+            "error": None,
+            "final_chi2": 1.8,
+            "state": {"current_model": FITTED, "best_chi2": 1.8},
+        }
+    )
+
+    def command(*args: str) -> list[str]:
+        if args[:2] == ("aure", "run"):
+            output = Path(args[2]).parent / "output"
+            code = (
+                f"import pathlib; p = pathlib.Path({str(output)!r}); "
+                f"p.mkdir(parents=True); (p / 'final_state.json').write_text({finished!r})"
+            )
+            return [sys.executable, "-c", code]
+        return serial(*args)
+
+    monkeypatch.setattr(jobs_module, "nrw_command", command)
+
+    started = quick(writer, app, "S1", {"name": "auto", "run": 100001})
+    payload = job_ended(writer)
+
+    assert started.status_code == 202, started.json
+    job = payload["job"]
+    assert (job["status"], job["step"]) == ("ok", 5), payload["log"]
+    assert "$ nrw aure new --name=auto --run=100001 -- S1" in payload["log"]
+    assert (project / "samples" / "S1" / "models" / "auto.yaml").is_file()
+    (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
+    assert recorded["fit_id"] == job["fit_id"]
+    assert (recorded["model"], recorded["method"]) == ("auto", "amoeba")
+
+
+def test_a_quick_fit_needs_aure_installed_and_says_so(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    from nr_workbench import aure_adapter
+
+    monkeypatch.setattr(aure_adapter, "is_available", lambda: False)
+
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+    response = quick(writer, app, "S1", {"name": "auto", "run": 100001})
+
+    assert listed["aure"] is False
+    assert response.status_code == 409
+    assert "AuRE is not installed" in response.json["error"]
+    assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+@pytest.mark.parametrize("taken", ["models/auto.yaml", "aure/auto"])
+def test_a_quick_fit_never_writes_over_a_name_taken(
+    app, writer, project: Path, taken: str
+) -> None:
+    path = project / "samples" / "S1" / taken
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if taken.endswith(".yaml"):
+        path.write_text("# mine\n")
+    else:
+        path.mkdir()
+
+    response = quick(writer, app, "S1", {"name": "auto"})
+
+    assert response.status_code == 409
+    assert "already exists" in response.json["error"]
+    assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+@pytest.mark.parametrize("run", ["100001", True, 0, -5, 1.5])
+def test_a_quick_fit_run_must_be_a_run_number(app, writer, run) -> None:
+    response = quick(writer, app, "S1", {"name": "auto", "run": run})
+
+    assert response.status_code == 400
+    assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+def test_the_runs_aure_can_fit_are_listed_from_the_data(app) -> None:
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+
+    assert listed["runs"] == [100001, 100005]

@@ -92,12 +92,18 @@ class ModelsData:
                     "script": spec.with_suffix(".py").is_file(),
                 }
             )
+        from nr_workbench.aure_adapter import is_available
+
         return {
             "sample": sample_id,
             "exists": directory.is_dir(),
             "has_data": _has_data(directory),
+            "runs": _steady_runs(directory),
             "models": models,
             "writable": self.writable,
+            # Whether it is installed, found without importing it: AuRE brings
+            # the whole language-model stack, seconds of it, into the server.
+            "aure": is_available(),
         }
 
     def create(self, sample_id: str, name: Any) -> dict[str, Any]:
@@ -114,13 +120,9 @@ class ModelsData:
                 command failed; the message is the command's own.
             TimedOut: The command did not finish in time.
         """
-        if not self.writable:
-            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+        self._refuse_unless_writable()
         directory = self._sample_dir(sample_id)
-        try:
-            validate_model_name(name)
-        except ValueError as exc:
-            raise RequestError(str(exc)) from exc
+        name = _model_name(name)
         if not directory.is_dir():
             raise ModelRefused(
                 f"samples/{sample_id}/ does not exist yet. Apply creates it, "
@@ -172,13 +174,9 @@ class ModelsData:
         """
         from nr_workbench.fitters import FITTERS
 
-        if not self.writable:
-            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+        self._refuse_unless_writable()
         directory = self._sample_dir(sample_id)
-        try:
-            validate_model_name(name)
-        except ValueError as exc:
-            raise RequestError(str(exc)) from exc
+        name = _model_name(name)
         spec = directory / MODELS_DIR / f"{name}.yaml"
         if not spec.is_file():
             raise ModelRefused(
@@ -255,8 +253,7 @@ class ModelsData:
         """
         from nr_workbench.web.jobs import JobNotFound
 
-        if not self.writable:
-            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+        self._refuse_unless_writable()
         if not isinstance(job_id, str):
             raise JobNotFound("No such job.")
         return {"job": self.jobs.cancel(job_id).as_dict()}
@@ -274,6 +271,95 @@ class ModelsData:
             ):
                 job.fit_id = entry.get("fit_id")
                 return
+
+    def quick_fit(self, sample_id: str, name: Any, run: Any = None) -> dict[str, Any]:
+        """Start a quick fit with AuRE: a stack proposed from sample.md, then fitted.
+
+        AuRE's own run is reconnaissance (see :mod:`nr_workbench.commands.
+        aure_cmd`); the fit that counts is the one ``nrw fit run`` records. So
+        the job goes on from AuRE's quick budget to import the spec it proposes,
+        generate its script, and fit that with amoeba from AuRE's values -- and
+        that fit is the one in Fits.
+
+        Args:
+            sample_id: The sample.
+            name: The model to write: ``models/<name>.yaml``, and AuRE's run
+                in ``aure/<name>/``.
+            run: Which steady run to fit; needed when the sample has several.
+
+        Returns:
+            ``{"job": ...}``, the job started.
+
+        Raises:
+            WritesDisabledError: The server was started read-only.
+            RequestError: The name or the run is not usable.
+            ModelRefused: The name is taken, or AuRE is not installed.
+            JobBusy: A job is running already.
+        """
+        from nr_workbench.aure_adapter import is_available
+        from nr_workbench.aure_setup import AURE_DIR
+
+        self._refuse_unless_writable()
+        directory = self._sample_dir(sample_id)
+        name = _model_name(name)
+        if run is not None and (
+            isinstance(run, bool) or not isinstance(run, int) or run <= 0
+        ):
+            raise RequestError(f"run must be a run number, not {run!r}.")
+        for taken in (
+            directory / MODELS_DIR / f"{name}.yaml",
+            directory / AURE_DIR / name,
+        ):
+            if taken.exists():
+                raise ModelRefused(
+                    f"{taken.relative_to(self.root).as_posix()} already exists. "
+                    "Choose another name."
+                )
+        if not is_available():
+            raise ModelRefused(
+                "AuRE is not installed where nrw serve runs, so there is nothing "
+                "to run a quick fit with. `nrw doctor` lists what is installed."
+            )
+        base = f"samples/{sample_id}"
+        chosen = [f"--run={run}"] if run is not None else []
+        job = self.jobs.start(
+            label=f"quick fit of {name} with AuRE",
+            sample=sample_id,
+            model=name,
+            steps=[
+                ["aure", "new", f"--name={name}", *chosen, "--", sample_id],
+                # Needs a language-model endpoint; without one it says how to
+                # set one, and the job stops here.
+                [
+                    "aure",
+                    "run",
+                    f"{base}/{AURE_DIR}/{name}/setup.yaml",
+                    "--budget=quick",
+                ],
+                [
+                    "aure",
+                    "import",
+                    f"{base}/{AURE_DIR}/{name}/output",
+                    f"--sample={sample_id}",
+                    f"--name={name}",
+                    *chosen,
+                ],
+                ["model", "generate", f"{base}/{MODELS_DIR}/{name}.yaml"],
+                [
+                    "fit",
+                    "run",
+                    f"{base}/{MODELS_DIR}/{name}.py",
+                    "--method=amoeba",
+                    "--verbose",
+                    "--note=From AuRE's quick fit, refined by amoeba.",
+                ],
+            ],
+        )
+        return {"job": job.as_dict()}
+
+    def _refuse_unless_writable(self) -> None:
+        if not self.writable:
+            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
 
     def _sample_dir(self, sample_id: str) -> Path:
         try:
@@ -313,6 +399,28 @@ def run_nrw(root: Path, *args: str, timeout: float) -> str:
         message = output.rsplit("Error: ", 1)[-1] if "Error: " in output else output
         raise ModelRefused(message or f"`nrw {args[0]}` exited {result.returncode}.")
     return output
+
+
+def _model_name(name: Any) -> str:
+    try:
+        return validate_model_name(name)
+    except ValueError as exc:
+        raise RequestError(str(exc)) from exc
+
+
+def _steady_runs(directory: Path) -> list[int]:
+    """The runs in ``data/steady/``, from the file names, as apply names them."""
+    from nr_workbench.instrument.reduced import parse_combined_name, parse_segment_name
+
+    folder = directory / "data" / "steady"
+    runs: set[int] = set()
+    if folder.is_dir():
+        for path in folder.iterdir():
+            segment = parse_segment_name(path.name)
+            run = segment.run if segment else parse_combined_name(path.name)
+            if run is not None:
+                runs.add(run)
+    return sorted(runs)
 
 
 def _fit_note(value: Any) -> str:

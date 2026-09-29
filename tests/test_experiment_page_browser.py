@@ -121,6 +121,14 @@ def test_what_you_typed_survives_a_save_of_the_same_sample_made_elsewhere(
     assert (saved.title, saved.description) == ("Their title", "typed by me")
 
 
+def empty_home(project: Path, monkeypatch) -> None:
+    """An empty home for the nrw processes a test starts: a child reads
+    ``~/.nrw`` and ``~/.aure`` afresh, and a real endpoint key there bills."""
+    home = project.parent / "home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+
+
 def open_s1(page: Page, site: Site) -> None:
     page.goto(site.link)
     page.goto(f"{site.url}/experiment")
@@ -253,8 +261,9 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
 
 
 def test_a_model_is_written_from_the_samples_data_once_it_has_some(
-    page: Page, site: Site, project: Path
+    page: Page, site: Site, project: Path, monkeypatch
 ) -> None:
+    empty_home(project, monkeypatch)
     open_s1(page, site)
     page.wait_for(
         "!document.getElementById('expt-models').classList.contains('d-none')",
@@ -285,8 +294,14 @@ def test_a_model_is_written_from_the_samples_data_once_it_has_some(
 
 
 def test_a_fit_started_on_the_page_is_followed_to_its_record(
-    page: Page, site: Site, project: Path
+    page: Page, site: Site, project: Path, monkeypatch
 ) -> None:
+    from nr_workbench.web import jobs as jobs_module
+
+    from .test_web_models import serial
+
+    empty_home(project, monkeypatch)
+    monkeypatch.setattr(jobs_module, "nrw_command", serial)
     write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
     open_s1(page, site)
     page.wait_for(
@@ -356,3 +371,39 @@ def test_a_fit_is_cancelled_from_the_page(
     assert page.js(
         "document.getElementById('expt-job-cancel').classList.contains('d-none')"
     )
+
+
+def test_a_quick_fit_with_aure_is_started_for_the_run_chosen(
+    page: Page, site: Site, project: Path, monkeypatch
+) -> None:
+    import sys
+
+    from nr_workbench.web import jobs as jobs_module
+
+    # Each step says what it was asked, and succeeds: what is tested is the
+    # page -- the run chosen, the job followed -- not AuRE.
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", f"print({' '.join(args)!r})"],
+    )
+    steady = project / "samples" / "S1" / "data" / "steady"
+    write_partials(steady, 234277)
+    write_partials(steady, 234280)
+    open_s1(page, site)
+    page.wait_for(
+        "!document.getElementById('expt-model-run').classList.contains('d-none')",
+        what="the choice of run",
+    )
+    page.js("document.getElementById('expt-model-run').value = '234280'")
+    page.type("expt-model-name", "auto")
+    page.click("expt-model-quick")
+
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'ok'",
+        what="the quick fit ended",
+    )
+    assert page.text("expt-job-title") == "Quick fit of auto with AuRE (S1)"
+    log = page.text("expt-job-log")
+    assert "aure new --name=auto --run=234280 -- S1" in log
+    assert log.index("aure run") < log.index("aure import") < log.index("fit run")
