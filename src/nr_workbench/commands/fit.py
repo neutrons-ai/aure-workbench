@@ -10,6 +10,7 @@ the same record shape.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sys
 from dataclasses import dataclass
@@ -51,6 +52,13 @@ class ResolvedTarget:
 
     sample: str | None
     results_dir: Path
+
+
+#: The line a fit prints as it starts, naming its result directory -- whose name
+#: is the fit id. The Experiment page reads it back from a job's output to link
+#: the fit that job recorded, rather than guess which of the model's fits it was.
+RUNNING_LINE = "Running {method} fit -> {directory}"
+RUNNING_RE = re.compile(r"^Running \S+ fit -> (?P<directory>\S.*?)\s*$", re.MULTILINE)
 
 
 def resolve_target(
@@ -370,7 +378,11 @@ def run_fit_command(
     directory.write_manifest(record)
 
     if not as_json:
-        click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
+        click.echo(
+            RUNNING_LINE.format(
+                method=method, directory=fit_dir.relative_to(layout.root)
+            )
+        )
 
     from nr_workbench.fitting.runner import FitError, run_fit
 

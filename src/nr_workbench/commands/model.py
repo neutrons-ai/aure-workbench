@@ -250,7 +250,7 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
     Raises:
         click.ClickException: If the spec is invalid or the target was edited.
     """
-    from nr_workbench.codegen.generator import generate, verify_self_hash
+    from nr_workbench.codegen.generator import generate, generated_at, verify_self_hash
     from nr_workbench.provenance.env import package_version
     from nr_workbench.spec.deprecation import is_deprecated, reason_of
     from nr_workbench.spec.models import SpecError
@@ -286,29 +286,46 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
         raise click.ClickException(str(exc)) from exc
 
     target = Path(out) if out else path.with_suffix(".py")
-    if target.exists() and not force:
-        existing = target.read_text(encoding="utf-8")
-        if existing.startswith("# ---") and not verify_self_hash(existing):
-            raise click.ClickException(
-                f"{target.name} has been edited by hand since it was generated.\n"
-                "Overwriting would discard those edits. Either re-apply them to the "
-                "spec, or run `nrw model fork` to take ownership of the script with "
-                "its provenance intact. Use --force to overwrite anyway."
-            )
+    existing = target.read_text(encoding="utf-8") if target.exists() else None
+    if (
+        existing is not None
+        and not force
+        and existing.startswith("# ---")
+        and not verify_self_hash(existing)
+    ):
+        raise click.ClickException(
+            f"{target.name} has been edited by hand since it was generated.\n"
+            "Overwriting would discard those edits. Either re-apply them to the "
+            "spec, or run `nrw model fork` to take ownership of the script with "
+            "its provenance intact. Use --force to overwrite anyway."
+        )
 
     versions = {
         name: version
         for name in ("refl1d", "bumps", "numpy", "nr-workbench")
         if (version := package_version(name))
     }
-    source = generate(
-        table,
-        spec_path=path.relative_to(layout.root),
-        spec_sha256=_spec_sha256(path),
-        versions=versions,
+
+    def render(now: Any = None) -> str:
+        return generate(
+            table,
+            spec_path=path.relative_to(layout.root),
+            spec_sha256=_spec_sha256(path),
+            versions=versions,
+            now=now,
+        )
+
+    # A script that would come out the same but for its timestamp is left as it
+    # is. Rewriting it would change its hash, and so the identity of every fit
+    # of it: an unchanged model, fitted again with unchanged settings, would
+    # read as a new run instead of being refused as the identical one it is.
+    previous = (
+        generated_at(existing) if existing and verify_self_hash(existing) else None
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source, encoding="utf-8")
+    unchanged = previous is not None and render(previous) == existing
+    if not unchanged:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(render(), encoding="utf-8")
 
     # The explanation is derived from the same table, so it cannot describe a
     # different model than the one just written.
@@ -324,7 +341,13 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
         encoding="utf-8",
     )
 
-    click.echo(f"Wrote {target.relative_to(layout.root)}")
+    if unchanged:
+        click.echo(
+            f"{target.relative_to(layout.root)} is up to date with its spec; "
+            "left as it is"
+        )
+    else:
+        click.echo(f"Wrote {target.relative_to(layout.root)}")
     click.echo(f"      {notes_target.relative_to(layout.root)}  (what it assumes)")
 
     click.echo(

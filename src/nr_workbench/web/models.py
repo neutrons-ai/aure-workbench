@@ -1,9 +1,13 @@
-"""A sample's models, for the Experiment page: its specs, and a new one written.
+"""A sample's models, for the Experiment page: its specs, a new one, and fits.
 
-A spec is written by ``nrw model new``, run as a child process in the project:
-the command a person types, so the page and the terminal cannot disagree about
-what a new spec holds. The model code is never imported into the server, which
-would load it, and whatever it imports, into the process serving every page.
+A spec is written by ``nrw model new``, and a fit runs ``nrw model generate``
+and ``nrw fit run`` -- the commands a person types, run as child processes in
+the project (:mod:`nr_workbench.web.jobs`), so the page and the terminal cannot
+disagree about what a spec holds or how a fit is recorded. The model code is
+never imported into the server, which would load it, and whatever it imports,
+into the process serving every page.
+
+Which commands make up a fit is decided here, with the request they answer.
 
 Nothing here imports Flask; :mod:`nr_workbench.web.experiment_api` maps the
 errors to status codes.
@@ -11,22 +15,24 @@ errors to status codes.
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import unicodedata
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from nr_workbench.bounded import TimedOut
+from nr_workbench.aure_setup import OUTPUT_DIR, SETUP_FILE, setup_dir
 from nr_workbench.experiment.model import CatalogValidationError, validate_sample_id
+from nr_workbench.fitters import FITTERS, refuse
+from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.samples import validate_model_name
-from nr_workbench.web.experiment import RequestError, WritesDisabledError
+from nr_workbench.web.experiment import RequestError, require_writable
+from nr_workbench.web.jobs import CommandRefused, Job, JobNotFound, JobRunner, run_nrw
 
 #: Seconds ``nrw model new`` may take. It reads each data file's header, so a
 #: few seconds on a local disk; longer means something is wrong.
 MODEL_NEW_TIMEOUT = 120.0
 
-#: Where a sample's specs live, and where ``nrw model new`` writes them.
+#: Where a sample's specs live, under ``samples/<id>/``, as ``nrw model new``
+#: and ``nrw aure import`` write them.
 MODELS_DIR = "models"
 
 #: What the page may ask a fitter for. Generous, so they never decide an
@@ -44,21 +50,16 @@ DREAM_ONLY = ("samples", "burn")
 MAX_FIT_NOTE = 500
 
 
-class ModelRefused(Exception):
-    """The command declined, or cannot run yet; the message says why."""
+class ModelRefused(CommandRefused):
+    """The request cannot be carried out yet; the message says why."""
 
 
-def nrw_command(*args: str) -> list[str]:
-    """The command line that runs ``nrw`` with *args*, as this server does.
-
-    ``sys.executable -m nr_workbench`` is the interpreter serving the page, so
-    the child is the same nrw, whatever is first on ``PATH``.
-    """
-    return [sys.executable, "-m", "nr_workbench", *args]
+class ModelNotFound(LookupError):
+    """There is no such spec."""
 
 
 class ModelsData:
-    """A project's models, as the Experiment page lists and creates them.
+    """A project's models, as the Experiment page lists, writes and fits them.
 
     Args:
         root: Project root.
@@ -69,36 +70,43 @@ class ModelsData:
     def __init__(
         self, root: Path, *, writable: bool = True, why_read_only: str = ""
     ) -> None:
-        from nr_workbench.web.jobs import JobRunner
-
         self.root = Path(root)
+        self.layout = ProjectLayout(root=self.root)
         self.writable = writable
         self.why_read_only = why_read_only
-        self.jobs = JobRunner(self.root, on_finished=self._recorded)
+        self.jobs = JobRunner(self.root, on_finished=self._find_recorded_fit)
 
     def models(self, sample_id: str) -> dict[str, Any]:
-        """One sample's specs, and whether a new one can be written.
+        """One sample's specs, and what a new one could be built from.
+
+        Args:
+            sample_id: The sample.
+
+        Returns:
+            Its specs, whether the sample exists and has data, the steady runs
+            AuRE may be asked to fit (as ``nrw aure new`` counts them), and
+            whether AuRE is installed.
 
         Raises:
             RequestError: If the sample id is not usable.
         """
-        directory = self._sample_dir(sample_id)
-        models = []
-        for spec in sorted((directory / MODELS_DIR).glob("*.yaml")):
-            models.append(
-                {
-                    "name": spec.stem,
-                    "spec": spec.relative_to(self.root).as_posix(),
-                    "script": spec.with_suffix(".py").is_file(),
-                }
-            )
         from nr_workbench.aure_adapter import is_available
 
+        directory = self._sample_dir(sample_id)
+        models = [
+            {
+                "name": spec.stem,
+                "spec": spec.relative_to(self.root).as_posix(),
+                "script": spec.with_suffix(".py").is_file(),
+            }
+            for spec in sorted((directory / MODELS_DIR).glob("*.yaml"))
+        ]
+        found = self._measured(sample_id)
         return {
             "sample": sample_id,
             "exists": directory.is_dir(),
-            "has_data": _has_data(directory),
-            "runs": _steady_runs(directory),
+            "has_data": bool(found and (found.steady or found.series)),
+            "runs": sorted(found.steady) if found else [],
             "models": models,
             "writable": self.writable,
             # Whether it is installed, found without importing it: AuRE brings
@@ -109,6 +117,10 @@ class ModelsData:
     def create(self, sample_id: str, name: Any) -> dict[str, Any]:
         """Write a new spec with ``nrw model new``, from the data on disk.
 
+        Args:
+            sample_id: The sample.
+            name: The model's name: the spec is ``models/<name>.yaml``.
+
         Returns:
             The sample's models, as :meth:`models` gives them, with ``output``:
             what the command printed, notes on angles and series included.
@@ -116,11 +128,11 @@ class ModelsData:
         Raises:
             WritesDisabledError: The server was started read-only.
             RequestError: The sample id or the name is not usable.
-            ModelRefused: The sample has no data yet, the spec exists, or the
-                command failed; the message is the command's own.
+            ModelRefused: The sample has no directory yet, or the spec exists.
+            CommandRefused: ``nrw model new`` declined; the message is its own.
             TimedOut: The command did not finish in time.
         """
-        self._refuse_unless_writable()
+        require_writable(self.writable, self.why_read_only)
         directory = self._sample_dir(sample_id)
         name = _model_name(name)
         if not directory.is_dir():
@@ -133,16 +145,15 @@ class ModelsData:
             # Checked here for the message; `nrw model new` refuses too, without
             # --force, so two requests racing for one name cannot overwrite.
             raise ModelRefused(
-                f"{spec.relative_to(self.root).as_posix()} already exists. "
-                "Choose another name, or edit that spec."
+                f"{self._shown(spec)} already exists. Choose another name, or edit "
+                "that spec."
             )
         # `--` ends the options: the sample id is never read as one.
         output = run_nrw(
             self.root,
             "model",
             "new",
-            "--name",
-            name,
+            f"--name={name}",
             "--",
             sample_id,
             timeout=MODEL_NEW_TIMEOUT,
@@ -169,24 +180,20 @@ class ModelsData:
         Raises:
             WritesDisabledError: The server was started read-only.
             RequestError: A setting is not usable.
-            ModelRefused: There is no such spec.
+            ModelNotFound: There is no such spec.
             JobBusy: A job is running already.
         """
-        from nr_workbench.fitters import FITTERS
-
-        self._refuse_unless_writable()
+        require_writable(self.writable, self.why_read_only)
         directory = self._sample_dir(sample_id)
         name = _model_name(name)
         spec = directory / MODELS_DIR / f"{name}.yaml"
         if not spec.is_file():
-            raise ModelRefused(
-                f"samples/{sample_id}/{MODELS_DIR}/{name}.yaml does not exist."
-            )
+            raise ModelNotFound(f"{self._shown(spec)} does not exist.")
         method = request.get("method", "amoeba")
+        if not isinstance(method, str):
+            raise RequestError(f"method must be text, not {method!r}.")
         if method not in FITTERS:
-            raise RequestError(
-                f"method must be one of {', '.join(FITTERS)}, not {method!r}."
-            )
+            raise RequestError(refuse(method))
         # `--option=value`, one argument each: a value is never read as an option.
         options: list[str] = []
         for key, (low, high) in FIT_LIMITS.items():
@@ -211,66 +218,13 @@ class ModelsData:
             options.append(f"--note={note}")
         if request.get("force") is True:
             options.append("--force")
-        relative = spec.relative_to(self.root)
         job = self.jobs.start(
             label=f"{method} fit of {name}",
             sample=sample_id,
             model=name,
-            steps=[
-                ["model", "generate", relative.as_posix()],
-                # --verbose: the fitter's progress is what the page shows.
-                [
-                    "fit",
-                    "run",
-                    relative.with_suffix(".py").as_posix(),
-                    f"--method={method}",
-                    "--verbose",
-                    *options,
-                ],
-            ],
+            steps=_fit_steps(self._shown(spec), method, options),
         )
         return {"job": job.as_dict()}
-
-    def job(self, offset: int = 0) -> dict[str, Any]:
-        """The job running, or the last one; and what it printed from *offset*."""
-        job = self.jobs.current()
-        if job is None:
-            return {"job": None, "log": "", "offset": 0}
-        from nr_workbench.web.jobs import JobNotFound
-
-        try:
-            text, offset = self.jobs.log(job.id, offset)
-        except JobNotFound:
-            text, offset = "", 0
-        return {"job": job.as_dict(), "log": text, "offset": offset}
-
-    def cancel(self, job_id: Any) -> dict[str, Any]:
-        """Stop the running job.
-
-        Raises:
-            WritesDisabledError: The server was started read-only.
-            JobNotFound: *job_id* is not the current job.
-        """
-        from nr_workbench.web.jobs import JobNotFound
-
-        self._refuse_unless_writable()
-        if not isinstance(job_id, str):
-            raise JobNotFound("No such job.")
-        return {"job": self.jobs.cancel(job_id).as_dict()}
-
-    def _recorded(self, job: Any) -> None:
-        """Find the fit a finished job recorded: its model's, since it started."""
-        from nr_workbench.project.layout import ProjectLayout
-        from nr_workbench.provenance.index import FitIndex
-
-        index = FitIndex(ProjectLayout(root=self.root).index_file)
-        for entry in index.fits(sample=job.sample):
-            if (
-                entry.get("model") == job.model
-                and str(entry.get("started_at") or "") >= job.started_at
-            ):
-                job.fit_id = entry.get("fit_id")
-                return
 
     def quick_fit(self, sample_id: str, name: Any, run: Any = None) -> dict[str, Any]:
         """Start a quick fit with AuRE: a stack proposed from sample.md, then fitted.
@@ -283,9 +237,9 @@ class ModelsData:
 
         Args:
             sample_id: The sample.
-            name: The model to write: ``models/<name>.yaml``, and AuRE's run
+            name: The model to write, ``models/<name>.yaml``; AuRE's run is kept
                 in ``aure/<name>/``.
-            run: Which steady run to fit; needed when the sample has several.
+            run: Which steady run AuRE fits; needed when the sample has several.
 
         Returns:
             ``{"job": ...}``, the job started.
@@ -297,30 +251,26 @@ class ModelsData:
             JobBusy: A job is running already.
         """
         from nr_workbench.aure_adapter import is_available
-        from nr_workbench.aure_setup import AURE_DIR
 
-        self._refuse_unless_writable()
+        require_writable(self.writable, self.why_read_only)
         directory = self._sample_dir(sample_id)
         name = _model_name(name)
         if run is not None and (
             isinstance(run, bool) or not isinstance(run, int) or run <= 0
         ):
             raise RequestError(f"run must be a run number, not {run!r}.")
-        for taken in (
-            directory / MODELS_DIR / f"{name}.yaml",
-            directory / AURE_DIR / name,
-        ):
+        spec = directory / MODELS_DIR / f"{name}.yaml"
+        workdir = setup_dir(self.root, sample_id, name)
+        for taken in (spec, workdir):
             if taken.exists():
                 raise ModelRefused(
-                    f"{taken.relative_to(self.root).as_posix()} already exists. "
-                    "Choose another name."
+                    f"{self._shown(taken)} already exists. Choose another name."
                 )
         if not is_available():
             raise ModelRefused(
                 "AuRE is not installed where nrw serve runs, so there is nothing "
                 "to run a quick fit with. `nrw doctor` lists what is installed."
             )
-        base = f"samples/{sample_id}"
         chosen = [f"--run={run}"] if run is not None else []
         job = self.jobs.start(
             label=f"quick fit of {name} with AuRE",
@@ -330,75 +280,126 @@ class ModelsData:
                 ["aure", "new", f"--name={name}", *chosen, "--", sample_id],
                 # Needs a language-model endpoint; without one it says how to
                 # set one, and the job stops here.
-                [
-                    "aure",
-                    "run",
-                    f"{base}/{AURE_DIR}/{name}/setup.yaml",
-                    "--budget=quick",
-                ],
+                ["aure", "run", self._shown(workdir / SETUP_FILE), "--budget=quick"],
+                # No --run: import reads the run from the setup AuRE was given,
+                # and checks it belongs to this sample.
                 [
                     "aure",
                     "import",
-                    f"{base}/{AURE_DIR}/{name}/output",
+                    self._shown(workdir / OUTPUT_DIR),
                     f"--sample={sample_id}",
                     f"--name={name}",
-                    *chosen,
                 ],
-                ["model", "generate", f"{base}/{MODELS_DIR}/{name}.yaml"],
-                [
-                    "fit",
-                    "run",
-                    f"{base}/{MODELS_DIR}/{name}.py",
-                    "--method=amoeba",
-                    "--verbose",
-                    "--note=From AuRE's quick fit, refined by amoeba.",
-                ],
+                *_fit_steps(
+                    self._shown(spec),
+                    "amoeba",
+                    ["--note=From AuRE's quick fit, refined by amoeba."],
+                ),
             ],
         )
         return {"job": job.as_dict()}
 
-    def _refuse_unless_writable(self) -> None:
-        if not self.writable:
-            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+    def job_status(self, offset: int | None = None) -> dict[str, Any]:
+        """The job running, or the last one, and what it printed.
+
+        Args:
+            offset: The byte of its output to read from; ``None`` for the last
+                chunk, as a page opening onto the job wants.
+
+        Returns:
+            ``{"job", "log", "offset"}``; ``job`` is ``None`` when there has
+            been none.
+        """
+        job = self.jobs.current()
+        if job is None:
+            return {"job": None, "log": "", "offset": 0}
+        try:
+            text, offset = self.jobs.log(job.id, offset)
+        except JobNotFound:
+            text, offset = "", 0
+        return {"job": job.as_dict(), "log": text, "offset": offset}
+
+    def cancel(self, job_id: str) -> dict[str, Any]:
+        """Stop the running job.
+
+        Args:
+            job_id: The job, as the page names it.
+
+        Returns:
+            ``{"job": ...}``.
+
+        Raises:
+            WritesDisabledError: The server was started read-only.
+            JobNotFound: *job_id* is not the current job.
+        """
+        require_writable(self.writable, self.why_read_only)
+        return {"job": self.jobs.cancel(job_id).as_dict()}
+
+    def _find_recorded_fit(self, job: Job) -> str | None:
+        """The fit a job's own ``nrw fit run`` recorded, from what it printed.
+
+        Read from the job's output, not guessed from the index: the terminal
+        fits the same models while a page job runs, and the newest fit of a
+        model since the job started need not be the job's. ``None`` when the
+        fit step never ran, or recorded nothing -- a cancelled fit is left as an
+        interrupted run, which is not in the index.
+        """
+        from nr_workbench.commands.fit import RUNNING_RE
+        from nr_workbench.provenance.index import FitIndex
+
+        if not job.steps or job.steps[-1][:2] != ["fit", "run"]:
+            return None
+        if job.step != len(job.steps):
+            return None
+        started = f"$ nrw {' '.join(job.steps[-1])}\n"
+        _, _, fitted = self.jobs.output(job.id).rpartition(started)
+        found = list(RUNNING_RE.finditer(fitted))
+        if not found:
+            return None
+        fit_id = PurePosixPath(found[-1].group("directory")).name
+        return fit_id if FitIndex(self.layout.index_file).find(fit_id) else None
+
+    def _measured(self, sample_id: str) -> Any:
+        """The sample's measurements as the commands see them: the register, or
+        the disk. ``None`` when there is no such sample."""
+        from nr_workbench.project.scan import load_register, scan_sample
+
+        try:
+            return load_register(self.root, sample_id) or scan_sample(
+                self.root, sample_id
+            )
+        except FileNotFoundError:
+            return None
 
     def _sample_dir(self, sample_id: str) -> Path:
         try:
             validate_sample_id(sample_id)
         except CatalogValidationError as exc:
             raise RequestError(str(exc)) from exc
-        return self.root / "samples" / sample_id
+        return self.layout.sample(sample_id)
+
+    def _shown(self, path: Path) -> str:
+        """*path* as the project names it, and as the commands take it."""
+        return path.relative_to(self.root).as_posix()
 
 
-def run_nrw(root: Path, *args: str, timeout: float) -> str:
-    """Run one ``nrw`` command in the project, and return what it printed.
+def _fit_steps(spec: str, method: str, options: list[str]) -> list[list[str]]:
+    """Generate a spec's script, then fit it: the tail of every fit job.
 
-    Raises:
-        ModelRefused: The command exited non-zero; its message is the error.
-        TimedOut: It did not finish within *timeout* seconds, and was stopped.
+    Args:
+        spec: The spec, relative to the project.
+        method: The fitter.
+        options: More ``--option=value`` arguments for ``nrw fit run``.
+
+    Returns:
+        The two steps.
     """
-    try:
-        result = subprocess.run(
-            nrw_command(*args),
-            cwd=root,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise TimedOut(
-            f"`nrw {' '.join(args[:2])}` did not finish within {timeout:.0f} s "
-            "and was stopped."
-        ) from exc
-    output = result.stdout.strip()
-    if result.returncode != 0:
-        # Click prints a refusal as "Error: <message>"; the message is the part
-        # a person needs, and the rest is kept for the log.
-        message = output.rsplit("Error: ", 1)[-1] if "Error: " in output else output
-        raise ModelRefused(message or f"`nrw {args[0]}` exited {result.returncode}.")
-    return output
+    script = PurePosixPath(spec).with_suffix(".py").as_posix()
+    return [
+        ["model", "generate", spec],
+        # --verbose: the fitter's progress is what the page shows.
+        ["fit", "run", script, f"--method={method}", "--verbose", *options],
+    ]
 
 
 def _model_name(name: Any) -> str:
@@ -408,23 +409,12 @@ def _model_name(name: Any) -> str:
         raise RequestError(str(exc)) from exc
 
 
-def _steady_runs(directory: Path) -> list[int]:
-    """The runs in ``data/steady/``, from the file names, as apply names them."""
-    from nr_workbench.instrument.reduced import parse_combined_name, parse_segment_name
-
-    folder = directory / "data" / "steady"
-    runs: set[int] = set()
-    if folder.is_dir():
-        for path in folder.iterdir():
-            segment = parse_segment_name(path.name)
-            run = segment.run if segment else parse_combined_name(path.name)
-            if run is not None:
-                runs.add(run)
-    return sorted(runs)
-
-
 def _fit_note(value: Any) -> str:
-    """A fit's note: one line of text, or nothing."""
+    """A fit's note: one line of text, or nothing.
+
+    Raises:
+        RequestError: It is not text, is too long, or is not one line.
+    """
     if value is None:
         return ""
     if not isinstance(value, str):
@@ -437,12 +427,3 @@ def _fit_note(value: Any) -> str:
     if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text):
         raise RequestError("note must be one line of text.")
     return text
-
-
-def _has_data(directory: Path) -> bool:
-    """Whether the sample holds any data a spec could be built from."""
-    for sub in ("steady", "tnr"):
-        folder = directory / "data" / sub
-        if folder.is_dir() and any(folder.iterdir()):
-            return True
-    return False

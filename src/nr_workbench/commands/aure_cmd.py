@@ -98,7 +98,7 @@ def run_aure_new(
         click.ClickException: If the data or the description is missing, or the
             target exists and ``force`` was not given.
     """
-    from nr_workbench.aure_setup import SetupError, compose, setup_dir
+    from nr_workbench.aure_setup import SETUP_FILE, SetupError, compose, setup_dir
     from nr_workbench.project.scan import load_register, scan_sample
 
     layout = _layout()
@@ -130,7 +130,7 @@ def run_aure_new(
         raise click.ClickException(str(exc)) from exc
 
     run_name = composed.document["name"]
-    target = setup_dir(layout.root, sample, run_name) / "setup.yaml"
+    target = setup_dir(layout.root, sample, run_name) / SETUP_FILE
     if target.exists() and not force:
         raise click.ClickException(
             f"{target.relative_to(layout.root)} already exists. Use --force to "
@@ -266,7 +266,9 @@ def run_aure_run(
             f"Unknown budget {budget!r}. Choose from: {', '.join(BUDGETS)}."
         )
 
-    output = setup_path.parent / "output"
+    from nr_workbench.aure_setup import OUTPUT_DIR
+
+    output = setup_path.parent / OUTPUT_DIR
     overrides = _run_environment(mode_enumeration=mode_enumeration)
     settings = BUDGETS[budget]
 

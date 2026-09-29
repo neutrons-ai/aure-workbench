@@ -7,8 +7,9 @@ accepts a write, and every write passes :func:`~nr_workbench.web.security.
 refuse_unless_writer` first.
 
 Status codes say whose problem it is: 400 the request was wrong, 403 it is not
-allowed from here, 409 something changed or must be resolved first, 503 the
-catalog cannot be read, 504 the data source did not answer.
+allowed from here, 404 there is no such run, spec or job, 409 something changed
+or must be resolved first -- or an nrw command declined, saying why -- 503 the
+catalog cannot be read, 504 the data source, or an nrw command, did not answer.
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ from nr_workbench.web.experiment import (
     RunNotListedError,
     WritesDisabledError,
 )
-from nr_workbench.web.jobs import JobBusy, JobNotFound
-from nr_workbench.web.models import ModelRefused, ModelsData
+from nr_workbench.web.jobs import CommandRefused, JobBusy, JobNotFound
+from nr_workbench.web.models import ModelNotFound, ModelsData
 from nr_workbench.web.settings import SettingsData, WriteFailedError
 
 experiment_api = Blueprint("experiment_api", __name__, url_prefix="/api/experiment")
@@ -91,7 +92,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code or 500
     for kinds, status in (
-        ((RunNotListedError, JobNotFound), 404),
+        ((RunNotListedError, JobNotFound, ModelNotFound), 404),
         ((WritesDisabledError,), 403),
         (
             (
@@ -103,7 +104,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 NeedsConfirmation,
                 TomlEditError,
                 Busy,
-                ModelRefused,
+                CommandRefused,
                 JobBusy,
             ),
             409,
@@ -282,12 +283,20 @@ def fit_model(sample_id: str, name: str) -> Any:
 
 @experiment_api.get("/jobs/current")
 def current_job() -> Any:
-    """The job running, or the last one, and its output from ``?offset=<bytes>``."""
-    try:
-        offset = max(0, int(request.args.get("offset", "0")))
-    except ValueError:
-        offset = 0
-    return jsonify(models_data().job(offset))
+    """The job running, or the last one, and its output from ``?offset=<bytes>``.
+
+    Without an offset, the last part of the output: what a page opening onto a
+    long DREAM log shows first.
+    """
+    raw = request.args.get("offset")
+    offset = None
+    if raw is not None:
+        # ASCII digits, and few enough of them: "²" is a digit to isdigit(),
+        # and a number past 4300 digits is refused by int() itself.
+        if not (raw.isascii() and raw.isdigit() and len(raw) <= 18):
+            raise RequestError(f"offset must be a byte count, not {raw[:40]!r}.")
+        offset = int(raw)
+    return jsonify(models_data().job_status(offset))
 
 
 @experiment_api.post("/jobs/<job_id>/cancel")

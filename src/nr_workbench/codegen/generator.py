@@ -561,6 +561,28 @@ def _stamp_self_hash(source: str) -> str:
     )
 
 
+def generated_at(source: str) -> datetime | None:
+    """When a generated script says it was generated, or ``None``.
+
+    Args:
+        source: The script's contents.
+
+    Returns:
+        The ``generated:`` stamp of its header, as a UTC time.
+    """
+    import re
+
+    match = re.search(r"^#   generated:   (\S+)$", source, re.MULTILINE)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=UTC
+        )
+    except ValueError:
+        return None
+
+
 def verify_self_hash(source: str) -> bool:
     """Check a generated script has not been hand-edited.
 

@@ -24,7 +24,8 @@
 
   let shown = null;  // the sample whose models are shown
   let fitting = null;  // the model the fit form is for
-  const job = { id: null, offset: 0, running: false, timer: null, ended: null };
+  // offset null: not read yet, so the first read is the log's last part.
+  const job = { id: null, offset: null, running: false, timer: null, ended: null };
 
   function modelsPath(id) {
     return "/api/experiment/samples/" + encodeURIComponent(id) + "/models";
@@ -235,7 +236,7 @@
     if (!current) return;
     if (current.id !== job.id) {
       job.id = current.id;
-      job.offset = 0;
+      job.offset = null;
       job.ended = null;
       $("expt-job-log").textContent = "";
       $("expt-job-result").replaceChildren();
@@ -285,7 +286,10 @@
 
   async function poll() {
     try {
-      const payload = await api("GET", "/api/experiment/jobs/current?offset=" + job.offset);
+      const payload = await api(
+        "GET",
+        "/api/experiment/jobs/current" + (job.offset === null ? "" : "?offset=" + job.offset)
+      );
       if (!payload.job || payload.job.id !== job.id) {
         follow(payload.job);
         return;

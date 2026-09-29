@@ -18,7 +18,7 @@ from typing import Any
 from nr_workbench.bounded import Bounded
 from nr_workbench.experiment.sources import SOURCE_TIMEOUT
 from nr_workbench.experiment.views import settings_view
-from nr_workbench.web.experiment import RequestError, WritesDisabledError
+from nr_workbench.web.experiment import RequestError, require_writable
 
 
 class WriteFailedError(Exception):
@@ -160,7 +160,4 @@ class SettingsData:
         return check_source(self.root, changes, run=self.checks.run)
 
     def _require_writable(self) -> None:
-        if not self.writable:
-            raise WritesDisabledError(
-                self.why_read_only or "This server was started read-only."
-            )
+        require_writable(self.writable, self.why_read_only)

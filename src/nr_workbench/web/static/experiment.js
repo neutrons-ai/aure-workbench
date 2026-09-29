@@ -289,7 +289,8 @@
     // starts at "unchanged": a type never set is steady anyway, and choosing
     // steady here would reset runs already recorded as tNR.
     const slot = $("expt-type-slot");
-    const chosen = slot.firstChild ? slot.firstChild.typeValue() : "";
+    const field = slot.querySelector(".expt-type-field");
+    const chosen = field ? field.typeValue() : "";
     slot.replaceChildren(typeField(chosen, "measurement type", "type (unchanged)"));
   }
 
@@ -323,7 +324,7 @@
       return;
     }
     const fields = { sample_id: sample };
-    const type = $("expt-type-slot").firstChild.typeValue();
+    const type = $("expt-type-slot").querySelector(".expt-type-field").typeValue();
     const condition = $("expt-condition").value.trim();
     if (type) fields.measurement = type;
     if (condition) fields.condition = condition;

@@ -66,6 +66,11 @@ HYPOTHESIS_SECTION = "Fits to perform"
 #: Where a sample's AuRE runs live, under ``samples/<id>/``.
 AURE_DIR = "aure"
 
+#: One run's setup, and the folder AuRE writes its results to, both in
+#: :func:`setup_dir`.
+SETUP_FILE = "setup.yaml"
+OUTPUT_DIR = "output"
+
 
 class SetupError(Exception):
     """Raised when a setup cannot be composed from what is on disk."""

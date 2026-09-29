@@ -3459,3 +3459,42 @@ here.
 committed. Job logs go in `.nrw/jobs/`, which writes a `.gitignore` of `*`
 into itself. The project's own `.gitignore` learns the rule only when
 `nrw init` runs again, and a DREAM log should never be committed in between.
+
+### 2026-09-29: what the reviews of fitting from the page found
+
+The design, security and test reviews of the page's models and fits found
+these. Each is fixed.
+
+**`nrw model generate` restamped an unchanged script.** Every run rewrote the
+script with a new `generated:` time. That changed its hash, and with it the
+identity `nrw fit run` uses to refuse an identical run. The page generates
+before every fit, so no page fit was ever refused as identical, and `--force`
+meant nothing. The same happened to anyone who ran `generate` before each fit
+in a terminal. Now a script that would come out the same but for its time is
+left as it is ("up to date with its spec").
+
+**A job found its fit by guessing.** It took the newest fit of the same model
+started after the job did. A fit of that model run in a terminal while the page
+job ran, which is normal here, was taken for the job's. Now the job reads the
+id from its own `nrw fit run` output (`RUNNING_LINE` in `commands/fit.py`) and
+checks that the index has it. A cancelled fit is not in the index, so it links
+nothing.
+
+**`python -m` puts the working directory first on `sys.path`.** The page ran
+its commands with the project as working directory, so a `click.py` or
+`json.py` beside an analysis would have been imported instead of the real
+module, in every step and in the fit script. Children now run with `-P`, as
+the `nrw` script effectively does.
+
+**A job record written on start-up.** A restarted server marked a job it found
+`running` as `detached` and wrote that back. That broke a read-only server,
+and on a second server it rewrote the first server's live job. Now `detached`
+is said in memory only.
+
+**A job whose thread failed never ended.** A full disk while writing its
+record left it `running`, and every later fit was refused until restart. Now
+the thread always ends the job.
+
+**Job files are opened never through a symbolic link.** Reads of the page are
+open to every account on the node, so a link planted in a shared project's
+`.nrw/jobs/` would have served whatever it pointed at.

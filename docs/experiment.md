@@ -299,7 +299,13 @@ from the page always runs what its spec says.
 
 The **Fit** panel follows the job: its output as it runs, then a link to the
 fit it recorded. One job runs at a time for the project, whichever sample it is
-for. Its output is kept in `.nrw/jobs/`, which git ignores.
+for. Its output is kept in `.nrw/jobs/`, which git ignores, for the newest 20
+jobs. Like the rest of the page, it can be read by anyone who can open the
+page, link or not.
+
+Fitting again when nothing has changed -- the spec, the data, the settings --
+is refused, as `nrw fit run` refuses it: the result would be the one you have.
+Tick **run again even if nothing changed** to record a replicate.
 
 **Cancel** stops the fit and every process it started. What the fit had written
 so far stays where it is, and `nrw check` lists it as an interrupted run, as it

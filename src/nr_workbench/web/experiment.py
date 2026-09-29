@@ -112,6 +112,20 @@ class WritesDisabledError(PermissionError):
     """The server was started without write access. The message says why."""
 
 
+def require_writable(writable: bool, why_read_only: str) -> None:
+    """Refuse a write on a server started read-only.
+
+    Args:
+        writable: Whether the server accepts writes.
+        why_read_only: What to say when it does not.
+
+    Raises:
+        WritesDisabledError: With *why_read_only*, or a plain reason.
+    """
+    if not writable:
+        raise WritesDisabledError(why_read_only or "This server was started read-only.")
+
+
 #: What a request raises when the data source did not answer in time.
 SourceTimeoutError = TimedOut
 
@@ -693,10 +707,7 @@ class ExperimentData:
         return [self._config_problem] if self._config_problem else []
 
     def _require_writable(self) -> None:
-        if not self.writable:
-            raise WritesDisabledError(
-                self.why_read_only or "This server was started read-only."
-            )
+        require_writable(self.writable, self.why_read_only)
 
     def _catalog(self, w: _Wiring) -> tuple[Catalog, list[Problem], bool]:
         """The catalog, its problems, and whether it could be read at all.

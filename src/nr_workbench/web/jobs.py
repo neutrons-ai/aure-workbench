@@ -1,16 +1,20 @@
-"""One job at a time, for the Experiment page: a fit, run as child processes.
+"""nrw commands run for the Experiment page: one at a time, as child processes.
 
 A fit takes minutes to hours of CPU, so it runs neither in the request nor in
 the server's process: nothing could stop it there, and a crash in bumps would
 take the page down with it. A job is a short list of ``nrw`` commands --
 ``model generate``, then ``fit run`` -- run one after another in the project,
 each in a process group of its own, so that Cancel stops every process a step
-started, bumps' parallel workers included.
+started, bumps' parallel workers included. :func:`run_nrw` runs one short
+command the same way and waits for it.
 
 One at a time: two fits compete for the same cores, and neither finishes sooner
 than if it had waited its turn. What a job printed is kept in
 ``.nrw/jobs/<id>.log`` and what it was in ``<id>.json``, so the page can say
-what became of a job after ``nrw serve`` was restarted under it.
+what became of a job after ``nrw serve`` was restarted under it. The folder
+ignores itself in git, keeps the newest :data:`KEEP_JOBS` jobs, and is never
+read or written through a symbolic link: the log is served to the page, and a
+link planted in a shared project would serve whatever it pointed at.
 
 Cancel sends SIGTERM, never SIGINT: bumps' DREAM takes a keyboard interrupt as
 "stop sampling" and returns the chain so far, which ``nrw fit run`` would then
@@ -19,26 +23,25 @@ record as a finished fit.
 
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 import os
+import re
 import secrets
 import signal
 import subprocess
+import sys
 import threading
-from collections.abc import Callable, Sequence
-from contextlib import suppress
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
-from nr_workbench.web.models import nrw_command
-
-#: Where jobs are kept, under the project. It ignores itself (see
-#: :meth:`JobRunner.start`): the project's ``.gitignore`` learns the rule only
-#: when ``nrw init`` runs again, and a DREAM log does not belong in git.
-JOBS_DIR = ".nrw/jobs"
+from nr_workbench.bounded import TimedOut
+from nr_workbench.project.layout import ProjectLayout
 
 #: Seconds Cancel waits after SIGTERM before SIGKILL.
 CANCEL_GRACE = 5.0
@@ -46,12 +49,25 @@ CANCEL_GRACE = 5.0
 #: The most of a job's log one request returns, in bytes.
 LOG_CHUNK = 256 * 1024
 
-#: A job is ``running`` until it ends as one of these. ``detached``: it was
-#: still running when ``nrw serve`` stopped without stopping it, so how it
-#: ended is not known here -- a fit that finished is in Fits all the same.
-ENDED = ("ok", "failed", "cancelled", "detached")
+#: How many jobs' records and logs are kept; older ones go as a new job starts.
+#: A DREAM log runs to megabytes, and only the newest job is ever shown.
+KEEP_JOBS = 20
+
+#: A job id: when it started, to the microsecond, so that the newest sorts
+#: last; then six hex digits.
+_ID_RE = re.compile(r"\d{8}T\d{12}Z-[0-9a-f]{6}")
+
+#: How Click reports a refusal, at the start of a line.
+_REFUSAL_RE = re.compile(r"^Error: ", re.MULTILINE)
+
+#: Opened never through a symbolic link, where the platform can say so.
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 _log = logging.getLogger(__name__)
+
+
+class CommandRefused(Exception):
+    """An nrw command declined; the message is its own."""
 
 
 class JobBusy(Exception):
@@ -62,17 +78,97 @@ class JobNotFound(LookupError):
     """No such job, or not the current one."""
 
 
+def nrw_command(*args: str) -> list[str]:
+    """The command line that runs ``nrw`` with *args*, as this server does.
+
+    ``sys.executable -m nr_workbench`` is the interpreter serving the page, so
+    the child is the same nrw, whatever is first on ``PATH``. ``-P`` keeps the
+    working directory -- the project -- off ``sys.path``, as the ``nrw`` script
+    does: a ``json.py`` or ``click.py`` beside an analysis must not be imported
+    in place of the real module.
+
+    Args:
+        *args: The command and its arguments, as typed after ``nrw``.
+
+    Returns:
+        The argument list for :mod:`subprocess`.
+    """
+    return [sys.executable, "-P", "-m", "nr_workbench", *args]
+
+
+def child_environment() -> dict[str, str]:
+    """The environment for an nrw child: this one's, without the link's secret.
+
+    ``nrw serve`` keeps the one-time link's secret in its environment for its
+    reloader. A fit, the script it runs, and AuRE have no use for it.
+
+    Returns:
+        The environment to pass.
+    """
+    from nr_workbench.commands.serve import TOKEN_ENV
+
+    return {key: value for key, value in os.environ.items() if key != TOKEN_ENV}
+
+
+def run_nrw(root: Path, *args: str, timeout: float) -> str:
+    """Run one ``nrw`` command in the project, and wait for it.
+
+    Args:
+        root: Project root, the command's working directory.
+        *args: The command and its arguments, as typed after ``nrw``.
+        timeout: Seconds it may take.
+
+    Returns:
+        What it printed, stdout and stderr together.
+
+    Raises:
+        CommandRefused: It declined, as Click reports it (``Error: ...``); the
+            message is the part after that.
+        RuntimeError: It failed any other way -- a crash, not a refusal -- so
+            the API answers 500 and logs all it printed.
+        TimedOut: It did not finish within *timeout*, and was stopped.
+    """
+    try:
+        result = subprocess.run(
+            nrw_command(*args),
+            cwd=root,
+            env=child_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimedOut(
+            f"`nrw {' '.join(args[:2])}` did not finish within {timeout:.0f} s "
+            "and was stopped."
+        ) from exc
+    output = result.stdout.strip()
+    if result.returncode == 0:
+        return output
+    refusals = list(_REFUSAL_RE.finditer(output))
+    if refusals:
+        raise CommandRefused(output[refusals[-1].end() :].strip())
+    raise RuntimeError(f"`nrw {' '.join(args)}` exited {result.returncode}:\n{output}")
+
+
 @dataclass
 class Job:
     """One job: what it runs, and how far it got.
 
     Attributes:
-        id: Its id, also the name of its log.
+        id: Its id, also the name of its record and its log.
         label: What the page calls it, e.g. ``dream fit of oxide``.
         sample: The sample it is for.
         model: The model it fits.
         steps: The ``nrw`` arguments of each step, run in order.
-        status: ``running``, or one of :data:`ENDED`.
+        status: ``running``; then ``ok``, ``failed`` or ``cancelled``. Or
+            ``detached``: it was still running when ``nrw serve`` stopped
+            without stopping it, so how it ended is not known here -- a fit
+            that finished is in Fits all the same.
         step: The step running, or the last one that ran, from 1.
         exit_code: The last step's exit status.
         started_at: When it started, UTC.
@@ -102,15 +198,19 @@ class JobRunner:
 
     Args:
         root: Project root: the jobs' working directory.
-        on_finished: Called with a job once it ends, from the job's thread --
-            to find the fit it recorded.
+        on_finished: Called with a job as it ends, from the job's thread and
+            before its status changes, so a page that sees it end sees this
+            too; returns the id of the fit it recorded, or ``None``.
     """
 
     def __init__(
-        self, root: Path, *, on_finished: Callable[[Job], None] | None = None
+        self,
+        root: Path,
+        *,
+        on_finished: Callable[[Job], str | None] | None = None,
     ) -> None:
         self.root = Path(root)
-        self.directory = self.root / JOBS_DIR
+        self.directory = ProjectLayout(root=self.root).state_dir / "jobs"
         self.on_finished = on_finished
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
@@ -128,8 +228,19 @@ class JobRunner:
     ) -> Job:
         """Start a job, unless one is running.
 
+        Args:
+            label: What the page calls it.
+            sample: The sample it is for.
+            model: The model it fits.
+            steps: The ``nrw`` arguments of each step, run in order until one
+                fails.
+
+        Returns:
+            The job, as it starts.
+
         Raises:
             JobBusy: A job is running.
+            OSError: Its record could not be written.
         """
         with self._lock:
             if self._job is not None and self._job.status == "running":
@@ -138,28 +249,29 @@ class JobRunner:
                     "a time. Cancel it, or wait for it to finish."
                 )
             job = Job(
-                id=datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(3),
+                id=datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ-")
+                + secrets.token_hex(3),
                 label=label,
                 sample=sample,
                 model=model,
                 steps=[list(step) for step in steps],
                 started_at=_now(),
             )
-            self.directory.mkdir(parents=True, exist_ok=True)
-            ignore = self.directory / ".gitignore"
-            if not ignore.exists():
-                ignore.write_text("*\n", encoding="utf-8")
+            self._prepare()
+            self._save(job)
             self._job = job
             self._cancelled = False
-            self._save(job)
             self._thread = threading.Thread(
                 target=self._run, args=(job,), name=f"nrw-job-{job.id}", daemon=True
             )
             self._thread.start()
-            return job
+            return replace(job)
 
     def cancel(self, job_id: str) -> Job:
         """Stop the running job: SIGTERM to its step's group, SIGKILL if it lingers.
+
+        Args:
+            job_id: The job, as the page names it.
 
         Returns:
             The job; ``cancelled`` once its thread has seen the step end.
@@ -171,16 +283,20 @@ class JobRunner:
             job = self._job
             if job is None or job.id != job_id:
                 raise JobNotFound(f"No job {job_id!r} is running here.")
-            if job.status != "running":
-                return job
-            self._cancelled = True
+            if job.status == "running":
+                self._cancelled = True
             process = self._process
+            snapshot = replace(job)
         if process is not None:
             _stop(process)
-        return job
+        return snapshot
 
     def stop(self) -> Job | None:
-        """Cancel whatever is running, as ``nrw serve`` stops; the job, if any."""
+        """Cancel whatever is running, as ``nrw serve`` stops.
+
+        Returns:
+            The job stopped, or ``None`` when nothing was running.
+        """
         job = self.current()
         if job is None or job.status != "running":
             return None
@@ -190,28 +306,76 @@ class JobRunner:
             thread.join(CANCEL_GRACE + 1)
         return job
 
-    def log(self, job_id: str, offset: int = 0) -> tuple[str, int]:
-        """What the job printed, from byte *offset*; and the offset to read on from.
+    def log(self, job_id: str, offset: int | None = None) -> tuple[str, int]:
+        """What a job printed, and the offset to read on from.
+
+        Args:
+            job_id: The job.
+            offset: The byte to read from; ``None`` for the last chunk, from the
+                start of a line -- what a page opening onto a long log shows.
+
+        Returns:
+            The text, and the byte offset just past what it covers.
 
         Raises:
-            JobNotFound: No log for *job_id*.
+            JobNotFound: No such job, or its log is not a file of this folder's.
         """
-        path = self._path(job_id, ".log")
         try:
-            with path.open("rb") as handle:
-                handle.seek(max(0, offset))
+            with _opened(self._path(job_id, ".log"), os.O_RDONLY) as handle:
+                size = os.fstat(handle.fileno()).st_size
+                tail = offset is None
+                start = max(0, size - LOG_CHUNK if tail else min(offset, size))
+                handle.seek(start)
                 chunk = handle.read(LOG_CHUNK)
-        except FileNotFoundError as exc:
-            raise JobNotFound(f"No job {job_id!r} has a log here.") from exc
-        # A chunk may end inside a character: stop before it, and read it whole
-        # next time.
-        text = chunk.decode("utf-8", errors="ignore")
-        return text, max(0, offset) + len(text.encode("utf-8"))
+        except OSError as exc:  # absent, or a link where the log should be
+            raise JobNotFound(f"No log of job {job_id!r} can be read here.") from exc
+        if tail and start > 0:
+            newline = chunk.find(b"\n") + 1
+            chunk, start = chunk[newline:], start + newline
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        text = decoder.decode(chunk)
+        # A character the chunk cuts in two is read whole next time; a byte that
+        # is not UTF-8 at all is shown as such, and counted as read.
+        pending, _ = decoder.getstate()
+        return text, start + len(chunk) - len(pending)
+
+    def output(self, job_id: str) -> str:
+        """All a job printed, as text: to read what it says, not to page through.
+
+        Raises:
+            JobNotFound: No such job, or its log is not a file of this folder's.
+        """
+        try:
+            with _opened(self._path(job_id, ".log"), os.O_RDONLY) as handle:
+                return handle.read().decode("utf-8", errors="replace")
+        except OSError as exc:
+            raise JobNotFound(f"No log of job {job_id!r} can be read here.") from exc
 
     # -- the job's own thread -------------------------------------------------
 
     def _run(self, job: Job) -> None:
-        with self._path(job.id, ".log").open("ab") as log:
+        ended, fit_id = "failed", None
+        try:
+            ended = self._steps(job)
+            if self.on_finished is not None:
+                try:
+                    fit_id = self.on_finished(job)
+                except Exception:
+                    _log.exception("Finding the fit job %s recorded failed", job.id)
+        except Exception:
+            # A full disk, a quota: whatever it was, the job ends and the log
+            # says why, rather than holding every later fit off until restart.
+            _log.exception("Job %s stopped unexpectedly", job.id)
+        finally:
+            with self._lock:
+                self._process = None
+                job.status, job.fit_id, job.finished_at = ended, fit_id, _now()
+                with suppress(OSError):
+                    self._save(job)
+
+    def _steps(self, job: Job) -> str:
+        """Run the job's steps in order; how the job ended."""
+        with _opened(self._path(job.id, ".log"), _CREATE, mode="ab") as log:
             for number, args in enumerate(job.steps, 1):
                 process = self._launch(job, number, args, log)
                 if process is None:
@@ -226,33 +390,27 @@ class JobRunner:
                 cancelled = self._cancelled
             if cancelled:
                 log.write(b"\nCancelled.\n")
-        ended = "cancelled" if cancelled else "ok" if job.exit_code == 0 else "failed"
-        # Before the status changes: a page that sees the job end should find
-        # the fit it recorded with it.
-        if self.on_finished is not None:
-            try:
-                self.on_finished(job)
-            except Exception:
-                _log.exception("Finding what job %s recorded failed", job.id)
-        with self._lock:
-            job.status = ended
-            job.finished_at = _now()
-            self._save(job)
+                return "cancelled"
+        return "ok" if job.exit_code == 0 else "failed"
 
     def _launch(
-        self, job: Job, number: int, args: list[str], log: Any
+        self, job: Job, number: int, args: list[str], log: IO[bytes]
     ) -> subprocess.Popen[bytes] | None:
         """Start step *number*, unless the job was cancelled; ``None`` if not."""
         with self._lock:
             if self._cancelled:
                 return None
             job.step = number
+            # Written before the process starts: once it runs, nothing here
+            # may fail and leave it unwatched.
+            self._save(job)
             log.write(f"$ nrw {' '.join(args)}\n".encode())
             log.flush()
             try:
                 self._process = subprocess.Popen(
                     nrw_command(*args),
                     cwd=self.root,
+                    env=child_environment(),
                     stdin=subprocess.DEVNULL,
                     stdout=log,
                     stderr=subprocess.STDOUT,
@@ -264,40 +422,82 @@ class JobRunner:
                 log.write(f"could not start: {exc}\n".encode())
                 job.exit_code = None
                 return None
-            self._save(job)
             return self._process
 
     # -- records ---------------------------------------------------------------
 
     def _path(self, job_id: str, suffix: str) -> Path:
         # Ids are made here, but the page sends them back: never a path.
-        if not job_id or not all(c.isalnum() or c in "-_" for c in job_id):
+        if not isinstance(job_id, str) or not _ID_RE.fullmatch(job_id):
             raise JobNotFound(f"No job {job_id!r} here.")
         return self.directory / f"{job_id}{suffix}"
 
+    def _prepare(self) -> None:
+        """Make the folder, ignored by git, holding only the newest jobs."""
+        self.directory.mkdir(parents=True, exist_ok=True)
+        ignore = self.directory / ".gitignore"
+        with suppress(FileExistsError), _opened(ignore, _CREATE, mode="wb") as handle:
+            handle.write(b"*\n")
+        recorded = sorted(
+            path.stem
+            for path in self.directory.glob("*.json")
+            if _ID_RE.fullmatch(path.stem)
+        )
+        for old in recorded[: max(0, len(recorded) - KEEP_JOBS + 1)]:
+            for suffix in (".json", ".log"):
+                with suppress(OSError):
+                    (self.directory / f"{old}{suffix}").unlink()
+
     def _save(self, job: Job) -> None:
         path = self._path(job.id, ".json")
-        partial = path.with_suffix(".json.partial")
-        partial.write_text(json.dumps(job.as_dict(), indent=2) + "\n", encoding="utf-8")
+        partial = path.with_name(f"{path.name}.partial")
+        # A partial left by a crash -- or a link planted in its place -- is
+        # removed, never written through.
+        with suppress(FileNotFoundError):
+            partial.unlink()
+        with _opened(partial, _CREATE, mode="wb") as handle:
+            handle.write((json.dumps(job.as_dict(), indent=2) + "\n").encode())
         os.replace(partial, path)
 
     def _last_recorded(self) -> Job | None:
-        """The newest job on disk; marked ``detached`` if it never ended."""
+        """The newest job recorded, as :meth:`current` shows it after a restart.
+
+        One the server that ran it never saw end is ``detached`` -- here, not on
+        disk: a read-only server writes nothing, and a second server on the
+        project must not rewrite the first one's job.
+        """
         try:
-            newest = max(self.directory.glob("*.json"), key=lambda p: p.name)
-        except (ValueError, OSError):
+            recorded = sorted(
+                path
+                for path in self.directory.glob("*.json")
+                if _ID_RE.fullmatch(path.stem)
+            )
+        except OSError:
+            return None
+        if not recorded:
             return None
         try:
-            job = Job(**json.loads(newest.read_text(encoding="utf-8")))
+            with _opened(recorded[-1], os.O_RDONLY) as handle:
+                job = Job(**json.loads(handle.read().decode("utf-8")))
         except (OSError, ValueError, TypeError):
+            return None  # unreadable: nothing is claimed about it
+        if job.id != recorded[-1].stem or not isinstance(job.steps, list):
             return None
         if job.status == "running":
-            # The server that ran it stopped without stopping it. Its step may
-            # still be running, or may have finished; nothing here knows which,
-            # and a pid from another server's life is never signalled.
             job.status = "detached"
-            self._save(job)
         return job
+
+
+#: Created new, and only new: never through a link, never over a file.
+_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+
+
+@contextmanager
+def _opened(path: Path, flags: int, *, mode: str = "rb") -> Iterator[IO[bytes]]:
+    """*path* opened with *flags*, never through a symbolic link."""
+    fd = os.open(path, flags | _NOFOLLOW, 0o600)
+    with os.fdopen(fd, mode) as handle:
+        yield handle
 
 
 def _stop(process: subprocess.Popen[bytes]) -> None:
@@ -314,8 +514,11 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
 
 
 def _signal(process: subprocess.Popen[bytes], sig: int) -> None:
+    # After the job thread's wait() has returned the leader is reaped, and this
+    # says so. While it waits, poll() cannot tell -- but a process group's id is
+    # not reused while any of its members lives, which is when a signal is sent.
     if process.poll() is not None:
-        return  # reaped: its pid may belong to someone else by now
+        return
     with suppress(ProcessLookupError, PermissionError):
         if hasattr(os, "killpg"):
             os.killpg(process.pid, sig)

@@ -179,6 +179,28 @@ def test_model_new_produces_a_spec_that_validates(project: Path, monkeypatch) ->
     assert checked.exit_code == 0, checked.output
 
 
+def test_model_generate_leaves_a_script_that_would_not_change_as_it_is(
+    project: Path, monkeypatch
+) -> None:
+    # Restamped, an unchanged script would hash differently, and a fit of it
+    # would no longer be refused as the identical run it is.
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+    assert run(project, monkeypatch, "model", "generate", str(spec)).exit_code == 0
+    script = spec.with_suffix(".py")
+    first = script.read_bytes()
+
+    again = run(project, monkeypatch, "model", "generate", str(spec))
+    spec.write_text(spec.read_text(encoding="utf-8") + "# edited\n", encoding="utf-8")
+    edited = run(project, monkeypatch, "model", "generate", str(spec))
+
+    assert again.exit_code == 0, again.output
+    assert "up to date with its spec" in again.output
+    assert edited.exit_code == 0, edited.output
+    assert "Wrote samples/S1/models/m.py" in edited.output
+    assert script.read_bytes() != first
+
+
 def test_model_new_writes_no_angles_when_every_file_records_its_own(
     project: Path, monkeypatch
 ) -> None:
