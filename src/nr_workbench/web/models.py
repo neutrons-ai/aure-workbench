@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,20 @@ MODEL_NEW_TIMEOUT = 120.0
 
 #: Where a sample's specs live, and where ``nrw model new`` writes them.
 MODELS_DIR = "models"
+
+#: What the page may ask a fitter for. Generous, so they never decide an
+#: analysis; finite, so a typo is not a week of CPU on a shared node.
+FIT_LIMITS = {
+    "steps": (1, 1_000_000),
+    "samples": (1, 100_000_000),
+    "burn": (0, 1_000_000),
+}
+
+#: Settings only DREAM takes: the others optimize, and draw no samples.
+DREAM_ONLY = ("samples", "burn")
+
+#: A fit's note, one line: it is stored in the record, and heads its notes.
+MAX_FIT_NOTE = 500
 
 
 class ModelRefused(Exception):
@@ -54,9 +69,12 @@ class ModelsData:
     def __init__(
         self, root: Path, *, writable: bool = True, why_read_only: str = ""
     ) -> None:
+        from nr_workbench.web.jobs import JobRunner
+
         self.root = Path(root)
         self.writable = writable
         self.why_read_only = why_read_only
+        self.jobs = JobRunner(self.root, on_finished=self._recorded)
 
     def models(self, sample_id: str) -> dict[str, Any]:
         """One sample's specs, and whether a new one can be written.
@@ -129,6 +147,134 @@ class ModelsData:
         )
         return {**self.models(sample_id), "output": output}
 
+    def fit(self, sample_id: str, name: Any, request: dict[str, Any]) -> dict[str, Any]:
+        """Start fitting a spec: ``nrw model generate``, then ``nrw fit run``.
+
+        The script is generated from the spec every time, and generate refuses
+        a script edited by hand -- so what runs is the spec's, never code
+        written into ``models/`` some other way.
+
+        Args:
+            sample_id: The sample.
+            name: The model, ``models/<name>.yaml``.
+            request: ``method`` (amoeba, de or dream), and optionally
+                ``steps``, DREAM's ``samples`` and ``burn``, a one-line
+                ``note``, and ``force`` to run again what already ran.
+
+        Returns:
+            ``{"job": ...}``, the job started.
+
+        Raises:
+            WritesDisabledError: The server was started read-only.
+            RequestError: A setting is not usable.
+            ModelRefused: There is no such spec.
+            JobBusy: A job is running already.
+        """
+        from nr_workbench.fitters import FITTERS
+
+        if not self.writable:
+            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+        directory = self._sample_dir(sample_id)
+        try:
+            validate_model_name(name)
+        except ValueError as exc:
+            raise RequestError(str(exc)) from exc
+        spec = directory / MODELS_DIR / f"{name}.yaml"
+        if not spec.is_file():
+            raise ModelRefused(
+                f"samples/{sample_id}/{MODELS_DIR}/{name}.yaml does not exist."
+            )
+        method = request.get("method", "amoeba")
+        if method not in FITTERS:
+            raise RequestError(
+                f"method must be one of {', '.join(FITTERS)}, not {method!r}."
+            )
+        # `--option=value`, one argument each: a value is never read as an option.
+        options: list[str] = []
+        for key, (low, high) in FIT_LIMITS.items():
+            value = request.get(key)
+            if value is None or value == "":
+                continue
+            if key in DREAM_ONLY and method != "dream":
+                raise RequestError(
+                    f"{key} is a DREAM setting, and {method} draws no samples."
+                )
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not low <= value <= high
+            ):
+                raise RequestError(
+                    f"{key} must be a whole number from {low} to {high}."
+                )
+            options.append(f"--{key}={value}")
+        note = _fit_note(request.get("note", ""))
+        if note:
+            options.append(f"--note={note}")
+        if request.get("force") is True:
+            options.append("--force")
+        relative = spec.relative_to(self.root)
+        job = self.jobs.start(
+            label=f"{method} fit of {name}",
+            sample=sample_id,
+            model=name,
+            steps=[
+                ["model", "generate", relative.as_posix()],
+                # --verbose: the fitter's progress is what the page shows.
+                [
+                    "fit",
+                    "run",
+                    relative.with_suffix(".py").as_posix(),
+                    f"--method={method}",
+                    "--verbose",
+                    *options,
+                ],
+            ],
+        )
+        return {"job": job.as_dict()}
+
+    def job(self, offset: int = 0) -> dict[str, Any]:
+        """The job running, or the last one; and what it printed from *offset*."""
+        job = self.jobs.current()
+        if job is None:
+            return {"job": None, "log": "", "offset": 0}
+        from nr_workbench.web.jobs import JobNotFound
+
+        try:
+            text, offset = self.jobs.log(job.id, offset)
+        except JobNotFound:
+            text, offset = "", 0
+        return {"job": job.as_dict(), "log": text, "offset": offset}
+
+    def cancel(self, job_id: Any) -> dict[str, Any]:
+        """Stop the running job.
+
+        Raises:
+            WritesDisabledError: The server was started read-only.
+            JobNotFound: *job_id* is not the current job.
+        """
+        from nr_workbench.web.jobs import JobNotFound
+
+        if not self.writable:
+            raise WritesDisabledError(self.why_read_only or "This server is read-only.")
+        if not isinstance(job_id, str):
+            raise JobNotFound("No such job.")
+        return {"job": self.jobs.cancel(job_id).as_dict()}
+
+    def _recorded(self, job: Any) -> None:
+        """Find the fit a finished job recorded: its model's, since it started."""
+        from nr_workbench.project.layout import ProjectLayout
+        from nr_workbench.provenance.index import FitIndex
+
+        index = FitIndex(ProjectLayout(root=self.root).index_file)
+        for entry in index.fits(sample=job.sample):
+            if (
+                entry.get("model") == job.model
+                and str(entry.get("started_at") or "") >= job.started_at
+            ):
+                job.fit_id = entry.get("fit_id")
+                return
+
     def _sample_dir(self, sample_id: str) -> Path:
         try:
             validate_sample_id(sample_id)
@@ -167,6 +313,22 @@ def run_nrw(root: Path, *args: str, timeout: float) -> str:
         message = output.rsplit("Error: ", 1)[-1] if "Error: " in output else output
         raise ModelRefused(message or f"`nrw {args[0]}` exited {result.returncode}.")
     return output
+
+
+def _fit_note(value: Any) -> str:
+    """A fit's note: one line of text, or nothing."""
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise RequestError(f"note must be text, not {value!r}.")
+    text = value.strip()
+    if len(text) > MAX_FIT_NOTE:
+        raise RequestError(
+            f"note is {len(text)} characters; the limit is {MAX_FIT_NOTE}."
+        )
+    if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text):
+        raise RequestError("note must be one line of text.")
+    return text
 
 
 def _has_data(directory: Path) -> bool:

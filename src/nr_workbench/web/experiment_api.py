@@ -26,6 +26,7 @@ from nr_workbench.web.experiment import (
     RunNotListedError,
     WritesDisabledError,
 )
+from nr_workbench.web.jobs import JobBusy, JobNotFound
 from nr_workbench.web.models import ModelRefused, ModelsData
 from nr_workbench.web.settings import SettingsData, WriteFailedError
 
@@ -90,7 +91,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code or 500
     for kinds, status in (
-        ((RunNotListedError,), 404),
+        ((RunNotListedError, JobNotFound), 404),
         ((WritesDisabledError,), 403),
         (
             (
@@ -103,6 +104,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 TomlEditError,
                 Busy,
                 ModelRefused,
+                JobBusy,
             ),
             409,
         ),
@@ -270,3 +272,25 @@ def sample_models(sample_id: str) -> Any:
 def create_model(sample_id: str) -> Any:
     """Write a spec from the data on disk, as ``nrw model new``: ``{"name"}``."""
     return jsonify(models_data().create(sample_id, _body().get("name"))), 201
+
+
+@experiment_api.post("/samples/<sample_id>/models/<name>/fit")
+def fit_model(sample_id: str, name: str) -> Any:
+    """Fit a spec in the background: ``{"method", "steps", "samples", "burn", ...}``."""
+    return jsonify(models_data().fit(sample_id, name, _body())), 202
+
+
+@experiment_api.get("/jobs/current")
+def current_job() -> Any:
+    """The job running, or the last one, and its output from ``?offset=<bytes>``."""
+    try:
+        offset = max(0, int(request.args.get("offset", "0")))
+    except ValueError:
+        offset = 0
+    return jsonify(models_data().job(offset))
+
+
+@experiment_api.post("/jobs/<job_id>/cancel")
+def cancel_job(job_id: str) -> Any:
+    """Stop the running job."""
+    return jsonify(models_data().cancel(job_id))

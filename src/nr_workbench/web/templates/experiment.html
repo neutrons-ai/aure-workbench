@@ -110,6 +110,48 @@
         </form>
         <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
         <pre id="expt-model-output" class="expt-output small mt-2 mb-0 d-none"></pre>
+        <form id="expt-fit-form" class="expt-fit d-none mt-3" novalidate>
+          <div class="fw-semibold mb-1" id="expt-fit-title">Fit</div>
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <select id="expt-fit-method" class="form-select form-select-sm expt-fit-method" aria-label="fitter">
+              <option value="amoeba">amoeba: explores downhill from the start, fast</option>
+              <option value="de">de: explores the whole range</option>
+              <option value="dream">dream: samples, for uncertainties</option>
+            </select>
+            <input id="expt-fit-steps" type="number" min="1" class="form-control form-control-sm expt-fit-number"
+                   placeholder="steps" aria-label="steps">
+            <input id="expt-fit-samples" type="number" min="1" class="form-control form-control-sm expt-fit-number d-none"
+                   placeholder="samples" aria-label="DREAM samples">
+            <input id="expt-fit-burn" type="number" min="0" class="form-control form-control-sm expt-fit-number d-none"
+                   placeholder="burn" aria-label="DREAM burn-in">
+          </div>
+          <input id="expt-fit-note" class="form-control form-control-sm mt-2" maxlength="500"
+                 placeholder="why this fit (optional; kept in its record)" aria-label="why this fit">
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" id="expt-fit-force">
+            <label class="form-check-label" for="expt-fit-force">run again even if nothing changed</label>
+          </div>
+          <div class="d-flex gap-2 mt-2">
+            <button type="submit" class="btn btn-sm btn-primary" id="expt-fit-run">Run fit</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-fit-close">Close</button>
+          </div>
+          <div class="form-text">
+            Leave a box empty for the fitter's default. The spec's script is
+            generated again first; a script edited by hand is refused.
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel d-none" id="expt-job-panel">
+      <div class="panel-head">
+        <span id="expt-job-title">Fit</span>
+        <span id="expt-job-state" class="badge text-bg-light"></span>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="expt-job-cancel">Cancel</button>
+      </div>
+      <div class="p-3 small">
+        <p id="expt-job-result" class="mb-2" aria-live="polite"></p>
+        <pre id="expt-job-log" class="expt-output expt-job-log small mb-0"></pre>
       </div>
     </div>
   </div>

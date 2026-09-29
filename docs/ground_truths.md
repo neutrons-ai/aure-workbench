@@ -3429,3 +3429,33 @@ not show up as missing data.
   rendered `steady` would read as a change.
 - **The bulk bar's type starts at *unchanged*.** Starting at `steady` would
   reset a run already recorded as `tNR` whenever runs are reassigned.
+
+### 2026-09-29: fitting from the Experiment page
+
+The page fits a spec by running `nrw model generate` and then `nrw fit run` as
+child processes (`python -m nr_workbench`, the server's own interpreter). The
+fit is never run inside the server. Four findings shaped this.
+
+**bumps' DREAM takes Ctrl-C as "done".** `bumps.dream.core.Dream.sample`
+catches `KeyboardInterrupt` and returns the chain so far, and `nrw fit run`
+then records that as a finished fit. So Cancel sends SIGTERM, never SIGINT. A
+test pins which signal the step receives.
+
+**A step runs in a session of its own** (`start_new_session=True`). That way
+Cancel's `killpg` reaches the processes the step starts, such as bumps'
+parallel workers. It also means Ctrl-C on `nrw serve` never reaches the fit,
+so `run_serve` stops the running job explicitly on the way out. If the server
+is killed, the next one marks the job `detached` and never signals a pid left
+over from the last server's life.
+
+**A cancelled fit is left as an interrupted run.** SIGTERM ends `nrw fit run`
+without its `except` clauses running. The provisional manifest therefore stays
+`running`, and `nrw check` reports it, as it does for any fit that was killed.
+Recording "cancelled" instead would need a SIGTERM handler in the fit command.
+That is possible, but it is a change to the provenance record and was not made
+here.
+
+**`.nrw/` is not ignored by git as a whole.** The fit index lives there and is
+committed. Job logs go in `.nrw/jobs/`, which writes a `.gitignore` of `*`
+into itself. The project's own `.gitignore` learns the rule only when
+`nrw init` runs again, and a DREAM log should never be committed in between.

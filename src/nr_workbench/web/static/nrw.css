@@ -296,3 +296,16 @@ tr.fit-story > td > span + span::before {
   border-radius: 0.25rem;
   padding: 0.5rem;
 }
+.expt-fit {
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  padding-top: 0.75rem;
+}
+.expt-fit-method {
+  max-width: 22rem;
+}
+.expt-fit-number {
+  max-width: 7rem;
+}
+.expt-job-log {
+  max-height: 24rem;
+}

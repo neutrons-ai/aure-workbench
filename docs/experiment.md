@@ -247,6 +247,40 @@ that one. A name is a plain name (letters, digits, `.`, `-`, `_`), because it
 becomes the spec's filename. As with every change on the page, only a browser
 that opened the link `nrw serve` printed can write one.
 
+### Fitting a model
+
+**Fit…** beside a spec starts a fit of it. Choose the fitter:
+
+- **amoeba** explores downhill from the starting values, fast. Use it while you
+  are still changing the model.
+- **de** explores the whole range of every parameter. Use it when amoeba stalls
+  on the starting point rather than on the model.
+- **dream** samples. It is the only one that gives uncertainties, and it takes
+  **samples** and **burn** as well as **steps**.
+
+Leave a box empty for the fitter's default. The page runs the same two commands
+you would, one after the other:
+
+```bash
+nrw model generate samples/<id>/models/<name>.yaml
+nrw fit run samples/<id>/models/<name>.py --method=dream --verbose ...
+```
+
+So the fit is recorded exactly as `nrw fit run` records it, and appears in
+**Fits** with its full provenance. The script is generated from the spec every
+time. A script someone edited by hand is refused, not run, so a fit started
+from the page always runs what its spec says.
+
+The **Fit** panel follows the job: its output as it runs, then a link to the
+fit it recorded. One job runs at a time for the project, whichever sample it is
+for. Its output is kept in `.nrw/jobs/`, which git ignores.
+
+**Cancel** stops the fit and every process it started. What the fit had written
+so far stays where it is, and `nrw check` lists it as an interrupted run, as it
+does for a fit stopped in a terminal. Stopping `nrw serve` stops its running
+job too. If the server was killed instead, the page says so the next time it
+starts, and a fit that went on to finish is in Fits all the same.
+
 ## A sample that already exists
 
 A sample written by hand before the page existed can be taken into the catalog:

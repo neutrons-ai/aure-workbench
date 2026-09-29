@@ -7,6 +7,7 @@ real partial files -- the page must write exactly what the terminal writes.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from click.testing import CliRunner
 
 from nr_workbench.cli import main
 from nr_workbench.project.samples import validate_model_name
+from nr_workbench.web import jobs as jobs_module
 from nr_workbench.web import models as models_module
 from nr_workbench.web.app import create_app
 
@@ -146,6 +148,14 @@ def test_a_read_only_server_writes_no_spec(project: Path) -> None:
     with pytest.raises(PermissionError):
         data.create("S1", "oxide")
     assert not (project / "samples" / "S1" / "models" / "oxide.yaml").exists()
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(exist_ok=True)
+    spec.write_text("{}\n")
+    with pytest.raises(PermissionError):
+        data.fit("S1", "oxide", {"method": "amoeba"})
+    with pytest.raises(PermissionError):
+        data.cancel("20260929T000000Z-abcdef")
+    assert data.jobs.current() is None
 
 
 def test_a_command_that_does_not_finish_is_stopped(app, writer, monkeypatch) -> None:
@@ -165,3 +175,129 @@ def test_a_command_that_does_not_finish_is_stopped(app, writer, monkeypatch) -> 
 @pytest.mark.parametrize("name", ["oxide", "Cu-Pt_2", "v1.2", "x" * 64])
 def test_validate_model_name_accepts_plain_names(name: str) -> None:
     assert validate_model_name(name) == name
+
+
+# --------------------------------------------------------------------------
+# Fitting a spec
+# --------------------------------------------------------------------------
+
+
+def fit(client, app, sample: str, name: str, body: dict, **headers):
+    sent = {"X-NRW-Token": app.config["NRW_PAGE_TOKEN"], "Origin": ORIGIN}
+    sent.update(headers)
+    return client.post(
+        f"/api/experiment/samples/{sample}/models/{name}/fit", json=body, headers=sent
+    )
+
+
+def job_ended(client, timeout: float = 120) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        payload = client.get("/api/experiment/jobs/current").json
+        if payload["job"] and payload["job"]["status"] != "running":
+            return payload
+        time.sleep(0.1)
+    raise AssertionError("the job did not end")
+
+
+def test_a_fit_started_from_the_page_is_recorded_as_nrw_fit_run_records_it(
+    app, writer, project: Path
+) -> None:
+    from nr_workbench.provenance.index import FitIndex
+
+    assert create(writer, app, "S1", "oxide").status_code == 201
+
+    started = fit(writer, app, "S1", "oxide", {"method": "amoeba", "steps": 3})
+    payload = job_ended(writer)
+
+    assert started.status_code == 202, started.json
+    job = payload["job"]
+    assert (job["status"], job["step"]) == ("ok", 2), payload["log"]
+    assert payload["log"].startswith(
+        "$ nrw model generate samples/S1/models/oxide.yaml"
+    )
+    assert "$ nrw fit run samples/S1/models/oxide.py --method=amoeba" in payload["log"]
+    (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
+    assert recorded["fit_id"] == job["fit_id"]
+    assert (recorded["model"], recorded["method"], recorded["status"]) == (
+        "oxide",
+        "amoeba",
+        "ok",
+    )
+    assert recorded["settings"]["steps"] == 3
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"method": "lm"},
+        {"method": "amoeba", "steps": 0},
+        {"method": "amoeba", "steps": "5"},
+        {"method": "amoeba", "steps": True},
+        {"method": "amoeba", "samples": 1000},
+        {"method": "dream", "burn": -1},
+        {"method": "dream", "samples": 10**9},
+        {"method": "amoeba", "note": "two\nlines"},
+        {"method": "amoeba", "note": "x" * 501},
+    ],
+)
+def test_a_fit_setting_that_is_not_usable_is_refused_before_anything_runs(
+    app, writer, project: Path, body: dict
+) -> None:
+    assert create(writer, app, "S1", "oxide").status_code == 201
+
+    response = fit(writer, app, "S1", "oxide", body)
+
+    assert response.status_code == 400, response.json
+    assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+def test_fitting_a_spec_that_does_not_exist_is_refused(app, writer) -> None:
+    response = fit(writer, app, "S1", "missing", {"method": "amoeba"})
+
+    assert response.status_code == 409
+    assert "does not exist" in response.json["error"]
+
+
+def test_a_second_fit_waits_for_the_first_and_cancel_stops_it(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(exist_ok=True)
+    spec.write_text("{}\n")
+    first = fit(writer, app, "S1", "oxide", {"method": "dream", "samples": 1000})
+
+    second = fit(writer, app, "S1", "oxide", {"method": "amoeba"})
+    stranger = app.test_client().post(
+        f"/api/experiment/jobs/{first.json['job']['id']}/cancel",
+        json={},
+        headers={"X-NRW-Token": app.config["NRW_PAGE_TOKEN"], "Origin": ORIGIN},
+    )
+    cancelled = writer.post(
+        f"/api/experiment/jobs/{first.json['job']['id']}/cancel",
+        json={},
+        headers={"X-NRW-Token": app.config["NRW_PAGE_TOKEN"], "Origin": ORIGIN},
+    )
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert "one job runs at a time" in second.json["error"]
+    assert stranger.status_code == 403
+    assert cancelled.status_code == 200
+    assert job_ended(writer)["job"]["status"] == "cancelled"
+
+
+def test_fitting_needs_the_link(app, project: Path) -> None:
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(exist_ok=True)
+    spec.write_text("{}\n")
+
+    response = fit(app.test_client(), app, "S1", "oxide", {"method": "amoeba"})
+
+    assert response.status_code == 403
+    assert app.config["NRW_MODELS"].jobs.current() is None

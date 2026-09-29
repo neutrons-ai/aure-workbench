@@ -282,3 +282,77 @@ def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     assert (project / "samples" / "S1" / "models" / "oxide.yaml").is_file()
     assert "samples/S1/models/oxide.yaml" in page.text("expt-models-list")
     assert "Wrote samples/S1/models/oxide.yaml" in page.text("expt-model-output")
+
+
+def test_a_fit_started_on_the_page_is_followed_to_its_record(
+    page: Page, site: Site, project: Path
+) -> None:
+    write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
+    open_s1(page, site)
+    page.wait_for(
+        "!document.getElementById('expt-model-create').disabled", what="the data seen"
+    )
+    page.type("expt-model-name", "oxide")
+    page.click("expt-model-create")
+    page.wait_for(
+        "document.querySelector('#expt-models-list .expt-model-fit') !== null",
+        what="the spec listed",
+    )
+
+    page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+    page.type("expt-fit-steps", "3")
+    page.click("expt-fit-run")
+
+    page.wait_for(
+        "document.getElementById('expt-job-result').textContent.includes('Recorded as')",
+        what="the fit recorded",
+        timeout=120,
+    )
+    href = page.js("document.querySelector('#expt-job-result a').getAttribute('href')")
+    from nr_workbench.provenance.index import FitIndex
+
+    (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
+    assert href == f"/f/{recorded['fit_id']}"
+    assert "$ nrw fit run samples/S1/models/oxide.py" in page.text("expt-job-log")
+    assert page.text("expt-job-state") == "ok"
+
+
+def test_a_fit_is_cancelled_from_the_page(
+    page: Page, site: Site, project: Path, monkeypatch
+) -> None:
+    import sys
+
+    from nr_workbench.web import jobs as jobs_module
+
+    # A step that runs until it is stopped, standing in for a long DREAM run.
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("{}\n")
+    (project / "samples" / "S1" / "data" / "steady").mkdir(parents=True)
+    open_s1(page, site)
+    page.wait_for(
+        "document.querySelector('#expt-models-list .expt-model-fit') !== null",
+        what="the spec listed",
+    )
+    page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+    page.click("expt-fit-run")
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'step 1 of 2'",
+        what="the job running",
+    )
+
+    page.click("expt-job-cancel")
+
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'cancelled'",
+        what="the job cancelled",
+    )
+    assert "interrupted run" in page.text("expt-job-result")
+    assert page.js(
+        "document.getElementById('expt-job-cancel').classList.contains('d-none')"
+    )

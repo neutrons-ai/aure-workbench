@@ -125,6 +125,13 @@ def run_serve(
             f"Cannot bind {host}:{port} -- {exc}. "
             "Another server may already be running; try --port."
         ) from exc
+    finally:
+        # A fit started from the page runs in a process group of its own, so
+        # Ctrl-C here does not reach it; stopping the server stops it, rather
+        # than leaving it to hold the cores unseen.
+        stopped = app.config["NRW_MODELS"].jobs.stop()
+        if stopped is not None:
+            click.echo(f"  Stopped the {stopped.label}.")
 
 
 def _echo_data_folder(root: Path) -> None:
