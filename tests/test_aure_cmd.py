@@ -816,7 +816,7 @@ def test_the_guard_refuses_the_command_line_too(sample: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", ["../evil", "a/b", ".."])
+@pytest.mark.parametrize("bad", ["../evil", "a/b", "..", "name\n"])
 def test_a_name_may_not_be_a_path(sample: Path, bad: str) -> None:
     """`--name` becomes a path segment; containment should not be accidental."""
     output = _finished_run(sample)

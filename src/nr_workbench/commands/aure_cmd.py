@@ -22,7 +22,6 @@ from __future__ import annotations
 import itertools
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -51,12 +50,6 @@ BUDGETS: dict[str, dict[str, Any]] = {
 RUN_ENV_FILE = "run-env.json"
 
 
-#: An identifier that is safe to join onto a path. Same shape `nrw sample new`
-#: already enforces for a sample id; applied here to `--name` too, because a
-#: name reaches the filesystem exactly as a sample does.
-_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-
 def _safe(value: str, what: str) -> str:
     """Return ``value`` if it is a plain name, else refuse.
 
@@ -66,7 +59,11 @@ def _safe(value: str, what: str) -> str:
     clear one, and the containment the rest of the layout assumes would be
     quietly untrue.
     """
-    if not _SAFE_SEGMENT.match(value) or value in {".", ".."}:
+    # Applied to --name as well as the sample: a name reaches the filesystem
+    # exactly as a sample does. Matched whole: `$` let "name\n" through.
+    from nr_workbench.project.samples import PLAIN_NAME_RE
+
+    if not PLAIN_NAME_RE.fullmatch(value):
         raise click.ClickException(
             f"{what} {value!r} must be a plain name -- letters, digits, dot, "
             "dash and underscore -- not a path."

@@ -9,6 +9,7 @@ the other way round. ``commands/sample.py`` re-exports both names.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from nr_workbench.project.layout import SAMPLE_SUBDIRS
 from nr_workbench.project.render import RenderContext, render_tree
@@ -86,3 +87,37 @@ def plan_sample_files(
         )
 
     return planned
+
+
+#: A plain name: never a path, never read as an option. Matched whole, with
+#: :func:`re.fullmatch` -- ``$`` would also match before a trailing newline.
+PLAIN_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+#: A model name becomes a filename three times over: the spec, its generated
+#: script, and the model its fits are recorded under.
+MAX_MODEL_NAME = 64
+
+
+def validate_model_name(name: object) -> str:
+    """Check a model name is a plain name, usable as its spec's filename.
+
+    Args:
+        name: The proposed name, from a command line or a page.
+
+    Returns:
+        The name, unchanged.
+
+    Raises:
+        ValueError: With the reason.
+    """
+    if (
+        not isinstance(name, str)
+        or len(name) > MAX_MODEL_NAME
+        or not PLAIN_NAME_RE.fullmatch(name)
+    ):
+        raise ValueError(
+            f"model name {name!r} must be a plain name: start with a letter or "
+            "digit, then letters, digits, '.', '-' or '_', at most "
+            f"{MAX_MODEL_NAME} characters."
+        )
+    return name

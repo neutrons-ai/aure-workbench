@@ -233,6 +233,20 @@ version of the source file; it is how those cases are told apart.
 Only runs that are *complete*, or that you confirmed, are copied. A run is
 copied whole or not at all.
 
+## Models
+
+Once a sample has data, the **Models** panel below Apply writes a model spec
+for it: give the model a name and click **New model**. The spec is exactly what
+`nrw model new <sample> --name <name>` writes from the data in
+`samples/<id>/data/`: one state per run, each segment's angle read from its own
+file, and a placeholder stack to replace with the real layers. The panel lists
+the sample's specs, and marks those a script has been generated from.
+
+A spec that already exists is never overwritten: choose another name, or edit
+that one. A name is a plain name (letters, digits, `.`, `-`, `_`), because it
+becomes the spec's filename. As with every change on the page, only a browser
+that opened the link `nrw serve` printed can write one.
+
 ## A sample that already exists
 
 A sample written by hand before the page existed can be taken into the catalog:

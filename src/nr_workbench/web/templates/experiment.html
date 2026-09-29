@@ -95,6 +95,23 @@
         </p>
       </div>
     </div>
+
+    <div class="panel d-none" id="expt-models">
+      <div class="panel-head">
+        <span id="expt-models-title">Models</span>
+        <span class="hint">a spec is the model a fit reads, written from the sample's data</span>
+      </div>
+      <div class="p-3 small">
+        <div id="expt-models-list" class="mb-2"></div>
+        <form id="expt-model-form" class="d-flex gap-2 align-items-center" novalidate>
+          <input class="form-control form-control-sm expt-model-name" id="expt-model-name"
+                 placeholder="model name, e.g. oxide" aria-label="new model name" maxlength="64">
+          <button type="submit" class="btn btn-sm btn-outline-primary" id="expt-model-create">New model</button>
+        </form>
+        <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
+        <pre id="expt-model-output" class="expt-output small mt-2 mb-0 d-none"></pre>
+      </div>
+    </div>
   </div>
 
   <aside class="rail">
@@ -159,4 +176,5 @@
 </script>
 <script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
 <script src="{{ url_for('static', filename='experiment.js') }}"></script>
+<script src="{{ url_for('static', filename='models.js') }}"></script>
 {% endblock %}

@@ -26,6 +26,7 @@ from nr_workbench.web.experiment import (
     RunNotListedError,
     WritesDisabledError,
 )
+from nr_workbench.web.models import ModelRefused, ModelsData
 from nr_workbench.web.settings import SettingsData, WriteFailedError
 
 experiment_api = Blueprint("experiment_api", __name__, url_prefix="/api/experiment")
@@ -39,6 +40,11 @@ def data() -> ExperimentData:
 def settings_data() -> SettingsData:
     """The request's :class:`SettingsData`, held on the app config."""
     return current_app.config["NRW_SETTINGS"]  # type: ignore[no-any-return]
+
+
+def models_data() -> ModelsData:
+    """The request's :class:`ModelsData`, held on the app config."""
+    return current_app.config["NRW_MODELS"]  # type: ignore[no-any-return]
 
 
 @experiment_api.before_request
@@ -96,6 +102,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 NeedsConfirmation,
                 TomlEditError,
                 Busy,
+                ModelRefused,
             ),
             409,
         ),
@@ -246,3 +253,20 @@ def check_folder() -> Any:
             body.get("location"), body.get("ipts"), body.get("kind")
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Models -- listing is open; writing a spec is behind the gate
+# ---------------------------------------------------------------------------
+
+
+@experiment_api.get("/samples/<sample_id>/models")
+def sample_models(sample_id: str) -> Any:
+    """One sample's specs, and whether a new one can be written."""
+    return jsonify(models_data().models(sample_id))
+
+
+@experiment_api.post("/samples/<sample_id>/models")
+def create_model(sample_id: str) -> Any:
+    """Write a spec from the data on disk, as ``nrw model new``: ``{"name"}``."""
+    return jsonify(models_data().create(sample_id, _body().get("name"))), 201

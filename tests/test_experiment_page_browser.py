@@ -29,6 +29,7 @@ from nr_workbench.experiment.model import RunChange, RunKey, SampleChange
 from nr_workbench.experiment.store import ParquetCatalogStore
 
 from .experiment_fixtures import write_autoreduced
+from .test_lifecycle import write_partials
 from .test_settings_page_browser import (  # noqa: F401 - fixtures
     Page,
     Site,
@@ -249,3 +250,35 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
     )
     assign_selected()
     assert store.load().runs[RunKey(234277)].measurement == "steady"
+
+
+def test_a_model_is_written_from_the_samples_data_once_it_has_some(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_s1(page, site)
+    page.wait_for(
+        "!document.getElementById('expt-models').classList.contains('d-none')",
+        what="the models panel",
+    )
+    assert "Apply first" in page.text("expt-models-list")
+    assert page.js("document.getElementById('expt-model-create').disabled") is True
+
+    # What Apply copies in: the sample's data, on disk.
+    write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S1')).click()"
+    )
+    page.wait_for(
+        "!document.getElementById('expt-model-create').disabled", what="the data seen"
+    )
+    page.type("expt-model-name", "oxide")
+    page.click("expt-model-create")
+
+    page.wait_for(
+        "document.getElementById('expt-model-status').textContent.startsWith('Wrote')",
+        what="the spec written",
+    )
+    assert (project / "samples" / "S1" / "models" / "oxide.yaml").is_file()
+    assert "samples/S1/models/oxide.yaml" in page.text("expt-models-list")
+    assert "Wrote samples/S1/models/oxide.yaml" in page.text("expt-model-output")

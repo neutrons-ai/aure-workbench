@@ -652,6 +652,9 @@
       id: id, rev: current ? current.rev || 0 : 0, values: fresh, runs: runs,
     };
     $("expt-adopt-plan").classList.add("d-none");
+    // models.js shows this sample's specs; it listens rather than being called,
+    // so the two files share nothing but this event.
+    document.dispatchEvent(new CustomEvent("nrw:sample-opened", { detail: { id: id } }));
     await refreshPreview(id);
   }
 

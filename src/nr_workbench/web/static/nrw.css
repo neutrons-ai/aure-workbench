@@ -283,3 +283,16 @@ tr.fit-story > td > span + span::before {
 .settings-indent {
   margin-left: 1.5rem;
 }
+
+/* The Models panel: a new model's name, and what a command printed. */
+.expt-model-name {
+  max-width: 16rem;
+}
+.expt-output {
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--bs-tertiary-bg, #f8f9fa);
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
