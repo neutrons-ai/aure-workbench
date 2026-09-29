@@ -502,6 +502,7 @@ def run_aure_import(
     from nr_workbench.aure_import import (
         ImportError_,
         fitted_model,
+        layer_names,
         read_final_state,
         reported_chisq,
         run_of,
@@ -567,14 +568,22 @@ def run_aure_import(
         chisq=reported_chisq(state),
     )
 
+    # AuRE names layers in prose; a spec's names are identifiers. The file
+    # keeps AuRE's, so the stack can still be read against AuRE's report.
+    renamed = [(aure, spec) for aure, spec in layer_names(model) if aure != spec]
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         _provenance_header(layout, target, Path(output_dir))
+        + _renamed_comment(renamed)
         + blank_angles_comment(blank)
         + _emit_spec(document),
         encoding="utf-8",
     )
     click.echo(f"Wrote {target.relative_to(layout.root)}")
+    if renamed:
+        click.echo("  layer names, as a spec takes them (AuRE's in quotes):")
+        for aure, spec in renamed:
+            click.echo(f"    {spec}  {aure!r}")
     warn_blank_angles(blank)
 
     # Anything AuRE's fit had that this spec does not. Silence here would mean
@@ -598,6 +607,16 @@ def run_aure_import(
     click.echo("Next:")
     click.echo(f"  nrw model validate {target.relative_to(layout.root)}")
     click.echo(f"  nrw model generate {target.relative_to(layout.root)}")
+
+
+def _renamed_comment(renamed: list[tuple[str, str]]) -> str:
+    """The layers AuRE named otherwise, as comments; ``repr`` keeps each on one
+    line whatever AuRE's name held."""
+    if not renamed:
+        return ""
+    lines = ["# Layer names, as a spec takes them, and AuRE's own:"]
+    lines += [f"#   {spec} = {aure!r}" for aure, spec in renamed]
+    return "\n".join(lines) + "\n#\n"
 
 
 def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) -> str:

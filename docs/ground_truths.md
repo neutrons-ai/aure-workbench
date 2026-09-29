@@ -3525,3 +3525,27 @@ ends a table where its rows end, as `reconcile` does. Before, a row-shaped line
 in a run's notes, further down, supplied the condition of a run the table did
 not list. And `nrw model new --name` applies the plain-name rule that
 `nrw aure` and the page apply.
+
+### 2026-09-29: AuRE names layers in prose, and a spec takes identifiers
+
+The first quick fit on real data got through `aure new`, `aure run` and
+`aure import`, then failed at `nrw model generate` with thirteen validation
+errors. AuRE had named the layers `silicon oxide`, `DPPC bilayer headgroup
+region` and `water-based solvent (unspecified contrast)`. `aure import` wrote
+them into the spec as they were, but a spec's layer name must match
+`^[A-Za-z_][\w-]*$`, because it is also a parameter path and a variable in the
+generated script. The import tests used AuRE models whose layers were called
+`Ti`, `Cu` and `Si`, so this was never exercised.
+
+`spec_layer_name` in `aure_import.py` now makes each name an ASCII identifier:
+
+- accents are dropped;
+- every run of other characters becomes one underscore;
+- a name that would start with a digit is prefixed with its position's name,
+  and one left empty is that name;
+- a Python keyword, `SLD` or `probe` is suffixed.
+
+Repeats are then made unique, as they were before. The import prints what it
+renamed, and the spec keeps AuRE's names as comments, so it can still be read
+against AuRE's report. The test model is the one AuRE reported for that
+bilayer.

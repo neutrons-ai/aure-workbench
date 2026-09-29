@@ -280,6 +280,11 @@ and says how to set one; `nrw check-llm` checks what is configured. AuRE's
 working files stay in `samples/<id>/aure/<name>/`. A name already used for a
 model or an AuRE run is refused.
 
+AuRE names layers in prose, such as `silicon oxide`. A spec's layer names are
+identifiers, because they are also parameter paths (`silicon_oxide.rho`) and
+variables in the generated script. So the import writes `silicon_oxide`, says
+what it renamed, and keeps AuRE's own names as comments at the top of the spec.
+
 ### Fitting a model
 
 **Fit…** beside a spec starts a fit of it. Choose the fitter:

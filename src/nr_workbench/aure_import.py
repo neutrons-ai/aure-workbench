@@ -30,6 +30,9 @@ Nothing here imports ``aure``; a ``final_state.json`` is just JSON.
 from __future__ import annotations
 
 import json
+import keyword
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -322,22 +325,78 @@ def run_of(output_dir: Path, scan: Any) -> int | None:
     return matches.pop() if len(matches) == 1 else None
 
 
-def _unique_names(stack: list[dict[str, Any]]) -> list[str]:
-    """Return stack names, de-duplicated in place.
+#: Names a layer may not take in a spec: the probe's own, in parameter paths
+#: (``probe.intensity``), and the one the generated script's stack builds with.
+_TAKEN_NAMES = frozenset({"probe", "SLD"})
 
-    A stack legitimately repeats a material -- D2O above and below a membrane,
-    the same oxide twice -- but an nrw layer name is a key, so a repeat would
-    silently collapse two layers into one. Suffixing is the conservative fix;
-    losing a layer is not recoverable from the written file.
+
+def spec_layer_name(text: str, fallback: str) -> str:
+    """AuRE's name for a layer, as a layer name a spec takes.
+
+    AuRE names layers the way a person would -- ``silicon oxide``, ``water-
+    based solvent (unspecified contrast)`` -- and an nrw layer name is a key, a
+    parameter path (``silicon_oxide.rho``) and a variable in the generated
+    script. So accents are dropped and every run of anything but letters and
+    digits becomes one underscore. A name that would start with a digit is
+    prefixed with its position's name, one left empty *is* that name, and a
+    Python keyword, or a name the spec or the script uses, is suffixed.
+
+    Args:
+        text: AuRE's name.
+        fallback: The position's own name (``layer2``), for a name that leaves
+            nothing usable.
+
+    Returns:
+        A Python identifier the spec's name rule accepts.
     """
-    seen: dict[str, int] = {}
+    plain = (
+        unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    )
+    name = "_".join(re.findall(r"[A-Za-z0-9]+", plain))
+    if not name:
+        return fallback
+    if name[0].isdigit():
+        name = f"{fallback}_{name}"
+    if keyword.iskeyword(name) or name in _TAKEN_NAMES:
+        name = f"{name}_layer"
+    return name
+
+
+def _unique_names(stack: list[dict[str, Any]]) -> list[str]:
+    """Return stack names as a spec takes them, de-duplicated in place.
+
+    Each is made a spec's name first (:func:`spec_layer_name`). A stack
+    legitimately repeats a material -- D2O above and below a membrane, the same
+    oxide twice -- but an nrw layer name is a key, so a repeat would silently
+    collapse two layers into one. Suffixing is the conservative fix; losing a
+    layer is not recoverable from the written file.
+    """
+    used: set[str] = set()
     names: list[str] = []
-    for entry in stack:
-        base = entry["name"]
-        count = seen.get(base, 0)
-        seen[base] = count + 1
-        names.append(base if count == 0 else f"{base}{count + 1}")
+    for position, entry in enumerate(stack):
+        base = spec_layer_name(entry["name"], f"layer{position}")
+        name, count = base, 1
+        while name in used:  # "a" twice beside an "a2" of its own is "a3"
+            count += 1
+            name = f"{base}{count}"
+        used.add(name)
+        names.append(name)
     return names
+
+
+def layer_names(model: dict[str, Any]) -> list[tuple[str, str]]:
+    """Each layer's name as AuRE reported it, and as the spec names it.
+
+    Args:
+        model: A ModelDefinition.
+
+    Returns:
+        ``(aure_name, spec_name)`` in stack order, incident medium last.
+    """
+    stack = ordered_stack(model)
+    return list(
+        zip((entry["name"] for entry in stack), _unique_names(stack), strict=True)
+    )
 
 
 def _free_parameters(names: list[str], model: dict[str, Any]) -> list[dict[str, Any]]:

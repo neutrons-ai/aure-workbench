@@ -290,6 +290,28 @@ def test_import_writes_a_spec_that_validates(sample: Path) -> None:
     assert validated.exit_code == 0, validated.output
 
 
+def test_import_of_prose_layer_names_writes_a_spec_generate_takes(
+    sample: Path,
+) -> None:
+    """AuRE names layers in prose -- "silicon oxide" -- which a spec does not
+    take; imported as they were, `nrw model generate` refused the spec."""
+    from .test_aure_import import PROSE_MODEL
+
+    output = _finished_run(sample, model=PROSE_MODEL)
+
+    imported = _run(
+        "aure", "import", str(output), "--sample", "Sample1", "--name", "bilayer"
+    )
+    generated = _run("model", "generate", "samples/Sample1/models/bilayer.yaml")
+
+    assert imported.exit_code == 0, imported.output
+    assert "silicon_oxide  'silicon oxide'" in imported.output
+    spec = (sample / "samples" / "Sample1" / "models" / "bilayer.yaml").read_text()
+    # AuRE's own names stay in the file, to read it against AuRE's report.
+    assert "#   silicon_oxide = 'silicon oxide'" in spec
+    assert generated.exit_code == 0, generated.output
+
+
 def test_import_records_that_aure_proposed_the_stack(sample: Path) -> None:
     """Months later, a reader must be able to tell a proposal from a measurement
     without going looking."""

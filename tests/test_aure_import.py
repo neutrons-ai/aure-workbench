@@ -54,6 +54,61 @@ MODEL = {
 }
 
 
+#: What AuRE reported for a lipid bilayer on silicon, measured through the
+#: substrate: its layer names are prose, one of them twice. Imported as they
+#: were, they made a spec its own validator refused.
+PROSE_MODEL = {
+    "substrate": {"name": "silicon", "sld": 2.07, "roughness": 3},
+    "layers": [
+        {
+            "name": "silicon oxide",
+            "sld": 4.147,
+            "sld_min": 1.5,
+            "sld_max": 5.5,
+            "thickness": 21.0,
+            "thickness_min": 7.5,
+            "thickness_max": 30.0,
+            "roughness": 13.9,
+            "roughness_max": 30.0,
+        },
+        {
+            "name": "DPPC bilayer headgroup region",
+            "sld": 5.95,
+            "sld_min": -1.0,
+            "sld_max": 6.0,
+            "thickness": 11.7,
+            "thickness_min": 5.0,
+            "thickness_max": 20.0,
+            "roughness": 16.2,
+        },
+        {
+            "name": "DPPC bilayer tail region",
+            "sld": 1.41,
+            "sld_min": -2.5,
+            "sld_max": 2.0,
+            "thickness": 15.5,
+            "thickness_min": 15.0,
+            "thickness_max": 60.0,
+            "roughness": 5.8,
+        },
+        {
+            "name": "DPPC bilayer headgroup region",
+            "sld": 5.95,
+            "sld_min": -1.0,
+            "sld_max": 6.0,
+            "thickness": 11.7,
+            "thickness_min": 5.0,
+            "thickness_max": 20.0,
+            "roughness": 16.2,
+        },
+    ],
+    "ambient": {"name": "water-based solvent (unspecified contrast)", "sld": 6.32},
+    "back_reflection": True,
+    "dq_is_fwhm": False,
+    "intensity": {"value": 1.0, "min": 0.7, "max": 1.1, "fixed": False},
+}
+
+
 #: A state block in the shape `nrw model new` writes, with the measured angles.
 STATES = [
     {
@@ -257,20 +312,28 @@ def test_probe_carries_the_geometry() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_translated_spec_validates(tmp_path: Path, project: Path) -> None:
+@pytest.mark.parametrize("model", [MODEL, PROSE_MODEL], ids=["plain", "prose"])
+def test_translated_spec_validates_and_generates(
+    tmp_path: Path, project: Path, model: dict
+) -> None:
     """A spec nrw's own validator rejects is not an import, it is a draft.
 
     This is what makes the translation worth doing in code: the result goes
-    straight into `nrw model generate` without a human retyping numbers.
+    straight into `nrw model generate` without a human retyping numbers --
+    whatever AuRE called its layers.
     """
+    import ast
+
     import yaml
 
+    from nr_workbench.codegen.generator import generate
     from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import build_table, discover_measurements
     from nr_workbench.spec.validate import validate_spec
 
     output = tmp_path / "output"
     output.mkdir()
-    (output / "final_state.json").write_text(json.dumps(_final_state(MODEL)), "utf-8")
+    (output / "final_state.json").write_text(json.dumps(_final_state(model)), "utf-8")
 
     from nr_workbench.commands.model import state_for_run
     from nr_workbench.project.scan import scan_sample
@@ -296,9 +359,13 @@ def test_translated_spec_validates(tmp_path: Path, project: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
 
-    report = validate_spec(load_spec(target), project)
-
+    loaded = load_spec(target)
+    report = validate_spec(loaded, project)
     assert not report.errors, report.errors
+
+    source = generate(build_table(loaded, discover_measurements(loaded, project)))
+
+    ast.parse(source)
 
 
 # --------------------------------------------------------------------------
@@ -483,3 +550,60 @@ def test_reported_chisq_is_none_for_garbage() -> None:
     state["state"]["best_chi2"] = None
 
     assert reported_chisq(state) is None
+
+
+def test_prose_layer_names_become_names_a_spec_takes() -> None:
+    spec = to_spec(model=PROSE_MODEL, sample="S", name="n", states=STATES)
+
+    # Through the substrate: the ambient first, the layers reversed.
+    assert [entry["name"] for entry in spec["stack"]] == [
+        "water_based_solvent_unspecified_contrast",
+        "DPPC_bilayer_headgroup_region",
+        "DPPC_bilayer_tail_region",
+        "DPPC_bilayer_headgroup_region2",
+        "silicon_oxide",
+        "silicon",
+    ]
+    paths = {p["path"] for p in spec["parameters"]}
+    assert "silicon_oxide.thickness" in paths
+    assert "DPPC_bilayer_headgroup_region2.rho" in paths
+
+
+@pytest.mark.parametrize(
+    ("aure", "spec"),
+    [
+        ("silicon oxide", "silicon_oxide"),
+        (
+            "water-based solvent (unspecified contrast)",
+            "water_based_solvent_unspecified_contrast",
+        ),
+        ("Oxyde de silicium à 5 %", "Oxyde_de_silicium_a_5"),
+        ("2nd oxide", "layer1_2nd_oxide"),
+        ("()", "layer1"),
+        ("class", "class_layer"),
+        ("SLD", "SLD_layer"),
+        ("probe", "probe_layer"),
+        ("oxide\nimport os", "oxide_import_os"),
+    ],
+)
+def test_spec_layer_name(aure: str, spec: str) -> None:
+    from nr_workbench.aure_import import spec_layer_name
+
+    assert spec_layer_name(aure, "layer1") == spec
+
+
+def test_a_name_made_unique_never_meets_one_already_taken() -> None:
+    """ "a" twice beside an "a2" of AuRE's own: the second "a" is "a3"."""
+    model = {
+        "substrate": {"name": "a", "sld": 2.07, "roughness": 3.0},
+        "layers": [
+            {"name": "a2", "sld": 1.0, "thickness": 10.0, "roughness": 3.0},
+            {"name": "a", "sld": 1.0, "thickness": 10.0, "roughness": 3.0},
+        ],
+        "ambient": {"name": "air", "sld": 0.0},
+        "back_reflection": False,
+    }
+
+    spec = to_spec(model=model, sample="S", name="n", states=STATES)
+
+    assert [entry["name"] for entry in spec["stack"]] == ["a", "a2", "a3", "air"]
