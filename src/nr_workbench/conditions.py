@@ -76,6 +76,9 @@ def from_table(markdown: str, run: str) -> str | None:
     for line in markdown.splitlines():
         cells = table_cells(line)
         if cells is None:
+            # A table ends where its rows do, as reconcile reads it: a row-like
+            # line further down -- in a run's notes -- belongs to no table.
+            header = []
             continue
         lowered = [c.lower() for c in cells]
         if column(lowered, RUN_HEADERS) is not None:

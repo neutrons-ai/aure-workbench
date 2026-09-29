@@ -425,8 +425,15 @@ def run_new(
             exists and ``force`` was not given.
     """
 
+    from nr_workbench.project.samples import validate_model_name
     from nr_workbench.project.scan import load_register, register_drift, scan_sample
 
+    # The name becomes a filename three times over; a path here would write
+    # the spec outside models/ -- the rule `nrw aure` and the page apply.
+    try:
+        validate_model_name(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     layout = _layout()
 
     # The register wins over the disk. `sample.yaml` is what this sample's

@@ -15,6 +15,7 @@ errors to status codes.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -426,4 +427,12 @@ def _fit_note(value: Any) -> str:
         )
     if any(unicodedata.category(char) in {"Cc", "Zl", "Zp"} for char in text):
         raise RequestError("note must be one line of text.")
+    # It is written under "Why this run" in the fit's NOTES.md, where a heading
+    # would start a section of its own -- leaving "why" empty -- and a comment
+    # marker would hide what follows it.
+    if re.match(r"#{1,6}(?:[ \t]|$)", text) or "<!--" in text or "-->" in text:
+        raise RequestError(
+            "note must not start with '#', or hold '<!--' or '-->': it heads "
+            "the fit's NOTES.md, where one would start a section or hide the rest."
+        )
     return text

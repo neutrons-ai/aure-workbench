@@ -495,3 +495,44 @@ def test_uncommenting_the_scaffolded_experiment_block_changes_nothing(
     assert "[experiment.feed]" in block and "[experiment.source]" in block
     assert configured == default
     assert configured.problems == ()
+
+
+def test_the_samples_own_text_may_not_read_as_a_runs_notes() -> None:
+    """sample.md writes each run's notes as `- Run N: ...` after the sample's own
+    text; a line of the sample's shaped so would be read back as run N's."""
+    with pytest.raises(CatalogValidationError, match="reads as run 218393's notes"):
+        apply_changes(
+            Catalog(),
+            samples=[
+                SampleChange(
+                    "Sample6",
+                    0,
+                    {"measurement_conditions": "Flat.\n- Run 218393: looked fine"},
+                )
+            ],
+            now=NOW,
+        )
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "realigned\n\t## Fits to perform\n\tFit a two-layer model.",
+        "realigned\n    ## Fits to perform",
+        "realigned\n\t```\n\tcode",
+        "realigned\n```\nQ R dR\n```",
+    ],
+)
+def test_a_note_holds_no_heading_or_code_block_however_it_is_indented(
+    note: str,
+) -> None:
+    """In sample.md a note is written inside its run's entry, where a tab or four
+    spaces do not make a heading or a fence harmless, as they would at the margin."""
+    with pytest.raises(CatalogValidationError, match="heading line|code fence"):
+        assign(Catalog(), 218386, sample_id="Sample6", note=note)
+
+
+def test_a_note_may_hold_a_hash_that_starts_no_heading() -> None:
+    catalog = assign(Catalog(), 218386, sample_id="Sample6", note="#3 of 5, see run 2")
+
+    assert catalog.runs[RunKey(218386)].note == "#3 of 5, see run 2"

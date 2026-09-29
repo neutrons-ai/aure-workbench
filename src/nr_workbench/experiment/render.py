@@ -24,11 +24,13 @@ from nr_workbench.experiment.model import (
     CatalogValidationError,
     RunEntry,
     clean_prose,
+    refuse_run_note_lines,
 )
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import MeasurementRow, RenderContext, SampleProse
 from nr_workbench.project.samples import plan_sample_files
 from nr_workbench.project.scaffold import PlannedFile, load_lock
+from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_PREFIX
 
 #: The lock's ``owner`` for a sample.md rendered from the catalog.
 CATALOG_OWNER = "experiment"
@@ -58,11 +60,6 @@ def sample_md_relpath(sample_id: str) -> str:
     return f"samples/{sample_id}/sample.md"
 
 
-#: How one measurement's notes open under *Measurement conditions*: the run
-#: named first, so no reader has to guess which measurement a note is about.
-RUN_NOTE_PREFIX = "- Run {run}: "
-
-
 def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
     """What the catalog writes into one sample's ``sample.md``.
 
@@ -73,6 +70,11 @@ def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
     data reconcile``'s check that the two agree.
     """
     context = catalog.context_for(sample_id)
+    try:
+        # Saved before the rule, or by another program: refused, not rewritten.
+        refuse_run_note_lines(context.measurement_conditions)
+    except CatalogValidationError as exc:
+        raise SampleRenderError(f"sample.md cannot be written: {exc}") from exc
     included = [entry for entry in catalog.runs_for(sample_id) if entry.include]
     rows = tuple(
         MeasurementRow(entry.key.run, entry.measurement_type, entry.condition)
@@ -119,7 +121,7 @@ def run_notes(entries: Iterable[RunEntry]) -> str:
             ) from exc
         first, *rest = note.split("\n")
         lines.append(RUN_NOTE_PREFIX.format(run=entry.key.run) + first)
-        lines.extend(f"  {line}" if line else "" for line in rest)
+        lines.extend(RUN_NOTE_INDENT + line if line else "" for line in rest)
     return "\n".join(lines)
 
 

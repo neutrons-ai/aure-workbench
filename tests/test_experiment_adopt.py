@@ -132,6 +132,15 @@ def write_sample(project: Path, text: str, sample: str = "Sample6") -> Path:
         pytest.param(
             {"mounting": "unknown", "measurement_conditions": "Flat."}, id="unknown"
         ),
+        # Remarks on single runs in the sample's own text, as they were written
+        # before runs had notes: not in the run-note form, so they stay put.
+        pytest.param(
+            {
+                "measurement_conditions": "Flat.\n- Run 218393 was realigned.\n"
+                "- Run 218399 had the beam drop."
+            },
+            id="remarks_per_run_in_prose",
+        ),
     ],
 )
 def test_parse_of_a_rendering_is_the_catalog_again(context) -> None:

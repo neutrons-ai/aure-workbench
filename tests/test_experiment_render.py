@@ -457,3 +457,32 @@ def test_a_note_that_would_break_sample_md_is_refused_naming_its_run() -> None:
         SampleRenderError, match="the note on run 218393 contains a heading line"
     ):
         prose_for(catalog, "Sample6")
+
+
+def test_sample_text_that_reads_as_a_runs_notes_is_refused_naming_the_run() -> None:
+    # Saved before the rule: written into sample.md, the line would be read back
+    # as run 218393's notes, and dropped from the sample's own text.
+    catalog = reference_catalog()
+    context = catalog.samples["Sample6"]
+    old = dataclasses.replace(
+        context, measurement_conditions="Flat.\n- Run 218393: looked fine"
+    )
+    catalog = dataclasses.replace(catalog, samples={**catalog.samples, "Sample6": old})
+
+    with pytest.raises(SampleRenderError, match="reads as run 218393's notes"):
+        prose_for(catalog, "Sample6")
+
+
+def test_a_row_in_a_note_is_no_row_of_the_measurement_table() -> None:
+    from nr_workbench.conditions import from_table
+
+    # A note line shaped like a table row, under Measurement conditions -- after
+    # the table has ended.
+    text = (
+        "## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 218386 | steady | 25 C |\n\n## Measurement conditions\n\n"
+        "- Run 218386: compare with\n  | 218999 | steady | 80 C |\n"
+    )
+
+    assert from_table(text, "218386") == "25 C"
+    assert from_table(text, "218999") is None

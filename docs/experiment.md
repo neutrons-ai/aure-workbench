@@ -204,6 +204,13 @@ there too:
 - **A `|` in a condition.** It splits the table cell.
 - **An unclosed code block.**
 - **A second table with a Run column.**
+- **A line in Measurement conditions that reads as a run's notes**,
+  `- Run 218386: ...`. That is how sample.md writes each run's notes, so the
+  line would be read back as that run's. Put it in the run's notes under
+  **Measurements**, where it is kept with the run.
+- **In a run's notes, a heading or a code block**, however it is indented.
+  A note is written inside its run's entry, where indenting it does not make
+  it harmless.
 
 ## Applying
 
@@ -284,8 +291,9 @@ model or an AuRE run is refused.
 - **dream** samples. It is the only one that gives uncertainties, and it takes
   **samples** and **burn** as well as **steps**.
 
-Leave a box empty for the fitter's default. The page runs the same two commands
-you would, one after the other:
+Leave a box empty for the fitter's default. The note, if you give one, heads
+the fit's `NOTES.md` as why it was run, so it is one line, and does not start
+with `#`. The page runs the same two commands you would, one after the other:
 
 ```bash
 nrw model generate samples/<id>/models/<name>.yaml

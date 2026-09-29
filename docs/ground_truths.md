@@ -3498,3 +3498,30 @@ the thread always ends the job.
 **Job files are opened never through a symbolic link.** Reads of the page are
 open to every account on the node, so a link planted in a shared project's
 `.nrw/jobs/` would have served whatever it pointed at.
+
+### 2026-09-29: spec text is never code in a generated script
+
+The generator wrote a spec's `description` between the `"""` of the script's
+docstring as it was, and its `name` into the `# model:` comment as it was. A
+description holding three quotes closed the docstring, so what followed was a
+statement, run by every fit of the spec. A name with a line break ended the
+comment, with the same effect. The schema allowed both.
+
+`nrw model new --from-notes` takes the description from a language model,
+which reads sample.md. So a prompt injection in a sample's notes could have
+become code that runs when someone clicks **Fit**. The page's Fit made that one
+click, and the promise that the page only runs "what the spec says" rested on
+it.
+
+Now a description line holding `"""`, a backslash or an unprintable
+character is escaped whole. So is a name that is not printable, which is
+written as its `repr`. Plain text is written exactly as before, so no existing
+script changes, and neither does the identity of its fits. A test parses the
+generated module and checks that the docstring is the description and that
+imports come next.
+
+Two smaller rules came out of the same review. `conditions.from_table` now
+ends a table where its rows end, as `reconcile` does. Before, a row-shaped line
+in a run's notes, further down, supplied the condition of a run the table did
+not list. And `nrw model new --name` applies the plain-name rule that
+`nrw aure` and the page apply.

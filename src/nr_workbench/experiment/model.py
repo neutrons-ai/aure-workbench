@@ -78,6 +78,12 @@ _HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)", re.MULTILINE)
 #: The opening line of a fenced code block.
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 
+#: The same two in a run's notes, which sample.md writes inside the run's entry,
+#: every line after the first indented: there either takes effect after any
+#: indentation, a tab included, that at the margin would make it code instead.
+_NOTE_HEADING_RE = re.compile(r"^[ \t]*#{1,6}(?:[ \t]|$)", re.MULTILINE)
+_NOTE_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})", re.MULTILINE)
+
 
 class CatalogValidationError(ValueError):
     """Raised when a value cannot go into the catalog. The message says why."""
@@ -491,7 +497,9 @@ def _clean_run_field(name: str, value: Any) -> Any:
     if name == "note":
         # Rendered into sample.md, so held to the rules of the prose there: no
         # heading, comment marker, fence or second table to change how it reads.
-        return clean_prose("note", value)
+        text = clean_prose("note", value)
+        _check_note_structure(text)
+        return text
     if name == "title":
         return clean_title_snapshot(value)
     if name == "start_time":
@@ -509,8 +517,53 @@ def _clean_sample_field(name: str, value: Any) -> Any:
             )
         return value
     if name in _PROSE_FIELDS:
-        return clean_prose(name.replace("_", " "), value)
+        text = clean_prose(name.replace("_", " "), value)
+        if name == "measurement_conditions":
+            refuse_run_note_lines(text)
+        return text
     raise CatalogValidationError(f"a sample has no field {name!r}")
+
+
+def refuse_run_note_lines(text: str) -> None:
+    """Refuse the sample's own *Measurement conditions* a line like a run's notes.
+
+    sample.md writes each run's notes after the sample's text, each opening
+    ``- Run <n>:``. A line of the sample's own that opens so would be read back
+    as that run's notes -- and, for a run left out, dropped.
+
+    Args:
+        text: The sample's measurement conditions.
+
+    Raises:
+        CatalogValidationError: Naming the run, and where the line belongs.
+    """
+    from nr_workbench.sample_md import RUN_NOTE_RE
+
+    for line in text.split("\n"):
+        match = RUN_NOTE_RE.match(line)
+        if match:
+            run = match.group(1)
+            raise CatalogValidationError(
+                f"measurement conditions has a line that reads as run {run}'s "
+                f"notes ({line.strip()[:60]!r}). Put it in run {run}'s notes, "
+                "under Measurements, where it is kept with the run -- or word it "
+                f"another way, such as 'Run {run} was ...'."
+            )
+
+
+def _check_note_structure(text: str) -> None:
+    for regex, what in (
+        (_NOTE_HEADING_RE, "a heading line"),
+        (_NOTE_FENCE_RE, "a code fence"),
+    ):
+        match = regex.search(text)
+        if match:
+            line = text[match.start() :].split("\n", 1)[0].strip()
+            raise CatalogValidationError(
+                f"note contains {what} ({line[:60]!r}). sample.md writes a note "
+                "inside its run's entry, where this would start a section or a "
+                "code block of its own, however it is indented."
+            )
 
 
 # ---------------------------------------------------------------------------

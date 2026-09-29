@@ -375,6 +375,8 @@ def test_a_fit_of_the_same_model_made_meanwhile_is_not_taken_for_the_jobs(
         {"method": "dream", "samples": 10**9},
         {"method": "amoeba", "note": "two\nlines"},
         {"method": "amoeba", "note": "x" * 501},
+        {"method": "amoeba", "note": "## Next steps"},
+        {"method": "amoeba", "note": "see <!-- here"},
     ],
 )
 def test_a_fit_setting_that_is_not_usable_is_refused_before_anything_runs(

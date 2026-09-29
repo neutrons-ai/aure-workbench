@@ -26,6 +26,15 @@ CONDITION_HEADERS = ("condition", "conditions")
 #: Header cells that name the measurement-type column, lowercased.
 TYPE_HEADERS = ("type",)
 
+#: How one measurement's notes open under *Measurement conditions*, as the
+#: catalog writes them: the run named first, so no reader has to guess which
+#: measurement a note is about. The note's later lines are indented under it.
+RUN_NOTE_PREFIX = "- Run {run}: "
+RUN_NOTE_INDENT = "  "
+
+#: A line that opens a run's notes, read back: ``- Run 218386: realigned``.
+RUN_NOTE_RE = re.compile(r"^- Run (\d+): ?(.*)$")
+
 
 def table_cells(line: str) -> list[str] | None:
     """The stripped cells of a table row, or ``None`` if *line* is not one."""

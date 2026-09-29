@@ -57,6 +57,7 @@ from nr_workbench.project.scaffold import (
     render_diff,
     replace_owned,
 )
+from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_RE
 
 #: The sections of the scaffolded sample.md, and the catalog field for each.
 _PROSE_SECTIONS = {
@@ -68,9 +69,6 @@ _PROSE_SECTIONS = {
 _MEASUREMENTS = "Measurements"
 
 _HEADING_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")
-#: One measurement's notes under *Measurement conditions*, as the catalog
-#: writes them: ``- Run 218386: realigned after mounting``.
-_RUN_NOTE_RE = re.compile(r"^- Run (\d+): ?(.*)$")
 _TITLE_RE = re.compile(r"^#[ \t]+(.+?)[ \t]*$")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _ROW_RE = re.compile(r"^\s*\|(.+)\|\s*$")
@@ -352,14 +350,17 @@ def _split_run_notes(body: str, notes: dict[int, str]) -> str:
     kept: list[str] = []
     entries: list[tuple[int, list[str]]] = []
     current: list[str] | None = None
+    indent = len(RUN_NOTE_INDENT)
     for line in body.split("\n"):
-        match = _RUN_NOTE_RE.match(line)
+        match = RUN_NOTE_RE.match(line)
         if match:
             current = [match.group(2)]
             entries.append((int(match.group(1)), current))
             continue
-        if current is not None and (line.startswith("  ") or not line.strip()):
-            current.append(line[2:] if line.startswith("  ") else "")
+        if current is not None and (
+            line.startswith(RUN_NOTE_INDENT) or not line.strip()
+        ):
+            current.append(line[indent:] if line.startswith(RUN_NOTE_INDENT) else "")
             continue
         current = None
         kept.append(line)

@@ -179,6 +179,19 @@ def test_model_new_produces_a_spec_that_validates(project: Path, monkeypatch) ->
     assert checked.exit_code == 0, checked.output
 
 
+@pytest.mark.parametrize("name", ["../x", "a/b", "x\n"])
+def test_model_new_refuses_a_name_that_is_a_path(
+    project: Path, monkeypatch, name: str
+) -> None:
+    before = sorted(p for p in (project / "samples").rglob("*") if p.is_file())
+
+    result = run(project, monkeypatch, "model", "new", "S1", "--name", name)
+
+    assert result.exit_code != 0
+    assert "plain name" in result.output
+    assert sorted(p for p in (project / "samples").rglob("*") if p.is_file()) == before
+
+
 def test_model_generate_leaves_a_script_that_would_not_change_as_it_is(
     project: Path, monkeypatch
 ) -> None:
