@@ -519,6 +519,8 @@ def test_reads_change_nothing_in_the_project(app, writer, expt: Path) -> None:
         "/api/experiment/changes?since=x",
         "/api/experiment/runs/234277/curves",
         "/api/experiment/samples/Sample6/preview",
+        "/api/experiment/samples/Sample6/models",
+        "/api/experiment/jobs/current",
         "/api/experiment/apply",
         "/api/experiment/settings",
         "/experiment",
@@ -577,17 +579,28 @@ def test_the_preview_shows_what_sample_md_would_become(app, writer) -> None:
 def test_an_unusable_sample_id_is_refused_on_every_route(
     app, writer, sample_id
 ) -> None:
-    """Ids the router accepts, so the refusal is validate_sample_id's own."""
-    for response in (
-        writer.get(f"/api/experiment/samples/{sample_id}/preview"),
-        writer.get(f"/api/experiment/samples/{sample_id}/adopt"),
-        writer.put(
-            f"/api/experiment/samples/{sample_id}",
-            json={"base_rev": 0, "fields": {"title": "x"}},
-            headers=write_headers(app),
-        ),
-    ):
-        assert response.status_code == 400, response.get_data(as_text=True)
+    """Ids the router accepts, so the refusal is validate_sample_id's own.
+
+    Every Experiment API route with a sample id in it, found in the app's own
+    map: one added later is covered without being listed here. On some, the id
+    reaches a child's command line. (The read-only project API answers 404 for
+    a sample that is not on disk, and runs nothing.)
+    """
+    routes = [
+        (method, rule.rule)
+        for rule in app.url_map.iter_rules()
+        if rule.rule.startswith("/api/experiment/") and "<sample_id>" in rule.rule
+        for method in sorted(rule.methods - {"HEAD", "OPTIONS"})
+    ]
+    assert len(routes) >= 8, routes  # found, not empty by accident
+    for method, rule in routes:
+        path = rule.replace("<sample_id>", sample_id).replace("<name>", "oxide")
+        response = writer.open(path, method=method, json={}, headers=write_headers(app))
+        assert response.status_code == 400, (
+            method,
+            path,
+            response.get_data(as_text=True),
+        )
         assert response.is_json
 
 

@@ -112,6 +112,10 @@ def do_fit(root: Path, monkeypatch: pytest.MonkeyPatch, *extra: str):
         "12",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
         *extra,
     )
 
@@ -249,6 +253,10 @@ def test_changing_a_setting_makes_a_distinct_run(
         "--steps",
         "13",
         "--seed",
+        "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
         "1",
     )
 

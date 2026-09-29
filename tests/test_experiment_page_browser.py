@@ -57,8 +57,19 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
+@pytest.fixture(autouse=True)
+def empty_home(tmp_path: Path, monkeypatch) -> None:
+    """An empty home for every nrw process a test here starts: a child reads
+    ``~/.nrw`` and ``~/.aure`` afresh, and a real endpoint key there bills. The
+    browser, started for the module, is already running by now."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+
 @pytest.fixture
-def site(project: Path) -> Iterator[Site]:
+def served(project: Path) -> Iterator[tuple[Site, object]]:
+    """The project served, and the app serving it."""
     from werkzeug.serving import make_server
 
     from nr_workbench.web.app import create_app
@@ -70,10 +81,17 @@ def site(project: Path) -> Iterator[Site]:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     url = f"http://127.0.0.1:{server.server_port}"
     try:
-        yield Site(url=url, link=f"{url}/auth/{token}")
+        yield Site(url=url, link=f"{url}/auth/{token}"), app
     finally:
         server.shutdown()
+        # A test that failed mid-fit leaves nothing running to slow the next.
+        app.config["NRW_MODELS"].jobs.stop()
         app.config["NRW_EXPERIMENT"].reload()
+
+
+@pytest.fixture
+def site(served) -> Site:
+    return served[0]
 
 
 def field(page: Page, element_id: str) -> str:
@@ -119,14 +137,6 @@ def test_what_you_typed_survives_a_save_of_the_same_sample_made_elsewhere(
     )
     saved = ParquetCatalogStore.for_project(project).load().samples["S1"]
     assert (saved.title, saved.description) == ("Their title", "typed by me")
-
-
-def empty_home(project: Path, monkeypatch) -> None:
-    """An empty home for the nrw processes a test starts: a child reads
-    ``~/.nrw`` and ``~/.aure`` afresh, and a real endpoint key there bills."""
-    home = project.parent / "home"
-    home.mkdir(exist_ok=True)
-    monkeypatch.setenv("HOME", str(home))
 
 
 def open_s1(page: Page, site: Site) -> None:
@@ -263,7 +273,6 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
 def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     page: Page, site: Site, project: Path, monkeypatch
 ) -> None:
-    empty_home(project, monkeypatch)
     open_s1(page, site)
     page.wait_for(
         "!document.getElementById('expt-models').classList.contains('d-none')",
@@ -300,7 +309,6 @@ def test_a_fit_started_on_the_page_is_followed_to_its_record(
 
     from .test_web_models import serial
 
-    empty_home(project, monkeypatch)
     monkeypatch.setattr(jobs_module, "nrw_command", serial)
     write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
     open_s1(page, site)
@@ -407,3 +415,86 @@ def test_a_quick_fit_with_aure_is_started_for_the_run_chosen(
     log = page.text("expt-job-log")
     assert "aure new --name=auto --run=234280 -- S1" in log
     assert log.index("aure run") < log.index("aure import") < log.index("fit run")
+
+
+def long_step(monkeypatch) -> None:
+    """Every step runs until it is stopped, standing in for a long DREAM run."""
+    import sys
+
+    from nr_workbench.web import jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
+    )
+
+
+def test_a_page_opened_onto_a_running_fit_follows_it_and_can_cancel_it(
+    page: Page, served, project: Path, monkeypatch
+) -> None:
+    site, app = served
+    long_step(monkeypatch)
+    app.config["NRW_MODELS"].jobs.start(
+        label="dream fit of oxide",
+        sample="S1",
+        model="oxide",
+        steps=[["model", "generate", "x"], ["fit", "run", "x"]],
+    )
+
+    open_s1(page, site)
+
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'step 1 of 2'",
+        what="the running fit, shown",
+    )
+    assert page.text("expt-job-title") == "Dream fit of oxide (S1)"
+    page.click("expt-job-cancel")
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'cancelled'",
+        what="the fit cancelled",
+    )
+
+
+def test_a_view_only_page_offers_no_writes_and_no_cancel(
+    page: Page, served, project: Path, monkeypatch
+) -> None:
+    site, app = served
+    long_step(monkeypatch)
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("{}\n")
+    write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
+    app.config["NRW_MODELS"].jobs.start(
+        label="dream fit of oxide", sample="S1", model="oxide", steps=[["x"]]
+    )
+
+    # No link opened: the page is view-only.
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".some(b => b.textContent.includes('S1'))",
+        what="the sample list",
+    )
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S1')).click()"
+    )
+    page.wait_for(
+        "document.querySelector('#expt-models-list .expt-model-fit') !== null",
+        what="the spec listed",
+    )
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'step 1 of 1'",
+        what="the running fit, shown",
+    )
+
+    assert "view-only" in page.text("expt-models-list")
+    for button in ("expt-model-create", "expt-model-quick"):
+        assert page.js(f"document.getElementById('{button}').disabled") is True
+    assert page.js(
+        "document.querySelector('#expt-models-list .expt-model-fit').disabled"
+    )
+    assert page.js(
+        "document.getElementById('expt-job-cancel').classList.contains('d-none')"
+    )

@@ -652,6 +652,10 @@ def two_fits(generated: Path, monkeypatch) -> tuple[Path, str, str]:
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert first.exit_code == 0, first.output
     second = run(
@@ -665,6 +669,10 @@ def two_fits(generated: Path, monkeypatch) -> tuple[Path, str, str]:
         "--steps",
         "14",
         "--seed",
+        "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
         "1",
     )
     assert second.exit_code == 0, second.output
@@ -710,6 +718,10 @@ def test_diff_does_not_call_a_model_edit_a_data_change(two_fits, monkeypatch) ->
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert later.exit_code == 0, later.output
     b = json.loads(run(root, monkeypatch, "ls", "--json").stdout)[0]["fit_id"]
@@ -753,6 +765,8 @@ def test_ls_shows_the_note_a_fit_was_run_with(project: Path, monkeypatch) -> Non
         "6",
         "--note",
         "oxide freed",
+        "--parallel",
+        "1",
     )
 
     text = run(project, monkeypatch, "ls").output
@@ -783,6 +797,10 @@ def test_diff_calls_out_a_data_change_above_everything_else(
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert third.exit_code == 0, third.output
     c = json.loads(run(root, monkeypatch, "ls", "--json").stdout)[0]["fit_id"]
@@ -807,6 +825,10 @@ def test_diff_reports_identical_runs_as_replicates(two_fits, monkeypatch) -> Non
         "--steps",
         "8",
         "--seed",
+        "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
         "1",
         "--force",
     )

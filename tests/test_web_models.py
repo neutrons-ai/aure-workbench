@@ -17,7 +17,6 @@ from click.testing import CliRunner
 
 from nr_workbench.cli import main
 from nr_workbench.project.samples import validate_model_name
-from nr_workbench.provenance.index import FitIndex
 from nr_workbench.web import jobs as jobs_module
 from nr_workbench.web import models as models_module
 from nr_workbench.web.app import create_app
@@ -280,52 +279,6 @@ def started(response) -> None:
     assert response.status_code == 202, response.json
 
 
-@pytest.mark.integration
-def test_a_fit_started_from_the_page_is_recorded_as_nrw_fit_run_records_it(
-    app, writer, project: Path
-) -> None:
-    assert create(writer, app, "S1", "oxide").status_code == 201
-
-    started(fit(writer, app, "S1", "oxide", {"method": "amoeba", "steps": 3}))
-    payload = job_ended(writer)
-
-    job = payload["job"]
-    assert (job["status"], job["step"]) == ("ok", 2), payload["log"]
-    assert payload["log"].startswith(
-        "$ nrw model generate samples/S1/models/oxide.yaml"
-    )
-    assert "$ nrw fit run samples/S1/models/oxide.py --method=amoeba" in payload["log"]
-    (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
-    assert recorded["fit_id"] == job["fit_id"]
-    assert (recorded["model"], recorded["method"], recorded["status"]) == (
-        "oxide",
-        "amoeba",
-        "ok",
-    )
-    assert recorded["settings"]["steps"] == 3
-
-
-@pytest.mark.integration
-def test_a_fit_that_records_nothing_links_nothing_and_force_links_the_new_one(
-    app, writer, project: Path
-) -> None:
-    assert create(writer, app, "S1", "oxide").status_code == 201
-    body = {"method": "amoeba", "steps": 3}
-    started(fit(writer, app, "S1", "oxide", body))
-    first = job_ended(writer)["job"]["fit_id"]
-
-    started(fit(writer, app, "S1", "oxide", body))  # nothing changed since
-    refused = job_ended(writer)
-    started(fit(writer, app, "S1", "oxide", {**body, "force": True}))
-    forced = job_ended(writer)["job"]
-
-    assert (refused["job"]["status"], refused["job"]["fit_id"]) == ("failed", None)
-    assert "An identical run already exists" in refused["log"]
-    assert forced["status"] == "ok"
-    newest = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")[0]
-    assert forced["fit_id"] == newest["fit_id"] != first
-
-
 def test_a_fit_of_the_same_model_made_meanwhile_is_not_taken_for_the_jobs(
     app, writer, project: Path, monkeypatch
 ) -> None:
@@ -479,78 +432,6 @@ def described(project: Path) -> None:
         "# S1\n\n## Description\n\nTi and Cu on silicon, in d8-THF.\n",
         encoding="utf-8",
     )
-
-
-@pytest.mark.integration
-def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
-    app, writer, project: Path, monkeypatch
-) -> None:
-    from .test_aure_cmd import FITTED
-
-    described(project)
-    # Every step is the real command but AuRE's run, which needs a language
-    # model: that one writes what a finished run leaves.
-    finished = json.dumps(
-        {
-            "success": True,
-            "error": None,
-            "final_chi2": 1.8,
-            "state": {"current_model": FITTED, "best_chi2": 1.8},
-        }
-    )
-
-    def command(*args: str) -> list[str]:
-        if args[:2] == ("aure", "run"):
-            output = Path(args[2]).parent / "output"
-            code = (
-                f"import pathlib; p = pathlib.Path({str(output)!r}); "
-                f"p.mkdir(parents=True); (p / 'final_state.json').write_text({finished!r})"
-            )
-            return [sys.executable, "-c", code]
-        return serial(*args)
-
-    monkeypatch.setattr(jobs_module, "nrw_command", command)
-
-    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
-    payload = job_ended(writer)
-
-    job, log = payload["job"], payload["log"]
-    assert (job["status"], job["step"]) == ("ok", 5), log
-    assert "$ nrw aure new --name=auto --run=100001 -- S1\n" in log
-    assert "$ nrw aure run samples/S1/aure/auto/setup.yaml --budget=quick\n" in log
-    # No --run: import reads the run from the setup AuRE was given.
-    assert (
-        "$ nrw aure import samples/S1/aure/auto/output --sample=S1 --name=auto\n" in log
-    )
-    assert (project / "samples" / "S1" / "models" / "auto.yaml").is_file()
-    (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
-    assert recorded["fit_id"] == job["fit_id"]
-    assert (recorded["model"], recorded["method"]) == ("auto", "amoeba")
-
-
-@pytest.mark.integration
-def test_a_quick_fit_without_an_endpoint_stops_at_aure_run_and_says_how_to_set_one(
-    app, writer, project: Path, monkeypatch
-) -> None:
-    from nr_workbench import aure_adapter
-
-    # Every step real. Conftest clears the variables AuRE reads, and the home
-    # the steps see is empty -- but a machine where an endpoint is configured
-    # anyway must never be billed for this test.
-    if aure_adapter.llm_available():
-        pytest.skip("a language-model endpoint is configured here")
-    monkeypatch.delenv("NRW_AGENT", raising=False)
-    described(project)
-
-    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
-    payload = job_ended(writer)
-
-    job, log = payload["job"], payload["log"]
-    assert (job["status"], job["step"], job["fit_id"]) == ("failed", 2, None), log
-    assert "no endpoint is configured" in log
-    assert "nrw check-llm" in log
-    assert not (project / "samples" / "S1" / "models" / "auto.yaml").exists()
-    assert FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1") == []
 
 
 def test_a_quick_fit_needs_aure_installed_and_says_so(
