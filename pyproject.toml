@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nr-workbench"
-version = "0.1.0"
+version = "0.2.0"
 description = "Project workbench for neutron reflectometry analysis at SNS REF_L (BL-4B)"
 readme = "README.md"
 requires-python = ">=3.11"
