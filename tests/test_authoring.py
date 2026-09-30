@@ -21,6 +21,7 @@ from nr_workbench.spec.authoring import (
     Proposal,
     agent_instructions,
     build_prompt,
+    describe_measurements,
     find_skills,
     merge_proposal,
     missing_relevant,
@@ -360,6 +361,112 @@ def sample_with_data(project: Path) -> Path:
         encoding="utf-8",
     )
     return project
+
+
+#: What was written about each measurement: a contrast per run in the table,
+#: a note on one run, and what every run shares.
+MEASURED_NOTES = """# S1
+
+## Description
+
+A lipid bilayer on silicon.
+
+## Measurements
+
+| Run | Type | Condition |
+|---|---|---|
+| 218386 | steady | in D2O |
+| 218387 | steady | in H2O |
+
+## Measurement conditions
+
+Measured at 25 C in a solid-liquid cell.
+
+- Run 218387: the cell was flushed with H2O first
+"""
+
+TWO_CONTRASTS = {
+    **SKELETON,
+    "states": [
+        {"name": "d2o", "run": 218386},
+        {"name": "h2o", "run": 218387},
+    ],
+}
+
+
+def test_each_measurement_is_set_out_with_its_condition_and_notes() -> None:
+    described = describe_measurements(TWO_CONTRASTS, MEASURED_NOTES)
+
+    assert described.splitlines() == [
+        "- state d2o (run 218386): condition: in D2O",
+        "- state h2o (run 218387): condition: in H2O; notes: the cell was "
+        "flushed with H2O first",
+        "- series tnr (run 218389): nothing written about it",
+        "- every state: Measured at 25 C in a solid-liquid cell.",
+    ]
+
+
+def test_nothing_is_set_out_when_nothing_was_written_about_a_measurement() -> None:
+    notes = "# S1\n\n## Description\n\nA lipid bilayer on silicon.\n"
+
+    assert describe_measurements(TWO_CONTRASTS, notes) == ""
+
+
+def test_the_request_carries_each_measurement_and_never_assumes_air() -> None:
+    measurements = describe_measurements(TWO_CONTRASTS, MEASURED_NOTES)
+
+    system, user = build_prompt(
+        skeleton=TWO_CONTRASTS,
+        notes=MEASURED_NOTES,
+        skills={},
+        measurements=measurements,
+    )
+
+    assert "===== EACH MEASUREMENT, AS THE NOTES DESCRIBE IT =====" in user
+    assert "- state h2o (run 218387): condition: in H2O" in user
+    assert "never assume air" in system
+    # A contrast that differs is the ambient's rho, one entry per state.
+    assert "per: state, in: [<that state>]" in system
+
+
+def test_from_notes_asks_with_each_runs_condition(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page's New model runs this: a condition written for a run must reach
+    the language model as that state's, or every state is fitted in air."""
+    from click.testing import CliRunner
+
+    from nr_workbench import aure_adapter
+    from nr_workbench.cli import main
+
+    root = sample_with_data(project)
+    (root / "samples" / "Sample1" / "sample.md").write_text(
+        "# Sample1\n\n## Description\n\nCopper electrode with a native oxide.\n"
+        "\n## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 100001 | steady | in d8-THF |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(
+        aure_adapter,
+        "llm_info",
+        lambda: {"available": True, "provider": "stub", "model": "test-model"},
+    )
+    asked: list[str] = []
+
+    def complete(system: str, user: str, **kw) -> str:
+        asked.append(user)
+        return json.dumps(PROPOSED)
+
+    monkeypatch.setattr(aure_adapter, "complete", complete)
+
+    result = CliRunner().invoke(
+        main, ["model", "new", "Sample1", "--name", "m", "--from-notes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    (user,) = asked
+    assert "- state run100001 (run 100001): condition: in d8-THF" in user
 
 
 def test_print_prompt_writes_the_skeleton_it_tells_the_agent_to_edit(

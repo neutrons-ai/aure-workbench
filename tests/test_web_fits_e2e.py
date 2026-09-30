@@ -42,7 +42,8 @@ pytestmark = pytest.mark.integration
 def test_a_page_fit_is_recorded_as_nrw_fit_run_records_it_refused_again_and_forced(
     app, writer, project: Path
 ) -> None:
-    assert create(writer, app, "S1", "oxide").status_code == 201
+    started(create(writer, app, "S1", "oxide"))
+    assert job_ended(writer)["job"]["status"] == "ok"
     body = {"method": "amoeba", "steps": 3}
 
     started(fit(writer, app, "S1", "oxide", body))

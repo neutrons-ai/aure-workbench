@@ -1,10 +1,10 @@
 /* The Experiment page's models and fits.
  *
  * The Models panel shows the specs of the sample open in the editor, writes a
- * new one from its data (as `nrw model new` does), and starts a fit of one.
- * The Fit panel follows the job: what it prints, Cancel, and the fit it
- * recorded. One job runs at a time, for the whole project, so the Fit panel
- * shows it whichever sample is open.
+ * new one from its notes and data (as `nrw model new --from-notes` does), and
+ * starts a fit of one. The Fit panel follows the job: what it prints, Cancel,
+ * and the fit it recorded. One job runs at a time, for the whole project, so
+ * the Fit panel shows it whichever sample is open.
  *
  * experiment.js says which sample is open with an "nrw:sample-opened" event;
  * the two files share nothing else. Every value is set as text.
@@ -23,7 +23,7 @@
   const LOG_KEEP = 400000;
 
   let shown = null;  // the sample whose models are shown
-  let fitting = null;  // the model the fit form is for
+  let fitting = null;  // the name of the model the fit form is for
   // The project's nrw.toml [fit], as the last listing gave it.
   let fitDefaults = { method: "dream", settings: {}, problem: null };
   // offset null: not read yet, so the first read is the log's last part.
@@ -66,7 +66,7 @@
         disabled: !canFit,
       });
       fit.addEventListener("click", function () {
-        openFit(model.name);
+        openFit(model);
       });
       // A proposal of AuRE's nobody edited can be asked for again -- after the
       // notes changed, say; the new one replaces it.
@@ -87,6 +87,14 @@
       list.append(el("div", { className: "d-flex gap-2 align-items-baseline mb-1 expt-model" }, [
         el("span", { className: "mono", text: model.name }),
         el("span", { className: "text-secondary", text: model.spec }),
+        // nrw's stub, not the sample: written when no language model answered.
+        model.placeholder
+          ? el("span", {
+            className: "badge text-bg-warning expt-model-placeholder",
+            text: "placeholder stack",
+            title: "air on a film on Si, not this sample: edit the stack before fitting",
+          })
+          : null,
         model.script
           ? el("span", { className: "badge text-bg-light", text: "script generated" })
           : null,
@@ -98,8 +106,8 @@
     if (payload.sample_md_pending) {
       list.append(el("p", {
         className: "text-warning-emphasis mb-0 mt-1 expt-md-pending",
-        text: "sample.md does not have the edits saved above yet: AuRE reads " +
-          "sample.md, so Apply before a quick fit.",
+        text: "sample.md does not have the edits saved above yet. A new model " +
+          "and a quick fit are written from sample.md, so Apply first.",
       }));
     }
     $("expt-model-name").disabled = Boolean(why);
@@ -132,7 +140,6 @@
     if (id !== shown) {
       // What was said about another sample is not about this one.
       $("expt-model-status").textContent = "";
-      $("expt-model-output").classList.add("d-none");
       $("expt-fit-form").classList.add("d-none");
       fitting = null;
       shown = id;
@@ -150,20 +157,17 @@
       return;
     }
     $("expt-model-create").disabled = true;
-    $("expt-model-status").textContent = "Writing " + name + ".yaml from the data…";
     try {
-      const payload = await api("POST", modelsPath(id), { name: name });
-      if (shown !== id) return;
-      render(payload);
+      const started = await api("POST", modelsPath(id), { name: name });
       $("expt-model-name").value = "";
       $("expt-model-status").textContent =
-        "Wrote samples/" + id + "/models/" + name + ".yaml.";
-      const out = $("expt-model-output");
-      out.textContent = payload.output || "";
-      out.classList.toggle("d-none", !payload.output);
+        "Writing " + name + ".yaml from the notes and the data; the Fit panel " +
+        "follows it.";
+      follow(started.job);
     } catch (error) {
       $("expt-model-status").textContent = error.message;
-      $("expt-model-create").disabled = false;
+    } finally {
+      load(id);  // the buttons as the sample now stands
     }
   });
 
@@ -201,9 +205,13 @@
 
   // -- starting a fit --------------------------------------------------------
 
-  function openFit(name) {
-    fitting = name;
-    $("expt-fit-title").textContent = "Fit " + name;
+  function openFit(model) {
+    fitting = model.name;
+    $("expt-fit-title").textContent = "Fit " + model.name;
+    // A fit of the stub stack fits a sample nobody measured: said first, and on
+    // the button, but not refused -- trying the machinery on it is legitimate.
+    $("expt-fit-placeholder").classList.toggle("d-none", !model.placeholder);
+    $("expt-fit-run").textContent = model.placeholder ? "Fit the placeholder anyway" : "Run fit";
     // The project's default fitter, said so beside its name.
     const select = $("expt-fit-method");
     Array.from(select.options).forEach(function (option) {

@@ -244,10 +244,26 @@ copied whole or not at all.
 
 Once a sample has data, the **Models** panel below Apply writes a model spec
 for it: give the model a name and click **New model**. The spec is exactly what
-`nrw model new <sample> --name <name>` writes from the data in
-`samples/<id>/data/`: one state per run, each segment's angle read from its own
-file, and a placeholder stack to replace with the real layers. The panel lists
-the sample's specs, and marks those a script has been generated from.
+`nrw model new <sample> --name <name> --from-notes` writes:
+
+- **Its states come from the data** in `samples/<id>/data/`: one per run, each
+  segment's angle read from its own file.
+- **Its stack is proposed by the language model** from `sample.md`: the
+  *Description* and *Details*, each run's condition in the Measurements table
+  and its notes, and the sample's *Measurement conditions*. Each state is sent
+  with its own condition, so the ambient comes from the notes and is never
+  assumed to be air. A contrast that differs between runs, such as D2O for one
+  and H2O for another, becomes the ambient's SLD fitted per state.
+
+Writing it is a job, followed in the Fit panel, because the model's answer can
+take a minute. Without a language model the job says so, and writes nrw's
+placeholder stack instead: air on a film on Si. The panel marks such a spec
+*placeholder stack* until its layers are edited, and **Fit…** on it says that
+its fit would mean nothing before it runs one.
+
+The panel lists the sample's specs, and marks those a script has been
+generated from. Like AuRE, New model reads `sample.md` as it is on disk; the
+panel says when there are edits saved on the page that it does not have yet.
 
 A spec that already exists is never overwritten: choose another name, or edit
 that one. A name is a plain name (letters, digits, `.`, `-`, `_`), because it

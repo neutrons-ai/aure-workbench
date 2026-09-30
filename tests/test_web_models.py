@@ -1,6 +1,6 @@
 """The Experiment page's models: specs listed and written, and fits run.
 
-The spec is written by the real ``nrw model new``, in a child process, from
+The spec is written by the real ``nrw model new --from-notes``, as a job, from
 real partial files -- the page must write exactly what the terminal writes --
 and fits are real ``nrw model generate`` and ``nrw fit run`` runs.
 """
@@ -18,7 +18,6 @@ from click.testing import CliRunner
 from nr_workbench.cli import main
 from nr_workbench.project.samples import validate_model_name
 from nr_workbench.web import jobs as jobs_module
-from nr_workbench.web import models as models_module
 from nr_workbench.web.app import create_app
 
 from .test_lifecycle import write_partials
@@ -105,18 +104,30 @@ def spec_of(project: Path, name: str = "oxide") -> Path:
     return spec
 
 
-def test_a_link_holder_writes_the_spec_nrw_model_new_writes(
+def test_a_link_holder_writes_the_spec_nrw_model_new_writes_from_the_notes(
     app, writer, project: Path, monkeypatch
 ) -> None:
     response = create(writer, app, "S1", "oxide")
 
-    assert response.status_code == 201, response.json
+    started(response)
+    assert response.json["job"]["steps"] == [
+        ["model", "new", "--from-notes", "--name=oxide", "--", "S1"]
+    ]
+    ended = job_ended(writer)
+    assert ended["job"]["status"] == "ok", ended["log"]
+    assert "Wrote samples/S1/models/oxide.yaml" in ended["log"]
+    # No language model here: the job says so, and how to set one up.
+    assert "No language-model endpoint is configured" in ended["log"]
     written = project / "samples" / "S1" / "models" / "oxide.yaml"
-    assert "Wrote samples/S1/models/oxide.yaml" in response.json["output"]
-    assert [m["name"] for m in response.json["models"]] == ["oxide"]
+    listed = writer.get("/api/experiment/samples/S1/models").json
+    assert [(m["name"], m["placeholder"]) for m in listed["models"]] == [
+        ("oxide", True)
+    ]
     # Byte for byte what the terminal writes.
     monkeypatch.chdir(project)
-    result = CliRunner().invoke(main, ["model", "new", "S1", "--name", "typed"])
+    result = CliRunner().invoke(
+        main, ["model", "new", "S1", "--name", "typed", "--from-notes"]
+    )
     assert result.exit_code == 0, result.output
     typed = written.with_name("typed.yaml").read_text(encoding="utf-8")
     assert written.read_text(encoding="utf-8") == typed.replace("typed", "oxide")
@@ -128,9 +139,11 @@ def test_a_module_in_the_project_is_not_imported_in_place_of_nrws(
     # A scientist's own click.py beside the analysis, or one planted there.
     (project / "click.py").write_text("raise SystemExit('the project copy ran')\n")
 
-    response = create(writer, app, "S1", "oxide")
+    started(create(writer, app, "S1", "oxide"))
+    ended = job_ended(writer)
 
-    assert response.status_code == 201, response.json
+    assert ended["job"]["status"] == "ok", ended["log"]
+    assert "the project copy ran" not in ended["log"]
 
 
 def test_the_models_are_listed_without_the_link(app, project: Path) -> None:
@@ -144,9 +157,41 @@ def test_the_models_are_listed_without_the_link(app, project: Path) -> None:
             "spec": "samples/S1/models/a.yaml",
             "script": True,
             "proposed": False,
+            "placeholder": False,
         }
     ]
     assert (listed["exists"], listed["has_data"]) == (True, True)
+
+
+@pytest.mark.parametrize(
+    ("was", "now"),
+    [
+        ("rho: 0.0", "rho: 6.36"),  # the ambient is D2O: a material
+        ("thickness: 100", "thickness: 40"),  # the film's start: the stack
+    ],
+)
+def test_a_placeholder_stack_is_one_until_its_layers_change(
+    app, project: Path, monkeypatch, was: str, now: str
+) -> None:
+    monkeypatch.chdir(project)
+    assert (
+        CliRunner().invoke(main, ["model", "new", "S1", "--name=stub"]).exit_code == 0
+    )
+    spec = project / "samples" / "S1" / "models" / "stub.yaml"
+
+    def placeholder() -> bool:
+        listed = app.test_client().get("/api/experiment/samples/S1/models").json
+        return listed["models"][0]["placeholder"]
+
+    before = placeholder()
+    text = spec.read_text(encoding="utf-8")
+    assert text.count(was) == 1
+    # The header's "PLACEHOLDER" comment is left, as a person editing the
+    # layers may well leave it: the stack decides.
+    spec.write_text(text.replace(was, now), encoding="utf-8")
+
+    assert (before, placeholder()) == (True, False)
+    assert "PLACEHOLDER" in spec.read_text(encoding="utf-8")
 
 
 def test_a_spec_that_exists_is_never_overwritten(app, writer, project: Path) -> None:
@@ -187,6 +232,8 @@ def test_a_sample_without_data_says_so_and_writes_nothing(
     assert no_directory.status_code == 409
     assert "Apply creates it" in no_directory.json["error"]
     assert not (project / "samples" / "S2" / "models" / "oxide.yaml").exists()
+    # Refused at once, not by a job a moment later.
+    assert writer.get("/api/experiment/jobs/current").json["job"] is None
 
 
 def test_writing_a_spec_needs_the_link_and_the_pages_token(
@@ -215,39 +262,6 @@ def test_a_read_only_server_writes_no_spec_and_starts_no_job(project: Path) -> N
 
     assert not (project / "samples" / "S1" / "models" / "oxide.yaml").exists()
     assert data.jobs.current() is None
-
-
-def test_a_command_that_does_not_finish_is_stopped(app, writer, monkeypatch) -> None:
-    monkeypatch.setattr(models_module, "MODEL_NEW_TIMEOUT", 0.5)
-    monkeypatch.setattr(
-        jobs_module,
-        "nrw_command",
-        lambda *args: [sys.executable, "-c", "import time; time.sleep(60)"],
-    )
-
-    response = create(writer, app, "S1", "oxide")
-
-    assert response.status_code == 504
-    assert "did not finish" in response.json["error"]
-
-
-def test_a_command_that_declines_is_409_and_one_that_crashes_is_500(
-    app, writer, monkeypatch
-) -> None:
-    def fails(code: str):
-        monkeypatch.setattr(
-            jobs_module, "nrw_command", lambda *args: [sys.executable, "-c", code]
-        )
-
-    fails("import sys; print('Error: nope, and why'); sys.exit(1)")
-    declined = create(writer, app, "S1", "oxide")
-    fails("raise PermissionError(13, 'Permission denied', '/proj/x.yaml')")
-    crashed = create(writer, app, "S1", "oxide")
-
-    assert (declined.status_code, declined.json["error"]) == (409, "nope, and why")
-    # A crash is not the caller's mistake: said as such, its detail in the log.
-    assert (crashed.status_code, crashed.json["kind"]) == (500, "InternalError")
-    assert "/proj" not in crashed.json["error"]
 
 
 @pytest.mark.parametrize("name", ["oxide", "Cu-Pt_2", "v1.2", "x" * 64])

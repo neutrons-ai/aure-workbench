@@ -806,6 +806,10 @@ def _scaffold_document(
         found: The scan result for this sample.
         root: Project root, needed to read the data-file headers.
     """
+    import copy
+
+    from nr_workbench.spec.authoring import PLACEHOLDER_MATERIALS, PLACEHOLDER_STACK
+
     root = Path(root) if root is not None else Path.cwd()
     states = []
     blank_angles: list[str] = []
@@ -872,16 +876,8 @@ def _scaffold_document(
         "sample": sample,
         "description": f"TODO: describe {sample}.\n",
         # A minimal physically-sensible stack, deliberately obvious as a stub.
-        "materials": {
-            "Ambient": {"rho": 0.0},
-            "Film": {"rho": 4.0},
-            "Si": {"rho": 2.07},
-        },
-        "stack": [
-            {"name": "Ambient", "material": "Ambient", "thickness": 0, "roughness": 5},
-            {"name": "Film", "material": "Film", "thickness": 100, "roughness": 5},
-            {"name": "Si", "material": "Si"},
-        ],
+        "materials": copy.deepcopy(PLACEHOLDER_MATERIALS),
+        "stack": copy.deepcopy(PLACEHOLDER_STACK),
         "probe": {"resolution": "angular_only", "dq_is_fwhm": dq_is_fwhm},
     }
     if states:
@@ -1263,6 +1259,7 @@ def _author_from_notes(
     from nr_workbench.spec.authoring import (
         AuthoringError,
         build_prompt,
+        describe_measurements,
         find_skills,
         merge_proposal,
         missing_relevant,
@@ -1316,6 +1313,7 @@ def _author_from_notes(
         notes=notes,
         skills=skills,
         facts=_measured_facts(layout, document, notes),
+        measurements=describe_measurements(document, notes),
     )
 
     click.echo(

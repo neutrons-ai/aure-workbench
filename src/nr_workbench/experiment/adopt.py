@@ -260,6 +260,45 @@ def _snippet(text: str) -> str:
     return one_line if len(one_line) <= 80 else one_line[:79] + "…"
 
 
+@dataclass(frozen=True)
+class Measurements:
+    """What ``sample.md`` says about its measurements, run by run.
+
+    Attributes:
+        shared: The sample's own *Measurement conditions* -- what holds for
+            every run.
+        conditions: Each run's condition, from the Measurements table.
+        notes: Each run's notes, from its entry under *Measurement
+            conditions* -- a run no table lists included, as hand-written notes
+            often have no table.
+    """
+
+    shared: str
+    conditions: dict[int, str]
+    notes: dict[int, str]
+
+
+def measurements_of(text: str) -> Measurements:
+    """Read what a ``sample.md`` says about each measurement.
+
+    What reads it -- AuRE's setup, the request for a model from the notes --
+    wants each run's condition and notes set out, so that a contrast or a
+    condition written for one run is used for that run.
+
+    Args:
+        text: The file's contents.
+
+    Returns:
+        The shared conditions, and each run's condition and notes.
+    """
+    parsed = parse_sample_md(text)
+    return Measurements(
+        shared=parsed.fields.get("measurement_conditions", ""),
+        conditions={row.run: row.condition for row in parsed.rows if row.condition},
+        notes={**parsed.unlisted_notes, **parsed.notes},
+    )
+
+
 def parse_sample_md(text: str) -> ParsedSample:
     """Read a ``sample.md`` into the catalog's fields, without losing anything.
 

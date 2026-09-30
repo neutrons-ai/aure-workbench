@@ -3623,3 +3623,32 @@ a hand-written note on a run no table lists.
 **Edits reach AuRE through `sample.md`.** The page's edits reach the file when
 they are applied. `sample_md_pending` says when the catalog has edits the file
 does not have yet, in `nrw aure new` and in the Models panel.
+
+### 2026-09-30: a model written on the page was always in air
+
+Fitted from the Experiment page, a sample was always in air, although its notes
+said it was measured in a liquid. There were two causes.
+
+**The page never asked for the notes.** Its **New model** ran `nrw model new`
+without `--from-notes`, so every spec it wrote had the placeholder stack: air
+on a film on Si. Nothing on the page said so, and **Fit…** fitted it.
+
+- New model now runs `nrw model new --from-notes`, as a job: a language
+  model's answer does not fit in a request. The synchronous runner it used
+  (`run_nrw`, with a 120 s limit) had no other caller, and is gone.
+- A spec whose materials and stack are still the placeholder's is marked
+  *placeholder stack*, and Fit… on it says so first. `is_placeholder` compares
+  the stack itself, not the header comment that announces it, because a person
+  replacing the layers may well leave the comment where it is.
+
+**The request left each run to be matched up.** `--from-notes` sent
+`sample.md` whole. A model reading it had to connect a Measurements row
+(`218386 | steady | in D2O`) to the skeleton's state `run218386` by itself.
+
+- `describe_measurements` now sets out one line per state and series, with its
+  run, condition and notes, plus one line for what every run shares.
+- The system prompt says to take the ambient from those lines and never assume
+  air. A contrast that differs between states is the ambient's `rho`,
+  `per: state`, one entry `in:` each state.
+- `measurements_of` (in `experiment/adopt.py`) is the one reader of the three,
+  for this request and for AuRE's `extra_description`.

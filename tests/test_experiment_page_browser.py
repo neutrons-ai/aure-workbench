@@ -294,13 +294,30 @@ def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     page.type("expt-model-name", "oxide")
     page.click("expt-model-create")
 
+    # A job: the language model's answer can take a minute. None is set up
+    # here, so the job says so and writes the placeholder stack.
     page.wait_for(
-        "document.getElementById('expt-model-status').textContent.startsWith('Wrote')",
+        "document.getElementById('expt-job-state').textContent === 'ok'",
         what="the spec written",
+        timeout=60,
     )
+    assert "from the notes" in page.text("expt-model-status")
+    assert "Wrote samples/S1/models/oxide.yaml" in page.text("expt-job-log")
+    assert "No language-model endpoint is configured" in page.text("expt-job-log")
     assert (project / "samples" / "S1" / "models" / "oxide.yaml").is_file()
+    page.wait_for(
+        "document.querySelector('#expt-models-list .expt-model-placeholder') !== null",
+        what="the spec listed, as a placeholder",
+    )
     assert "samples/S1/models/oxide.yaml" in page.text("expt-models-list")
-    assert "Wrote samples/S1/models/oxide.yaml" in page.text("expt-model-output")
+
+    # Its fit is said to mean nothing before it is run -- but not refused.
+    page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+    assert "placeholder stack" in page.text("expt-fit-placeholder")
+    assert not page.js(
+        "document.getElementById('expt-fit-placeholder').classList.contains('d-none')"
+    )
+    assert page.text("expt-fit-run") == "Fit the placeholder anyway"
 
 
 def test_a_fit_started_on_the_page_is_followed_to_its_record(

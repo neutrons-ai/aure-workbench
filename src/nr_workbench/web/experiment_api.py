@@ -271,8 +271,8 @@ def sample_models(sample_id: str) -> Any:
 
 @experiment_api.post("/samples/<sample_id>/models")
 def create_model(sample_id: str) -> Any:
-    """Write a spec from the data on disk, as ``nrw model new``: ``{"name"}``."""
-    return jsonify(models_data().create(sample_id, _body().get("name"))), 201
+    """Write a spec from the notes and the data, as a job: ``{"name"}``."""
+    return jsonify(models_data().create(sample_id, _body().get("name"))), 202
 
 
 @experiment_api.post("/samples/<sample_id>/models/<name>/fit")

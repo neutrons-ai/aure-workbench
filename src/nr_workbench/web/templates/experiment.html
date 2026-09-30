@@ -99,7 +99,7 @@
     <div class="panel d-none" id="expt-models">
       <div class="panel-head">
         <span id="expt-models-title">Models</span>
-        <span class="hint">a spec is the model a fit reads, written from the sample's data</span>
+        <span class="hint">a spec is the model a fit reads, written from the sample's notes and data</span>
       </div>
       <div class="p-3 small">
         <div id="expt-models-list" class="mb-2"></div>
@@ -113,16 +113,24 @@
           <button type="button" class="btn btn-sm btn-outline-primary" id="expt-model-quick">Quick fit with AuRE</button>
         </form>
         <div class="form-text">
-          <strong>New model</strong> writes a spec with a placeholder stack, for
-          you to edit. <strong>Quick fit with AuRE</strong> has AuRE propose the
-          stack from sample.md's Description and fit one run on a quick budget;
-          the spec it proposes is then fitted from AuRE's values and recorded in
-          Fits. It needs a language-model endpoint (<code>nrw check-llm</code>).
+          <strong>New model</strong> writes a spec for you to check: its states
+          come from the data, and its stack is proposed by the language model
+          from sample.md &mdash; the description, and each run's condition and
+          notes. <strong>Quick fit with AuRE</strong> has AuRE propose the stack
+          from the same notes and fit one run on a quick budget; the spec it
+          proposes is then fitted from AuRE's values and recorded in Fits. Both
+          need a language model (<code>nrw check-llm</code> says whether one
+          answers); without one, New model writes a placeholder stack.
         </div>
         <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
-        <pre id="expt-model-output" class="expt-output small mt-2 mb-0 d-none"></pre>
         <form id="expt-fit-form" class="expt-fit d-none mt-3" novalidate>
           <div class="fw-semibold mb-1" id="expt-fit-title">Fit</div>
+          <p id="expt-fit-placeholder" class="text-warning-emphasis small mb-2 d-none">
+            This spec still has nrw's placeholder stack &mdash; air on a film on
+            Si &mdash; not this sample's layers. Its fit would mean nothing: edit
+            the stack first, or write a new model once a language model is set
+            up.
+          </p>
           <div class="d-flex flex-wrap gap-2 align-items-center">
             <select id="expt-fit-method" class="form-select form-select-sm expt-fit-method" aria-label="fitter">
               <option value="dream">dream: samples, for uncertainties</option>

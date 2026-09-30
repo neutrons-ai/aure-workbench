@@ -144,23 +144,19 @@ def measurement_context(notes: str, run: int) -> str:
     Returns:
         One line per thing said, or ``""`` when it says nothing about it.
     """
-    from nr_workbench.experiment.adopt import parse_sample_md
+    from nr_workbench.experiment.adopt import measurements_of
 
     try:
-        parsed = parse_sample_md(notes)
+        measured = measurements_of(notes)
     except Exception:  # noqa: BLE001 - AuRE still gets the description
         return ""
     lines: list[str] = []
-    condition = next((row.condition for row in parsed.rows if row.run == run), "")
-    if condition:
-        lines.append(f"The condition of run {run}: {condition}.")
-    shared = parsed.fields.get("measurement_conditions", "")
-    if shared:
-        lines.append(f"Measurement conditions: {shared}")
-    # Hand-written notes need not have a table that lists the run.
-    note = parsed.notes.get(run) or parsed.unlisted_notes.get(run, "")
-    if note:
-        lines.append(f"Notes on run {run}: {note}")
+    if measured.conditions.get(run):
+        lines.append(f"The condition of run {run}: {measured.conditions[run]}.")
+    if measured.shared:
+        lines.append(f"Measurement conditions: {measured.shared}")
+    if measured.notes.get(run):
+        lines.append(f"Notes on run {run}: {measured.notes[run]}")
     return "\n".join(lines)
 
 

@@ -1,9 +1,10 @@
 """A sample's models, for the Experiment page: its specs, a new one, and fits.
 
-A spec is written by ``nrw model new``, and a fit runs ``nrw model generate``
-and ``nrw fit run`` -- the commands a person types, run as child processes in
-the project (:mod:`nr_workbench.web.jobs`), so the page and the terminal cannot
-disagree about what a spec holds or how a fit is recorded. The model code is
+A spec is written by ``nrw model new --from-notes``, and a fit runs ``nrw
+model generate`` and ``nrw fit run`` -- the commands a person types, run as
+jobs, in child processes in the project (:mod:`nr_workbench.web.jobs`), so the
+page and the terminal cannot disagree about what a spec holds or how a fit is
+recorded. The model code is
 never imported into the server, which would load it, and whatever it imports,
 into the process serving every page.
 
@@ -34,11 +35,7 @@ from nr_workbench.fitting.settings import (
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.samples import validate_model_name
 from nr_workbench.web.experiment import RequestError, require_writable
-from nr_workbench.web.jobs import CommandRefused, Job, JobNotFound, JobRunner, run_nrw
-
-#: Seconds ``nrw model new`` may take. It reads each data file's header, so a
-#: few seconds on a local disk; longer means something is wrong.
-MODEL_NEW_TIMEOUT = 120.0
+from nr_workbench.web.jobs import CommandRefused, Job, JobNotFound, JobRunner
 
 #: Where a sample's specs live, under ``samples/<id>/``, as ``nrw model new``
 #: and ``nrw aure import`` write them.
@@ -102,6 +99,9 @@ class ModelsData:
                 # A proposal of AuRE's nobody edited: a new quick fit may
                 # replace it, so the page offers one.
                 "proposed": _is_unedited_proposal(spec),
+                # nrw's stub -- air on a film on Si -- not the sample: a fit of
+                # it means nothing, and the page says so before running one.
+                "placeholder": _is_placeholder(spec),
             }
             for spec in sorted((directory / MODELS_DIR).glob("*.yaml"))
         ]
@@ -135,22 +135,27 @@ class ModelsData:
         }
 
     def create(self, sample_id: str, name: Any) -> dict[str, Any]:
-        """Write a new spec with ``nrw model new``, from the data on disk.
+        """Write a new spec from the sample's notes and data, as a job.
+
+        ``nrw model new --from-notes``: the states come from the data on disk,
+        and the stack from the notes -- the sample's description and each run's
+        condition and notes -- by the configured language model. Without one,
+        it is nrw's placeholder stack, and the job's output says so. A job, not
+        a request: the model's answer can take a minute.
 
         Args:
             sample_id: The sample.
             name: The model's name: the spec is ``models/<name>.yaml``.
 
         Returns:
-            The sample's models, as :meth:`models` gives them, with ``output``:
-            what the command printed, notes on angles and series included.
+            ``{"job": ...}``, the job started.
 
         Raises:
             WritesDisabledError: The server was started read-only.
             RequestError: The sample id or the name is not usable.
-            ModelRefused: The sample has no directory yet, or the spec exists.
-            CommandRefused: ``nrw model new`` declined; the message is its own.
-            TimedOut: The command did not finish in time.
+            ModelRefused: The sample has no directory or no data yet, or the
+                spec exists.
+            JobBusy: A job is running already.
         """
         require_writable(self.writable, self.why_read_only)
         directory = self._sample_dir(sample_id)
@@ -159,6 +164,14 @@ class ModelsData:
             raise ModelRefused(
                 f"samples/{sample_id}/ does not exist yet. Apply creates it, "
                 "with the data a spec is built from."
+            )
+        found = self._measured(sample_id)
+        if not (found and (found.steady or found.series)):
+            # Said now, as `nrw model new` would a moment later: the states are
+            # the data's, and there is none to build them from.
+            raise ModelRefused(
+                f"No data found for {sample_id!r}: samples/{sample_id}/data/ "
+                "holds none yet. Apply the runs assigned to this sample first."
             )
         spec = directory / MODELS_DIR / f"{name}.yaml"
         if spec.exists():
@@ -169,16 +182,13 @@ class ModelsData:
                 "that spec."
             )
         # `--` ends the options: the sample id is never read as one.
-        output = run_nrw(
-            self.root,
-            "model",
-            "new",
-            f"--name={name}",
-            "--",
-            sample_id,
-            timeout=MODEL_NEW_TIMEOUT,
+        job = self.jobs.start(
+            label=f"new model {name}, from the notes",
+            sample=sample_id,
+            model=name,
+            steps=[["model", "new", "--from-notes", f"--name={name}", "--", sample_id]],
         )
-        return {**self.models(sample_id), "output": output}
+        return {"job": job.as_dict()}
 
     def fit(self, sample_id: str, name: Any, request: dict[str, Any]) -> dict[str, Any]:
         """Start fitting a spec: ``nrw model generate``, then ``nrw fit run``.
@@ -519,3 +529,12 @@ def _sample_md_pending(root: Path, sample_id: str) -> bool:
     from nr_workbench.experiment.render import sample_md_pending
 
     return sample_md_pending(root, sample_id)
+
+
+def _is_placeholder(spec: Path) -> bool:
+    from nr_workbench.spec.authoring import is_placeholder
+
+    try:
+        return is_placeholder(spec.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return False

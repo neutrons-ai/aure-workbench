@@ -5,8 +5,7 @@ the server's process: nothing could stop it there, and a crash in bumps would
 take the page down with it. A job is a short list of ``nrw`` commands --
 ``model generate``, then ``fit run`` -- run one after another in the project,
 each in a process group of its own, so that Cancel stops every process a step
-started, bumps' parallel workers included. :func:`run_nrw` runs one short
-command the same way and waits for it.
+started, bumps' parallel workers included.
 
 One at a time: two fits compete for the same cores, and neither finishes sooner
 than if it had waited its turn. What a job printed is kept in
@@ -40,7 +39,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
-from nr_workbench.bounded import TimedOut
 from nr_workbench.project.layout import ProjectLayout
 
 #: Seconds Cancel waits after SIGTERM before SIGKILL.
@@ -56,9 +54,6 @@ KEEP_JOBS = 20
 #: A job id: when it started, to the microsecond, so that the newest sorts
 #: last; then six hex digits.
 _ID_RE = re.compile(r"\d{8}T\d{12}Z-[0-9a-f]{6}")
-
-#: How Click reports a refusal, at the start of a line.
-_REFUSAL_RE = re.compile(r"^Error: ", re.MULTILINE)
 
 #: Opened never through a symbolic link, where the platform can say so.
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
@@ -108,51 +103,6 @@ def child_environment() -> dict[str, str]:
     from nr_workbench.commands.serve import TOKEN_ENV
 
     return {key: value for key, value in os.environ.items() if key != TOKEN_ENV}
-
-
-def run_nrw(root: Path, *args: str, timeout: float) -> str:
-    """Run one ``nrw`` command in the project, and wait for it.
-
-    Args:
-        root: Project root, the command's working directory.
-        *args: The command and its arguments, as typed after ``nrw``.
-        timeout: Seconds it may take.
-
-    Returns:
-        What it printed, stdout and stderr together.
-
-    Raises:
-        CommandRefused: It declined, as Click reports it (``Error: ...``); the
-            message is the part after that.
-        RuntimeError: It failed any other way -- a crash, not a refusal -- so
-            the API answers 500 and logs all it printed.
-        TimedOut: It did not finish within *timeout*, and was stopped.
-    """
-    try:
-        result = subprocess.run(
-            nrw_command(*args),
-            cwd=root,
-            env=child_environment(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise TimedOut(
-            f"`nrw {' '.join(args[:2])}` did not finish within {timeout:.0f} s "
-            "and was stopped."
-        ) from exc
-    output = result.stdout.strip()
-    if result.returncode == 0:
-        return output
-    refusals = list(_REFUSAL_RE.finditer(output))
-    if refusals:
-        raise CommandRefused(output[refusals[-1].end() :].strip())
-    raise RuntimeError(f"`nrw {' '.join(args)}` exited {result.returncode}:\n{output}")
 
 
 @dataclass
