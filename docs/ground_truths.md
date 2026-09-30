@@ -3652,3 +3652,43 @@ on a film on Si. Nothing on the page said so, and **Fit…** fitted it.
   `per: state`, one entry `in:` each state.
 - `measurements_of` (in `experiment/adopt.py`) is the one reader of the three,
   for this request and for AuRE's `extra_description`.
+
+### 2026-09-30: the page chooses the language model in `.env`, and the server loads none
+
+The Settings page's *Language model* section writes `LLM_PROVIDER=claude_code`
+and `LLM_MODEL` into the project's `.env`, so New model and AuRE's quick fit can
+use Claude through the Claude Code CLI without `~/.aure`. Three findings shaped
+it.
+
+**A value loaded into the server would pin every job.** `load_dotenv(override=
+False)` puts a file's values into `os.environ`. A child process inherits
+`os.environ` as its environment, and the environment wins over every file. So
+had `nrw serve` ever called `load_env()`, each job would run with the provider
+the server read at that moment, whatever `.env` said afterwards. The server
+does not call it today; the page only needs `is_available()`, which finds AuRE
+without importing it. Two things keep it that way:
+
+- `where_set` works out each setting from the files, without loading them.
+- `load_env` records what it loaded (`loaded_from_files()`), and
+  `child_environment()` leaves those out, so a child reads the files itself.
+
+**`LLM_MODEL` must be written, even empty.** A machine that has run AuRE with
+another provider has `LLM_MODEL=gpt-4o` in `~/.aure`. With only
+`LLM_PROVIDER=claude_code` in `.env`, AuRE would run `claude --model gpt-4o`.
+python-dotenv sets `KEY=` to `""`, so an empty `LLM_MODEL=` in `.env` stops
+`~/.aure`'s from being taken. AuRE's own default for `claude_code` is the empty
+model, which is the CLI's default.
+
+**`.env` is the person's file.** It holds keys and other tools' settings, so
+`project/envfile.py` follows these rules:
+
+- It touches only the `NAME=value` lines of the variables asked for.
+- It removes a later duplicate, because the later line would win.
+- It keeps line endings and the file's mode. A new `.env` is 0600.
+- It refuses a symbolic link.
+- It makes the change against the revision the page read.
+
+**Check** runs `nrw check-llm --endpoint --json` in a child, as a job would,
+one at a time and for 180 s at most. It is behind the link, because the call
+is billed. Reading the section needs no link, so it never shows a key, not even
+redacted: it says only whether one is set.

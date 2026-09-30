@@ -224,7 +224,7 @@ nrw's.
 | File | Belongs to | Holds | Committed |
 |---|---|---|---|
 | `nrw.toml` | the project | the IPTS, the data folder, the watcher, the assistants, and how nrw fits (`[fit]`) | yes |
-| `.env` in the project | you, on this machine | the language-model endpoint and its key | no (gitignored) |
+| `.env` in the project | you, on this machine | the language-model endpoint and its key; the Settings page's *Language model* writes it | no (gitignored) |
 | `~/.nrw` | you | the same, for all your projects | — |
 | `~/.aure` | you, and AuRE | the endpoint too, and AuRE's own fit defaults (`FIT_METHOD`, `FIT_STEPS`, `FIT_BURN`) | — |
 
@@ -238,6 +238,12 @@ For the language-model endpoint, nrw takes each variable from the first of:
 `nrw doctor` lists the files it read and the settings it found, with keys
 redacted. Keys and endpoints never go in `nrw.toml`, because it is committed
 and shared. `.env.example` in the project lists the variables.
+
+To use Claude through the Claude Code CLI, which needs no key, choose it under
+*Language model* on the Settings page of `nrw serve`. That writes
+`LLM_PROVIDER=claude_code` into the project's `.env`, which then wins over
+`~/.aure`, and **Check** makes one call to prove it answers. See
+[docs/experiment.md](docs/experiment.md#language-model).
 
 ## Provenance
 

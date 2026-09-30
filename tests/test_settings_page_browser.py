@@ -529,3 +529,51 @@ def test_a_file_nrw_cannot_edit_shows_the_lines_to_add_and_keeps_the_form(
     # Not a conflict, so not reloaded: what the person typed is still there.
     assert page.js("document.getElementById('s-settle').value") == "60"
     assert toml.read_bytes() == before
+
+
+def test_claude_is_chosen_for_the_projects_jobs_and_checked(
+    page: Page, site: Site, fresh: Path, monkeypatch
+) -> None:
+    import sys
+
+    from nr_workbench.web import jobs as jobs_module
+
+    # The check's call stands in, answering as `nrw check-llm --json` does:
+    # what is tested is the page.
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [
+            sys.executable,
+            "-c",
+            "import json; print(json.dumps({'probes': [{'status': 'ok', "
+            "'detail': 'answered', 'model': 'claude_code/sonnet', 'seconds': 2.5}]}))",
+        ],
+    )
+    open_settings(page, site)
+    page.wait_for(
+        "!document.getElementById('llm-save').disabled", what="the Language model"
+    )
+    assert "nothing is set up" in page.text("llm-now")
+    assert page.js("document.getElementById('llm-outside').checked")
+
+    page.type("llm-model", "sonnet")  # a model is Claude's: typing one chooses it
+    assert page.js("document.getElementById('llm-claude').checked")
+    page.click("llm-save")
+
+    page.wait_for(
+        "document.getElementById('llm-status').textContent.startsWith('Saved in .env')",
+        what="the choice saved",
+    )
+    assert "LLM_MODEL=sonnet" in (fresh / ".env").read_text(encoding="utf-8")
+    assert "Claude, through the Claude Code CLI, model sonnet (from .env)" in page.text(
+        "llm-now"
+    )
+
+    page.click("llm-check")
+
+    page.wait_for(
+        "document.querySelector('#llm-result .llm-probe') !== null", what="the check"
+    )
+    assert "It answered, in 2.5 s." in page.text("llm-result")
+    assert "claude_code/sonnet" in page.text("llm-result")

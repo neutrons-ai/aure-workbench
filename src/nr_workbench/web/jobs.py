@@ -92,17 +92,26 @@ def nrw_command(*args: str) -> list[str]:
 
 
 def child_environment() -> dict[str, str]:
-    """The environment for an nrw child: this one's, without the link's secret.
+    """The environment for an nrw child: this one's, less two things.
 
-    ``nrw serve`` keeps the one-time link's secret in its environment for its
-    reloader. A fit, the script it runs, and AuRE have no use for it.
+    - The one-time link's secret, which ``nrw serve`` keeps in its environment
+      for its reloader. A fit, the script it runs, and AuRE have no use for it.
+    - Anything this process loaded from a ``.env`` file. The child reads the
+      files itself; passed down, a value would win over the project's
+      ``.env`` as though the shell had set it, and a language model chosen on
+      the Settings page would reach no job until the server restarted.
 
     Returns:
         The environment to pass.
     """
+    from nr_workbench import env
     from nr_workbench.commands.serve import TOKEN_ENV
 
-    return {key: value for key, value in os.environ.items() if key != TOKEN_ENV}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key != TOKEN_ENV and key not in env.loaded_from_files()
+    }
 
 
 @dataclass

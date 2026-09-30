@@ -27,12 +27,15 @@ def isolate_user_env(tmp_path_factory, monkeypatch) -> None:
     green suite.
 
     `_loaded` is reset too. It is a module-level latch, so the first test to
-    call `load_env` would otherwise decide for every test after it.
+    call `load_env` would otherwise decide for every test after it; and so is
+    `_set_by_files`, which would otherwise take a later test's shell variable
+    for one a file set.
     """
     empty = tmp_path_factory.mktemp("home")
     monkeypatch.setattr(env_module, "USER_ENV_PATH", empty / ".nrw")
     monkeypatch.setattr(env_module, "AURE_ENV_PATH", empty / ".aure")
     monkeypatch.setattr(env_module, "_loaded", False)
+    monkeypatch.setattr(env_module, "_set_by_files", set())
     for name in _USER_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
 

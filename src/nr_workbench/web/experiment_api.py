@@ -85,6 +85,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
     from nr_workbench.experiment.model import CatalogValidationError, RecordConflict
     from nr_workbench.experiment.render import SampleRenderError
     from nr_workbench.experiment.store import CatalogError
+    from nr_workbench.project.envfile import EnvFileError
     from nr_workbench.project.scaffold import LockProblemError
     from nr_workbench.project.settings import NeedsConfirmation, SettingsError
     from nr_workbench.project.tomlfile import TomlEditError
@@ -106,6 +107,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 Busy,
                 CommandRefused,
                 JobBusy,
+                EnvFileError,
             ),
             409,
         ),
@@ -226,7 +228,8 @@ def adopt(sample_id: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Settings -- reading is open; saving and checking a folder are behind the gate
+# Settings -- reading is open; saving, and checking a folder or the language
+# model, are behind the gate
 # ---------------------------------------------------------------------------
 
 
@@ -256,6 +259,30 @@ def check_folder() -> Any:
             body.get("location"), body.get("ipts"), body.get("kind")
         )
     )
+
+
+@experiment_api.get("/settings/llm")
+def llm_settings() -> Any:
+    """The language model the page's jobs use, and where each part is set."""
+    return jsonify(settings_data().llm())
+
+
+@experiment_api.put("/settings/llm")
+def save_llm() -> Any:
+    """Choose it, in the project's .env: ``{"revision", "provider", "model"}``."""
+    body = _body()
+    return jsonify(
+        settings_data().save_llm(
+            body.get("revision"), body.get("provider"), body.get("model", "")
+        )
+    )
+
+
+@experiment_api.post("/settings/llm/check")
+def check_llm() -> Any:
+    """Make one real call to it, as ``nrw check-llm --endpoint`` does."""
+    _body()
+    return jsonify(settings_data().check_llm())
 
 
 # ---------------------------------------------------------------------------

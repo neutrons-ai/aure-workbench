@@ -94,6 +94,42 @@ folder first, as **Check folder** does, with the same 15-second deadline.
 `--json` prints one object, whichever options are given: `{"settings",
 "change", "check"}`, where `change` and `check` are `null` unless asked for.
 
+### Language model
+
+**New model** and **Quick fit with AuRE** ask a language model. The
+*Language model* section says which one they use now, and which file each part
+of that comes from. Its choices are:
+
+- **Claude, through the Claude Code CLI.** AuRE runs `claude -p`, which answers
+  as whatever it is logged in as: a subscription, an API key, or Bedrock,
+  Vertex or Foundry. No key is needed. Leave the model blank for the CLI's
+  default, or name one: `sonnet`, `opus`, `haiku`, or a full model or
+  deployment name.
+- **As set outside this project**: whatever `~/.nrw` or `~/.aure` says.
+
+Unlike the rest of the page, this is saved in the project's `.env`, not in
+`nrw.toml`. `nrw.toml` is committed and shared, while a language model belongs
+to one person on one machine, and `.env` is gitignored. Choosing Claude writes
+two lines, under a comment saying where they came from:
+
+```
+LLM_PROVIDER=claude_code
+LLM_MODEL=
+```
+
+`LLM_MODEL` is written even when blank. Otherwise a model that `~/.aure` names
+for another provider, such as `gpt-4o`, would be passed to `claude`. Choosing
+*as set outside this project* removes the two lines. Nothing else in `.env` is
+changed, and a `.env` that is a symbolic link is never written through.
+
+Each job reads `.env` as it starts, so a choice applies from the next one, with
+no restart. The exception is a variable set in the environment `nrw serve` was
+started with: that wins over `.env`, and the section says so.
+
+**Check** makes one real call to the saved model, as `nrw check-llm --endpoint`
+does, and says what answered and how long it took. The call is billed like any
+other.
+
 ## Where the runs come from
 
 By default the page watches the folder REF_L's `new_reduction` pipeline writes:
