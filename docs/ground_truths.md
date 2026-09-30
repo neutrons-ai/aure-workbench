@@ -3770,3 +3770,42 @@ and modeling prompts do read, and writes no `extra_description`. A quick fit
 fits one run, so one description serves it. **Check what AuRE reads from its
 prompts' code, not its docstrings:** AuRE declares no stable API
 (`aure_adapter`), and a documented field can be unwired.
+
+### 2026-09-30: curating fits, where their evidence is
+
+Launching fits stays on the Experiment page, where their inputs are. Curation
+(star, finalize, discard, delete) goes on the fit and Fits pages, because a
+person judges a fit while looking at it. All of it goes through the one gated
+write API.
+
+**Recorded as index events.** `star`, `unstar`, `discard`, `restore` and
+`delete` are appended to `.nrw/index.jsonl` beside `promote`, with who and
+when. They merge in git and never lose history. `provenance/curation.py`
+replays them (`curation_of`): the last word on a fit is what it is.
+
+**Discard, then delete, a decision of the user's.** Discarding keeps every
+file. Deleting is a second, explicit step, and it is refused while anything
+uses the fit:
+
+- a report cites it (`notes_about`);
+- a figure manifest lists it (`"fits"`);
+- another fit read its files, as an input under its directory;
+- or it has ISAAC records (`isaac/`).
+
+Deleting never goes through a link, and the index keeps the record that the fit
+ran. `nrw check` no longer reports a discarded or deleted fit, and `nrw ls`
+leaves them out unless `--all`.
+
+**A fit superseded as final still showed `final`.** The Fits list, the sample
+page and the fit page badged every label a fit had ever held. `nrw ls` asked for
+the last `final` across the whole project, so with two samples only one fit got
+its mark. Every reader now takes the labels from `curation_of`, where the last
+promotion of a label per sample holds it.
+
+**The fit pages carry the write token now,** so they get the strict script
+policy (`page_csp`, with a nonce), as the Experiment and Settings pages do.
+They render project text: notes, the spec and the script. Only the pages' own
+scripts may run where a token is.
+
+**The page names a fit whole.** The terminal accepts a prefix, but a prefix in
+a URL could come to match a later fit.

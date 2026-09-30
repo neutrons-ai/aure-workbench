@@ -268,6 +268,12 @@ are stamped at write time.
 Re-running an identical fit is refused by default, and a result whose data has
 changed underneath it is reported as `STALE` everywhere it appears.
 
+Fits are curated on the fit pages of `nrw serve`, or with `nrw fit star`,
+`discard`, `restore` and `delete`. A discarded fit keeps its files until you
+delete them, which is refused while anything uses them, and the record that it
+ran is never lost. See
+[docs/experiment.md](docs/experiment.md#curating-fits).
+
 `nrw pack` closes the last gap. A result directory records the *hashes* of its
 data, not the data, so it describes a fit nobody else can run. A bundle carries
 the measurements themselves at the paths the frozen script expects, plus a

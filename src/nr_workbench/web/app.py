@@ -35,6 +35,7 @@ from flask import (
 
 from nr_workbench.web import security
 from nr_workbench.web.api import api
+from nr_workbench.web.curation import CurationData
 from nr_workbench.web.experiment import ExperimentData
 from nr_workbench.web.experiment_api import experiment_api
 from nr_workbench.web.llm_settings import LlmSettingsData
@@ -106,6 +107,11 @@ def create_app(
     )
     app.config["NRW_EXPERIMENT"] = experiment
     app.config["NRW_MODELS"] = ModelsData(
+        root,
+        writable=app.config["NRW_WRITABLE"],
+        why_read_only=app.config["NRW_READ_ONLY_REASON"],
+    )
+    app.config["NRW_CURATION"] = CurationData(
         root,
         writable=app.config["NRW_WRITABLE"],
         why_read_only=app.config["NRW_READ_ONLY_REASON"],
@@ -257,9 +263,26 @@ def _register_views(app: Flask) -> None:
             problems=problems,
         )
 
+    def curating(template: str, **context: Any) -> Any:
+        """A page that curates fits: the write token for a writer, and the
+        policy that keeps any script but the page's own from reading it."""
+        nonce = secrets.token_urlsafe(16)
+        writer = security.can_write()
+        page = render_template(
+            template,
+            page_token=app.config["NRW_PAGE_TOKEN"] if writer else "",
+            writer=writer,
+            csp_nonce=nonce,
+            read_only_reason=app.config["NRW_READ_ONLY_REASON"],
+            **context,
+        )
+        response = make_response(page)
+        response.headers["Content-Security-Policy"] = security.page_csp(nonce)
+        return response
+
     @app.get("/f/<fit_id>")
-    def fit(fit_id: str) -> str:
-        """One fit in detail, with its provenance."""
+    def fit(fit_id: str) -> Any:
+        """One fit in detail, with its provenance, and what was said about it."""
         try:
             detail = data().fit(fit_id)
         except FileNotFoundError as exc:
@@ -267,14 +290,13 @@ def _register_views(app: Flask) -> None:
         except ValueError as exc:
             abort(400, str(exc))
         trajectory = data().trajectory(fit_id)
-        return render_template("fit.html", fit=detail, trajectory=trajectory)
+        said = app.config["NRW_CURATION"].state(detail["fit_id"])
+        return curating("fit.html", fit=detail, trajectory=trajectory, said=said)
 
     @app.get("/fits")
-    def fits() -> str:
+    def fits() -> Any:
         """Every fit in the project, newest first."""
-        return render_template(
-            "fits.html", fits=data().fits(), overview=data().overview()
-        )
+        return curating("fits.html", fits=data().fits(), overview=data().overview())
 
     @app.get("/figures/<sample_id>/<label>/<path:filename>")
     def figure(sample_id: str, label: str, filename: str) -> Any:

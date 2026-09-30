@@ -149,10 +149,13 @@ The prompt and the full transcript are kept under `.nrw/agent/`. Options:
 
 ## The limits, and why there are two of them
 
-Three actions are refused: `nrw promote`, `nrw isaac export --upload`, and any
-`--force`.
+Among the actions refused are `nrw promote`; curating fits (`nrw fit star`,
+`unstar`, `discard`, `restore` and `delete`); `nrw isaac export --upload`; and
+any `--force`.
 
-The first two are obvious. The third is the one worth explaining: **every
+The first three are plain: which fit is the answer, which are good and which
+are set aside or deleted are a person's judgements, and an upload publishes
+outside the project. The last is the one worth explaining: **every
 forcing flag in nr-workbench exists because a check said no** — drifted inputs,
 a hand-edited script, an identical run already recorded, a directory somebody
 else wrote. An agent reaching for `--force` has arrived at exactly the
@@ -165,7 +168,7 @@ Two independent mechanisms enforce them:
    why. It splits on `&&`, `;` and `|` first, so `nrw ls && nrw promote abc`
    does not slip past.
 2. **`NRW_AGENT=1`**, which `nrw agent run` sets on the session itself. Under
-   it, all three refuse from the inside — `--force` is checked once at the top
+   it, each of them refuses from the inside — `--force` is checked once at the top
    of the CLI rather than in each command, so a subcommand added next year is
    covered without anyone remembering to.
 

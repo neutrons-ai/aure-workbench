@@ -412,6 +412,47 @@ does for a fit stopped in a terminal. Stopping `nrw serve` stops its running
 job too. If the server was killed instead, the page says so the next time it
 starts, and a fit that went on to finish is in Fits all the same.
 
+## Curating fits
+
+Setting up and running fits happens on this page. Judging them happens where
+their evidence is: a fit's own page (**Fits**, then a fit), with its curves,
+residuals, parameters and the other fits of its model. As with every change the
+pages make, only a browser that opened the link `nrw serve` printed can curate.
+
+- **Star** marks a fit worth coming back to. The Fits list has a star beside
+  each fit.
+- **Finalize…** makes a fit the answer for its sample, which is `nrw promote`
+  from the page. It asks why, and the reason is kept with the fit. It says
+  which fit it replaces as final, and that one stays in the history. A fit
+  whose data changed since it ran is not finalized unless you say so again,
+  and that is recorded too.
+- **Discard…** sets a fit aside, with a reason. It leaves the listings, and
+  the Fits list keeps it behind **Show the discarded**. Every file is kept, and
+  **Restore** brings it back. The final fit cannot be discarded: finalize
+  another first.
+- **Delete files…** frees the disk. It is offered only for a fit already
+  discarded, and only after you confirm. A fit that anything uses keeps its
+  files, and the page says what uses it: a report that cites it or drew a
+  figure from it, another fit that read its files, or ISAAC records made from
+  it. The record that the fit ran stays in the index, and the Fits page shows
+  it as deleted.
+
+Each of these is recorded in the fit index (`.nrw/index.jsonl`) with who and
+when, as promotions always have been, so it travels with the project in git.
+The terminal does the same:
+
+```bash
+nrw fit star <fit_id>
+nrw fit discard <fit_id> --reason "the Ti layer diverged"
+nrw fit restore <fit_id>
+nrw fit delete <fit_id>      # a discarded fit's files; asks first
+nrw promote <fit_id> --reason "..."
+nrw ls --all                 # the discarded fits too
+```
+
+An unattended agent can do none of them: which fits are good, set aside or
+deleted is a person's judgement.
+
 ## A sample that already exists
 
 A sample written by hand before the page existed can be taken into the catalog:

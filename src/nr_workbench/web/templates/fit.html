@@ -13,7 +13,11 @@
 
 <div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
   <h1 class="h5 mb-0 mono">{{ fit.fit_id }}</h1>
-  {% for label in fit.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+  <span id="fit-badges" class="d-inline-flex gap-1">
+    {% for label in fit.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+    {% if said.curation.starred %}<span class="badge text-bg-warning">★ starred</span>{% endif %}
+    {% if said.curation.discarded %}<span class="badge text-bg-secondary">discarded</span>{% endif %}
+  </span>
   {% if fit.sample %}
   <a class="small" href="{{ url_for('sample', sample_id=fit.sample) }}">{{ fit.sample }}</a>
   {% endif %}
@@ -39,6 +43,25 @@
   {% endif %}
 </p>
 {% endif %}
+
+{# What a person has said about this fit, and -- for a browser that opened the
+   link `nrw serve` printed -- what they can still say: curation.js draws it
+   from the server's answer. #}
+<div id="curate" class="curate mb-3">
+  <p id="curate-discarded" class="alert alert-secondary py-2 small mb-2 d-none"></p>
+  <div id="curate-buttons" class="d-flex flex-wrap gap-2 align-items-center"></div>
+  <p id="curate-refusal" class="small text-secondary mt-1 mb-0 d-none"></p>
+  <div id="curate-form" class="curate-form mt-2 d-none">
+    <label class="form-label small mb-1" for="curate-reason" id="curate-question"></label>
+    <textarea id="curate-reason" class="form-control form-control-sm" rows="2"></textarea>
+    <div class="d-flex gap-2 mt-2">
+      <button type="button" class="btn btn-sm btn-primary" id="curate-go">Finalize</button>
+      <button type="button" class="btn btn-sm btn-outline-warning d-none" id="curate-force">Finalize anyway</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="curate-cancel">Cancel</button>
+    </div>
+  </div>
+  <p id="curate-status" class="small mb-0" aria-live="polite"></p>
+</div>
 
 {% if fit.problems %}
 <div class="alert alert-warning py-2 problem">
@@ -269,7 +292,13 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
+  window.NRW_CURATION = {{ said|nrwjson|safe }};
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
+<script src="{{ url_for('static', filename='curation.js') }}"></script>
+<script nonce="{{ csp_nonce }}">
 (function () {
   NRW.fitPanel("plot-fit", "plot-residual", {{ fit.curves|nrwjson|safe }});
 

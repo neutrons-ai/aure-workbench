@@ -21,6 +21,7 @@ from werkzeug.exceptions import HTTPException
 
 from nr_workbench.bounded import Busy, TimedOut
 from nr_workbench.web import security
+from nr_workbench.web.curation import CurationData
 from nr_workbench.web.experiment import (
     ExperimentData,
     RequestError,
@@ -53,6 +54,11 @@ def models_data() -> ModelsData:
 def llm_data() -> LlmSettingsData:
     """The request's :class:`LlmSettingsData`, held on the app config."""
     return current_app.config["NRW_LLM"]  # type: ignore[no-any-return]
+
+
+def curation_data() -> CurationData:
+    """The request's :class:`CurationData`, held on the app config."""
+    return current_app.config["NRW_CURATION"]  # type: ignore[no-any-return]
 
 
 @experiment_api.before_request
@@ -95,11 +101,12 @@ def _map(exc: Exception) -> tuple[Any, int]:
     from nr_workbench.project.scaffold import LockProblemError
     from nr_workbench.project.settings import NeedsConfirmation, SettingsError
     from nr_workbench.project.tomlfile import TomlEditError
+    from nr_workbench.provenance.curation import CurationRefused, NoSuchFit
 
     if isinstance(exc, HTTPException):
         return jsonify({"error": exc.description}), exc.code or 500
     for kinds, status in (
-        ((RunNotListedError, JobNotFound, ModelNotFound), 404),
+        ((RunNotListedError, JobNotFound, ModelNotFound, NoSuchFit), 404),
         ((WritesDisabledError,), 403),
         (
             (
@@ -114,6 +121,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
                 CommandRefused,
                 JobBusy,
                 EnvFileError,
+                CurationRefused,
             ),
             409,
         ),
@@ -289,6 +297,46 @@ def check_llm() -> Any:
     """Make one real call to it, as ``nrw check-llm --endpoint`` does."""
     _body()
     return jsonify(llm_data().check_llm())
+
+
+# ---------------------------------------------------------------------------
+# Curating fits -- what is said about a fit is read with the fit; every change
+# is behind the gate
+# ---------------------------------------------------------------------------
+
+
+@experiment_api.post("/fits/<fit_id>/star")
+def star_fit(fit_id: str) -> Any:
+    """Star a fit, or take its star away: ``{"starred": true|false}``."""
+    return jsonify(curation_data().star(fit_id, _body().get("starred")))
+
+
+@experiment_api.post("/fits/<fit_id>/discard")
+def discard_fit(fit_id: str) -> Any:
+    """Set a fit aside, every file kept: ``{"reason"}``."""
+    return jsonify(curation_data().discard(fit_id, _body().get("reason")))
+
+
+@experiment_api.post("/fits/<fit_id>/restore")
+def restore_fit(fit_id: str) -> Any:
+    """Bring a discarded fit back."""
+    _body()
+    return jsonify(curation_data().restore(fit_id))
+
+
+@experiment_api.post("/fits/<fit_id>/delete")
+def delete_fit(fit_id: str) -> Any:
+    """Delete a discarded fit's files: ``{"confirm": <its id>}``."""
+    return jsonify(curation_data().delete(fit_id, _body().get("confirm")))
+
+
+@experiment_api.post("/fits/<fit_id>/finalize")
+def finalize_fit(fit_id: str) -> Any:
+    """Make a fit its sample's final one: ``{"reason", "force"}``."""
+    body = _body()
+    return jsonify(
+        curation_data().finalize(fit_id, body.get("reason"), body.get("force", False))
+    )
 
 
 # ---------------------------------------------------------------------------

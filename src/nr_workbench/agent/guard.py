@@ -76,6 +76,12 @@ _REASONS = {
         "status`, and `apply`, `adopt` or `settings` without --write, are "
         "allowed: they show what would happen and change nothing."
     ),
+    "curate": (
+        "Which fits are good, set aside or deleted is a person's judgement, like "
+        "a promotion: a star, a discarded fit and a deleted one all change what "
+        "the next person reading the project believes. Write in ESCALATIONS.md "
+        "which fits you would star, discard or delete, and why, and stop."
+    ),
     "nested": (
         "`nrw init --nested` was refused because an ancestor directory is "
         "already a project -- this would create a second nrw.toml, a second "
@@ -186,6 +192,10 @@ def _segments(command: str) -> list[str]:
     return [p for p in pieces if p.strip()]
 
 
+#: What `nrw fit` does to a fit rather than with it: each is a person's call.
+_CURATION = ("star", "unstar", "discard", "restore", "delete")
+
+
 def _judge_text(piece: str) -> Verdict:
     """Judge raw text that could not be tokenised.
 
@@ -203,6 +213,7 @@ def _judge_text(piece: str) -> Verdict:
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
     for pattern, rule in (
         (r"(?<![\w-])promote(?![\w-])", "promote"),
+        (r"(?<![\w-])fit\s+(?:" + "|".join(_CURATION) + r")(?![\w-])", "curate"),
         (r"--upload(?![\w-])", "upload"),
         (r"--force(?![\w-])", "force"),
         (r"--nested(?![\w-])", "nested"),
@@ -244,6 +255,12 @@ def _judge_one(tokens: list[str]) -> Verdict:
         or ({"apply", "adopt", "settings"} & set(subcommands) and "--write" in flags)
     ):
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
+
+    # `fit` then the action, next to each other: `nrw fit run x.py --note
+    # discard` is a fit run, not a discard.
+    for place, word in enumerate(words[:-1]):
+        if word == "fit" and words[place + 1] in _CURATION:
+            return Verdict(allowed=False, rule="curate", reason=_REASONS["curate"])
 
     if "isaac" in subcommands and "--upload" in flags:
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
@@ -370,7 +387,7 @@ def refuse_if_agent(action: str) -> None:
 
     Args:
         action: ``promote``, ``upload``, ``force``, ``nested``,
-            ``aure-run`` or ``experiment``.
+            ``aure-run``, ``experiment`` or ``curate``.
 
     Raises:
         click.ClickException: When ``NRW_AGENT`` is set.

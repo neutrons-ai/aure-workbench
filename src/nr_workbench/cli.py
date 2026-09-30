@@ -628,6 +628,61 @@ def fit_run_command(**kwargs: object) -> None:
     run_fit_command(**kwargs)  # type: ignore[arg-type]
 
 
+@fit_group.command("star")
+@click.argument("fit_id")
+def fit_star(fit_id: str) -> None:
+    """Star FIT_ID: one worth coming back to."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("star", fit_id)
+
+
+@fit_group.command("unstar")
+@click.argument("fit_id")
+def fit_unstar(fit_id: str) -> None:
+    """Take FIT_ID's star away."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("unstar", fit_id)
+
+
+@fit_group.command("discard")
+@click.argument("fit_id")
+@click.option(
+    "--reason", required=True, help="Why it is set aside. Required; kept with it."
+)
+def fit_discard(fit_id: str, reason: str) -> None:
+    """Set FIT_ID aside: out of the listings, every file kept.
+
+    `nrw fit restore` brings it back; `nrw fit delete` then frees the disk.
+    """
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("discard", fit_id, reason=reason)
+
+
+@fit_group.command("restore")
+@click.argument("fit_id")
+def fit_restore(fit_id: str) -> None:
+    """Bring a discarded FIT_ID back into the listings."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("restore", fit_id)
+
+
+@fit_group.command("delete")
+@click.argument("fit_id")
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+def fit_delete(fit_id: str, yes: bool) -> None:
+    """Delete a discarded FIT_ID's files; the record that it ran stays.
+
+    Refused while a report, a figure, another fit or an ISAAC record uses it.
+    """
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("delete", fit_id, yes=yes)
+
+
 @main.group("tnr")
 def tnr_group() -> None:
     """Assess temporal change in a time-resolved run."""
@@ -832,11 +887,14 @@ def whence_command(path: str, as_json: bool) -> None:
 @click.option("--sample", default=None, help="Restrict to one sample.")
 @click.option("--limit", type=int, default=50, show_default=True, help="Maximum rows.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def ls_command(sample: str | None, limit: int, as_json: bool) -> None:
+@click.option(
+    "--all", "show_all", is_flag=True, help="Include discarded and deleted fits."
+)
+def ls_command(sample: str | None, limit: int, as_json: bool, show_all: bool) -> None:
     """List recorded fits, newest first."""
     from nr_workbench.commands.provenance_cmd import run_ls
 
-    run_ls(sample=sample, as_json=as_json, limit=limit)
+    run_ls(sample=sample, as_json=as_json, limit=limit, show_all=show_all)
 
 
 @main.command("promote")

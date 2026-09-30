@@ -453,21 +453,19 @@ class ProjectData:
             one, plus the ``description`` and ``change`` lines that tell a
             long list of hashes apart.
         """
-        promoted: dict[str, list[str]] = {}
-        for event in self.index.promotions():
-            fit_id = str(event.get("fit_id"))
-            label = str(event.get("label"))
-            promoted.setdefault(fit_id, [])
-            # Later promotions of the same label supersede earlier ones, but a
-            # fit can hold more than one label at once.
-            if label not in promoted[fit_id]:
-                promoted[fit_id].append(label)
+        from nr_workbench.provenance.curation import NONE, curation_of
+
+        # The labels a fit holds now -- a fit superseded as final is not final
+        # -- and whether it is starred, set aside, or its files deleted.
+        curated = curation_of(self.index.entries())
 
         rows = []
         for row in annotate(self.index.fits(sample=sample_id)):
             entry = dict(row)
             fit_id = str(row.get("fit_id"))
-            entry["labels"] = promoted.get(fit_id, [])
+            state = curated.get(fit_id, NONE)
+            entry["labels"] = list(state.labels)
+            entry["curation"] = state.as_dict()
             # The index is append-only on purpose -- that a fit happened stays
             # true even after someone clears out disk space. But its artifacts
             # may be gone, and a row that links to a 404 is worse than one that
@@ -974,14 +972,10 @@ class ProjectData:
         )
 
     def _labels_for(self, fit_id: str) -> list[str]:
-        """Return promotion labels currently held by a fit."""
-        labels = []
-        for event in self.index.promotions():
-            if str(event.get("fit_id")) == fit_id:
-                label = str(event.get("label"))
-                if label not in labels:
-                    labels.append(label)
-        return labels
+        """Return the labels a fit holds now: not one it was superseded in."""
+        from nr_workbench.provenance.curation import NONE, curation_of
+
+        return list(curation_of(self.index.entries()).get(fit_id, NONE).labels)
 
     def _series_dir(self, sample_id: str, name: str) -> Path:
         """Resolve a series directory, rejecting anything outside the sample."""

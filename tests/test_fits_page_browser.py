@@ -1,0 +1,166 @@
+"""The fit and Fits pages in a real browser: curating fits.
+
+The API tests prove what the server allows; these prove the pages offer it and
+act on the answers: a star, a finalization with its reason, a discard that the
+page then offers to undo or to follow with deleting the files -- only once the
+person confirmed -- and the Fits list's stars and its toggle for the discarded.
+Each also fails on any script error or security violation the page raises,
+which is how a script blocked by the pages' new policy would show.
+"""
+
+# The browser fixtures are imported and requested by name, which ruff reads
+# as redefinitions.
+# ruff: noqa: F811
+
+from __future__ import annotations
+
+import secrets
+import threading
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from click.testing import CliRunner
+
+from nr_workbench.cli import main
+from nr_workbench.project.layout import ProjectLayout
+from nr_workbench.provenance import curation
+
+from .test_curation import A, B, events, recorded
+from .test_settings_page_browser import (  # noqa: F401 - fixtures
+    Page,
+    Site,
+    browser,
+    page,
+)
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def project(tmp_path: Path) -> Path:
+    root = tmp_path / "analysis"
+    assert (
+        CliRunner().invoke(main, ["init", str(root), "--sample", "S1"]).exit_code == 0
+    )
+    recorded(root, A)
+    recorded(root, B)
+    return root
+
+
+@pytest.fixture
+def site(project: Path) -> Iterator[Site]:
+    from werkzeug.serving import make_server
+
+    from nr_workbench.web.app import create_app
+
+    token = secrets.token_urlsafe(24)
+    app = create_app(project, token=token, autostart=False)
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield Site(url=url, link=f"{url}/auth/{token}")
+    finally:
+        server.shutdown()
+        app.config["NRW_EXPERIMENT"].reload()
+
+
+def open_as_writer(page: Page, site: Site, path: str) -> None:
+    page.goto(site.link)
+    page.goto(f"{site.url}{path}")
+
+
+def text(page: Page, element_id: str) -> str:
+    return page.js(
+        f"(document.getElementById('{element_id}') || {{}}).textContent || ''"
+    )
+
+
+def test_a_fit_is_starred_and_finalized_and_the_answer_cannot_be_set_aside(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_as_writer(page, site, f"/f/{A}")
+    page.wait_for("document.getElementById('curate-star') !== null", what="the bar")
+
+    page.click("curate-star")
+    page.wait_for(
+        "document.getElementById('fit-badges').textContent.includes('starred')",
+        what="the star",
+    )
+    page.click("curate-finalize")
+    assert "Why is this the answer for S1?" in text(page, "curate-question")
+    page.type("curate-reason", "converged; the oxide is where the notes put it")
+    page.click("curate-go")
+
+    page.wait_for(
+        "document.getElementById('fit-badges').textContent.includes('final')",
+        what="the fit finalized",
+    )
+    assert text(page, "curate-finalize") == "Final"
+    assert page.js("document.getElementById('curate-discard').disabled")
+    (promotion,) = events(project, "promote")
+    assert promotion["reason"] == "converged; the oxide is where the notes put it"
+
+
+def test_a_fit_is_discarded_restored_and_its_files_go_only_when_confirmed(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_as_writer(page, site, f"/f/{B}")
+    page.wait_for("document.getElementById('curate-discard') !== null", what="the bar")
+
+    page.click("curate-discard")
+    page.type("curate-reason", "the Ti layer diverged")
+    page.click("curate-go")
+    page.wait_for(
+        "document.getElementById('curate-restore') !== null", what="the discard"
+    )
+    assert "the Ti layer diverged" in text(page, "curate-discarded")
+
+    page.js("window.confirm = () => false")
+    before = text(page, "curate-status")
+    page.click("curate-delete")
+    # Declined, nothing was sent: a request says "…" before it is answered.
+    assert text(page, "curate-status") == before
+    assert (project / "samples" / "S1" / "results" / B).is_dir()
+
+    page.js("window.confirm = () => true")
+    page.click("curate-delete")
+    page.wait_for(
+        "document.getElementById('curate-status').textContent.startsWith('Deleted')",
+        what="the files deleted",
+    )
+    assert not (project / "samples" / "S1" / "results" / B).exists()
+    assert "The record that it ran stays" in text(page, "curate-status")
+
+
+def test_the_fits_list_stars_and_keeps_the_discarded_behind_a_toggle(
+    page: Page, site: Site, project: Path
+) -> None:
+    curation.discard(ProjectLayout(root=project), B, reason="diverged")
+    open_as_writer(page, site, "/fits")
+    hidden = (
+        "document.querySelector('tbody[data-discarded]').classList.contains('d-none')"
+    )
+    assert page.js(hidden)
+
+    page.js("document.getElementById('fits-show-discarded').click()")
+    assert not page.js(hidden)
+
+    page.js(f"document.querySelector('button.fit-star[data-fit-id=\"{A}\"]').click()")
+    page.wait_for(
+        f"document.querySelector('button.fit-star[data-fit-id=\"{A}\"]')"
+        ".getAttribute('aria-pressed') === 'true'",
+        what="the star",
+    )
+    assert [e["fit_id"] for e in events(project, "star")] == [A]
+
+
+def test_a_page_opened_without_the_link_offers_nothing(
+    page: Page, site: Site, project: Path
+) -> None:
+    page.goto(f"{site.url}/f/{A}")
+    page.wait_for("document.readyState === 'complete'", what="the page")
+
+    assert page.js("document.getElementById('curate-buttons').children.length") == 0
+    assert page.js("window.NRW_WRITE_TOKEN") == ""

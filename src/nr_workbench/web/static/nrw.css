@@ -313,3 +313,17 @@ tr.fit-story > td > span + span::before {
 .expt-model-run {
   max-width: 9rem;
 }
+
+/* Curating fits: the star column of the Fits list, and the reason form. */
+.fit-star-col {
+  width: 1.6rem;
+  text-align: center;
+}
+.fit-star {
+  text-decoration: none;
+  color: var(--bs-warning-text-emphasis);
+  line-height: 1;
+}
+.curate-form {
+  max-width: 42rem;
+}

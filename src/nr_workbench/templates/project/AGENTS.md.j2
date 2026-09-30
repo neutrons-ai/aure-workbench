@@ -205,6 +205,7 @@ the fit absorbs the error into roughness rather than reporting it.
 | Trace a figure, `.par`, or data file to its fit | `nrw whence <path>` |
 | Compare two fits | `nrw diff <fit_a> <fit_b>` |
 | Bless a result | `nrw promote <fit_id> --as final --reason '...'` |
+| Star a fit, set one aside, or delete a discarded one's files -- when the person asks | `nrw fit star <fit_id>`, `nrw fit discard <fit_id> --reason '...'`, `nrw fit restore <fit_id>`, `nrw fit delete <fit_id>` |
 | Verify project integrity | `nrw check` |
 
 `nrw serve` also exposes `/api/…`, which returns exactly what the browser
