@@ -50,7 +50,7 @@
       if (state.discarded) {
         box.append(el("span", {
           className: "badge text-bg-secondary",
-          text: state.deleted ? "files deleted" : "discarded",
+          text: state.deleted ? "deleted" : "discarded",
           title: state.discarded.reason || "",
         }));
       }
@@ -74,12 +74,18 @@
       const state = said.curation;
       const note = $("curate-discarded");
       note.classList.toggle("d-none", !state.discarded);
-      note.textContent = state.discarded
-        ? (state.deleted ? "Its files were deleted" : "Set aside") +
-          (state.discarded.who ? " by " + state.discarded.who : "") +
-          (state.discarded.at ? " on " + state.discarded.at : "") +
-          ": " + (state.discarded.reason || "no reason given") + "."
-        : "";
+      const reason = (state.discarded || {}).reason || "no reason given";
+      note.textContent = !state.discarded
+        ? ""
+        : state.deleted
+          ? "Its files were deleted" +
+            (state.deleted.who ? " by " + state.deleted.who : "") +
+            (state.deleted.at ? " on " + state.deleted.at : "") +
+            ". It had been set aside because: " + reason + "."
+          : "Set aside" +
+            (state.discarded.who ? " by " + state.discarded.who : "") +
+            (state.discarded.at ? " on " + state.discarded.at : "") +
+            ": " + reason + ".";
       if (!TOKEN) return;  // shown, not offered
       const final = state.labels.includes("final");
       const buttons = [];

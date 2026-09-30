@@ -15,8 +15,8 @@ ipts = {{ ipts|toml }}
 # `nrw init` writes a different set of files for each.
 #
 # Changing this list and re-running `nrw init` adds the new harness's files.
-# Removing a name never deletes anything -- the files stay where they are and
-# `nrw doctor` reports them as no longer maintained.
+# Removing a name never deletes anything -- the files stay where they are, and
+# `nrw init` stops updating them.
 [harness]
 kinds = [{% for name in harnesses %}{{ name|toml }}{% if not loop.last %}, {% endif %}{% endfor %}]
 
@@ -40,7 +40,8 @@ notes = {{ audience.notes|toml }}
 # How a model is fitted when the command line does not say. `nrw fit run`
 # and the Fit button on the Experiment page read these; an option given there
 # -- `nrw fit run model.py --method amoeba` -- wins over what is set here, and
-# a setting set nowhere is bumps' own default, shown beside it. Every fit's
+# a setting set nowhere is bumps' own default: the commented values below,
+# except the example seed. Every fit's
 # record keeps what it ran with, wherever that came from.
 #
 #   method = "dream"   samples the posterior: the one fitter that gives
@@ -51,8 +52,8 @@ notes = {{ audience.notes|toml }}
 #
 # A fitter's own settings go in its own table, and apply only to fits with
 # that fitter. To set one, remove the `# ` from its line and from its table's
-# [...] line. This is not where AuRE's settings live: see the README, "Fitting
-# options".
+# [...] line. This is not where AuRE's settings live: see nr-workbench's
+# README, "Fitting options".
 #
 # [fit]
 # method = "dream"

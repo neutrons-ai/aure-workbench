@@ -225,6 +225,7 @@ def test_the_models_are_listed_without_the_link(app, project: Path) -> None:
             "spec": "samples/S1/models/a.yaml",
             "script": True,
             "proposed": False,
+            "run": None,
             "placeholder": False,
         }
     ]
@@ -591,16 +592,27 @@ def test_a_model_aure_proposed_is_quick_fitted_again_replacing_only_the_unedited
     ) in payload["log"]
 
 
-def unedited_proposal() -> str:
+def unedited_proposal(run: int | None = None) -> str:
     """A spec as `nrw aure import` writes it: its header, and its self-hash."""
     from nr_workbench.aure_import import PROPOSED_MARKER
     from nr_workbench.codegen.generator import stamp_self_hash
 
+    states = f"states:\n- name: run{run}\n  run: {run}\n" if run else ""
     return stamp_self_hash(
         f"# The stack below {PROPOSED_MARKER} 0.1 @ abc,\n"
         f"#   self sha256: {'0' * 64}  (nrw:self)\n"
-        "schema: nrw-model/1\n"
+        "schema: nrw-model/1\n" + states
     )
+
+
+def test_a_proposal_is_listed_with_the_run_it_was_fitted_to(app, project: Path) -> None:
+    # Quick fit again fits that run, whichever is chosen in the list beside it.
+    spec_of(project, "auto").write_text(unedited_proposal(run=100005), encoding="utf-8")
+
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+
+    (auto,) = listed["models"]
+    assert (auto["proposed"], auto["run"]) == (True, 100005)
 
 
 @pytest.mark.parametrize("run", ["100001", True, 0, -5, 1.5])

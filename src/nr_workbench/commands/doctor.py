@@ -397,7 +397,7 @@ def _agent_checks() -> list[Check]:
                 "agent limits",
                 "warn",
                 "no .claude/settings.json; run `nrw init` to add the hook that "
-                "refuses promote, --upload and --force",
+                "refuses promote, curation, publishing and --force",
             )
         )
         return checks

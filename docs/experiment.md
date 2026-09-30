@@ -21,7 +21,7 @@ nrw serve
 
 ```
   http://127.0.0.1:8765/experiment      the experiment's runs
-  http://127.0.0.1:8765/settings        its IPTS, data folder and watcher
+  http://127.0.0.1:8765/settings        its IPTS, data folder, watcher and language model
 
   Data folder  /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction  (nrw's default)
   ! The data location /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction needs the
@@ -30,7 +30,8 @@ nrw serve
   This experiment is not set up yet: nrw needs its IPTS, or the
   folder its reduced data is in, before it can watch anything.
 
-  To edit the experiment, open this link in your browser:
+  To edit the experiment, curate fits or change the settings, open this link
+  in your browser:
     http://127.0.0.1:8765/auth/9f0c…
   It works once, for one browser, and is kept out of the request log.
   Without it the pages are view-only.
@@ -60,7 +61,8 @@ nrw experiment apply --write       # writes it
 ## Settings
 
 The Settings page sets what the Experiment page watches. Everything it saves
-goes into `nrw.toml`, which you can also edit by hand.
+goes into `nrw.toml`, which you can also edit by hand, except the language
+model, which is saved in the project's `.env` ([Language model](#language-model)).
 
 - **The experiment.** Its IPTS and beamtime label. When the project's own path
   names an IPTS (`/SNS/REF_L/IPTS-34347/shared/…`), the page offers it.
@@ -96,9 +98,9 @@ folder first, as **Check folder** does, with the same 15-second deadline.
 
 ### Language model
 
-**New model** and **Quick fit with AuRE** ask a language model. The
-*Language model* section says which one they use now, and which file each part
-of that comes from. Its choices are:
+**New model**, **Quick fit with AuRE** and ISAAC's **Export** ask a language
+model. The *Language model* section says which one they use now, and which file
+each part of that comes from. Its choices are:
 
 - **Claude, through the Claude Code CLI.** AuRE runs `claude -p`, which answers
   as whatever it is logged in as: a subscription, an API key, or Bedrock,
@@ -106,6 +108,11 @@ of that comes from. Its choices are:
   default, or name one: `sonnet`, `opus`, `haiku`, or a full model or
   deployment name.
 - **As set outside this project**: whatever `~/.nrw` or `~/.aure` says.
+
+A third, **As this project's `.env` sets it**, is shown only when `.env` names
+another provider, written there by hand. It cannot be chosen, only kept or
+left: choosing Claude replaces those lines, and choosing *as set outside this
+project* removes them.
 
 Unlike the rest of the page, this is saved in the project's `.env`, not in
 `nrw.toml`. `nrw.toml` is committed and shared, while a language model belongs
@@ -119,8 +126,9 @@ LLM_MODEL=
 
 `LLM_MODEL` is written even when blank. Otherwise a model that `~/.aure` names
 for another provider, such as `gpt-4o`, would be passed to `claude`. Choosing
-*as set outside this project* removes the two lines again, which leaves `.env`
-exactly as it was before. Nothing else in `.env` is changed. The section says
+*as set outside this project* removes the `LLM_PROVIDER` and `LLM_MODEL` lines,
+whoever wrote them: after a choice of Claude, that leaves `.env` exactly as it
+was before. Nothing else in `.env` is changed. The section says
 so, and changes nothing, when `.env` is something it should not edit: a
 symbolic link, a file that is not text, or one changed by hand since the page
 read it.
@@ -133,7 +141,8 @@ started with: that wins over `.env`, and the section says so.
 does, and says what answered and how long it took. It makes exactly one call,
 with AuRE's retries off, and it is billed like any other. It waits as long as
 AuRE waits for a call (`LLM_TIMEOUT`, 120 seconds by default) and a minute more,
-then stops, along with any `claude` it started.
+never more than ten minutes, then stops, along with any `claude` it started.
+`nrw doctor` shows what is configured without making a call.
 
 ## Where the runs come from
 
@@ -292,9 +301,10 @@ for it: give the model a name and click **New model**. The spec is exactly what
 - **Its stack is proposed by the language model** from `sample.md`: the
   *Description* and *Details*, each run's condition in the Measurements table
   and its notes, and the sample's *Measurement conditions*. Each state is sent
-  with its own condition, so the ambient comes from the notes and is never
-  assumed to be air. A contrast that differs between runs, such as D2O for one
-  and H2O for another, becomes the ambient's SLD fitted per state.
+  with its own condition, and the model is told to take the ambient from the
+  notes, never to assume air, and to fit a contrast that differs between runs
+  (D2O for one, H2O for another) as the ambient's SLD per state. It is told,
+  not forced: check the ambient in what it proposes.
 
 Writing it is a job, followed in the Fit panel, because the model's answer can
 take a minute. One job runs at a time, so while a fit runs, New model waits and
@@ -316,9 +326,14 @@ that opened the link `nrw serve` printed can write one.
 
 **Quick fit with AuRE** writes a new model whose stack is proposed rather than
 a placeholder. AuRE fits one run on its quick budget; choose the run when the
-sample has more than one. From `sample.md` it reads:
+sample has more than one. The spec it proposes models that one run: to
+co-refine several, write one with **New model**. From `sample.md` it reads:
 
-- the sample's *Description* and *Details*;
+- the sample's *Description* and *Details*. A sample with nothing under
+  *Description* is refused, because AuRE builds the whole model from it. Say
+  which side the beam enters in words AuRE's setup looks for, such as "measured
+  through the silicon substrate" or "back reflection": without them, the setup
+  assumes the beam arrives from the ambient side;
 - *Fits to perform*, as a hypothesis;
 - for the run it fits, its condition in the Measurements table, the sample's
   *Measurement conditions*, and the notes on that run.
@@ -341,11 +356,12 @@ nrw fit run samples/<id>/models/<name>.py --method=amoeba
 ```
 
 AuRE needs a language-model endpoint. Without one, the job stops at `aure run`
-and says how to set one; `nrw check-llm` checks what is configured. AuRE's
+and says how to set one. `nrw doctor` shows what is configured, and
+`nrw check-llm` makes one real call to prove it answers. AuRE's
 working files stay in `samples/<id>/aure/<name>/`.
 
-**Quick fit again** beside a model AuRE proposed asks AuRE again, for example
-after you have added to `sample.md`:
+**Quick fit again** beside a model AuRE proposed asks AuRE again, about the
+same run it fitted before, for example after you have added to `sample.md`:
 
 - The new proposal replaces the spec, and is fitted like the first. Both fits
   stay in **Fits**.
@@ -395,7 +411,9 @@ from the page always runs what its spec says.
 The **Fit** panel follows the job: its output as it runs, then a link to the
 fit it recorded, until you close it. It shows the job running now, not the ones
 before it: past fits are on the **Fits** page. One job runs at a time for the
-project, whichever sample it is for. Its output is kept in `.nrw/jobs/`, which
+project, whichever sample it is for, and that includes ISAAC's steps started
+from a fit's page: the panel here follows those too, and its **Cancel** is the
+one that stops them. Its output is kept in `.nrw/jobs/`, which
 git ignores, for the newest 20 jobs. Like the rest of the page, it can be read
 by anyone who can open the page, link or not.
 
@@ -419,13 +437,14 @@ their evidence is: a fit's own page (**Fits**, then a fit), with its curves,
 residuals, parameters and the other fits of its model. As with every change the
 pages make, only a browser that opened the link `nrw serve` printed can curate.
 
-- **Star** marks a fit worth coming back to. The Fits list has a star beside
-  each fit.
-- **Finalize…** makes a fit the answer for its sample, which is `nrw promote`
-  from the page. It asks why, and the reason is kept with the fit. It says
-  which fit it replaces as final, and that one stays in the history. A fit
-  whose data changed since it ran is not finalized unless you say so again,
-  and that is recorded too.
+- **☆ Star** marks a fit worth coming back to, and **★ Starred** takes the
+  star away. The Fits list has a star beside each fit, which does the same.
+- **Finalize…** makes a fit the answer for its sample, which is `nrw promote
+  --as final` from the page. It asks why, and the reason is kept with the fit.
+  It says which fit it replaces as final, and that one stays in the history. A
+  fit whose data changed since it ran is not finalized unless you say so again,
+  and that is recorded too. A fit that failed is offered the button but
+  refused: only a fit that finished can be the answer.
 - **Discard…** sets a fit aside, with a reason. It leaves the listings, and
   the Fits list keeps it behind **Show the discarded**. Every file is kept, and
   **Restore** brings it back. The final fit cannot be discarded: finalize
@@ -435,7 +454,8 @@ pages make, only a browser that opened the link `nrw serve` printed can curate.
   that anything uses keeps its files, and the page says what uses it: a
   report in any sample that cites it or drew a figure from it, another fit
   that read its files, or ISAAC records made or pushed from it. The record
-  that the fit ran stays in the index, and the Fits page shows it as deleted.
+  that the fit ran stays in the index. The Fits list shows it as deleted,
+  behind **Show the discarded**, and its own page is gone with its files.
 
 Each of these is recorded in the fit index (`.nrw/index.jsonl`) with who and
 when, as promotions always have been, so it travels with the project in git.
@@ -443,10 +463,11 @@ The terminal does the same:
 
 ```bash
 nrw fit star <fit_id>
+nrw fit unstar <fit_id>
 nrw fit discard <fit_id> --reason "the Ti layer diverged"
 nrw fit restore <fit_id>
 nrw fit delete <fit_id>      # a discarded fit's files; asks first
-nrw promote <fit_id> --reason "..."
+nrw promote <fit_id> --as final --reason "..."
 nrw ls --all                 # the discarded fits too
 ```
 
@@ -460,12 +481,16 @@ Records. Only the final fit: its page shows an **ISAAC** panel once it is
 finalized. The panel has three steps, each run as a job:
 
 1. **Export** writes the records into the fit's `isaac/`, as `nrw isaac export`
-   does, and checks each against the schema.
+   does, and checks each against the schema. With a language model configured
+   it also asks it to read `sample.md` for each run's conditions, a billed
+   call; `nrw isaac export --no-llm` uses the Measurements table alone.
 2. **Validate with the server** sends those records, with your key, to the
    portal, which checks them and keeps nothing. It asks first, naming the
    portal.
-3. **Push…** publishes exactly those records, after you confirm. It does not
-   export again, so what the server checked is what it gets. The portal keeps
+3. **Push…** publishes exactly those records, after you confirm. What leaves
+   the project is the data, the fitted model and the notes: `sample.md`, the
+   fit's `NOTES.md`, the reason it was finalized, and any report that cites
+   it. It does not export again, so what the server checked is what it gets. The portal keeps
    what it is given, so the push is recorded with the fit before it starts,
    with the files it sends, and after it ends, with the id of every record the
    portal made. A push that fails part way, or is stopped, is recorded as one
@@ -474,8 +499,12 @@ finalized. The panel has three steps, each run as a job:
    Pushing again adds new records and replaces none, and the page says so
    first. The push refuses if the portal changed since you confirmed.
 
-The panel needs `data-assembler` and `nr-isaac-format`
-(`pip install 'nr-workbench[isaac]'`), and the portal and its key. Put them in
+Once another fit is finalized in its place, the panel offers nothing more, but
+a fit that was pushed keeps its list of pushes on its page.
+
+The panel needs `data-assembler` and `nr-isaac-format`, which come with the
+`isaac` extra (re-run the installer with `NRW_EXTRAS=isaac`; see
+[install.md](install.md#options)), and the portal and its key. Put them in
 `~/.nrw`, your own file:
 
 ```
@@ -483,8 +512,8 @@ ISAAC_URL=https://isaac.slac.stanford.edu/portal/api
 ISAAC_KEY=...
 ```
 
-They are read from your own settings only, `~/.nrw` or the shell, and never
-from the project's `.env`. Anyone who can write the project writes that file,
+They are read from your own settings only (the shell, `~/.nrw`, or
+`~/.aure` if you keep them there) and never from the project's `.env`. Anyone who can write the project writes that file,
 and a portal named there would decide where your key and the records go. The
 panel says where each is set, the portal's host, and when the project's
 `.env` names one that is ignored. It never shows the key. From the terminal:

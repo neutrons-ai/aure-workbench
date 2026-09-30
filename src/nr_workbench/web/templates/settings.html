@@ -14,7 +14,7 @@
 <div class="settings">
   <div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
     <h1 class="h4 mb-0">Settings</h1>
-    <span class="small text-secondary">saved in <code>nrw.toml</code>, which you can also edit by hand</span>
+    <span class="small text-secondary">saved in <code>nrw.toml</code>, which you can also edit by hand &mdash; except the language model, saved in the project's <code>.env</code></span>
   </div>
 
   <div id="set-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
@@ -114,7 +114,7 @@
     <section class="panel" id="s-llm">
       <div class="panel-head">
         <span>Language model</span>
-        <span class="hint">for New model and AuRE's quick fit; saved in this project's <code>.env</code>, which git ignores</span>
+        <span class="hint">for New model, AuRE's quick fit and ISAAC's Export; saved in this project's <code>.env</code>, which git ignores</span>
       </div>
       <div class="p-3">
         <p id="llm-now" class="small mb-2" aria-live="polite">Reading what is set…</p>
@@ -163,9 +163,10 @@
           <span id="llm-status" class="small text-secondary" aria-live="polite"></span>
         </div>
         <div class="form-text">
-          <strong>Check</strong> makes one real call to the model saved here, as
-          <code>nrw check-llm --endpoint</code> does: it is billed like any other,
-          and can take a minute.
+          <strong>Check</strong> makes one real call to the model a job would use
+          now, as <code>nrw check-llm --endpoint</code> does: it is billed like any
+          other, and waits up to <code>LLM_TIMEOUT</code> (120 s by default) and a
+          minute more.
         </div>
         <div id="llm-result" class="small mt-2" aria-live="polite"></div>
       </div>

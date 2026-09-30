@@ -101,7 +101,8 @@
           title: payload.aure ? "" : "AuRE is not installed where nrw serve runs.",
         });
         again.addEventListener("click", function () {
-          quickFit(model.name, again);
+          // The run it was proposed from, not whichever is chosen in the list.
+          quickFit(model.name, again, model.run);
         });
       }
       list.append(el("div", { className: "d-flex gap-2 align-items-baseline mb-1 expt-model" }, [
@@ -126,7 +127,7 @@
     if (payload.sample_md_pending) {
       list.append(el("p", {
         className: "text-warning-emphasis mb-0 mt-1 expt-md-pending",
-        text: "sample.md does not have the edits saved above yet. A new model " +
+        text: "sample.md does not have the edits saved in the sample editor yet. A new model " +
           "and a quick fit are written from sample.md, so Apply first.",
       }));
     }
@@ -191,12 +192,13 @@
 
   /* A quick fit of *name* with AuRE: a new model, or a new proposal for one
    * AuRE proposed before. */
-  async function quickFit(name, button) {
+  async function quickFit(name, button, run) {
     const id = shown;
     if (!id) return;
     const body = { name: name };
     const runs = $("expt-model-run");
-    if (!runs.classList.contains("d-none") && runs.value) body.run = Number(runs.value);
+    if (run) body.run = run;
+    else if (!runs.classList.contains("d-none") && runs.value) body.run = Number(runs.value);
     button.disabled = true;
     try {
       const started = await api("POST", modelsPath(id) + "/quick-fit", body);
@@ -383,7 +385,12 @@
         result.append(button);
       }
     } else {
-      result.replaceChildren(ENDINGS[current.status] || current.status);
+      const last = current.steps[current.steps.length - 1] || [];
+      const fit = last[0] === "fit" && last[1] === "run";
+      // Only a fit leaves an interrupted run for `nrw check` to list.
+      result.replaceChildren(current.status === "cancelled" && !fit
+        ? "Cancelled. What it had written so far is left as it was."
+        : ENDINGS[current.status] || current.status);
       if (current.fit_id) result.append(" Recorded as ", fitLink(current.fit_id), ".");
     }
     result.append(" ", el("a", { href: "/fits", text: "All fits" }), ".");

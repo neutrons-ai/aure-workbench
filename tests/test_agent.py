@@ -86,6 +86,7 @@ from nr_workbench.agent import guard, session
         ("bash -c 'nrw experiment apply --write'", "experiment"),
         ("python -m nr_workbench.cli experiment assign 1 --sample S", "experiment"),
         ("nrw experiment assign 1 --note $'it\\'s' --sample S", "experiment"),
+        ("nrw aure run samples/S1/aure/x/setup.yaml $'it\\'s'", "aure-run"),
     ],
 )
 def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
@@ -107,7 +108,7 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         "nrw isaac export abc123",  # export without --upload is fine
         "nrw ls --sample expt11",
         "nrw note abc123 --text 'rejected: oxide unconstrained'",
-        "nrw check --contradictions",
+        "nrw check",
         "git commit -m 'wip'",
         "python -c 'print(1)'",
         "ls -la results/",
@@ -128,6 +129,9 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         "nrw experiment settings",
         "nrw experiment settings --check --json",
         "nrw experiment settings --location /data/x",
+        # Validating an AuRE setup calls no endpoint, parsed or not.
+        "nrw aure run samples/S1/aure/x/setup.yaml --dry-run",
+        "nrw aure run samples/S1/aure/x/setup.yaml --dry-run $'it\\'s'",
     ],
 )
 def test_the_working_commands_are_allowed(command: str) -> None:

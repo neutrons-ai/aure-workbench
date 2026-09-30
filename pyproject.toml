@@ -229,6 +229,10 @@ extend-exclude = [
   # verbatim on purpose: reformatting it would weaken the comparison and
   # obscure what the generator is being measured against.
   "tests/data/reference",
+  # Markdown is prose, and the SKILL.md files are shipped data. Ruff 0.16
+  # formats the Python inside Markdown code blocks, the pinned pre-commit ruff
+  # does not, and `ruff format src` rewrote the shipped skills more than once.
+  "*.md",
 ]
 
 [tool.ruff.lint]

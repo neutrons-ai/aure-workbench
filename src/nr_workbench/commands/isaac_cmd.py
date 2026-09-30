@@ -46,6 +46,13 @@ from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import FitIndex
 from nr_workbench.provenance.lookup import FitNotFoundError, resolve_fit
 
+#: How the tools are installed. Not `pip install 'nr-workbench[isaac]'`:
+#: nr-workbench is not on PyPI, so that installs nothing (docs/install.md).
+INSTALL = (
+    "re-run the nr-workbench installer with NRW_EXTRAS=isaac (docs/install.md), "
+    "or `pip install -e '.[isaac]'` in a clone"
+)
+
 #: How long each subprocess may take. Assembly reads every data file; the
 #: convert step validates against a schema. Neither should approach this.
 TIMEOUT = 300
@@ -150,7 +157,10 @@ def run_export(
         _upload(layout, index, entry, records, validate_only=validate_only, yes=yes)
     else:
         click.echo()
-        click.echo("  Not uploaded. Add --upload to push these to the ISAAC Portal.")
+        click.echo(
+            f"  Not uploaded. `nrw isaac push {resolved}` publishes them -- the "
+            "final fit only -- after `--validate-only` asks the portal first."
+        )
 
 
 def _report_staged(staged: Staged, fit_id: str) -> None:
@@ -234,7 +244,7 @@ def _promotion_reason(layout: ProjectLayout, fit_id: str) -> str | None:
     return str(reason) if reason else None
 
 
-def _find(names: tuple[str, ...], install: str) -> list[str]:
+def _find(names: tuple[str, ...]) -> list[str]:
     """Locate a CLI, preferring one beside the running interpreter."""
     for name in names:
         local = Path(sys.executable).parent / name
@@ -260,8 +270,8 @@ def _find(names: tuple[str, ...], install: str) -> list[str]:
     if importable:
         return [sys.executable, "-m", module]
     raise ToolMissingError(
-        f"{names[0]} is not installed.\n"
-        f"  pip install '{install}'\n"
+        f"{names[0]} is not installed. It comes with nr-workbench's isaac "
+        f"extra:\n  {INSTALL}.\n"
         "The ISAAC schema mapping lives in those tools rather than here, so "
         "the export cannot run without them."
     )
@@ -270,7 +280,7 @@ def _find(names: tuple[str, ...], install: str) -> list[str]:
 def tool_installed(name: str) -> bool:
     """Whether the export would find *name*: one of the tools it drives."""
     try:
-        _find((name,), "nr-workbench[isaac]")
+        _find((name,))
     except ToolMissingError:
         return False
     return True
@@ -322,10 +332,7 @@ def _text(output: str | bytes | None) -> str:
 
 def _assemble(ingest: Path) -> None:
     """``data-assembler ingest-workflow`` over the staged contract."""
-    cmd = _find(
-        ("data-assembler",),
-        "nr-workbench[isaac]",
-    )
+    cmd = _find(("data-assembler",))
     _run(
         [*cmd, "ingest-workflow", str(ingest), "-o", str(ingest), "--json"],
         "data-assembler ingest-workflow",
@@ -349,7 +356,7 @@ def _with_notes(description: str | None, notes: str | None) -> str | None:
 
 def _convert(ingest: Path, records: Path, notes: str | None) -> None:
     """``nr-isaac-format convert-ingest`` into one record per state."""
-    cmd = _find(("nr-isaac-format",), "nr-workbench[isaac]")
+    cmd = _find(("nr-isaac-format",))
     records.mkdir(parents=True, exist_ok=True)
     # A directory, always: with several states an explicit .json target is
     # rejected, and passing a directory for one state is accepted.
@@ -362,7 +369,7 @@ def _convert(ingest: Path, records: Path, notes: str | None) -> None:
 
 def _validate(records: Path) -> None:
     """Validate every record locally before anyone is offered an upload."""
-    cmd = _find(("nr-isaac-format",), "nr-workbench[isaac]")
+    cmd = _find(("nr-isaac-format",))
     for path in sorted(records.glob("*.json")):
         _run([*cmd, "validate", str(path)], f"validating {path.name}")
 
@@ -550,7 +557,11 @@ def _upload(
             f"({host}).",
             bold=True,
         )
-        click.echo("  This shares the data and the fitted model outside this project.")
+        click.echo(
+            "  This shares the data, the fitted model and the notes outside this "
+            "project: sample.md, the fit's NOTES.md, the reason it was finalized, "
+            "and any report that cites it."
+        )
         if state.published:
             click.echo(
                 f"  It was published before, on {state.published[-1].get('at')}: "
@@ -560,7 +571,7 @@ def _upload(
             click.echo("  Not uploaded.")
             return
 
-    cmd = _find(("nr-isaac-format",), "nr-workbench[isaac]")
+    cmd = _find(("nr-isaac-format",))
     # --url: the portal the tool uses is the one recorded here; the key goes in
     # the environment, never on a command line another account can list.
     args = [*cmd, "push", str(records), "--url", url.value]

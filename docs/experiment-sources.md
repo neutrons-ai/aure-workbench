@@ -126,8 +126,10 @@ and know them sooner:
 - **The SNS web monitor** (`monitor.sns.gov`) reports each run as it is
   *acquired*, before any reduction exists. The page shows such a run as
   **awaiting reduction**, a state the folder can never show. The monitor's run
-  lists need an ORNL login, so a monitor feed needs credentials (in `.env`,
-  never in `nrw.toml`).
+  lists need an ORNL login, so a monitor feed needs credentials. They belong
+  where ISAAC's key does, in `~/.nrw` or the shell: never in `nrw.toml`, and
+  not in the project's `.env`, which anyone who can write the project can
+  write.
 - **Tiled** can announce runs whatever the data source is.
 
 A feed returns every run it currently knows. `experiment/live.py` works out

@@ -386,7 +386,8 @@ def model_generate_command(**kwargs: object) -> None:
 @click.option(
     "--print-prompt",
     is_flag=True,
-    help="Print the instruction to hand a coding assistant, and write nothing.",
+    help="Write the skeleton, and print the instruction to hand a coding "
+    "assistant, instead of asking a language model.",
 )
 def model_new_command(**kwargs: object) -> None:
     """Scaffold a spec for SAMPLE from the data found on disk.
@@ -952,7 +953,7 @@ def isaac_export_command(**kwargs: object) -> None:
     portal reads them as one experiment.
 
     Needs `data-assembler` and `nr-isaac-format`, which own the schema
-    mapping: pip install 'nr-workbench[isaac]'.
+    mapping: re-run the installer with NRW_EXTRAS=isaac (docs/install.md).
     """
     from nr_workbench.commands.isaac_cmd import run_export
 
@@ -981,7 +982,7 @@ def isaac_push_command(
     The records `nrw isaac export` wrote, unchanged: what the server validated
     is what is published. Only the final fit of a sample is published, and
     each push is recorded in the fit index. ISAAC_URL and ISAAC_KEY are the
-    person's own -- the shell or ~/.nrw -- never the project's .env.
+    person's own -- the shell, ~/.nrw or ~/.aure -- never the project's .env.
     """
     from nr_workbench.commands.isaac_cmd import run_push
 
@@ -1749,8 +1750,9 @@ def import_command(**kwargs: object) -> None:
 def serve_command(**kwargs: object) -> None:
     """Browse the project, and organize the experiment's runs into samples.
 
-    Pages only read, except the Experiment page, which edits the catalog from
-    a browser that opened the one-time link printed at start-up.
+    Pages only read, except where they change the project -- the Experiment
+    and Settings pages, and curating and publishing fits -- and those work
+    only in a browser that opened the one-time link printed at start-up.
     """
     from nr_workbench.commands.serve import run_serve
 

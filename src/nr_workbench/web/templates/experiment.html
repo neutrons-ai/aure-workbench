@@ -115,13 +115,14 @@
         <div class="form-text">
           <strong>New model</strong> writes a spec for you to check: its states
           come from the data, and its stack is proposed by the language model
-          from sample.md &mdash; the description, and each run's condition and
-          notes. <strong>Quick fit with AuRE</strong> has AuRE propose the stack
-          from the same notes and fit one run on a quick budget; the spec it
-          proposes is then fitted from AuRE's values and recorded in Fits. Both
-          need a language model, chosen and checked under <em>Language model</em>
-          in <a href="/settings#s-llm">Settings</a>; without one, New model
-          writes a placeholder stack.
+          from the whole of sample.md, with each run's condition and notes set
+          out. <strong>Quick fit with AuRE</strong> has AuRE propose the stack
+          from the description, the fits to perform and the one run it fits, on
+          a quick budget; the spec it proposes is then fitted from AuRE's values
+          and recorded in Fits. Both ask the language model chosen under
+          <em>Language model</em> in <a href="/settings#s-llm">Settings</a>.
+          Without one, New model writes nrw's placeholder stack, and a quick fit
+          stops before AuRE runs.
         </div>
         <p id="expt-model-wait" class="small text-secondary mt-2 mb-0 d-none" aria-live="polite"></p>
         <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
@@ -165,9 +166,10 @@
           </div>
           <div class="form-text">
             The fitter and each box start at what the fit would use: the
-            project's, from nrw.toml [fit], else bumps' own. Only what you
-            change is sent with the fit. The spec's script is generated again
-            first; a script edited by hand is refused.
+            fitter from nrw.toml [fit], else dream; each box from nrw.toml,
+            else bumps' own default. Only what you change is sent with the fit.
+            The spec's script is generated again first; a script edited by hand
+            is refused.
           </div>
           <p id="expt-fit-problem" class="text-danger small mb-0 mt-1 d-none"></p>
         </form>

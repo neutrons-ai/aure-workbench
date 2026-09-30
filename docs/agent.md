@@ -141,32 +141,48 @@ The prompt and the full transcript are kept under `.nrw/agent/`. Options:
 | | |
 |---|---|
 | `--dry-run` | Compose and print; start nothing |
-| `--turns N` | Cap on harness turns (default 60) |
+| `--turns N` | Cap on harness turns (default 200) |
 | `--model NAME` | Model to run (default: the harness's own) |
-| `--timeout SECONDS` | Kill the session after this long |
+| `--timeout SECONDS` | Kill the session after this long (required for OpenCode, which has no turn cap) |
+| `--again` | Run even though the sample already has a written report |
+| `--harness NAME` | Which harness to drive: `claude` (the default) or `opencode` |
 
 ---
 
 ## The limits, and why there are two of them
 
-Among the actions refused are `nrw promote`; curating fits (`nrw fit star`,
-`unstar`, `discard`, `restore` and `delete`); `nrw isaac export --upload`; and
-any `--force`.
+These are refused, and the preview beside each is not:
 
-The first three are plain: which fit is the answer, which are good and which
-are set aside or deleted are a person's judgements, and an upload publishes
-outside the project. The last is the one worth explaining: **every
-forcing flag in nr-workbench exists because a check said no** — drifted inputs,
-a hand-edited script, an identical run already recorded, a directory somebody
-else wrote. An agent reaching for `--force` has arrived at exactly the
-situation a person is meant to see.
+| Refused | Still allowed |
+|---|---|
+| `nrw promote` — marking a fit as the answer | `nrw ls`, `nrw assess`, `nrw diff` |
+| Curating fits: `nrw fit star`, `unstar`, `discard`, `restore` and `delete` | |
+| `nrw isaac push`, even with `--validate-only`, and `nrw isaac export --upload` | `nrw isaac export`, which writes the records on disk |
+| `nrw aure run` | `nrw aure run --dry-run`, which validates the setup |
+| Organizing the experiment: `nrw experiment assign` and `release`, and `apply`, `adopt` or `settings` with `--write` | `nrw experiment status`, and the same three without `--write` |
+| `nrw sample reset` | `nrw sample reset --dry-run` |
+| `nrw init --nested` | `nrw sample new <ID>` in the existing project |
+| Any `--force` | |
+
+Most are plain. Which fit is the answer, which are good and which are set
+aside, which sample a run belongs to and under what condition are a person's
+judgements, and a reset deletes the record of what was tried. A push publishes
+outside the project, and a validate-only push is refused too because it sends
+the records and the key off the machine. An AuRE run makes billed
+language-model calls for as long as it takes. The last is the one worth
+explaining: **every forcing flag in nr-workbench exists because a check said
+no** — drifted inputs, a hand-edited script, an identical run already recorded,
+a directory somebody else wrote. An agent reaching for `--force` has arrived at
+exactly the situation a person is meant to see.
 
 Two independent mechanisms enforce them:
 
 1. **A `PreToolUse` hook** in `.claude/settings.json` running `nrw agent
-   guard`. It exits 2, which blocks the call before it runs and shows the model
-   why. It splits on `&&`, `;` and `|` first, so `nrw ls && nrw promote abc`
-   does not slip past.
+   guard` (for OpenCode, a plugin that calls the same command; see
+   [OpenCode](#opencode)). It exits 2, which blocks the call before it runs and
+   shows the model why. It splits the command line on newlines, `;`, `&`, `|`,
+   parentheses and backticks first, so neither `nrw ls && nrw promote abc` nor
+   `$(nrw promote abc)` slips past.
 2. **`NRW_AGENT=1`**, which `nrw agent run` sets on the session itself. Under
    it, each of them refuses from the inside — `--force` is checked once at the top
    of the CLI rather than in each command, so a subcommand added next year is
@@ -223,7 +239,7 @@ one yourself:
 | Check | Command | Catches |
 |---|---|---|
 | Headers against `sample.md` | `nrw data reconcile <sample>` | A run mislabelled in the notes; a different direct beam; a time-resolved reduction filed as a steady state |
-| Spec self-consistency | `nrw check --contradictions` | A constraint whose `form` contradicts the measured trajectory; roughness ranges that permit σ > t/4; parameters silently held at scaffold defaults |
+| Spec self-consistency | `nrw check` | A constraint whose `form` contradicts the measured trajectory; roughness ranges that permit σ > t/4; parameters silently held at scaffold defaults |
 | Fit assessment | `nrw assess <fit-id>` | Parameters on bounds, unconstrained posteriors, ρ–t correlations above 0.8, a layer swallowed by its own interfaces |
 
 This is where automation earns the most. In the reference experiment, the
@@ -322,13 +338,14 @@ costs the thing that matters, which is a transcript you can follow.
 ## The agent does not need an LLM endpoint
 
 nr-workbench can be pointed at a language-model endpoint (`LLM_PROVIDER`,
-`LLM_API_KEY`; `nrw doctor` reports what it sees). Three commands use it: `nrw
+`LLM_API_KEY`; `nrw doctor` reports what it sees). Four commands use it: `nrw
 assess` asks whether fitted values look physically sensible, `nrw model new
---from-notes` proposes a stack, and `nrw isaac export` writes condition
-sentences.
+--from-notes` proposes a stack, `nrw isaac export` writes condition
+sentences, and `nrw aure run` hands AuRE the whole fit.
 
 **None of them consults it while an agent is driving.** Under `NRW_AGENT=1`
-each hands the work to the harness instead:
+`nrw aure run` is refused (see [the limits](#the-limits-and-why-there-are-two-of-them)),
+and the other three hand the work to the harness instead:
 
 | Command | Endpoint configured, no agent | Agent driving |
 |---|---|---|
@@ -343,7 +360,7 @@ the judgement you wanted with a worse one, and then presents it as evidence
 inside the harness's own context.
 
 The consequence worth stating plainly: **you do not need an endpoint
-configured to run the agent.** The three commands above work; they simply
+configured to run the agent.** The three commands in the table work; they simply
 route the judgement to the thing already doing the judging. An endpoint is
 still useful when nobody has a harness open.
 
@@ -597,7 +614,8 @@ and the guard plugin below. `nrw agent run --harness opencode` drives it.
 
 ```bash
 nrw agent run Sample4 --harness opencode --timeout 7200
-nrw agent run Sample4 --harness opencode -m anthropic/claude-sonnet-4-5
+nrw agent run Sample4 --harness opencode --timeout 7200 \
+    --model anthropic/claude-sonnet-4-5
 ```
 
 **The limits are three, not two.** `.opencode/plugins/nrw-guard.js` hooks
@@ -712,8 +730,12 @@ in the morning; a false pass costs the night.
 
 ## Reading it in the morning
 
-The output rule is one page per sample under `samples/<id>/reports/`, rewritten
-rather than appended, plus `ESCALATIONS.md` at the root. This is a property of
+The output rule is one report per sample under `samples/<id>/reports/`,
+rewritten rather than appended, plus `ESCALATIONS.md` at the root. The report
+is one analysis at three altitudes, in three files that `nrw report --check`
+holds to the same answer: `-technical.md` (every branch, and what abandoned
+it), `-si.md` (for a peer reading the paper) and `-plain.md` (for a colleague
+who does not fit reflectivity). This is a property of
 the design, not a preference. Forty individually defensible records are
 collectively unreadable, and once you stop reading them, every other safety
 property here is a formality.
@@ -726,7 +748,8 @@ The order to read in:
 3. `samples/<id>/reports/` — what it concluded.
 4. `nrw whence`, `nrw diff`, `nrw assess` — anything you want to check.
 
-Then promote by hand, with a reason:
+Then promote by hand, with a reason — here, or with **Finalize** on the fit's
+page in `nrw serve`:
 
 ```bash
 nrw promote 20260810-231402Z-4f2a8c1e --as final \

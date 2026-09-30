@@ -321,7 +321,7 @@ def _observe_specs(root: Path, sample: str) -> str:
     # `_paths_against_implied_change` and `_constraint_on_a_flat_run` all
     # return nothing --- three of the five checks, including the one the
     # skills call the most-repeated Red Flag. The block would still be
-    # labelled `nrw check --contradictions` while being a fraction of it.
+    # labelled with `nrw check` while being a fraction of what it checks.
     assessment = _latest_assessment(root / "samples" / sample)
 
     # Grouped by finding, not by file. A sample accumulates near-identical
@@ -375,7 +375,7 @@ def _observe_specs(root: Path, sample: str) -> str:
                 specs[0] if len(specs) == 1 else f"{len(specs)} specs incl. {specs[0]}"
             )
             lines.append(f"  {where}: {message}")
-        sections.append("Specs (`nrw check --contradictions`):\n" + "\n".join(lines))
+        sections.append("Specs (as `nrw check` finds them):\n" + "\n".join(lines))
     return "\n\n".join(sections)
 
 

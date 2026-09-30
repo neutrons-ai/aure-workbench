@@ -1,6 +1,7 @@
 /* Publishing a final fit to ISAAC, from its page: export, validate, push.
  *
- * Shown for the final fit of its sample, the only one published: the server
+ * Shown for the final fit of its sample, the only one published -- and, for a
+ * fit pushed while it was final, its pushes stay shown after that. The server
  * says whether this one is, which tools are installed, where the portal and
  * its key are set (never the key), the records the export wrote and each push
  * so far. Each step runs as a job, one at a time with the page's fits, and the
@@ -57,9 +58,18 @@
     const pushes = shown.published;
     $("isaac-published").textContent = pushes.length
       ? pushes.map(function (push) {
-        return "Pushed " + push.at + " by " + push.who + " to " + push.portal + ": " +
-          (push.records || []).length + " record(s)" +
-          (push.complete === false ? ", before the push failed" : "") + ".";
+        const made = (push.records || []).length;
+        const said = "Pushed " + push.at + " by " + push.who + " to " + push.portal + ": ";
+        // Recorded before it ran: one that never reported back may still have
+        // made records, and pushing again would make them twice.
+        if (push.complete === undefined) {
+          return said + "its outcome was never recorded, so it may have made " +
+            "records. Check the portal before pushing again.";
+        }
+        return said + made + " record(s) confirmed" +
+          (push.complete === false
+            ? ", and it may have made more: check the portal before pushing again"
+            : "") + ".";
       }).join(" ")
       : "";
   }
@@ -78,10 +88,19 @@
   }
 
   function render() {
-    panel.classList.toggle("d-none", !shown.final);
-    if (!shown.final) return;
-    setup();
+    const pushed = shown.published.length > 0;
+    panel.classList.toggle("d-none", !shown.final && !pushed);
+    if (!shown.final && !pushed) return;
     published();
+    if (!shown.final) {
+      // Pushed while it was final: that stays said, on its own page, and
+      // nothing more is offered.
+      $("isaac-setup").replaceChildren(line("No longer the final fit of " +
+        (said.sample || "its sample") + ", so it is not published again."));
+      $("isaac-buttons").replaceChildren();
+      return;
+    }
+    setup();
     if (!TOKEN || !shown.writable) return;  // shown, not offered
     const tools = Object.values(shown.tools).every(Boolean);
     const sendable = tools && shown.records.length && shown.portal.host && shown.key.set;
@@ -122,8 +141,10 @@
       : "";
     const sure = window.confirm(
       "Publish " + shown.records.length + " record(s) of " + said.fit_id + " to " +
-      shown.portal.host + "?\n\nThis shares the data and the fitted model outside " +
-      "this project, and the portal keeps them." + again
+      shown.portal.host + "?\n\nThis shares the data, the fitted model and the " +
+      "notes outside this project -- sample.md, this fit's NOTES.md, the reason " +
+      "it was finalized, and any report that cites it -- and the portal keeps " +
+      "them." + again
     );
     if (sure) start("push", { confirm: said.fit_id, host: shown.portal.host });
   }

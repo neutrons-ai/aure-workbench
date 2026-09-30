@@ -30,7 +30,7 @@ sample they named may not exist, or may exist under a different spelling.
 
 The failure mode is not that the work is hard. It is that improvising around
 the gap **looks like progress and produces something unusable**: a `samples/`
-directory made with `mkdir` that `nrw scan` does not recognise, data copied
+directory made with `mkdir` that `nrw sample scan` does not recognise, data copied
 somewhere plausible that no fit will ever find, a refl1d script written by hand
 whose results carry no provenance — which is the one thing this project exists
 to provide.

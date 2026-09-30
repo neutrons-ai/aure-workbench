@@ -3617,7 +3617,9 @@ sent *Measurement conditions*, the run's condition, or its notes, so
 information added about the measurements could not reach the proposal, however
 many times it was re-run. The state's `extra_description`, which AuRE appends
 to the description when it prompts the model, now carries all three for the
-run being fitted. They are read with the catalog's own parser, which also keeps
+run being fitted. *(Wrong: AuRE never reads it. They go into
+`sample_description` now; see "AuRE never reads a state's
+`extra_description`" below.)* They are read with the catalog's own parser, which also keeps
 a hand-written note on a run no table lists.
 
 **Edits reach AuRE through `sample.md`.** The page's edits reach the file when
@@ -3635,7 +3637,9 @@ on a film on Si. Nothing on the page said so, and **Fit…** fitted it.
 
 - New model now runs `nrw model new --from-notes`, as a job: a language
   model's answer does not fit in a request. The synchronous runner it used
-  (`run_nrw`, with a 120 s limit) had no other caller, and is gone.
+  (`run_nrw`, with a 120 s limit) had no other caller, and is gone. *(Since
+  re-added, for the Language model **Check**, with a process group of its own;
+  see the review entry below.)*
 - A spec whose materials and stack are still the placeholder's is marked
   *placeholder stack*, and Fit… on it says so first. `is_placeholder` compares
   the stack itself, not the header comment that announces it, because a person
@@ -3651,7 +3655,8 @@ on a film on Si. Nothing on the page said so, and **Fit…** fitted it.
   air. A contrast that differs between states is the ambient's `rho`,
   `per: state`, one entry `in:` each state.
 - `measurements_of` (in `experiment/adopt.py`) is the one reader of the three,
-  for this request and for AuRE's `extra_description`.
+  for this request and for AuRE's `extra_description` (now its
+  `sample_description`, as above).
 
 ### 2026-09-30: the page chooses the language model in `.env`, and the server loads none
 
@@ -3689,7 +3694,8 @@ model, which is the CLI's default.
 - It makes the change against the revision the page read.
 
 **Check** runs `nrw check-llm --endpoint --json` in a child, as a job would,
-one at a time and for 180 s at most. It is behind the link, because the call
+one at a time and for 180 s at most. *(Now `LLM_TIMEOUT` plus a minute, capped
+at ten minutes: see the next entry.)* It is behind the link, because the call
 is billed. Reading the section needs no link, so it never shows a key, not even
 redacted: it says only whether one is set.
 
@@ -3800,7 +3806,9 @@ leaves them out unless `--all`.
 page and the fit page badged every label a fit had ever held. `nrw ls` asked for
 the last `final` across the whole project, so with two samples only one fit got
 its mark. Every reader now takes the labels from `curation_of`, where the last
-promotion of a label per sample holds it.
+promotion of a label per sample holds it. *(Not every reader did: see "One
+reader of labels" below. `curation.replay()` is the one reader now, and
+`curation_of` returns its `fits`.)*
 
 **The fit pages carry the write token now,** so they get the strict script
 policy (`page_csp`, with a nonce), as the Experiment and Settings pages do.
@@ -3819,8 +3827,10 @@ or from a `.env` that python-dotenv finds by walking up from *the tool's own
 install* (not the working directory, as its comment says), never from
 `~/.nrw`. Under `--no-llm` nothing else loaded the settings either, so a key
 kept in `~/.nrw` reached the push only by accident. `ISAAC_URL` and `ISAAC_KEY`
-are now known settings, with the key secret: `nrw doctor` and the page say
-where each is set, and never show the key. See the next entry for how the
+are now known settings, with the key secret: the page says where each is
+set, and never shows the key. *(`nrw doctor` lists them, the key redacted,
+among its "llm settings", but does not say where each is set, and shows a
+project `.env` value that the push ignores. Not fixed yet.)* See the next entry for how the
 push reads them now.
 
 **What is validated is what is pushed.** An export asks a language model for
@@ -3833,13 +3843,17 @@ same way.
 1 if any record fails, even after the portal accepted others. The push path
 reads the "created (record_id=...)" lines whatever the exit code, and appends
 a `publish` event to the index: when, by whom, the portal's host, each record
-made, and `complete`. The curation replay carries these events, so a published
+made, and `complete`. *(Now two events sharing an `attempt` id, the first
+written before the push runs: see "A push is recorded before it runs"
+below.)* The curation replay carries these events, so a published
 fit's files can never be deleted, even with its `isaac/` removed by hand.
 
 **Only the final fit is published** (the user's decision), by `nrw isaac push`
 and by the page. Validating needs no finalization: asking the server whether
 records would be accepted publishes nothing. The guard counts `nrw isaac push`
-without `--validate-only` as an upload.
+without `--validate-only` as an upload. *(Superseded: the guard refuses every
+`nrw isaac push`, because validating sends the records and the key too. See
+the next entry.)*
 
 ### 2026-09-30: what the reviews of curation and ISAAC changed
 
@@ -3902,3 +3916,55 @@ the records made and `complete`. An attempt with no outcome reads as
 so re-exporting cannot change the record of it. The real tool goes on past a
 failed record, only an authentication error stops it early, and a contract
 test runs it against a local stand-in portal.
+
+### 2026-09-30: what the documentation review found
+
+A review of every document against the code found about sixty stale or wrong
+statements. Most came from four patterns, which are worth knowing because
+each will recur.
+
+**A limit added in code did not reach the lists of limits.** The refused
+commands grew from three (promote, `--upload`, `--force`) to eight rules, and
+at least seven places listed them: `guard._REASONS` (the source), the table in
+`docs/agent.md` (the reference the others link to), the walkthrough in
+`docs/getting-started-with-agent.md`, "The person's commands" in
+`AGENTS.md.j2`, the `$comment` in the Claude harness's `settings.json`, the
+README's summary, and the analyst-handoff skill's table. Each still said
+three. Change `_REASONS` and those seven together.
+
+**The Claude Code hook applies to interactive sessions too.** `nrw agent
+guard` judges every Bash call in any Claude Code session in the project; only
+`NRW_AGENT`'s refusals are for unattended sessions alone. So `AGENTS.md`'s
+rows saying an assistant may promote or curate "when the person asks" could
+never be followed. They now say the command is the person's, to hand to them.
+
+**`pip install 'nr-workbench[isaac]'` cannot work.** nr-workbench is not on
+PyPI (its `aure` dependency is a direct reference), so that command installs
+nothing, and it was the hint in `nrw isaac export --help`, the missing-tool
+error and the ISAAC panel. The hint is now `isaac_cmd.INSTALL`: re-run the
+installer with `NRW_EXTRAS=isaac`, or `pip install -e '.[isaac]'` in a clone.
+
+**A user's decision did not reach the walkthrough.** "Only the final fit is
+published" and "the ISAAC key is set in `~/.nrw`" changed the code and
+`docs/experiment.md`, while `docs/getting-started.md` still showed
+`nrw isaac export --upload` with credentials in `.env`.
+
+Code changed with the review:
+
+- **`nrw sample reset` is refused under `NRW_AGENT`** (rule `reset`), and by
+  the hook, except with `--dry-run`. It deletes every fit and model of a
+  sample: the record of what was tried.
+- **The guard's text floor** (the fallback for a command `shlex` cannot split,
+  such as one with `$'...'`) had no `reset` or `aure-run` rule, so a quoting
+  accident let either through. Both are there now, with the same `--dry-run`
+  exemption.
+- **A fit pushed while it was final keeps its pushes on its page.** The ISAAC
+  panel hid itself for any fit not final, and with it the record that the fit
+  had been published.
+- **Ruff no longer reads Markdown** (`extend-exclude = ["*.md"]`). Ruff 0.16
+  formats the Python inside Markdown code blocks, the pinned pre-commit ruff
+  does not, so `ruff format --check src tests` failed on four shipped SKILL.md
+  files and `ruff format src` rewrote them.
+- `nrw serve`'s start-up lines and help, and the page's quick-fit-again button,
+  now say what the pages do: curate, publish, set the language model, and fit
+  a proposed model's own run again.

@@ -98,7 +98,9 @@ class ModelsData:
                 "script": spec.with_suffix(".py").is_file(),
                 # A proposal of AuRE's nobody edited: a new quick fit may
                 # replace it, so the page offers one.
-                "proposed": _is_unedited_proposal(spec),
+                "proposed": (proposed := _is_unedited_proposal(spec)),
+                # The run AuRE fitted for it: Quick fit again fits that one.
+                "run": _proposed_run(spec) if proposed else None,
                 # nrw's stub -- air on a film on Si -- not the sample: a fit of
                 # it means nothing, and the page says so before running one.
                 "placeholder": _is_placeholder(spec),
@@ -523,6 +525,25 @@ def _is_unedited_proposal(spec: Path) -> bool:
         return is_unedited_proposal(spec.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def _proposed_run(spec: Path) -> int | None:
+    """The run an AuRE proposal was fitted to: its one state's."""
+    import yaml
+
+    try:
+        document = yaml.safe_load(spec.read_text(encoding="utf-8"))
+        run = document["states"][0]["run"]
+    except (
+        OSError,
+        UnicodeDecodeError,
+        yaml.YAMLError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ):
+        return None
+    return run if isinstance(run, int) and not isinstance(run, bool) else None
 
 
 def _sample_md_pending(root: Path, sample_id: str) -> bool:

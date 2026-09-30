@@ -30,9 +30,6 @@ from nr_workbench.web.jobs import JobRunner
 #: The tools the export drives, as `nrw isaac export` finds them.
 TOOLS = ("data-assembler", "nr-isaac-format")
 
-#: What installs them.
-INSTALL = "pip install 'nr-workbench[isaac]'"
-
 
 class IsaacData:
     """The ISAAC panel of one project's fit pages.
@@ -70,7 +67,11 @@ class IsaacData:
         Raises:
             NoSuchFit: No fit is recorded under that id.
         """
-        from nr_workbench.commands.isaac_cmd import portal_host, portal_settings
+        from nr_workbench.commands.isaac_cmd import (
+            INSTALL,
+            portal_host,
+            portal_settings,
+        )
         from nr_workbench.env import shown_source
         from nr_workbench.provenance.curation import (
             NoSuchFit,

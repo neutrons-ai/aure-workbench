@@ -843,3 +843,24 @@ def test_no_library_call_curates_unattended(project: Path, monkeypatch) -> None:
             call()
 
     assert [e for e in index_of(project).entries() if e.get("event") != "fit"] == []
+
+
+def test_a_reset_is_a_persons_call_but_seeing_what_it_would_do_is_not(
+    project: Path, monkeypatch
+) -> None:
+    from nr_workbench.agent.guard import judge
+
+    recorded(project, A)
+    monkeypatch.setenv("NRW_AGENT", "1")
+
+    refused = nrw(project, monkeypatch, "sample", "reset", "S1", "--yes")
+    previewed = nrw(project, monkeypatch, "sample", "reset", "S1", "--dry-run")
+
+    assert refused.exit_code != 0 and "NRW_AGENT is set" in refused.output
+    assert previewed.exit_code == 0, previewed.output
+    assert (project / "samples" / "S1" / "results" / A).is_dir()
+    assert judge("nrw sample reset S1 --yes").rule == "reset"
+    assert judge("nrw sample reset S1 --dry-run").allowed
+    # A quote the parser cannot split is judged as text, and still refused.
+    assert judge("nrw sample reset S1 --yes $'it\\'s'").rule == "reset"
+    assert judge("nrw sample reset S1 --dry-run $'it\\'s'").allowed

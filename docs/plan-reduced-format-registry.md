@@ -1,5 +1,9 @@
 # Plan: one registry for reduced-file formats
 
+> **A design record, kept for its reasoning.** What the code does now is in
+> the code and `docs/ground_truths.md`; where they disagree with this plan,
+> they are right.
+
 **Status:** **done, 2026-09-21** — differently from the design below, and the
 difference is the interesting part. See "How it was actually resolved" at the
 end. Raised 2026-09-16 while teaching the package to read REF_L's

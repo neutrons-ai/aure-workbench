@@ -97,9 +97,7 @@ def portal(monkeypatch, *, failing: int | None = None) -> None:
         "    print(f'  ✓ \\x1b[1m{f.name}\\x1b[0m: created (record_id={key}-{n}@{host})')\n"
         "sys.exit(1 if failing is not None else 0)\n"
     )
-    monkeypatch.setattr(
-        isaac_cmd, "_find", lambda names, install: [sys.executable, "-c", code]
-    )
+    monkeypatch.setattr(isaac_cmd, "_find", lambda names: [sys.executable, "-c", code])
 
 
 def nrw(project: Path, monkeypatch, *args: str):
@@ -264,7 +262,7 @@ def test_no_portal_or_key_of_ones_own_sends_nothing(project: Path, monkeypatch) 
     exported(project, A)
     finalize(project)
 
-    def never(names, install):
+    def never(names):
         raise AssertionError("the tool was run")
 
     monkeypatch.setattr(isaac_cmd, "_find", never)

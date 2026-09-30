@@ -58,8 +58,9 @@ If you already suspect something — a native oxide, a swollen layer — write i
 under `## Fits to perform`. AuRE will rank it as a candidate and test it.
 
 **Working with a coding assistant?** Just tell it you want a first fit. It will
-ask you these questions and write the answers here for you; the standard it
-follows is `skills/reflectometry/aure-first-fit/SKILL.md`.
+ask you these questions and hand you the answers to paste in here: `sample.md`
+is the one file it does not write for you. The standard it follows is
+`skills/reflectometry/aure-first-fit/SKILL.md`.
 
 ## 3. Write the setup
 

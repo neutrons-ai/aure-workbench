@@ -132,8 +132,13 @@ cannot tell anyone:
 
 ### 6. Run it
 
+The run is the scientist's to start: it makes billed language-model calls for
+as long as it takes, and the project's hook refuses it to an assistant. Check
+the setup yourself, then hand them the command:
+
 ```bash
-nrw aure run samples/<ID>/aure/<name>/setup.yaml
+nrw aure run samples/<ID>/aure/<name>/setup.yaml --dry-run   # yours: validates, calls nothing
+nrw aure run samples/<ID>/aure/<name>/setup.yaml             # theirs
 ```
 
 Default budget is `quick` — few steps, one refinement — because the first

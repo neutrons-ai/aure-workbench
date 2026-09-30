@@ -69,6 +69,26 @@ them is how you end up unable to say which script produced a figure.
    each with its own hash and its own records.
 5. **Run `nrw check` before calling anything final.**
 
+## The person's commands
+
+These change what the project claims, or send it somewhere else, so they are
+the person's to run. The project's hook refuses them to you in Claude Code and
+OpenCode, and `nrw` refuses them itself in an unattended session
+(`NRW_AGENT=1`). Give the person the command and your reasons; unattended,
+write both in `ESCALATIONS.md` and stop.
+
+- `nrw promote`, and curating fits: `nrw fit star`, `unstar`, `discard`,
+  `restore` and `delete`
+- `nrw isaac push`, even with `--validate-only`, and `nrw isaac export --upload`
+- `nrw aure run` (with `--dry-run` it is yours: it only validates the setup)
+- `nrw experiment assign` and `release`, and `apply`, `adopt` or `settings`
+  with `--write` (without it they only preview, and are yours)
+- `nrw sample reset` (with `--dry-run` it is yours)
+- `nrw init --nested`, and any `--force`
+
+`nrw agent guard --command '<command>'` says whether a command would be
+refused, and why.
+
 ## Write down what you learn, next to what it is about
 
 The analysis is the thinking, not the fits. Record it as you go, scoped to what
@@ -101,11 +121,11 @@ Experiment page (`nrw serve`). It is still not yours to edit -- and there a
 hand edit does not even reach the catalog: it only stops the next apply from
 updating the file.
 
-Which sample a run belongs to, under what condition, and whether it is used
-are the scientist's decisions too. Read them with `nrw experiment status
---json`; `nrw experiment assign`, `apply --write`, `adopt --write` and
-`release` are refused to an unattended session, so propose them in
-ESCALATIONS.md instead.
+Which sample a run belongs to, under what condition, whether it is used, and
+where the data is read from are the scientist's decisions too. Read them with
+`nrw experiment status --json`. `nrw experiment assign` and `release`, and
+`apply`, `adopt` or `settings` with `--write`, are the person's commands (see
+"The person's commands" above): propose them instead.
 
 That includes the sections that look like invitations. If `## Description` is
 empty and `nrw aure new` refuses, or the six questions in
@@ -165,12 +185,14 @@ their answers and nothing in the data supplies them.
 | Task | Command |
 |---|---|
 | Write the setup from the data and `sample.md` | `nrw aure new <ID> --run <run>` |
-| Run it (needs an LLM endpoint) | `nrw aure run <setup.yaml>` |
+| Check the setup without running it | `nrw aure run <setup.yaml> --dry-run` |
+| Run it (needs an LLM endpoint; the person's command) | `nrw aure run <setup.yaml>` |
 | ...and retry a thin layer in the wrong basin | `nrw aure run <setup.yaml> --mode-enumeration` |
 | Turn the fitted model into a model spec | `nrw aure import <output> --sample <ID> --name <name>` |
 
 **An AuRE run is reconnaissance, not a result.** It carries no fit record, so
-the run that counts is the `nrw fit run` on the imported spec.
+the run that counts is the `nrw fit run` on the script generated from the
+imported spec.
 
 **Modelling**
 
@@ -194,7 +216,7 @@ the fit absorbs the error into roughness rather than reporting it.
 | Check a spec without fitting | `nrw model validate <spec.yaml>` |
 | Build it in-process and report the parameter table | `nrw model preview <spec.yaml>` |
 | Write the refl1d script | `nrw model generate <spec.yaml>` |
-| Take manual ownership of a script | `nrw model fork <script.py>` |
+| Take manual ownership of a spec's generated script | `nrw model fork <spec.yaml>` |
 
 **Fitting and provenance**
 
@@ -204,8 +226,8 @@ the fit absorbs the error into roughness rather than reporting it.
 | List fits | `nrw ls` |
 | Trace a figure, `.par`, or data file to its fit | `nrw whence <path>` |
 | Compare two fits | `nrw diff <fit_a> <fit_b>` |
-| Bless a result | `nrw promote <fit_id> --as final --reason '...'` |
-| Star a fit, set one aside, or delete a discarded one's files -- when the person asks | `nrw fit star <fit_id>`, `nrw fit discard <fit_id> --reason '...'`, `nrw fit restore <fit_id>`, `nrw fit delete <fit_id>` |
+| Bless a result -- the person's command: give it to them | `nrw promote <fit_id> --as final --reason '...'`, or **Finalize** on the fit's page in `nrw serve` |
+| Star a fit, set one aside, or delete a discarded one's files -- the person's too | `nrw fit star <fit_id>`, `nrw fit unstar <fit_id>`, `nrw fit discard <fit_id> --reason '...'`, `nrw fit restore <fit_id>`, `nrw fit delete <fit_id>` |
 | Verify project integrity | `nrw check` |
 
 `nrw serve` also exposes `/api/…`, which returns exactly what the browser

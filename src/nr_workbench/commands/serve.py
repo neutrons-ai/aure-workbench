@@ -90,7 +90,8 @@ def run_serve(
     click.echo(f"  http://{shown}:{port}/")
     click.echo(f"  http://{shown}:{port}/experiment      the experiment's runs")
     click.echo(
-        f"  http://{shown}:{port}/settings        its IPTS, data folder and watcher"
+        f"  http://{shown}:{port}/settings        its IPTS, data folder, watcher "
+        "and language model"
     )
     click.echo(f"  http://{shown}:{port}/api/overview    the same data as JSON")
     click.echo("")
@@ -104,7 +105,10 @@ def run_serve(
     if reason:
         click.echo(f"  {reason}")
     else:
-        click.echo("  To edit the experiment, open this link in your browser:")
+        click.echo(
+            "  To edit the experiment, curate fits or change the settings, open "
+            "this link\n  in your browser:"
+        )
         click.echo(f"    http://{shown}:{port}/auth/{token}")
         click.echo(
             "  It works once, for one browser, and is kept out of the request log.\n"

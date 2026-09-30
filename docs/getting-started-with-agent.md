@@ -90,7 +90,7 @@ nrw doctor
 
 ```
   ✓ project       ~/beamtime/cu-thf
-  ✓ skills        16 installed: analysis-provenance, neutron-reflectometry, …
+  ✓ skills        19 installed: analysis-provenance, analyst-handoff, …
   ✓ harness       2.1.156 at ~/.local/bin/claude
   ✓ agent limits  PreToolUse hook + 2 deny rule(s)
 ```
@@ -250,9 +250,11 @@ the fit by the fit.
 | | |
 |---|---|
 | `--dry-run` | Compose and print; start nothing |
-| `--turns N` | Cap on harness turns (default 60) |
+| `--turns N` | Cap on harness turns (default 200) |
 | `--model NAME` | Model to run (default: the harness's own) |
-| `--timeout SECONDS` | Kill the session after this long |
+| `--timeout SECONDS` | Kill the session after this long (required for OpenCode, which has no turn cap) |
+| `--again` | Run even though the sample already has a written report |
+| `--harness NAME` | `claude` (the default) or `opencode` |
 
 ### 6. Read what it did
 
@@ -401,12 +403,22 @@ morning, a run wrongly fitted costs the night.
 
 ## What the agent cannot do
 
-Three things, refused by a `PreToolUse` hook *and* by `nrw` itself under
+These are refused by a `PreToolUse` hook *and* by `nrw` itself under
 `NRW_AGENT=1`:
 
-- `nrw promote`
-- `nrw isaac export --upload`
+- `nrw promote`, and curating fits: `nrw fit star`, `unstar`, `discard`,
+  `restore` and `delete`
+- publishing to ISAAC: `nrw isaac push` (even `--validate-only`) and
+  `nrw isaac export --upload`
+- `nrw aure run`, except with `--dry-run`
+- organizing the experiment: `nrw experiment assign` and `release`, and
+  `apply`, `adopt` or `settings` with `--write`
+- `nrw sample reset`, except with `--dry-run`
+- `nrw init --nested`
 - any `--force`
+
+[docs/agent.md](agent.md#the-limits-and-why-there-are-two-of-them) says why
+each is a person's call, and what stays allowed.
 
 You can check any command without running it:
 
@@ -430,6 +442,10 @@ an agent told only "no" retries.
 | Symptom | Look at |
 |---|---|
 | It refuses to start | `## Fits to perform` is empty. That is the design, not a bug. |
+| It refuses: the sample already holds a written report | the task looks answered. Say what is left under `## Fits to perform`, or pass `--again` for a deliberate second pass |
+| It refuses: a session is already analysing the sample | `nrw agent status` shows what is running; `nrw agent stop <sample>` ends it |
+| It refuses: no `nrw agent guard` hook | run `nrw init` to restore it — and if a session removed it, read what that session did before trusting it |
+| It refuses with OpenCode: no turn cap | pass `--timeout <seconds>`; `--turns` does nothing there |
 | `nrw agent run` says the harness is missing | `claude` is not on `PATH`; `nrw doctor` confirms |
 | `agent limits` is a `!` | run `nrw init` to add `.claude/settings.json` |
 | Everything says `arriving` | the files were just written; wait `--settle` seconds, or lower it |

@@ -49,7 +49,8 @@
   function claudeProblem() {
     if (!shown.aure) return "AuRE is not installed where nrw serve runs.";
     if (!shown.claude_code.supported) {
-      return "The installed AuRE predates this provider: update it (pip install -e .).";
+      return "The installed AuRE predates this provider: upgrade nr-workbench where " +
+        "nrw serve runs (docs/install.md, Upgrading), which brings the AuRE it needs.";
     }
     if (!shown.claude_code.cli) {
       return "claude is not on nrw serve's PATH. Install Claude Code, or set " +
@@ -82,7 +83,7 @@
     $("llm-other-row").classList.toggle("d-none", !other);
     $("llm-other-detail").textContent = other
       ? "LLM_PROVIDER=" + shown.project.LLM_PROVIDER + ", written by hand. " +
-        "Choosing another replaces it."
+        "Choosing Claude replaces it; choosing As set outside removes it."
       : "";
 
     $("llm-claude").value = shown.claude_code.id;

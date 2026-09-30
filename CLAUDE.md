@@ -26,12 +26,13 @@ shape almost every decision:
    overwrite a file the user has edited. The three-way logic lives in
    `project/scaffold.py` and is the most safety-critical code here.
 
-### Read the plan
+### History
 
-`~/.claude/plans/read-project-md-and-make-imperative-prism.md` holds the
-approved milestone plan (M0 scaffold+skills → M1 provenance → M2 tNR assessment
-→ M3 spec+generator → M4 forms → M5 web UI). `docs/project.md` is the original
-requirement.
+The original milestone plan (M0 scaffold+skills → M1 provenance → M2 tNR
+assessment → M3 spec+generator → M4 forms → M5 web UI) is implemented. Its
+requirement, `docs/project.md`, was retired in bcd1c66
+(`git show bcd1c66^:docs/project.md` recovers it). `docs/plan-*.md` are design
+records of later work.
 
 ### Skills
 
@@ -63,7 +64,7 @@ carrying several findings that cost real debugging time.
 ### Verification
 
 ```bash
-pytest                        # 78 tests, ~2s
+pytest                        # ~2,500 tests, about two minutes
 ruff check src tests          # lint
 ruff format --check src tests # format
 pre-commit run --all-files    # exactly what CI runs

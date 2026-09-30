@@ -44,9 +44,10 @@ for each assistant the project is set up for, so an assistant opened in this
 folder already knows REF_L conventions.
 
 The second line says which assistants those are. Claude Code and GitHub Copilot
-are the default; `nrw init --harness opencode` adds OpenCode, and passing
-`--harness` at all narrows the set to exactly what you name. The choice is
-recorded in `nrw.toml`, so later runs keep it without the flag.
+are the default. `--harness` sets the whole list, once per assistant:
+`nrw init --harness claude --harness copilot --harness opencode` adds OpenCode
+to the two, and `nrw init --harness opencode` alone sets up OpenCode only. The
+choice is recorded in `nrw.toml`, so later runs keep it without the flag.
 
 One of them is `.nrw/schema/nrw-model-1.json`, the JSON Schema for a model spec,
 generated from the code rather than written by hand. `.vscode/settings.json`
@@ -67,7 +68,7 @@ nrw doctor
   ✓ aure          1.0.1 @ d6e38e481fcf
   ✓ instrument    SNS REF_L
   ! samples       none yet; run `nrw sample new <ID>`
-  ✓ skills        17 installed: analysis-provenance, analyst-handoff, ...
+  ✓ skills        19 installed: analysis-provenance, analyst-handoff, ...
 ```
 
 ## 2. Make the sample and bring the data in
@@ -81,7 +82,10 @@ nrw sample new Sample6 --title "Cu/Pt in d8-THF, 1 M LiBF4 (expt 11)"
 > a sample, and copies the data in only once a run has finished arriving. Its
 > **Settings** page sets the IPTS and the data folder if `nrw init` was run
 > without `--ipts`; the one-time link `nrw serve` prints opens it. See
-> [experiment.md](experiment.md). The manual route below is what it automates.
+> [experiment.md](experiment.md). The manual route below is what it automates
+> — and it is still the route for a sliced time-resolved series like this
+> walkthrough's, which the page does not handle yet
+> ([Not yet](experiment.md#not-yet)).
 
 Copy the reduced ASCII in. Raw NeXus is gitignored; reduced data is small and
 belongs in the repository with the analysis.
@@ -139,8 +143,10 @@ Sample6
 
 `sample.yaml` is the machine register — the scan maintains it. `sample.md` is
 yours: what the sample is, what was done to it, what you expect. The tool never
-edits it, and the `!` line is it telling you the two disagree. Write the runs up
-in `sample.md` and the warning goes away.
+edits it (the one exception is a sample the Experiment page manages: its
+`sample.md` is written from the page, and its first lines say so). The `!` line
+is it telling you the two disagree. Write the runs up in `sample.md` and the
+warning goes away.
 
 **`sample.yaml` is also how you co-refine a subset.** It is a normal file, and
 `nrw model new` builds from it rather than from the disk. A beamtime directory
@@ -337,7 +343,9 @@ what the sample is made of, in what order, roughly how thick. That is in your
 head and, if you wrote it down, in `sample.md`.
 
 Three ways to close that gap. All three produce the same file; pick whichever
-matches what you have to hand.
+matches what you have to hand. The first two are `nrw model new` with a flag,
+so use one *instead of* the plain command above — run after it, they stop at
+the spec it already wrote, unless you add `--force` to replace it.
 
 **1. An LLM endpoint, if you have one configured.**
 
@@ -364,7 +372,9 @@ The written file says who proposed it:
 ```
 
 **A model may only propose `description`, `materials`, `stack`, `parameters`
-and `constraints`.** Anything it returns for `states`, `series`, `thetas`,
+and `constraints`** — plus two choices your notes make and the files cannot:
+`series_select`, which slices to model, and `probe.back_reflection`, which side
+the beam enters. Anything it returns for `states`, `series`, `thetas`,
 `data_dir` or `run` is discarded — those were read from the files and are
 already exact. That filter is in the code, not just in the prompt: a wrong
 angle would broaden every fringe and the fit would quietly absorb it into
@@ -372,7 +382,10 @@ roughness.
 
 Configure it in `.env` — `nrw init` ships a `.env.example` listing every
 variable, and `.env` itself is gitignored, which matters because a beamtime
-directory gets shared, archived and sometimes published.
+directory gets shared, archived and sometimes published. Or set it on the
+Settings page of `nrw serve`: its *Language model* section writes the same
+file, makes one call to check it, and also offers **Claude through the Claude
+Code CLI**, which needs no key ([experiment.md](experiment.md#language-model)).
 
 ```bash
 cp .env.example .env      # then fill in one of the provider blocks
@@ -409,7 +422,10 @@ Fill in the model spec at samples/Sample6/models/cu-thf-218389.yaml for sample S
    - skills/reflectometry/refl-bl4b-instrument/SKILL.md
    - skills/reflectometry/thin-layer-degeneracy/SKILL.md
 
-2. Read samples/Sample6/sample.md for what the sample is and what was done to it.
+2. Read samples/Sample6/sample.md for what the sample is and what was done to it -- and
+   for each measurement: its condition in the Measurements table, and its
+   notes under Measurement conditions. Take the ambient from them, never
+   assume air. ...
 
 3. Edit ONLY these parts of the spec:
      description, materials, stack, parameters
@@ -681,7 +697,15 @@ nrw serve
   1 sample(s), 1 fit(s)
 
   http://127.0.0.1:8765/
-  http://127.0.0.1:8765/api/overview   the same data as JSON
+  http://127.0.0.1:8765/experiment      the experiment's runs
+  http://127.0.0.1:8765/settings        its IPTS, data folder, watcher and language model
+  http://127.0.0.1:8765/api/overview    the same data as JSON
+  ...
+  To edit the experiment, curate fits or change the settings, open this link
+  in your browser:
+    http://127.0.0.1:8765/auth/<token>
+  It works once, for one browser, and is kept out of the request log.
+  Without it the pages are view-only.
 ```
 
 `/s/Sample6` is the sample landscape: every steady-state segment as R(Q), the
@@ -691,7 +715,11 @@ that slice's R(Q) overlays onto the top panel, so you can see what the sample
 looked like at the moment the change was happening.
 
 `/f/<fit_id>` is the fit: data and model per experiment with a residual strip,
-all 21 SLD profiles, the parameter table, and a provenance panel.
+all 21 SLD profiles, the parameter table, and a provenance panel. Opened
+through the link, it also curates: **Star** a fit worth coming back to,
+**Finalize** it as the sample's answer, with the reason (what `nrw promote --as
+final` does in the next step), or **Discard** it and, later, delete its files.
+See [Curating fits](experiment.md#curating-fits).
 
 Every page has a JSON twin under `/api/…`, which is what an assistant should
 read rather than scraping HTML.
@@ -733,10 +761,11 @@ nrw whence samples/Sample6/results/20260805-191540Z-732f4286/fit/cu-thf-218389.p
 ```
 
 It works on more than fit outputs. Ask it about a *data* file and it lists every
-fit that consumed it; ask about a figure you saved into the fit's `figures/`
+fit that consumed it; ask about a figure the fit wrote into its `figures/`
 directory and it identifies the fit even if that figure has since been copied
-out of the project and emailed, because figures placed there are stamped with
-their `fit_id` at write time (PNG `tEXt`, SVG `<desc>`).
+out of the project and emailed, because the fit stamps the figures there with
+its `fit_id` when it finishes (PNG `tEXt`, SVG `<desc>`). A figure saved there
+afterwards is not stamped.
 
 `nrw check` is the guard: it verifies every input hash still matches, that no
 generated script has been hand-edited, that none is stale against its spec, and
@@ -753,6 +782,10 @@ Start with the automatic checks:
 ```bash
 nrw assess 20260805-191540Z-732f4286
 ```
+
+The output below is from a different fit, `…0103d9c7`: a DREAM fit of the tNR
+run alone, which the sample note further down explains. It is shown because
+the interval checks read a DREAM posterior, and the amoeba fit above has none.
 
 ```
   fit       20260807-163359Z-0103d9c7
@@ -884,15 +917,22 @@ to reproducing it.
 
 ## 11. Publish it to ISAAC
 
+Only a sample's final fit is published — the one promoted in step 8, or
+finalized on its page. Exporting writes the records on disk and sends nothing:
+
 ```bash
 nrw isaac export 20260807-155810Z-ec6d0134
 ```
 
+The output below is from another project's final fit, a co-refinement of three
+steady conditions of sample `expt11`, because three conditions show what the
+export does with a co-refinement:
+
 ```
   fit       20260807-155810Z-ec6d0134
-  state     run218386: 3 angle segments -> one measurement
-  state     run218393: 3 angle segments -> one measurement
-  state     run218397: 3 angle segments -> one measurement
+  state     run218386: 3 angle segments concatenated -> run 218386
+  state     run218393: 3 angle segments concatenated -> run 218393
+  state     run218397: 3 angle segments concatenated -> run 218397
   chisq     1.69822
 
   records   3 written to samples/expt11/results/.../isaac/records
@@ -902,7 +942,7 @@ nrw isaac export 20260807-155810Z-ec6d0134
   linked    3 records share one sample id, so the portal reads them as
             conditions of one experiment
 
-  Not uploaded. Add --upload to push these to the ISAAC Portal.
+  Not uploaded. `nrw isaac push 20260807-155810Z-ec6d0134` publishes them -- the final fit only -- after `--validate-only` asks the portal first.
 ```
 
 Two lines in that output are the whole point.
@@ -945,23 +985,35 @@ left empty rather than filled with something wrong.
 Nothing is invented. If neither the table nor the spec says anything, the
 record says nothing about conditions.
 
-To upload:
+To publish what the export wrote:
 
 ```bash
-nrw isaac export <fit_id> --upload                  # asks before publishing
-nrw isaac export <fit_id> --upload --validate-only  # ask the API, persist nothing
+nrw isaac push <fit_id> --validate-only   # the portal checks them, and keeps nothing
+nrw isaac push <fit_id>                   # asks before publishing
 ```
 
-Uploading is never implied by exporting, and it confirms first: a record on a
-shared portal is not straightforwardly retractable. Credentials come from
-`ISAAC_URL` and `ISAAC_KEY` in `.env`.
+Publishing is never implied by exporting, and the push confirms first, naming
+what leaves the project: the data, the fitted model and the notes —
+`sample.md`, the fit's `NOTES.md`, the reason it was finalized, and any report
+that cites it. A record on a shared portal is not straightforwardly
+retractable, so each push is recorded with the fit before it runs, and what was
+sent is copied under the fit's `isaac/published/`. The fit's page in
+`nrw serve` offers the same steps: **Export**, **Validate with the server** and
+**Push…**.
+
+The portal and the key are yours, not the project's: set `ISAAC_URL` and
+`ISAAC_KEY` in `~/.nrw` (or your shell, or `~/.aure`). The project's `.env` is
+never read for them: anyone who can write the project can write that file, and
+it would choose where your key and your records are sent.
 
 nr-workbench does not map anything to the ISAAC schema itself — `data-assembler`
 and `nr-isaac-format` own that, and a second copy would drift from a schema
-neither project controls. They are an optional extra:
+neither project controls. They are the optional `isaac` extra; re-run the
+installer with it ([install.md](install.md#options)):
 
 ```bash
-pip install 'nr-workbench[isaac]'
+curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
+  | NRW_EXTRAS=isaac sh
 ```
 
 Without them the export stages the fit, tells you what it assembled, and says
@@ -1005,7 +1057,7 @@ input too, but editing it is a *model* change and is reported as one.
 **If you need to hand-edit the script**, do it properly:
 
 ```bash
-nrw model fork samples/Sample6/models/cu-thf-218389.py
+nrw model fork samples/Sample6/models/cu-thf-218389.yaml
 ```
 
 That hands you ownership of the file and keeps full provenance. Editing a
