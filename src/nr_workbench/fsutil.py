@@ -59,7 +59,7 @@ def advisory_lock(path: Path) -> Iterator[None]:
 
 
 def atomic_write_bytes(
-    target: Path, data: bytes, *, scratch: Path | None = None
+    target: Path, data: bytes, *, scratch: Path | None = None, mode: int | None = None
 ) -> None:
     """Replace *target* with *data*, so a reader sees all of the old or the new.
 
@@ -76,25 +76,35 @@ def atomic_write_bytes(
         scratch: Where to put the temp file, when not beside *target* -- for
             a directory whose every file is tracked or watched. It must be on
             the same filesystem as *target*, or the rename is not atomic.
+        mode: The permission bits to give it, instead of the replaced file's.
+            For a caller that has already read the target through a descriptor
+            of its own: *target* is then never looked up by name for its mode,
+            which would follow a link put there meanwhile.
     """
     folder = scratch if scratch is not None else target.parent
     folder.mkdir(parents=True, exist_ok=True)
     temp = folder / f".{target.name}.{secrets.token_hex(6)}.tmp"
-    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, 0o666)
+    # Born with the mode it is given: a temp file holding a .env's keys must
+    # never be readable by more accounts than the file it replaces.
+    created = 0o666 if mode is None else mode & 0o777
+    descriptor = os.open(
+        temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW, created
+    )
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(data)
-            handle.flush()
             # The file keeps its permissions: set on the open file, not by
-            # name, after its content, and only the permission bits -- a file
+            # name, before its content, and only the permission bits -- a file
             # nrw writes never needs setuid, setgid or sticky, whatever the old
             # one had. The temp file has this process's umask, and a
             # group-writable nrw.toml in a shared project would otherwise come
             # back writable by its owner alone.
-            with suppress(FileNotFoundError):
-                mode = stat.S_IMODE(os.stat(target).st_mode) & 0o777
-                if hasattr(os, "fchmod"):
-                    os.fchmod(handle.fileno(), mode)
+            if mode is None:
+                with suppress(FileNotFoundError):
+                    mode = stat.S_IMODE(os.stat(target).st_mode) & 0o777
+            if mode is not None and hasattr(os, "fchmod"):
+                os.fchmod(handle.fileno(), mode & 0o777)
+            handle.write(data)
+            handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, target)
     finally:

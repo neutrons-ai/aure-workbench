@@ -28,6 +28,7 @@ from nr_workbench.web.experiment import (
     WritesDisabledError,
 )
 from nr_workbench.web.jobs import CommandRefused, JobBusy, JobNotFound
+from nr_workbench.web.llm_settings import MISSING, LlmSettingsData
 from nr_workbench.web.models import ModelNotFound, ModelsData
 from nr_workbench.web.settings import SettingsData, WriteFailedError
 
@@ -47,6 +48,11 @@ def settings_data() -> SettingsData:
 def models_data() -> ModelsData:
     """The request's :class:`ModelsData`, held on the app config."""
     return current_app.config["NRW_MODELS"]  # type: ignore[no-any-return]
+
+
+def llm_data() -> LlmSettingsData:
+    """The request's :class:`LlmSettingsData`, held on the app config."""
+    return current_app.config["NRW_LLM"]  # type: ignore[no-any-return]
 
 
 @experiment_api.before_request
@@ -85,7 +91,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
     from nr_workbench.experiment.model import CatalogValidationError, RecordConflict
     from nr_workbench.experiment.render import SampleRenderError
     from nr_workbench.experiment.store import CatalogError
-    from nr_workbench.project.envfile import EnvFileError
+    from nr_workbench.project.envfile import EnvFileError, EnvValueError
     from nr_workbench.project.scaffold import LockProblemError
     from nr_workbench.project.settings import NeedsConfirmation, SettingsError
     from nr_workbench.project.tomlfile import TomlEditError
@@ -116,7 +122,7 @@ def _map(exc: Exception) -> tuple[Any, int]:
         # Expected, and said: a read-only project, a full disk. Not the
         # generic 500 -- the person can do something about it.
         ((WriteFailedError,), 500),
-        ((RequestError, CatalogValidationError, SettingsError), 400),
+        ((RequestError, CatalogValidationError, SettingsError, EnvValueError), 400),
     ):
         if isinstance(exc, kinds):
             return _error(exc, status)
@@ -264,7 +270,7 @@ def check_folder() -> Any:
 @experiment_api.get("/settings/llm")
 def llm_settings() -> Any:
     """The language model the page's jobs use, and where each part is set."""
-    return jsonify(settings_data().llm())
+    return jsonify(llm_data().llm())
 
 
 @experiment_api.put("/settings/llm")
@@ -272,8 +278,8 @@ def save_llm() -> Any:
     """Choose it, in the project's .env: ``{"revision", "provider", "model"}``."""
     body = _body()
     return jsonify(
-        settings_data().save_llm(
-            body.get("revision"), body.get("provider"), body.get("model", "")
+        llm_data().save_llm(
+            body.get("revision"), body.get("provider", MISSING), body.get("model", "")
         )
     )
 
@@ -282,7 +288,7 @@ def save_llm() -> Any:
 def check_llm() -> Any:
     """Make one real call to it, as ``nrw check-llm --endpoint`` does."""
     _body()
-    return jsonify(settings_data().check_llm())
+    return jsonify(llm_data().check_llm())
 
 
 # ---------------------------------------------------------------------------

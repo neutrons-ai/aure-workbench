@@ -110,7 +110,7 @@ of that comes from. Its choices are:
 Unlike the rest of the page, this is saved in the project's `.env`, not in
 `nrw.toml`. `nrw.toml` is committed and shared, while a language model belongs
 to one person on one machine, and `.env` is gitignored. Choosing Claude writes
-two lines, under a comment saying where they came from:
+two lines:
 
 ```
 LLM_PROVIDER=claude_code
@@ -119,16 +119,21 @@ LLM_MODEL=
 
 `LLM_MODEL` is written even when blank. Otherwise a model that `~/.aure` names
 for another provider, such as `gpt-4o`, would be passed to `claude`. Choosing
-*as set outside this project* removes the two lines. Nothing else in `.env` is
-changed, and a `.env` that is a symbolic link is never written through.
+*as set outside this project* removes the two lines again, which leaves `.env`
+exactly as it was before. Nothing else in `.env` is changed. The section says
+so, and changes nothing, when `.env` is something it should not edit: a
+symbolic link, a file that is not text, or one changed by hand since the page
+read it.
 
 Each job reads `.env` as it starts, so a choice applies from the next one, with
 no restart. The exception is a variable set in the environment `nrw serve` was
 started with: that wins over `.env`, and the section says so.
 
 **Check** makes one real call to the saved model, as `nrw check-llm --endpoint`
-does, and says what answered and how long it took. The call is billed like any
-other.
+does, and says what answered and how long it took. It makes exactly one call,
+with AuRE's retries off, and it is billed like any other. It waits as long as
+AuRE waits for a call (`LLM_TIMEOUT`, 120 seconds by default) and a minute more,
+then stops, along with any `claude` it started.
 
 ## Where the runs come from
 
@@ -292,7 +297,8 @@ for it: give the model a name and click **New model**. The spec is exactly what
   and H2O for another, becomes the ambient's SLD fitted per state.
 
 Writing it is a job, followed in the Fit panel, because the model's answer can
-take a minute. Without a language model the job says so, and writes nrw's
+take a minute. One job runs at a time, so while a fit runs, New model waits and
+the panel says so. Without a language model the job says so, and writes nrw's
 placeholder stack instead: air on a film on Si. The panel marks such a spec
 *placeholder stack* until its layers are edited, and **Fit…** on it says that
 its fit would mean nothing before it runs one.

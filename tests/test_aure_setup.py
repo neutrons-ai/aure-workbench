@@ -18,6 +18,7 @@ from nr_workbench.aure_setup import (
     SetupError,
     compose,
     describe_sample,
+    measurement_context,
     reads_as_back_reflection,
     state_files,
 )
@@ -315,6 +316,17 @@ def test_a_note_on_the_run_reaches_aure_though_no_table_lists_it(project: Path) 
     assert composed.document["states"][0]["extra_description"] == (
         "Notes on run 218386: in D2O"
     )
+
+
+def test_a_condition_written_as_a_sentence_gets_one_full_stop() -> None:
+    notes = (
+        DESCRIBED + "\n## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 218386 | steady | The ambient medium is D2O. |\n"
+    )
+
+    said = measurement_context(notes, 218386)
+
+    assert said == "The condition of run 218386: The ambient medium is D2O."
 
 
 def test_compose_adds_nothing_when_nothing_was_written_about_it(project: Path) -> None:

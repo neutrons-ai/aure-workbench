@@ -3,7 +3,8 @@
  * Saved in the project's .env, not nrw.toml: settings.js and this file share
  * nothing but the page. The server says what applies and where each part comes
  * from; this page shows that, sends back the choice with the revision of .env
- * it was shown, and never sees a key. Every value is set as text.
+ * it was shown, and never sees a key. Every control starts disabled, and only
+ * the server's answer enables it. Every value is set as text.
  */
 "use strict";
 
@@ -14,20 +15,25 @@
   const TOKEN = window.NRW_WRITE_TOKEN || "";
   const api = N.client(TOKEN);
   const PATH = "/api/experiment/settings/llm";
+  const CONTROLS = ["llm-claude", "llm-outside", "llm-model", "llm-save", "llm-check"];
   let shown = null;
 
   function writable() {
     return Boolean(shown && shown.writable && TOKEN);
   }
 
-  /* "claude_code, the CLI's default model, from .env" -- what applies, said. */
+  function isClaude(provider) {
+    return Boolean(shown && provider === shown.claude_code.id);
+  }
+
+  /* "Claude, through the Claude Code CLI, the CLI's default model (from .env)". */
   function describe(part) {
     if (!part.provider) {
       return part.key
         ? "no provider is named; a key is set, so AuRE guesses one from it"
         : "nothing is set up";
     }
-    const claude = part.provider === "claude_code";
+    const claude = isClaude(part.provider);
     let text = claude ? "Claude, through the Claude Code CLI" : part.provider;
     if (part.model) text += ", model " + part.model;
     else if (claude) text += ", the CLI's default model";
@@ -52,20 +58,24 @@
     return "";
   }
 
+  function toggle(id, text) {
+    $(id).textContent = text;
+    $(id).classList.toggle("d-none", !text);
+  }
+
   function render() {
     $("llm-now").textContent =
       "New model and quick fits use: " + describe(shown.effective) + ".";
-    const environment = $("llm-environment");
-    environment.textContent = shown.environment.length
+    toggle("llm-environment", shown.environment.length
       ? "nrw serve was started with " + shown.environment.join(" and ") +
         " set in its environment, which wins over this project's .env: a " +
         "choice saved here reaches no job until nrw serve is started without it."
-      : "";
-    environment.classList.toggle("d-none", !shown.environment.length);
-
-    const problem = claudeProblem();
-    $("llm-claude-problem").textContent = problem;
-    $("llm-claude-problem").classList.toggle("d-none", !problem);
+      : "");
+    toggle("llm-problem", shown.problem ? shown.problem + " It cannot be changed from here." : "");
+    toggle("llm-claude-problem", claudeProblem());
+    toggle("llm-claude-binary", shown.claude_code.binary_from
+      ? "Which claude runs is set by AURE_CLAUDE_BIN, in " + shown.claude_code.binary_from + "."
+      : "");
 
     $("llm-outside-detail").textContent = describe(shown.outside) + ".";
     const other = shown.choice === "other";
@@ -75,17 +85,23 @@
         "Choosing another replaces it."
       : "";
 
-    $("llm-claude").checked = shown.choice === "claude_code";
+    $("llm-claude").value = shown.claude_code.id;
+    $("llm-claude").checked = isClaude(shown.choice);
     $("llm-other").checked = other;
     $("llm-outside").checked = shown.choice === "outside";
-    $("llm-model").value = shown.choice === "claude_code" ? shown.project.LLM_MODEL || "" : "";
+    $("llm-model").maxLength = shown.model_max;
+    $("llm-model").value = isClaude(shown.choice) ? shown.project.LLM_MODEL || "" : "";
 
     const off = !writable();
-    ["llm-claude", "llm-outside", "llm-model", "llm-save", "llm-check"].forEach(function (id) {
+    CONTROLS.forEach(function (id) {
       $(id).disabled = off;
     });
-    // Offered only while nothing is chosen for it: it is what .env says now.
-    $("llm-other").disabled = true;
+    // What .env cannot be changed to; Check still asks what a job would use.
+    if (shown.problem) {
+      ["llm-claude", "llm-outside", "llm-model", "llm-save"].forEach(function (id) {
+        $(id).disabled = true;
+      });
+    }
     if (off) {
       $("llm-status").textContent = shown.read_only_reason ||
         "View only: open the link nrw serve printed to change this.";
@@ -96,8 +112,12 @@
     try {
       shown = await api("GET", PATH);
       render();
+      return true;
     } catch (error) {
+      // Nothing is enabled: a choice made without the section's answer would
+      // be sent against a revision nobody read.
       $("llm-now").textContent = "What is set could not be read: " + error.message;
+      return false;
     }
   }
 
@@ -115,8 +135,8 @@
       return;
     }
     const body = { revision: shown.revision, provider: null };
-    if (choice.value === "claude_code") {
-      body.provider = "claude_code";
+    if (choice === $("llm-claude")) {
+      body.provider = shown.claude_code.id;
       body.model = $("llm-model").value.trim();
     }
     $("llm-save").disabled = true;
@@ -129,10 +149,14 @@
         ? "Saved in .env: " + saved.changes.join("; ") + "."
         : "Nothing needed changing.";
     } catch (error) {
-      status.textContent = error.message;
-      if ((error.payload || {}).kind === "EnvFileConflict") await load();
-    } finally {
-      $("llm-save").disabled = !writable();
+      if ((error.payload || {}).kind === "EnvFileConflict" && await load()) {
+        // Shown as .env is now, and only then said.
+        status.textContent = ".env was changed meanwhile; the section was " +
+          "reloaded. Make the change again.";
+      } else {
+        status.textContent = error.message;
+        $("llm-save").disabled = !writable() || Boolean(shown.problem);
+      }
     }
   });
 

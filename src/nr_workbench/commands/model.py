@@ -806,9 +806,7 @@ def _scaffold_document(
         found: The scan result for this sample.
         root: Project root, needed to read the data-file headers.
     """
-    import copy
-
-    from nr_workbench.spec.authoring import PLACEHOLDER_MATERIALS, PLACEHOLDER_STACK
+    from nr_workbench.spec.authoring import placeholder_materials, placeholder_stack
 
     root = Path(root) if root is not None else Path.cwd()
     states = []
@@ -876,8 +874,8 @@ def _scaffold_document(
         "sample": sample,
         "description": f"TODO: describe {sample}.\n",
         # A minimal physically-sensible stack, deliberately obvious as a stub.
-        "materials": copy.deepcopy(PLACEHOLDER_MATERIALS),
-        "stack": copy.deepcopy(PLACEHOLDER_STACK),
+        "materials": placeholder_materials(),
+        "stack": placeholder_stack(),
         "probe": {"resolution": "angular_only", "dq_is_fwhm": dq_is_fwhm},
     }
     if states:
@@ -1269,10 +1267,10 @@ def _author_from_notes(
 
     info = llm_info()
     if not info.get("available"):
-        from nr_workbench.aure_adapter import claude_code_supported
+        from nr_workbench.aure_adapter import CLAUDE_CODE, claude_code_supported
 
         get_one = (
-            "    a placeholder. Either set LLM_PROVIDER=claude_code to use the\n"
+            f"    a placeholder. Either set LLM_PROVIDER={CLAUDE_CODE} to use the\n"
             "    Claude Code CLI you already have (no key needed), or set\n"
             "    LLM_PROVIDER and LLM_API_KEY, or run:\n"
             if claude_code_supported()

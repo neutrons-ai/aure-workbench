@@ -119,19 +119,24 @@
       <div class="p-3">
         <p id="llm-now" class="small mb-2" aria-live="polite">Reading what is set…</p>
         <div id="llm-environment" class="alert alert-warning py-2 small d-none" role="status"></div>
+        <div id="llm-problem" class="alert alert-warning py-2 small d-none" role="status"></div>
         <div class="form-check">
-          <input class="form-check-input" type="radio" name="llm-choice" id="llm-claude" value="claude_code">
+          {# Its value, the provider's id, is set from the server's answer:
+             AuRE owns the name. Every control starts disabled, and only the
+             section's own answer enables it. #}
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-claude" disabled>
           <label class="form-check-label" for="llm-claude">Claude, through the Claude Code CLI</label>
           <div class="small text-secondary">
             No key: it answers as whatever <code>claude</code> is logged in as &mdash;
             a subscription, an API key, or Bedrock, Vertex or Foundry.
           </div>
           <div id="llm-claude-problem" class="small text-warning-emphasis d-none"></div>
+          <div id="llm-claude-binary" class="small text-secondary d-none"></div>
         </div>
         <div class="settings-indent">
           <input id="llm-model" class="form-control form-control-sm mono settings-short mt-1"
                  list="llm-models" placeholder="the CLI's default" aria-label="Claude model"
-                 autocomplete="off" spellcheck="false" maxlength="128">
+                 autocomplete="off" spellcheck="false" disabled>
           <datalist id="llm-models">
             <option value="sonnet"></option>
             <option value="opus"></option>
@@ -143,18 +148,18 @@
           </div>
         </div>
         <div class="form-check mt-2 d-none" id="llm-other-row">
-          <input class="form-check-input" type="radio" name="llm-choice" id="llm-other" value="other">
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-other" value="other" disabled>
           <label class="form-check-label" for="llm-other">As this project's <code>.env</code> sets it</label>
           <div id="llm-other-detail" class="small text-secondary"></div>
         </div>
         <div class="form-check mt-2">
-          <input class="form-check-input" type="radio" name="llm-choice" id="llm-outside" value="outside">
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-outside" value="outside" disabled>
           <label class="form-check-label" for="llm-outside">As set outside this project</label>
           <div id="llm-outside-detail" class="small text-secondary"></div>
         </div>
         <div class="d-flex gap-2 mt-3 align-items-center flex-wrap">
-          <button type="submit" class="btn btn-sm btn-primary" id="llm-save">Save</button>
-          <button type="button" class="btn btn-sm btn-outline-secondary" id="llm-check">Check</button>
+          <button type="submit" class="btn btn-sm btn-primary" id="llm-save" disabled>Save</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="llm-check" disabled>Check</button>
           <span id="llm-status" class="small text-secondary" aria-live="polite"></span>
         </div>
         <div class="form-text">

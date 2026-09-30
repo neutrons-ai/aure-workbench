@@ -269,6 +269,15 @@ class Page:
         self.js(f"document.getElementById({json.dumps(element_id)}).click()")
 
 
+@pytest.fixture(autouse=True)
+def empty_home(tmp_path: Path, monkeypatch) -> None:
+    """A child the page starts reads ~/.nrw and ~/.aure through HOME: an empty
+    one, so that a developer's real endpoint key is never called."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+
 @pytest.fixture(scope="module")
 def browser(tmp_path_factory) -> Iterator[Browser]:
     """A headless Chrome for this module's tests."""
@@ -531,6 +540,55 @@ def test_a_file_nrw_cannot_edit_shows_the_lines_to_add_and_keeps_the_form(
     assert toml.read_bytes() == before
 
 
+def wait_for_the_language_model(page: Page) -> None:
+    """Until the section has its answer: only its render checks a choice."""
+    page.wait_for(
+        "document.querySelector('input[name=llm-choice]:checked') !== null",
+        what="the Language model section",
+    )
+
+
+LLM_CONTROLS = ["llm-claude", "llm-outside", "llm-model", "llm-save", "llm-check"]
+
+
+def disabled(page: Page, ids: list[str]) -> list[bool]:
+    return [page.js(f"document.getElementById('{i}').disabled") for i in ids]
+
+
+def test_an_env_the_page_cannot_change_is_said_and_only_checking_is_offered(
+    page: Page, site: Site, fresh: Path
+) -> None:
+    (fresh / ".env").write_bytes(b"LLM_MODEL=caf\xe9\n")
+    open_settings(page, site)
+
+    page.wait_for(
+        "document.getElementById('llm-problem').textContent.includes('UTF-8')",
+        what="the problem said",
+    )
+
+    assert disabled(page, LLM_CONTROLS) == [True, True, True, True, False]
+
+
+def test_a_section_whose_answer_never_came_offers_nothing(
+    page: Page, site: Site, monkeypatch
+) -> None:
+    from nr_workbench.web.llm_settings import LlmSettingsData
+
+    def broken(self):
+        raise RuntimeError("an unexpected failure")
+
+    monkeypatch.setattr(LlmSettingsData, "llm", broken)
+    open_settings(page, site)
+
+    page.wait_for(
+        "document.getElementById('llm-now').textContent.includes('could not be read')",
+        what="the failure said",
+    )
+
+    # No choice made without the section's answer, and no billed call either.
+    assert disabled(page, LLM_CONTROLS) == [True] * len(LLM_CONTROLS)
+
+
 def test_claude_is_chosen_for_the_projects_jobs_and_checked(
     page: Page, site: Site, fresh: Path, monkeypatch
 ) -> None:
@@ -551,9 +609,7 @@ def test_claude_is_chosen_for_the_projects_jobs_and_checked(
         ],
     )
     open_settings(page, site)
-    page.wait_for(
-        "!document.getElementById('llm-save').disabled", what="the Language model"
-    )
+    wait_for_the_language_model(page)
     assert "nothing is set up" in page.text("llm-now")
     assert page.js("document.getElementById('llm-outside').checked")
 

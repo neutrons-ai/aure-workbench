@@ -5,7 +5,8 @@ the server's process: nothing could stop it there, and a crash in bumps would
 take the page down with it. A job is a short list of ``nrw`` commands --
 ``model generate``, then ``fit run`` -- run one after another in the project,
 each in a process group of its own, so that Cancel stops every process a step
-started, bumps' parallel workers included.
+started, bumps' parallel workers included. :func:`run_nrw` runs one short
+command the same way, for what must not wait behind a fit.
 
 One at a time: two fits compete for the same cores, and neither finishes sooner
 than if it had waited its turn. What a job printed is kept in
@@ -39,6 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
+from nr_workbench.bounded import TimedOut
 from nr_workbench.project.layout import ProjectLayout
 
 #: Seconds Cancel waits after SIGTERM before SIGKILL.
@@ -112,6 +114,59 @@ def child_environment() -> dict[str, str]:
         for key, value in os.environ.items()
         if key != TOKEN_ENV and key not in env.loaded_from_files()
     }
+
+
+def run_nrw(
+    root: Path, *args: str, timeout: float, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run one short ``nrw`` command in the project, and wait for it.
+
+    For what is not a job -- a check that must not queue behind a fit -- run as
+    a job's step is: the same command line and environment, and a process group
+    of its own, so that a command out of time is stopped whole. A language
+    model's CLI it started, a grandchild, is killed with it, not left running
+    and billing.
+
+    Args:
+        root: The project: the command's working directory.
+        *args: The command and its arguments, as typed after ``nrw``.
+        timeout: Seconds to wait.
+        env: Variables to set for it, over :func:`child_environment`.
+
+    Returns:
+        How it ended, and what it printed.
+
+    Raises:
+        TimedOut: It did not finish in *timeout* seconds, and was killed.
+    """
+    process = subprocess.Popen(
+        nrw_command(*args),
+        cwd=root,
+        env={**child_environment(), **(env or {})},
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # The whole group, and at once: nothing it was doing is kept. Its id
+        # is not reused while any member lives, which is when this reaches it.
+        with suppress(ProcessLookupError, PermissionError):
+            if hasattr(os, "killpg"):
+                os.killpg(process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+            else:  # pragma: no cover - no process groups: the command itself
+                process.kill()
+        # Bounded too: a grandchild that left the group would hold the pipes.
+        with suppress(subprocess.TimeoutExpired):
+            process.communicate(timeout=CANCEL_GRACE)
+        raise TimedOut(
+            f"`nrw {' '.join(args)}` did not finish in {timeout:.0f} seconds, and "
+            "was stopped."
+        ) from None
+    return subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
 
 
 @dataclass

@@ -303,7 +303,6 @@ def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     )
     assert "from the notes" in page.text("expt-model-status")
     assert "Wrote samples/S1/models/oxide.yaml" in page.text("expt-job-log")
-    assert "No language-model endpoint is configured" in page.text("expt-job-log")
     assert (project / "samples" / "S1" / "models" / "oxide.yaml").is_file()
     page.wait_for(
         "document.querySelector('#expt-models-list .expt-model-placeholder') !== null",
@@ -335,6 +334,11 @@ def test_a_fit_started_on_the_page_is_followed_to_its_record(
     )
     page.type("expt-model-name", "oxide")
     page.click("expt-model-create")
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'ok'",
+        what="the spec written",
+        timeout=60,
+    )
     page.wait_for(
         "document.querySelector('#expt-models-list .expt-model-fit') !== null",
         what="the spec listed",
@@ -383,7 +387,8 @@ def test_a_fit_is_cancelled_from_the_page(
     spec = project / "samples" / "S1" / "models" / "oxide.yaml"
     spec.parent.mkdir(parents=True)
     spec.write_text("{}\n")
-    (project / "samples" / "S1" / "data" / "steady").mkdir(parents=True)
+    # Data, so nothing but the running job keeps New model from starting.
+    write_partials(project / "samples" / "S1" / "data" / "steady", 234277)
     open_s1(page, site)
     page.wait_for(
         "document.querySelector('#expt-models-list .expt-model-fit') !== null",
@@ -396,6 +401,10 @@ def test_a_fit_is_cancelled_from_the_page(
         what="the job running",
     )
 
+    # One job at a time: New model waits for it, and says so.
+    assert page.js("document.getElementById('expt-model-create').disabled")
+    assert "one runs at a time" in page.text("expt-model-wait")
+
     page.click("expt-job-cancel")
 
     page.wait_for(
@@ -403,6 +412,10 @@ def test_a_fit_is_cancelled_from_the_page(
         what="the job cancelled",
     )
     assert "interrupted run" in page.text("expt-job-result")
+    assert not page.js("document.getElementById('expt-model-create').disabled")
+    assert page.js(
+        "document.getElementById('expt-model-wait').classList.contains('d-none')"
+    )
     assert page.js(
         "document.getElementById('expt-job-cancel').classList.contains('d-none')"
     )

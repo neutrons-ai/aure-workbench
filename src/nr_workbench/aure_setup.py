@@ -151,8 +151,11 @@ def measurement_context(notes: str, run: int) -> str:
     except Exception:  # noqa: BLE001 - AuRE still gets the description
         return ""
     lines: list[str] = []
-    if measured.conditions.get(run):
-        lines.append(f"The condition of run {run}: {measured.conditions[run]}.")
+    condition = measured.conditions.get(run, "")
+    if condition:
+        # Often written as a sentence already: one full stop, not two.
+        end = "" if condition.endswith((".", "!", "?")) else "."
+        lines.append(f"The condition of run {run}: {condition}{end}")
     if measured.shared:
         lines.append(f"Measurement conditions: {measured.shared}")
     if measured.notes.get(run):

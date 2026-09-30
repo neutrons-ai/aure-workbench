@@ -37,6 +37,7 @@ from nr_workbench.web import security
 from nr_workbench.web.api import api
 from nr_workbench.web.experiment import ExperimentData
 from nr_workbench.web.experiment_api import experiment_api
+from nr_workbench.web.llm_settings import LlmSettingsData
 from nr_workbench.web.models import ModelsData
 from nr_workbench.web.project import ProjectData
 from nr_workbench.web.settings import SettingsData
@@ -105,6 +106,11 @@ def create_app(
     )
     app.config["NRW_EXPERIMENT"] = experiment
     app.config["NRW_MODELS"] = ModelsData(
+        root,
+        writable=app.config["NRW_WRITABLE"],
+        why_read_only=app.config["NRW_READ_ONLY_REASON"],
+    )
+    app.config["NRW_LLM"] = LlmSettingsData(
         root,
         writable=app.config["NRW_WRITABLE"],
         why_read_only=app.config["NRW_READ_ONLY_REASON"],

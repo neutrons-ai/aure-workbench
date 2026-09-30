@@ -133,6 +133,74 @@ def test_a_link_holder_writes_the_spec_nrw_model_new_writes_from_the_notes(
     assert written.read_text(encoding="utf-8") == typed.replace("typed", "oxide")
 
 
+#: The child a New model job runs, in place of `nrw`: the real command, with
+#: only the call to the language model stood in. What it is asked is kept in
+#: the file NRW_TEST_PROMPT names; it answers with a stack of its own.
+ASKS_THE_LANGUAGE_MODEL = """
+import json, os, sys
+from nr_workbench import aure_adapter, env
+
+def llm_info():
+    env.load_env()  # as the real one does: whatever the files say
+    return {"available": True, "provider": os.environ.get("LLM_PROVIDER"),
+            "model": os.environ.get("LLM_MODEL")}
+
+def complete(system, user, **options):
+    with open(os.environ["NRW_TEST_PROMPT"], "w", encoding="utf-8") as handle:
+        handle.write(user)
+    return json.dumps({
+        "materials": {"D2O": {"rho": 6.36}, "Film": {"rho": 3.0}, "Si": {"rho": 2.07}},
+        "stack": [
+            {"name": "D2O", "material": "D2O", "thickness": 0, "roughness": 5},
+            {"name": "Film", "material": "Film", "thickness": 80, "roughness": 5},
+            {"name": "Si", "material": "Si"},
+        ],
+    })
+
+aure_adapter.llm_info = llm_info
+aure_adapter.complete = complete
+from nr_workbench.cli import main
+main(sys.argv[1:], prog_name="nrw")
+"""
+
+
+def test_new_model_asks_the_language_model_chosen_in_settings_run_by_run(
+    app, writer, project: Path, tmp_path: Path, monkeypatch
+) -> None:
+    # Claude, chosen on the Settings page; each run's contrast, in the notes.
+    (project / "samples" / "S1" / "sample.md").write_text(
+        "# S1\n\n## Description\n\nA film on silicon.\n\n## Measurements\n\n"
+        "| Run | Type | Condition |\n|---|---|---|\n"
+        "| 100001 | steady | in D2O |\n| 100005 | steady | in H2O |\n",
+        encoding="utf-8",
+    )
+    revision = writer.get("/api/experiment/settings/llm").json["revision"]
+    chosen = writer.put(
+        "/api/experiment/settings/llm",
+        json={"revision": revision, "provider": "claude_code", "model": "sonnet"},
+        headers=headers(app),
+    )
+    assert chosen.status_code == 200, chosen.json
+    prompt = tmp_path / "prompt.txt"
+    monkeypatch.setenv("NRW_TEST_PROMPT", str(prompt))
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", ASKS_THE_LANGUAGE_MODEL, *args],
+    )
+
+    started(create(writer, app, "S1", "oxide"))
+    ended = job_ended(writer)
+
+    assert ended["job"]["status"] == "ok", ended["log"]
+    assert "asking claude_code/sonnet" in ended["log"]  # read from .env, by the job
+    asked = prompt.read_text(encoding="utf-8")
+    assert "- state run100001 (run 100001): condition: in D2O" in asked
+    assert "- state run100005 (run 100005): condition: in H2O" in asked
+    listed = writer.get("/api/experiment/samples/S1/models").json["models"]
+    assert [(m["name"], m["placeholder"]) for m in listed] == [("oxide", False)]
+
+
 def test_a_module_in_the_project_is_not_imported_in_place_of_nrws(
     app, writer, project: Path
 ) -> None:

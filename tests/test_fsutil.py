@@ -165,6 +165,41 @@ def test_atomic_write_bytes_sets_permissions_on_the_open_file(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_a_mode_given_is_the_temp_files_before_it_holds_anything(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A .env's keys are never, even for an instant, readable by others: the
+    temp file is born with the mode, and the file is never looked up by name."""
+    target = tmp_path / ".env"
+    target.write_bytes(b"old\n")
+    target.chmod(0o644)  # not the mode asked for: the one given wins
+    monkeypatch.setattr(os, "umask", os.umask)  # restored whatever happens
+    os.umask(0o022)
+    seen: list[tuple[int, int]] = []
+    real_fchmod = os.fchmod
+
+    def fchmod(fd: int, mode: int) -> None:
+        info = os.fstat(fd)
+        seen.append((info.st_mode & 0o777, info.st_size))
+        real_fchmod(fd, mode)
+
+    real_stat = os.stat
+
+    def stat(path, *args, **kwargs):
+        if isinstance(path, (str, os.PathLike)) and os.fspath(path) == str(target):
+            raise AssertionError("the target looked up by name")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(fsutil.os, "fchmod", fchmod)
+    monkeypatch.setattr(fsutil.os, "stat", stat)
+
+    atomic_write_bytes(target, b"LLM_API_KEY=x\n", mode=0o600)
+
+    assert seen == [(0o600, 0)]  # born 0600, and set before any byte is in it
+    assert real_stat(target).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_atomic_write_bytes_keeps_no_setuid_setgid_or_sticky_bit(
     tmp_path: Path,
 ) -> None:

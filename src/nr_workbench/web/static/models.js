@@ -23,6 +23,7 @@
   const LOG_KEEP = 400000;
 
   let shown = null;  // the sample whose models are shown
+  let listed = null;  // what the last listing of it said
   let fitting = null;  // the name of the model the fit form is for
   // The project's nrw.toml [fit], as the last listing gave it.
   let fitDefaults = { method: "dream", settings: {}, problem: null };
@@ -47,8 +48,27 @@
     return "";
   }
 
+  /* New model and a quick fit are jobs, and one job runs at a time: while one
+   * runs, they wait, and the panel says so rather than refusing a click. */
+  function writeButtons() {
+    if (!listed) return;
+    const why = blocked(listed);
+    const waiting = !why && job.running
+      ? "A job is running (below), and one runs at a time: New model and a " +
+        "quick fit can start once it ends."
+      : "";
+    $("expt-model-create").disabled = Boolean(why || waiting);
+    const quick = $("expt-model-quick");
+    quick.disabled = Boolean(why || waiting) || !listed.aure;
+    quick.title = why || waiting ||
+      (listed.aure ? "" : "AuRE is not installed where nrw serve runs.");
+    $("expt-model-wait").textContent = waiting;
+    $("expt-model-wait").classList.toggle("d-none", !waiting);
+  }
+
   function render(payload) {
     if (payload.fit) fitDefaults = payload.fit;
+    listed = payload;
     $("expt-models").classList.remove("d-none");
     $("expt-models-title").textContent = "Models of " + payload.sample;
     const list = $("expt-models-list");
@@ -111,7 +131,6 @@
       }));
     }
     $("expt-model-name").disabled = Boolean(why);
-    $("expt-model-create").disabled = Boolean(why);
     // AuRE fits one measurement: which, when there is a choice.
     const runs = $("expt-model-run");
     const chosen = runs.value;
@@ -121,9 +140,7 @@
     });
     if (chosen && (payload.runs || []).map(String).includes(chosen)) runs.value = chosen;
     runs.classList.toggle("d-none", (payload.runs || []).length < 2);
-    const quick = $("expt-model-quick");
-    quick.disabled = Boolean(why) || !payload.aure;
-    quick.title = why || (payload.aure ? "" : "AuRE is not installed where nrw serve runs.");
+    writeButtons();
   }
 
   async function load(id) {
@@ -142,6 +159,7 @@
       $("expt-model-status").textContent = "";
       $("expt-fit-form").classList.add("d-none");
       fitting = null;
+      listed = null;
       shown = id;
     }
     load(id);
@@ -328,6 +346,7 @@
 
   function showJob(current) {
     job.running = current.status === "running";
+    writeButtons();
     $("expt-job-title").textContent =
       current.label.charAt(0).toUpperCase() + current.label.slice(1) +
       " (" + current.sample + ")";

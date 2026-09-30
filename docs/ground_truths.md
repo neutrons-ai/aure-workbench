@@ -3692,3 +3692,61 @@ model, which is the CLI's default.
 one at a time and for 180 s at most. It is behind the link, because the call
 is billed. Reading the section needs no link, so it never shows a key, not even
 redacted: it says only whether one is set.
+
+### 2026-09-30: what the review of the Language model section changed
+
+The design, security and test reviews of the two commits above found no
+critical problem. Their findings changed these things:
+
+- **`.env` is edited through python-dotenv's own parser** (`dotenv.parser.
+  parse_stream`), not by splitting lines.
+  - Splitting lines turned a form feed into a line break and rewrote an
+    `LLM_MODEL=` inside a quoted value.
+  - A bare `LLM_PROVIDER` line after the one nrw set made a reader unset the
+    provider, so Save answered 200 while a job used `~/.aure`.
+  - Each piece the parser gives back is kept byte for byte, including the blank
+    lines that belong to it, and a later line for a managed name is removed. The
+    header comment is gone, so undoing a choice restores the file exactly.
+  - These are python-dotenv's internal modules, so the dependency is bounded
+    `<2`.
+- **`.env` is read without following a link** (`O_NOFOLLOW | O_NONBLOCK`,
+  `fstat`, at most 1 MiB). Reading it is open to anyone who can reach the page,
+  and a planted link to a FIFO or to `/dev/zero` would have hung or exhausted
+  the server.
+- **Revisions are HMACs with a key made per process.** A plain SHA-256 of a
+  file of secrets, served openly, confirms a guess of its contents.
+- **The shared atomic writer set the mode after writing the data.** The temp
+  file sat under the umask, usually 0644, for the moment it held the new
+  contents. That was harmless for `nrw.toml` but not for `.env`'s keys. Now it
+  is created with the mode it is given, and `fchmod` runs before any byte is
+  written. `mode=` lets `.env` pass the mode it read through its own
+  descriptor, so the target is never looked up by name, which would follow a
+  link swapped in meanwhile. This applies to every caller of
+  `atomic_write_bytes`.
+- **`where_set` replays python-dotenv exactly.** It uses one list of files
+  (`_candidates`, now with `is_project`) and python-dotenv's own interpolation,
+  against the environment as it would stand at each file. So a `${VAR}` in
+  `~/.aure` sees what `.env` set, a bare name sets nothing, and
+  `PYTHON_DOTENV_DISABLED` is honoured before each file. A test compares the
+  result with a real child.
+- **The Check could leave a billed `claude` running.** `subprocess.run(timeout)`
+  kills only the direct child, and AuRE starts `claude` as a grandchild. Now:
+  - `jobs.run_nrw` gives the Check its own process group and kills the whole
+    group;
+  - `LLM_MAX_RETRIES=0` makes "one real call" exactly one;
+  - the deadline follows the effective `LLM_TIMEOUT`, plus a minute, capped at
+    ten minutes.
+- **The section has its own class** (`web/llm_settings.py`), and AuRE's
+  provider name, its default timeout and its rule for finding `claude` live in
+  `aure_adapter`.
+- **Provider errors are scrubbed of keys** (`aure_adapter.scrubbed`) before a
+  job prints them, because job logs are open to read.
+- **Each measurement goes into the request as one line**, marked as data, so a
+  note written over several lines cannot pass for another state's.
+
+**Decided, and open to change: New model shares the one job lane.** New model
+became a job in bdbfa3a, so it now waits behind a running fit, which the old
+synchronous command did not. The page disables the button and says so rather
+than refusing the click. A second lane for language-model jobs would need a
+second runner with its own records folder and a panel that follows two jobs.
+That is not done yet.

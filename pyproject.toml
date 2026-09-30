@@ -91,7 +91,11 @@ dependencies = [
   # untrusted file). Imported inside functions only: ~0.9 s, and `nrw --help`
   # must stay instant -- tests/test_cli.py enforces it.
   "pyarrow>=14.0.1",
-  "python-dotenv>=1.0",
+  # Its parser (`dotenv.parser`, `dotenv.variables`) edits the project's .env
+  # and replays loading for the Settings page: not its documented API, so a
+  # major version is not taken unread. tests/test_llm_settings.py pins what
+  # nrw relies on.
+  "python-dotenv>=1.0,<2",
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",

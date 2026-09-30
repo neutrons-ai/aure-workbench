@@ -63,6 +63,15 @@ REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 
+#: AuRE's Claude Code CLI provider, as ``LLM_PROVIDER`` names it. AuRE owns the
+#: name, so it is spelled here: the one module that speaks AuRE's API.
+CLAUDE_CODE = "claude_code"
+
+#: AuRE's own limit on one language-model call, in seconds, when
+#: ``LLM_TIMEOUT`` does not say (``aure.llm.config.get_llm_timeout``).
+DEFAULT_LLM_TIMEOUT = 120
+
+
 class AureUnavailableError(Exception):
     """Raised when AuRE is not importable or has moved a function we need."""
 
@@ -107,9 +116,32 @@ def claude_code_supported() -> bool:
     if spec is None or not spec.submodule_search_locations:
         return False
     for location in spec.submodule_search_locations:
-        if (Path(location) / "llm" / "providers" / "claude_code.py").is_file():
+        if (Path(location) / "llm" / "providers" / f"{CLAUDE_CODE}.py").is_file():
             return True
     return False
+
+
+def claude_cli(binary: str | None = None) -> str | None:
+    """The ``claude`` AuRE's provider would run, or ``None`` when there is none.
+
+    AuRE's own rule (``claude_code._binary``), found without importing AuRE:
+    ``AURE_CLAUDE_BIN`` when it is set -- a path to an executable, or a name on
+    ``PATH`` -- and otherwise ``claude`` on ``PATH``.
+
+    Args:
+        binary: What ``AURE_CLAUDE_BIN`` is set to, if anything.
+
+    Returns:
+        The path of the executable.
+    """
+    import os
+    import shutil
+
+    if binary:
+        if os.path.isfile(binary) and os.access(binary, os.X_OK):
+            return binary
+        return shutil.which(binary)
+    return shutil.which("claude")
 
 
 def endpoint_hint() -> str:
@@ -124,7 +156,7 @@ def endpoint_hint() -> str:
     )
     if claude_code_supported():
         return (
-            base + ", or set LLM_PROVIDER=claude_code to use the Claude Code "
+            base + f", or set LLM_PROVIDER={CLAUDE_CODE} to use the Claude Code "
             "CLI you already have — that one needs no key."
         )
     return base + "."
@@ -744,6 +776,30 @@ def llm_info() -> dict[str, Any]:
     return info
 
 
+def scrubbed(text: str) -> str:
+    """*text* with every key this process holds taken out of it.
+
+    A provider's error can quote the request it refused, key included, and what
+    a job prints is served to anyone who can read the page.
+
+    Args:
+        text: An error message, say.
+
+    Returns:
+        The text, each secret's value replaced by ``[a key]``.
+    """
+    import os
+
+    from nr_workbench.env import SECRET_VARS
+
+    for name in SECRET_VARS:
+        value = os.environ.get(name, "")
+        # A short value would be found in ordinary words; no key is that short.
+        if len(value) >= 8:
+            text = text.replace(value, "[a key]")
+    return text
+
+
 def complete(system: str, user: str, *, temperature: float = 0.0) -> str:
     """Send one prompt to the configured endpoint and return the reply text.
 
@@ -772,7 +828,7 @@ def complete(system: str, user: str, *, temperature: float = 0.0) -> str:
         reply = model.invoke([("system", system), ("human", user)])
     except Exception as exc:
         raise AureUnavailableError(
-            f"The language-model call failed: {type(exc).__name__}: {exc}"
+            scrubbed(f"The language-model call failed: {type(exc).__name__}: {exc}")
         ) from exc
 
     content = getattr(reply, "content", reply)

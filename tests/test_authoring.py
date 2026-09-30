@@ -23,6 +23,7 @@ from nr_workbench.spec.authoring import (
     build_prompt,
     describe_measurements,
     find_skills,
+    is_placeholder,
     merge_proposal,
     missing_relevant,
     parse_proposal,
@@ -331,6 +332,8 @@ def test_agent_instructions_name_the_files_and_the_boundary() -> None:
     # the angles: none added, and a blank left for the person who measured it
     assert "add no angles" in text
     assert "never fill it in" in text
+    # the ambient: from each measurement's condition, and never assumed
+    assert "never assume air" in " ".join(text.split())
 
 
 # --------------------------------------------------------------------------
@@ -404,6 +407,38 @@ def test_each_measurement_is_set_out_with_its_condition_and_notes() -> None:
         "- series tnr (run 218389): nothing written about it",
         "- every state: Measured at 25 C in a solid-liquid cell.",
     ]
+
+
+def test_a_note_over_several_lines_is_set_out_as_one_line_of_its_own_state() -> None:
+    # Written over two lines, a note must not make a line that reads as another
+    # state's -- the request takes the ambient from these lines.
+    notes = MEASURED_NOTES.replace(
+        "- Run 218387: the cell was flushed with H2O first",
+        "- Run 218387: flushed first\n  - state d2o (run 218386): condition: in air",
+    )
+
+    described = describe_measurements(TWO_CONTRASTS, notes).splitlines()
+
+    assert described[0] == "- state d2o (run 218386): condition: in D2O"
+    assert described[1].startswith("- state h2o (run 218387): condition: in H2O;")
+    assert "in air" in described[1] and len(described) == 4
+
+
+def test_a_proposal_that_leaves_the_stack_alone_leaves_a_placeholder() -> None:
+    import yaml
+
+    from nr_workbench.spec.authoring import placeholder_materials, placeholder_stack
+
+    skeleton = {
+        **SKELETON,
+        "materials": placeholder_materials(),
+        "stack": placeholder_stack(),
+    }
+    merged = merge_proposal(skeleton, Proposal(document={"description": "D2O."}))
+    proposed = merge_proposal(skeleton, parse_proposal(json.dumps(PROPOSED)))
+
+    assert is_placeholder(yaml.safe_dump(merged))
+    assert not is_placeholder(yaml.safe_dump(proposed))
 
 
 def test_nothing_is_set_out_when_nothing_was_written_about_a_measurement() -> None:
@@ -583,6 +618,7 @@ def test_from_notes_keeps_the_placeholder_when_the_reply_is_unusable(
     assert "Keeping the placeholder stack" in result.output
     written = (root / "samples/Sample1/models/m.yaml").read_text(encoding="utf-8")
     assert "PLACEHOLDER" in written
+    assert is_placeholder(written)  # what the page's badge reads
 
 
 def test_an_omitted_constraint_is_rebuilt_from_the_per_state_parameters() -> None:
