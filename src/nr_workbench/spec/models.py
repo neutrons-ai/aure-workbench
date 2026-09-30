@@ -371,16 +371,31 @@ class Trim(_Base):
         }
 
 
+def _incident_angle(value: float | None, where: str) -> float | None:
+    """An incident angle in degrees, or ``None`` for one read from its file."""
+    if value is not None and not 0 < value < 90:  # NaN fails this too
+        raise SpecError(
+            f"{where}: an incident angle is in degrees, between 0 and 90, not {value!r}"
+        )
+    return value
+
+
 class Segment(_Base):
     """One angle segment of a steady-state measurement.
 
     Attributes:
         file: Path to the reduced data, relative to the project root.
-        theta: Incident angle in degrees -- theta, not two-theta.
+        theta: Incident angle in degrees -- theta, not two-theta. Left out, it
+            is read from the file's header; given, it is checked against it.
     """
 
     file: str
-    theta: float
+    theta: float | None = None
+
+    @field_validator("theta")
+    @classmethod
+    def _an_angle(cls, value: float | None) -> float | None:
+        return _incident_angle(value, "a segment's `theta`")
 
 
 class State(_Base):
@@ -391,8 +406,13 @@ class State(_Base):
         condition: Free text, e.g. "OCV before EIS". Carried into the record.
         run: Run number, used to resolve ``segments: auto``.
         kind: ``partials`` (one file per angle) or ``combined``.
-        segments: Explicit segment list, or ``auto`` to resolve from ``run``.
-        thetas: Angles for ``segments: auto``.
+        segments: Explicit segment list, or ``auto`` to resolve from ``run``:
+            every segment of the run in ``data_dir``.
+        thetas: Angles for ``segments: auto``, in degrees, one per segment.
+            Left out -- or ``null`` in a place -- each is read from its file's
+            header; one given is checked against it. There is no default: an
+            angle assumed from habit sets the fit's wavelength axis, and a
+            wrong one is absorbed into the fit rather than reported.
         data_dir: Directory holding the files, relative to the project root.
     """
 
@@ -401,7 +421,7 @@ class State(_Base):
     run: int | None = None
     kind: StateKind = "partials"
     segments: list[Segment] | Literal["auto"] = "auto"
-    thetas: list[float] = Field(default_factory=lambda: [0.45, 1.2, 3.5])
+    thetas: list[float | None] | None = None
     data_dir: str | None = None
 
     @field_validator("name")
@@ -413,11 +433,27 @@ class State(_Base):
             )
         return value
 
+    @field_validator("thetas")
+    @classmethod
+    def _angles(cls, value: list[float | None] | None) -> list[float | None] | None:
+        for angle in value or []:
+            _incident_angle(angle, "`thetas`")
+        return value
+
     @model_validator(mode="after")
     def _auto_needs_a_run(self) -> State:
         if self.segments == "auto" and self.run is None:
             raise SpecError(
                 f"state {self.name!r}: `segments: auto` needs a `run` number"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _thetas_are_for_auto(self) -> State:
+        if self.segments != "auto" and self.thetas is not None:
+            raise SpecError(
+                f"state {self.name!r}: `thetas` is for `segments: auto`; give "
+                "each listed segment its own `theta`, or none to read its file's"
             )
         return self
 
@@ -457,7 +493,10 @@ class Series(_Base):
         condition: Free text, e.g. "during EIS".
         run: Run number.
         reduced_dir: Directory of reduced slices, relative to the project root.
-        theta: Incident angle in degrees. tNR is a single angle.
+        theta: Incident angle in degrees; tNR is a single angle. The slices
+            carry no header, so left out it is read from the run's summed
+            dataset in the sample's ``data/steady``; given, it is checked
+            against that.
         select: Which slices to include.
         time_from: Where slice times come from. ``filename`` parses
             ``r<run>_t<seconds>.txt``; ``reduction_json`` reads the sidecar,
@@ -468,9 +507,14 @@ class Series(_Base):
     condition: str = ""
     run: int | None = None
     reduced_dir: str
-    theta: float = 0.6
+    theta: float | None = None
     select: SeriesSelect = Field(default_factory=SeriesSelect)
     time_from: Literal["filename", "reduction_json"] = "filename"
+
+    @field_validator("theta")
+    @classmethod
+    def _an_angle(cls, value: float | None) -> float | None:
+        return _incident_angle(value, "a series' `theta`")
 
     @field_validator("name")
     @classmethod
@@ -591,24 +635,26 @@ class Constraint(_Base):
 
 
 class FitSettings(_Base):
-    """Default fit settings recorded with the model.
+    """A spec's ``fit:`` block. **Not read**: kept so a spec that has one validates.
+
+    It was meant as each model's default fit settings, but nothing ever read
+    it, while ``nrw model new`` and ``nrw aure import`` wrote ``method: amoeba``
+    into every spec -- a setting in plain view that did nothing. A fit's
+    settings come from ``nrw fit run``'s options, the Experiment page's Fit
+    form, and the project's ``nrw.toml`` [fit] (see
+    :mod:`nr_workbench.fitting.settings`). ``nrw model validate`` says so of a
+    spec that still has the block.
 
     Attributes:
-        method: Which fitter, ``amoeba``, ``de`` or ``dream``. See
-            :mod:`nr_workbench.fitters` for why those are the only three.
+        method: A fitter, ``amoeba``, ``de`` or ``dream``, if one is named.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
-        pop: Population size, as a multiplier on the number of free
-            parameters. Used by ``de`` and ``dream``; ignored by ``amoeba``,
-            which has no population. It belongs in the spec rather than only
-            on the command line because it changes what the search covers, so
-            two runs of the same spec at different populations are two
-            different searches and the record should say which was which.
+        pop: Population size.
         seed: Random seed.
     """
 
-    method: str = "amoeba"
+    method: str | None = None
     steps: int | None = None
     samples: int | None = None
     burn: int | None = None
@@ -617,16 +663,12 @@ class FitSettings(_Base):
 
     @field_validator("method")
     @classmethod
-    def _known_fitter(cls, value: str) -> str:
-        """Reject a fitter the tool will not run.
-
-        Checked here as well as at the CLI because a spec's `fit:` block is the
-        default every later `nrw fit run` inherits, so an off-menu choice
-        written once would keep being made silently.
-        """
+    def _known_fitter(cls, value: str | None) -> str | None:
+        """Reject a fitter the tool will not run, even in a block not read:
+        someone reading the spec would take it for the fitter."""
         from nr_workbench.fitters import FITTERS, refuse
 
-        if value not in FITTERS:
+        if value is not None and value not in FITTERS:
             raise ValueError(refuse(value))
         return value
 
@@ -650,7 +692,7 @@ class ModelSpec(_Base):
         constraints: Functional forms across a series.
         trim: Ranges of the data to keep. Later entries win field by field,
             so a global cut can be narrowed for one measurement.
-        fit: Default fit settings.
+        fit: Not read; see :class:`FitSettings`.
         post_build: Verbatim Python appended to the generated script. An escape
             hatch, hash-tracked and flagged -- every use is a schema bug report.
     """

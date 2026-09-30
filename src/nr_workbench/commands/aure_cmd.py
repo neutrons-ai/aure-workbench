@@ -22,7 +22,6 @@ from __future__ import annotations
 import itertools
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -51,12 +50,6 @@ BUDGETS: dict[str, dict[str, Any]] = {
 RUN_ENV_FILE = "run-env.json"
 
 
-#: An identifier that is safe to join onto a path. Same shape `nrw sample new`
-#: already enforces for a sample id; applied here to `--name` too, because a
-#: name reaches the filesystem exactly as a sample does.
-_SAFE_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
-
 def _safe(value: str, what: str) -> str:
     """Return ``value`` if it is a plain name, else refuse.
 
@@ -66,7 +59,11 @@ def _safe(value: str, what: str) -> str:
     clear one, and the containment the rest of the layout assumes would be
     quietly untrue.
     """
-    if not _SAFE_SEGMENT.match(value) or value in {".", ".."}:
+    # Applied to --name as well as the sample: a name reaches the filesystem
+    # exactly as a sample does. Matched whole: `$` let "name\n" through.
+    from nr_workbench.project.samples import PLAIN_NAME_RE
+
+    if not PLAIN_NAME_RE.fullmatch(value):
         raise click.ClickException(
             f"{what} {value!r} must be a plain name -- letters, digits, dot, "
             "dash and underscore -- not a path."
@@ -101,7 +98,7 @@ def run_aure_new(
         click.ClickException: If the data or the description is missing, or the
             target exists and ``force`` was not given.
     """
-    from nr_workbench.aure_setup import SetupError, compose, setup_dir
+    from nr_workbench.aure_setup import SETUP_FILE, SetupError, compose, setup_dir
     from nr_workbench.project.scan import load_register, scan_sample
 
     layout = _layout()
@@ -132,8 +129,18 @@ def run_aure_new(
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    from nr_workbench.experiment.render import sample_md_pending
+
+    if sample_md_pending(layout.root, sample):
+        click.secho(
+            f"  !  samples/{sample}/sample.md is not what the experiment catalog "
+            "would write now:\n     edits saved on the Experiment page reach it "
+            "when you Apply. AuRE reads it as it is.",
+            fg="yellow",
+        )
+
     run_name = composed.document["name"]
-    target = setup_dir(layout.root, sample, run_name) / "setup.yaml"
+    target = setup_dir(layout.root, sample, run_name) / SETUP_FILE
     if target.exists() and not force:
         raise click.ClickException(
             f"{target.relative_to(layout.root)} already exists. Use --force to "
@@ -269,7 +276,9 @@ def run_aure_run(
             f"Unknown budget {budget!r}. Choose from: {', '.join(BUDGETS)}."
         )
 
-    output = setup_path.parent / "output"
+    from nr_workbench.aure_setup import OUTPUT_DIR
+
+    output = setup_path.parent / OUTPUT_DIR
     overrides = _run_environment(mode_enumeration=mode_enumeration)
     settings = BUDGETS[budget]
 
@@ -487,6 +496,7 @@ def run_aure_import(
     name: str,
     run: int | None = None,
     force: bool = False,
+    replace_unedited: bool = False,
 ) -> None:
     """Turn a finished AuRE run into an nrw model spec.
 
@@ -496,13 +506,18 @@ def run_aure_import(
         name: Model name; also the filename.
         run: Which steady run the states describe; inferred when there is one.
         force: Overwrite an existing spec.
+        replace_unedited: Overwrite an existing spec only if it is a proposal
+            of AuRE's nobody has edited since -- as a new quick fit does.
 
     Raises:
-        click.ClickException: If the run holds no model, or the target exists.
+        click.ClickException: If the run holds no model, or the target exists
+            and may not be replaced.
     """
     from nr_workbench.aure_import import (
         ImportError_,
         fitted_model,
+        is_unedited_proposal,
+        layer_names,
         read_final_state,
         reported_chisq,
         run_of,
@@ -512,8 +527,9 @@ def run_aure_import(
     from nr_workbench.aure_setup import SetupError, choose_run
     from nr_workbench.commands.model import (
         _emit_spec,
+        blank_angles_comment,
         state_for_run,
-        warn_assumed_angles,
+        warn_blank_angles,
     )
     from nr_workbench.project.scan import load_register, scan_sample
 
@@ -548,16 +564,27 @@ def run_aure_import(
         )
     try:
         chosen = choose_run(found, inferred)
-        block, _, assumed = state_for_run(layout.root, found.steady[chosen])
+        block, _, blank = state_for_run(layout.root, found.steady[chosen])
     except (SetupError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     target = layout.sample(sample) / "models" / f"{name}.yaml"
     if target.exists() and not force:
-        raise click.ClickException(
-            f"{target.relative_to(layout.root)} already exists. Use --force to "
-            "overwrite."
-        )
+        # Checked as the file is written, not when a job was started minutes
+        # before: an edit made while AuRE ran is never replaced.
+        existing = target.read_text(encoding="utf-8")
+        if not (replace_unedited and is_unedited_proposal(existing)):
+            detail = (
+                " and has been edited since AuRE proposed it, or was not proposed "
+                "by AuRE; --replace-unedited replaces only a proposal nobody has "
+                "edited"
+                if replace_unedited
+                else ""
+            )
+            raise click.ClickException(
+                f"{target.relative_to(layout.root)} already exists{detail}. Use "
+                "another --name, or --force to overwrite it anyway."
+            )
 
     document = to_spec(
         model=model,
@@ -567,13 +594,27 @@ def run_aure_import(
         chisq=reported_chisq(state),
     )
 
+    # AuRE names layers in prose; a spec's names are identifiers. The file
+    # keeps AuRE's, so the stack can still be read against AuRE's report.
+    renamed = [(aure, spec) for aure, spec in layer_names(model) if aure != spec]
     target.parent.mkdir(parents=True, exist_ok=True)
+    from nr_workbench.codegen.generator import stamp_self_hash
+
     target.write_text(
-        _provenance_header(layout, target, Path(output_dir)) + _emit_spec(document),
+        stamp_self_hash(
+            _provenance_header(layout, target, Path(output_dir))
+            + _renamed_comment(renamed)
+            + blank_angles_comment(blank)
+            + _emit_spec(document)
+        ),
         encoding="utf-8",
     )
     click.echo(f"Wrote {target.relative_to(layout.root)}")
-    warn_assumed_angles(assumed)
+    if renamed:
+        click.echo("  layer names, as a spec takes them (AuRE's in quotes):")
+        for aure, spec in renamed:
+            click.echo(f"    {spec}  {aure!r}")
+    warn_blank_angles(blank)
 
     # Anything AuRE's fit had that this spec does not. Silence here would mean
     # an unconstrained spec quoting the chi-squared of a constrained fit.
@@ -598,6 +639,16 @@ def run_aure_import(
     click.echo(f"  nrw model generate {target.relative_to(layout.root)}")
 
 
+def _renamed_comment(renamed: list[tuple[str, str]]) -> str:
+    """The layers AuRE named otherwise, as comments; ``repr`` keeps each on one
+    line whatever AuRE's name held."""
+    if not renamed:
+        return ""
+    lines = ["# Layer names, as a spec takes them, and AuRE's own:"]
+    lines += [f"#   {spec} = {aure!r}" for aure, spec in renamed]
+    return "\n".join(lines) + "\n#\n"
+
+
 def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) -> str:
     """Say who proposed this stack, and under what.
 
@@ -606,6 +657,7 @@ def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) ->
     a measurement without going looking.
     """
     from nr_workbench.aure_adapter import resolved_commit
+    from nr_workbench.aure_import import PROPOSED_MARKER
     from nr_workbench.commands.model import _schema_relative
 
     try:
@@ -627,15 +679,23 @@ def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) ->
         f"{RUN_ENV_FILE}\n# beside the output directory, so what it ran with "
         "cannot be reconstructed.\n"
     )
+    try:
+        source = output_dir.resolve().relative_to(layout.root.resolve()).as_posix()
+    except ValueError:
+        source = output_dir.as_posix()
     return (
         f"# yaml-language-server: $schema={_schema_relative(layout, target)}\n"
         "#\n"
-        f"# The stack below was PROPOSED by AuRE {release} @ {commit[:12]},\n"
+        f"# The stack below {PROPOSED_MARKER} {release} @ {commit[:12]},\n"
         "# from sample.md and the data. It is a starting point, not a\n"
         "# measurement -- check every layer and range before fitting.\n"
         "# States, angles and data_dir were read from the files' own headers\n"
         "# and were not proposed.\n"
         f"{knob_line}"
+        f"#   from:        {source!r}\n"
+        # Edited, this no longer holds -- and a new quick fit of the model then
+        # leaves the file alone rather than replacing it.
+        f"#   self sha256: {'0' * 64}  (nrw:self)\n"
         "#\n"
         "#   nrw model validate <this file>\n"
         "#   nrw model generate <this file>\n"

@@ -436,3 +436,50 @@ def test_a_layer_name_is_written_as_a_python_literal() -> None:
 
     assert "SLD('" in source or 'SLD("' in source
     ast.parse(source)
+
+
+def test_a_description_never_becomes_code() -> None:
+    # Three quotes would close the docstring; a backslash would be an escape.
+    # The description may come from a language model (`--from-notes`).
+    description = (
+        "Film on Si.\n"
+        '"""; __import__("os").system("echo PWNED"); """\n'
+        "See C:\\data and \\N{BULLET}."
+    )
+    source = generate(
+        table_from({**BASE, "description": description}, {"a": 2, "b": 1}),
+        now=FIXED_TIME,
+    )
+
+    module = ast.parse(source)
+
+    docstring, after = module.body[0], module.body[1]
+    assert isinstance(docstring, ast.Expr) and isinstance(docstring.value, ast.Constant)
+    assert docstring.value.value.strip() == description
+    assert isinstance(after, ast.Import | ast.ImportFrom)
+    assert verify_self_hash(source)
+
+
+def test_a_plain_description_is_written_as_it_is() -> None:
+    description = "Film on Si, with \"double\" and 'single' quotes."
+    source = generate(
+        table_from({**BASE, "description": description}, {"a": 2, "b": 1}),
+        now=FIXED_TIME,
+    )
+
+    assert f'"""\n{description}\n"""' in source
+
+
+def test_a_name_with_a_line_break_stays_inside_its_comment() -> None:
+    source = generate(
+        table_from({**BASE, "name": "demo\nimport os"}, {"a": 2, "b": 1}),
+        now=FIXED_TIME,
+    )
+
+    module = ast.parse(source)
+
+    assert "#   model:       'demo\\nimport os'" in source
+    imported = [
+        a.name for n in module.body if isinstance(n, ast.Import) for a in n.names
+    ]
+    assert "os" not in imported

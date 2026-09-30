@@ -24,18 +24,18 @@ stack:                                      # ambient -> substrate
 
 probe: {resolution: angular_only, dq_is_fwhm: true}
 
+# No angles: each is read from its file's header (a series': from its run's
+# summed dataset in data/steady). State one only for a file that records none.
 states:
   - name: ocv1
     condition: OCV before the EIS sequence
     run: 218386
     segments: auto
-    thetas: [0.45, 1.2, 3.5]
     data_dir: samples/Sample6/data/steady
   - name: ocv2
     condition: OCV after the EIS sequence
     run: 218393
     segments: auto
-    thetas: [0.45, 1.2, 3.5]
     data_dir: samples/Sample6/data/steady
 
 series:
@@ -43,7 +43,6 @@ series:
     condition: during the EIS sequence
     run: 218389
     reduced_dir: samples/Sample6/data/tnr/218389
-    theta: 0.6
     time_from: reduction_json
     select:
       labels: ["sequence_*_eis_*"]
@@ -95,4 +94,6 @@ constraints:
       - CuOx.rho
       - Ti.rho
 
-fit: {method: dream, samples: 5000, burn: 2000}
+# How this model is fitted is not part of it: `nrw fit run` takes the fitter
+# from its options, else from the project's nrw.toml [fit] -- DREAM, unless
+# that says otherwise. (A `fit:` block here would not be read.)

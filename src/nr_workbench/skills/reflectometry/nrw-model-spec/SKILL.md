@@ -164,20 +164,27 @@ against 101.994 here), so re-run rather than compare.
 
 ```yaml
 states:
-  - {name: ocv1, run: 218386, segments: auto, thetas: [0.45, 1.2, 3.5],
-     data_dir: samples/Sample6/data/steady}
+  - {name: ocv1, run: 218386, segments: auto, data_dir: samples/Sample6/data/steady}
 series:
   - name: tnr
     run: 218389
     reduced_dir: samples/Sample6/data/tnr/218389
-    theta: 0.6
     time_from: reduction_json          # or `filename` for r<run>_t<sec>.txt
     select: {labels: ["sequence_*_eis_*"]}
 ```
 
-`segments: auto` globs `REFL_<run>_<i>_*_partial.txt` per angle and fails if a
-file is missing or ambiguous — which is the check that replaces the
-DON'T-FORGET comment.
+`segments: auto` is every segment of the run in `data_dir` — either reduction's
+file names — and fails if one is ambiguous or missing from the middle, which is
+the check that replaces the DON'T-FORGET comment.
+
+**No angle is written, and none is assumed.** Each is read from its own file's
+header; a series' from its run's summed dataset in `data/steady`, because the
+slices carry none. `thetas` (one per segment, `null` for any read from its file)
+or a series' `theta` is only for a file that records no angle — `nrw model new`
+leaves those `null`, for you to fill in, and validation refuses the spec until
+you do. An angle you state for a file that records its own is checked against
+it and refused if they disagree. A misalignment belongs in `probe.theta_offset`,
+not in `thetas`.
 
 ### 5. Declare the parameters
 

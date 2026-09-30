@@ -21,7 +21,9 @@ from nr_workbench.spec.authoring import (
     Proposal,
     agent_instructions,
     build_prompt,
+    describe_measurements,
     find_skills,
+    is_placeholder,
     merge_proposal,
     missing_relevant,
     parse_proposal,
@@ -327,7 +329,11 @@ def test_agent_instructions_name_the_files_and_the_boundary() -> None:
     assert "skills/reflectometry/nrw-model-spec/SKILL.md" in text
     assert "Leave `states`, `series`, `thetas`" in text
     assert "nrw model validate" in text
-    assert 'do not "tidy" 1.201 to 1.2' in text
+    # the angles: none added, and a blank left for the person who measured it
+    assert "add no angles" in text
+    assert "never fill it in" in text
+    # the ambient: from each measurement's condition, and never assumed
+    assert "never assume air" in " ".join(text.split())
 
 
 # --------------------------------------------------------------------------
@@ -358,6 +364,144 @@ def sample_with_data(project: Path) -> Path:
         encoding="utf-8",
     )
     return project
+
+
+#: What was written about each measurement: a contrast per run in the table,
+#: a note on one run, and what every run shares.
+MEASURED_NOTES = """# S1
+
+## Description
+
+A lipid bilayer on silicon.
+
+## Measurements
+
+| Run | Type | Condition |
+|---|---|---|
+| 218386 | steady | in D2O |
+| 218387 | steady | in H2O |
+
+## Measurement conditions
+
+Measured at 25 C in a solid-liquid cell.
+
+- Run 218387: the cell was flushed with H2O first
+"""
+
+TWO_CONTRASTS = {
+    **SKELETON,
+    "states": [
+        {"name": "d2o", "run": 218386},
+        {"name": "h2o", "run": 218387},
+    ],
+}
+
+
+def test_each_measurement_is_set_out_with_its_condition_and_notes() -> None:
+    described = describe_measurements(TWO_CONTRASTS, MEASURED_NOTES)
+
+    assert described.splitlines() == [
+        "- state d2o (run 218386): condition: in D2O",
+        "- state h2o (run 218387): condition: in H2O; notes: the cell was "
+        "flushed with H2O first",
+        "- series tnr (run 218389): nothing written about it",
+        "- every state: Measured at 25 C in a solid-liquid cell.",
+    ]
+
+
+def test_a_note_over_several_lines_is_set_out_as_one_line_of_its_own_state() -> None:
+    # Written over two lines, a note must not make a line that reads as another
+    # state's -- the request takes the ambient from these lines.
+    notes = MEASURED_NOTES.replace(
+        "- Run 218387: the cell was flushed with H2O first",
+        "- Run 218387: flushed first\n  - state d2o (run 218386): condition: in air",
+    )
+
+    described = describe_measurements(TWO_CONTRASTS, notes).splitlines()
+
+    assert described[0] == "- state d2o (run 218386): condition: in D2O"
+    assert described[1].startswith("- state h2o (run 218387): condition: in H2O;")
+    assert "in air" in described[1] and len(described) == 4
+
+
+def test_a_proposal_that_leaves_the_stack_alone_leaves_a_placeholder() -> None:
+    import yaml
+
+    from nr_workbench.spec.authoring import placeholder_materials, placeholder_stack
+
+    skeleton = {
+        **SKELETON,
+        "materials": placeholder_materials(),
+        "stack": placeholder_stack(),
+    }
+    merged = merge_proposal(skeleton, Proposal(document={"description": "D2O."}))
+    proposed = merge_proposal(skeleton, parse_proposal(json.dumps(PROPOSED)))
+
+    assert is_placeholder(yaml.safe_dump(merged))
+    assert not is_placeholder(yaml.safe_dump(proposed))
+
+
+def test_nothing_is_set_out_when_nothing_was_written_about_a_measurement() -> None:
+    notes = "# S1\n\n## Description\n\nA lipid bilayer on silicon.\n"
+
+    assert describe_measurements(TWO_CONTRASTS, notes) == ""
+
+
+def test_the_request_carries_each_measurement_and_never_assumes_air() -> None:
+    measurements = describe_measurements(TWO_CONTRASTS, MEASURED_NOTES)
+
+    system, user = build_prompt(
+        skeleton=TWO_CONTRASTS,
+        notes=MEASURED_NOTES,
+        skills={},
+        measurements=measurements,
+    )
+
+    assert "===== EACH MEASUREMENT, AS THE NOTES DESCRIBE IT =====" in user
+    assert "- state h2o (run 218387): condition: in H2O" in user
+    assert "never assume air" in system
+    # A contrast that differs is the ambient's rho, one entry per state.
+    assert "per: state, in: [<that state>]" in system
+
+
+def test_from_notes_asks_with_each_runs_condition(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page's New model runs this: a condition written for a run must reach
+    the language model as that state's, or every state is fitted in air."""
+    from click.testing import CliRunner
+
+    from nr_workbench import aure_adapter
+    from nr_workbench.cli import main
+
+    root = sample_with_data(project)
+    (root / "samples" / "Sample1" / "sample.md").write_text(
+        "# Sample1\n\n## Description\n\nCopper electrode with a native oxide.\n"
+        "\n## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 100001 | steady | in d8-THF |\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(root)
+    monkeypatch.setattr(
+        aure_adapter,
+        "llm_info",
+        lambda: {"available": True, "provider": "stub", "model": "test-model"},
+    )
+    asked: list[str] = []
+
+    def complete(system: str, user: str, **kw) -> str:
+        asked.append(user)
+        return json.dumps(PROPOSED)
+
+    monkeypatch.setattr(aure_adapter, "complete", complete)
+
+    result = CliRunner().invoke(
+        main, ["model", "new", "Sample1", "--name", "m", "--from-notes"]
+    )
+
+    assert result.exit_code == 0, result.output
+    (user,) = asked
+    assert "- state run100001 (run 100001): condition: in d8-THF" in user
 
 
 def test_print_prompt_writes_the_skeleton_it_tells_the_agent_to_edit(
@@ -435,9 +579,15 @@ def test_from_notes_merges_a_proposal_and_records_who_made_it(
     assert "PLACEHOLDER" not in written
     document = yaml.safe_load(written)
     assert [layer["name"] for layer in document["stack"]] == ["THF", "Cu", "Si"]
-    # and the measured angles are still the ones read from the headers,
-    # rounded but not rounded to the nominal settings
-    assert document["states"][0]["thetas"] == [0.4499, 1.2009]
+    # and the angles are still the files' own: the spec carries none, so no
+    # proposal can have changed them, and resolving reads each header.
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
+
+    assert "thetas" not in document["states"][0]
+    spec = load_spec(root / "samples/Sample1/models/m.yaml")
+    resolved = discover_measurements(spec, root)["run100001"]
+    assert [round(m.theta, 4) for m in resolved] == [0.4499, 1.2009]
 
 
 def test_from_notes_keeps_the_placeholder_when_the_reply_is_unusable(
@@ -468,6 +618,7 @@ def test_from_notes_keeps_the_placeholder_when_the_reply_is_unusable(
     assert "Keeping the placeholder stack" in result.output
     written = (root / "samples/Sample1/models/m.yaml").read_text(encoding="utf-8")
     assert "PLACEHOLDER" in written
+    assert is_placeholder(written)  # what the page's badge reads
 
 
 def test_an_omitted_constraint_is_rebuilt_from_the_per_state_parameters() -> None:

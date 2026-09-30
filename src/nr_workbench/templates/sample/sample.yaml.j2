@@ -5,9 +5,11 @@
 # scan` maintains it and reports where the two disagree.
 schema: nrw-sample/1
 id: {{ sample_id }}
-title: "{{ title }}"
-{% if beamtime %}beamtime: "{{ beamtime }}"
-{% endif %}created: "{{ created }}"
+{# `tojson` is a valid YAML double-quoted scalar: a title with a quote in it
+   must not produce a register `yaml.safe_load` cannot read. -#}
+title: {{ title|tojson }}
+{% if beamtime %}beamtime: {{ beamtime|tojson }}
+{% endif %}created: {{ created|tojson }}
 
 # Steady-state measurements. Populated by `nrw sample scan`.
 steady: []

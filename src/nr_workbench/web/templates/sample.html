@@ -13,7 +13,7 @@
   <span class="text-secondary small">
     {{ sample.steady|length }} steady ·
     {{ sample.series|length }} series ·
-    {{ sample.fits|length }} fits
+    {{ sample.fits|rejectattr('curation.discarded')|list|length }} fits
   </span>
 </div>
 
@@ -125,10 +125,12 @@
           <th class="text-end">free</th><th>method</th><th>when</th><th></th>
         </tr></thead>
         <tbody>
-        {% for row in sample.fits %}
+        {# A discarded fit is set aside: on the Fits page, behind its toggle. #}
+        {% for row in sample.fits if not (row.curation or {}).discarded %}
           <tr>
             <td>{% if row.present is not defined or row.present %}<a class="mono" href="{{ url_for('fit', fit_id=row.fit_id) }}">{{ row.fit_id }}</a>{% else %}<span class="mono text-secondary">{{ row.fit_id }}</span> <span class="badge text-bg-secondary" title="the result directory was deleted; the index keeps the record that the run happened">deleted</span>{% endif %}
               {% for label in row.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+              {% if (row.curation or {}).starred %}<span title="starred">★</span>{% endif %}
             </td>
             <td class="small">{{ row.model }}</td>
             <td class="text-end mono">{{ '%.4g'|format(row.chisq) if row.chisq is not none else '—' }}</td>

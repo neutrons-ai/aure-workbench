@@ -14,13 +14,13 @@ import click
 
 from nr_workbench.agent.guard import refuse_if_agent
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
-from nr_workbench.provenance.index import EVENT_PROMOTE, FitIndex
+from nr_workbench.provenance.index import FitIndex
 from nr_workbench.provenance.lookup import (
     FitNotFoundError,
     resolve_fit,
 )
 from nr_workbench.provenance.lookup import fit_dir as find_fit_dir
-from nr_workbench.provenance.record import FitDirectory, format_timestamp, utc_now
+from nr_workbench.provenance.record import FitDirectory
 from nr_workbench.provenance.summary import annotate
 from nr_workbench.provenance.whence import (
     Freshness,
@@ -231,7 +231,11 @@ def _print_whence(result: Any) -> None:
 
 
 def run_ls(
-    *, sample: str | None = None, as_json: bool = False, limit: int = 50
+    *,
+    sample: str | None = None,
+    as_json: bool = False,
+    limit: int = 50,
+    show_all: bool = False,
 ) -> None:
     """List recorded fits, newest first.
 
@@ -239,15 +243,27 @@ def run_ls(
         sample: Restrict to one sample.
         as_json: Emit machine-readable JSON.
         limit: Maximum rows to show.
+        show_all: Include fits that were discarded, or whose files were
+            deleted; they are left out otherwise.
 
     Raises:
         click.ClickException: If there is no project here.
     """
+    from nr_workbench.provenance.curation import NONE, curation_of
+
     layout = _layout()
     index = FitIndex(layout.index_file)
+    curated = curation_of(index.entries())
     # Annotate the whole history, then trim: the change line for the oldest
     # row shown is relative to a fit that may be below the limit.
-    rows = annotate(index.fits(sample=sample))[:limit]
+    rows = [
+        {**row, "curation": curated.get(str(row.get("fit_id")), NONE).as_dict()}
+        for row in annotate(index.fits(sample=sample))
+    ]
+    hidden = [r for r in rows if r["curation"]["discarded"] or r["curation"]["deleted"]]
+    if not show_all:
+        rows = [r for r in rows if r not in hidden]
+    rows = rows[:limit]
 
     if as_json:
         click.echo(json.dumps(rows, indent=2, default=str))
@@ -258,11 +274,8 @@ def run_ls(
         return
 
     documented = _documented(layout, rows)
-    promoted = {
-        entry.get("fit_id")
-        for label in {str(e.get("label")) for e in index.promotions()}
-        if (entry := index.current_label(label)) is not None
-    }
+    # The fits holding a label now: each sample's last promotion of it.
+    promoted = {str(r.get("fit_id")) for r in rows if r["curation"]["labels"]}
 
     width = max(len(str(r.get("fit_id", ""))) for r in rows)
     click.echo(
@@ -272,7 +285,11 @@ def run_ls(
         fit_id = str(row.get("fit_id", ""))
         chisq = row.get("chisq")
         chisq_text = f"{chisq:.4g}" if isinstance(chisq, int | float) else "-"
+        state = row["curation"]
         star = " *" if fit_id in promoted else ""
+        star += " ★" if state["starred"] else ""
+        star += " (discarded)" if state["discarded"] and not state["deleted"] else ""
+        star += " (deleted)" if state["deleted"] else ""
         freshness = _freshness_of(layout, index, fit_id)
         click.echo(
             f"  {fit_id:<{width}}  {str(row.get('model', ''))[:24]:<24} "
@@ -289,9 +306,15 @@ def run_ls(
         if written:
             click.secho(f"      ✎ {written}", fg="green", dim=True)
 
-    if promoted:
+    if promoted or any(r["curation"]["starred"] for r in rows):
         click.echo()
-        click.echo("  * promoted")
+        click.echo("  * promoted   ★ starred")
+    if hidden and not show_all:
+        click.echo()
+        click.secho(
+            f"  {len(hidden)} discarded or deleted fit(s) not shown: nrw ls --all",
+            dim=True,
+        )
     undocumented = [r for r in rows if not documented.get(str(r.get("fit_id")))]
     if undocumented:
         click.echo()
@@ -357,9 +380,8 @@ def _documented(layout: ProjectLayout, rows: list[dict[str, Any]]) -> dict[str, 
 def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) -> None:
     """Mark a fit as the answer, recording who decided and why.
 
-    "Final" is never implicit. The most recent fit is not the answer, the
-    lowest chi-squared is not automatically the answer -- a person decides, and
-    that decision is itself provenance worth keeping.
+    :func:`nr_workbench.provenance.curation.promote`, from the terminal: the
+    page's Finalize makes the same promotion.
 
     Args:
         fit_id: The fit to promote. A unique prefix is accepted.
@@ -371,81 +393,23 @@ def run_promote(*, fit_id: str, label: str, reason: str, force: bool = False) ->
         click.ClickException: On an unknown fit, an empty reason, or stale
             inputs without ``--force``.
     """
+    from nr_workbench.provenance.curation import CurationRefused, InputsChanged, promote
+
     layout = _layout()
-    index = FitIndex(layout.index_file)
-
     refuse_if_agent("promote")
-
-    if not reason.strip():
+    try:
+        promotion = promote(layout, fit_id, label=label, reason=reason, force=force)
+    except InputsChanged as exc:
         raise click.ClickException(
-            "A reason is required: it is the part worth keeping."
-        )
+            f"{exc}\nRe-run it, or pass --force to promote it anyway (recorded in "
+            "the entry)."
+        ) from exc
+    except CurationRefused as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    matches = index.resolve(fit_id)
-    if not matches:
-        raise click.ClickException(f"No fit matching '{fit_id}'. See `nrw ls`.")
-    if len(matches) > 1:
-        raise click.ClickException(
-            f"'{fit_id}' matches {len(matches)} fits: "
-            + ", ".join(str(m["fit_id"]) for m in matches[:5])
-        )
-
-    entry = matches[0]
-    resolved_id = str(entry["fit_id"])
-
-    if entry.get("status") != "ok":
-        raise click.ClickException(
-            f"{resolved_id} has status '{entry.get('status')}'. Only a successful fit can be promoted."
-        )
-
-    fit_dir = find_fit_dir(layout, entry)
-    if fit_dir is None:
-        raise click.ClickException(f"Fit directory for {resolved_id} is missing.")
-
-    _, freshness = check_inputs(fit_dir, layout.root)
-    if (
-        freshness is not Freshness.FRESH
-        and freshness is not Freshness.UNKNOWN
-        and not force
-    ):
-        raise click.ClickException(
-            f"{resolved_id} is {_FRESHNESS_MARK[freshness]}: its inputs have changed since it ran.\n"
-            "Re-run it, or pass --force to promote it anyway (recorded in the entry)."
-        )
-
-    previous = index.current_label(label, sample=entry.get("sample"))
-    if previous and previous.get("fit_id") != resolved_id:
-        # Superseding is recorded, never erased: what was once considered
-        # final is part of the story.
-        index.append(
-            {
-                "fit_id": previous.get("fit_id"),
-                "sample": previous.get("sample"),
-                "label": label,
-                "superseded_by": resolved_id,
-                "at": format_timestamp(utc_now()),
-            },
-            event="supersede",
-        )
-
-    index.append(
-        {
-            "fit_id": resolved_id,
-            "sample": entry.get("sample"),
-            "model": entry.get("model"),
-            "label": label,
-            "reason": reason.strip(),
-            "who": _current_user(),
-            "at": format_timestamp(utc_now()),
-            "forced": bool(force) and freshness is not Freshness.FRESH,
-            "supersedes": previous.get("fit_id") if previous else None,
-        },
-        event=EVENT_PROMOTE,
-    )
-
-    click.echo(f"Promoted {resolved_id} as '{label}'.")
-    if previous and previous.get("fit_id") != resolved_id:
-        click.echo(f"  supersedes {previous['fit_id']} (kept in the index)")
+    click.echo(f"Promoted {promotion['fit_id']} as '{label}'.")
+    if promotion["supersedes"]:
+        click.echo(f"  supersedes {promotion['supersedes']} (kept in the index)")
 
 
 def collect_problems(
@@ -466,11 +430,20 @@ def collect_problems(
     Returns:
         ``(fits_checked, problems)``.
     """
+    from nr_workbench.provenance.curation import replay
+
     problems: list[dict[str, str]] = []
     checked = 0
+    curated_state = replay(index.entries())
+    curated = curated_state.fits
 
     for entry in index.fits():
         fit_id = str(entry.get("fit_id", ""))
+        state = curated.get(fit_id)
+        if state is not None and (state.discarded or state.deleted):
+            # Set aside by a person, its files deleted on purpose: neither is
+            # a problem to fix, and a stale input of one needs no re-run.
+            continue
         fit_dir = find_fit_dir(layout, entry)
         if fit_dir is None:
             problems.append(
@@ -522,11 +495,7 @@ def collect_problems(
                 }
             )
 
-    for promotion in index.promotions():
-        label = str(promotion.get("label"))
-        current = index.current_label(label, sample=promotion.get("sample"))
-        if current is None or current.get("fit_id") != promotion.get("fit_id"):
-            continue
+    for (_, label), promotion in curated_state.holders.items():
         if index.find(str(promotion.get("fit_id"))) is None:
             problems.append(
                 {
@@ -721,16 +690,6 @@ def _freshness_of(layout: ProjectLayout, index: FitIndex, fit_id: str) -> Freshn
 def _short(value: str | None, length: int = 12) -> str:
     """Abbreviate a hash for display."""
     return value[:length] if value else "-"
-
-
-def _current_user() -> str:
-    """Best-effort identity of whoever is promoting a result."""
-    import getpass
-
-    try:
-        return getpass.getuser()
-    except Exception:
-        return "unknown"
 
 
 def _format_number(value: object) -> str:
@@ -989,11 +948,11 @@ def check_reported_finality(
         One problem per claimed-but-unpromoted fit.
     """
     from nr_workbench.notes import FIT_ID_PATTERN
+    from nr_workbench.provenance.curation import replay
 
+    # Every sample's labelled fits, not the project's last one promoted.
     promoted = {
-        str(entry.get("fit_id"))
-        for label in {str(e.get("label")) for e in index.promotions()}
-        if (entry := index.current_label(label)) is not None
+        fit_id for fit_id, state in replay(index.entries()).fits.items() if state.labels
     }
 
     problems: list[dict[str, str]] = []

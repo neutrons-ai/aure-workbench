@@ -34,12 +34,17 @@ import difflib
 import hashlib
 import json
 import shutil
-from collections.abc import Iterable, Mapping
+import threading
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+
+from nr_workbench.fsutil import atomic_write_bytes
+from nr_workbench.project.layout import ProjectLayout
 
 LOCK_SCHEMA = "nrw-scaffold-lock/1"
 
@@ -56,6 +61,10 @@ class Outcome(StrEnum):
     DRIFTED = "drifted"
     UNTRACKED = "untracked"
     MERGE = "merge"
+
+
+class LockProblemError(Exception):
+    """The scaffold lock must not be written until a person fixes it."""
 
 
 #: Outcomes that represent a change to the working tree.
@@ -77,6 +86,10 @@ class PlannedFile:
             also owns, rather than as the whole file. Changes how this file is
             classified and applied -- see :data:`Outcome.MERGE`. Only
             ``.gitignore`` uses it.
+        owner: Which producer's content this is, when more than one can plan
+            the same file. Recorded in the lock; a plan from a *different*
+            owner is never an UPGRADE -- see :func:`classify`. Only a
+            catalog-rendered ``sample.md`` sets it (``"experiment"``).
     """
 
     relpath: str
@@ -84,6 +97,7 @@ class PlannedFile:
     template_id: str
     template_version: int = 1
     merge: bool = False
+    owner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +210,49 @@ def _lock_is_healthy(lock_path: Path) -> bool:
     return isinstance(document, dict) and isinstance(document.get("files"), dict)
 
 
+def lock_problem(lock_path: Path) -> str | None:
+    """Why the lock on disk must not be written over, or ``None`` if it is fine.
+
+    :func:`load_lock` reads a damaged lock as empty, which is safe for
+    ``nrw init`` -- every file then reads as UNTRACKED and is left alone --
+    but not for a partial plan. Writing a lock from a plan that covers one
+    file, on top of a lock that failed to load, keeps that one entry and
+    drops every other, permanently. The lock is tracked and shared, so a git
+    conflict in it is the likely cause, and the fix is a person's.
+
+    Args:
+        lock_path: Path to ``.nrw/scaffold.lock.json``.
+
+    Returns:
+        The reason, or ``None`` when the lock is absent or healthy.
+    """
+    if not lock_path.exists():
+        return None
+    if _lock_is_healthy(lock_path):
+        return None
+    try:
+        text = lock_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return f"{lock_path.name} cannot be read ({exc})."
+    if "<<<<<<<" in text or ">>>>>>>" in text:
+        return (
+            f"{lock_path.name} contains git conflict markers. Resolve the merge "
+            "(keep both sides' entries) and commit before nrw writes to it."
+        )
+    return (
+        f"{lock_path.name} is not a lock nrw can read. Restore it from git "
+        "before nrw writes to it, or every file it tracks would lose its entry."
+    )
+
+
+def _has_conflict_markers(lock_path: Path) -> bool:
+    try:
+        text = lock_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return "<<<<<<<" in text or ">>>>>>>" in text
+
+
 def write_lock(lock_path: Path, entries: Mapping[str, dict[str, Any]]) -> None:
     """Write the scaffold lock atomically.
 
@@ -208,10 +265,15 @@ def write_lock(lock_path: Path, entries: Mapping[str, dict[str, Any]]) -> None:
         "updated": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "files": dict(sorted(entries.items())),
     }
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = lock_path.with_suffix(lock_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    tmp.replace(lock_path)
+    # A unique temp file per write: `nrw serve` applies on request threads
+    # while a terminal may run `nrw sample new`, and one shared ".tmp" name let
+    # two writers rename each other's half-written lock into place.
+    atomic_write_bytes(lock_path, (json.dumps(document, indent=2) + "\n").encode())
+
+
+def _stamp() -> str:
+    """A backup directory's name: the time now, UTC, to the second."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def classify(
@@ -243,6 +305,16 @@ def classify(
 
     if lock_entry is None:
         return Outcome.UNTRACKED
+
+    # A file another producer owns is not ours to "upgrade", even untouched.
+    # The case this exists for: the experiment catalog renders sample.md, the
+    # lock records that content, and `nrw sample new` then plans the *blank*
+    # template for the same path. Unedited-since-install would read as a
+    # template upgrade and reset the file to blank -- silently, since nothing
+    # about it is an error. Whoever wrote it last owns it; anyone else drifts.
+    recorded_owner = lock_entry.get("owner")
+    if recorded_owner and recorded_owner != planned.owner:
+        return Outcome.DRIFTED
 
     if on_disk != lock_entry.get("sha256_at_install"):
         return Outcome.DRIFTED
@@ -337,6 +409,42 @@ def _forced_content(planned: PlannedFile, target: Path) -> bytes:
     return ignore.force_merge(existing, planned.content.decode("utf-8")).encode("utf-8")
 
 
+_WRITERS = threading.Lock()
+_HOLDING = threading.local()
+
+
+@contextmanager
+def writing_scaffold(root: Path) -> Iterator[None]:
+    """Hold the scaffold lock file against every other writer while updating it.
+
+    ``nrw init``, ``nrw sample new``, experiment apply and adopt, and the
+    Settings page all read, change and write ``.nrw/scaffold.lock.json`` --
+    two of them from ``nrw serve``'s request threads while a terminal may run
+    the others. Two writers that each read the same lock would each write back
+    only their own entries. Re-entrant within a thread: a second ``flock`` from
+    the same thread would wait for itself.
+
+    Raises:
+        OSError: The lock cannot be taken, e.g. a read-only project.
+    """
+    from nr_workbench.fsutil import advisory_lock
+
+    if getattr(_HOLDING, "depth", 0):
+        _HOLDING.depth += 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth -= 1
+        return
+    guard = ProjectLayout(root=Path(root)).cache_dir / "scaffold.lock.json"
+    with _WRITERS, advisory_lock(guard):
+        _HOLDING.depth = 1
+        try:
+            yield
+        finally:
+            _HOLDING.depth = 0
+
+
 def apply_scaffold(
     root: Path,
     planned_files: Iterable[PlannedFile],
@@ -346,6 +454,7 @@ def apply_scaffold(
     force: bool = False,
     lock_path: Path | None = None,
     diff_sink: list[str] | None = None,
+    rebuild_lock: bool = False,
 ) -> ScaffoldReport:
     """Install a set of templated files under ``root``, idempotently.
 
@@ -359,18 +468,68 @@ def apply_scaffold(
         lock_path: Override the lock location. Defaults to
             ``root/.nrw/scaffold.lock.json``.
         diff_sink: List to append rendered diffs to when ``show_diff`` is set.
+        rebuild_lock: Allow replacing a lock that cannot be read. Only a plan
+            covering the whole project may: ``nrw init`` passes it, and its
+            rebuilt lock loses only the entries it did not plan, which then
+            read as UNTRACKED -- conservative. A partial plan (one sample)
+            over a damaged lock would keep its own entries and drop every
+            other one, so every other caller is refused.
 
     Returns:
         A report of what happened (or would happen).
+
+    Raises:
+        LockProblemError: The lock cannot be read and ``rebuild_lock`` is
+            off -- or it holds git conflict markers, which even ``nrw init``
+            must not paper over: they mean two people's entries, and a
+            rebuild would keep neither side's samples.
     """
+    if dry_run:
+        # A dry run (`nrw init --check`) writes nothing, not even a lock file.
+        return _apply_scaffold(
+            root,
+            planned_files,
+            dry_run=True,
+            show_diff=show_diff,
+            force=force,
+            lock_path=lock_path,
+            diff_sink=diff_sink,
+            rebuild_lock=rebuild_lock,
+        )
+    with writing_scaffold(Path(root).resolve()):
+        return _apply_scaffold(
+            root,
+            planned_files,
+            dry_run=False,
+            show_diff=show_diff,
+            force=force,
+            lock_path=lock_path,
+            diff_sink=diff_sink,
+            rebuild_lock=rebuild_lock,
+        )
+
+
+def _apply_scaffold(
+    root: Path,
+    planned_files: Iterable[PlannedFile],
+    *,
+    dry_run: bool = False,
+    show_diff: bool = False,
+    force: bool = False,
+    lock_path: Path | None = None,
+    diff_sink: list[str] | None = None,
+    rebuild_lock: bool = False,
+) -> ScaffoldReport:
+    """The body of :func:`apply_scaffold`, with the writer lock held."""
     root = Path(root).resolve()
-    lock_path = lock_path or (root / ".nrw" / "scaffold.lock.json")
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
+    trouble = lock_problem(lock_path)
+    if trouble and (not rebuild_lock or _has_conflict_markers(lock_path)):
+        raise LockProblemError(trouble)
     lock = load_lock(lock_path)
     updated_lock = dict(lock)
 
-    backup_root = (
-        root / ".nrw" / "backups" / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    )
+    backup_root = ProjectLayout(root=root).backups_dir / _stamp()
     results: list[FileResult] = []
 
     for planned in planned_files:
@@ -433,11 +592,14 @@ def apply_scaffold(
 
 def _lock_entry(planned: PlannedFile) -> dict[str, Any]:
     """Build the lock entry for a freshly installed file."""
-    return {
+    entry: dict[str, Any] = {
         "template_id": planned.template_id,
         "template_version": planned.template_version,
         "sha256_at_install": sha256_bytes(planned.content),
     }
+    if planned.owner:
+        entry["owner"] = planned.owner
+    return entry
 
 
 def _write(target: Path, content: bytes) -> None:
@@ -504,3 +666,114 @@ def _render_diff(planned: PlannedFile, target: Path) -> str:
         tofile=f"b/{planned.relpath}",
     )
     return "".join(diff)
+
+
+# ---------------------------------------------------------------------------
+# Changing ownership, with consent
+# ---------------------------------------------------------------------------
+
+
+def render_diff(planned: PlannedFile, target: Path) -> str:
+    """A unified diff from the file on disk to ``planned``; see :func:`_render_diff`."""
+    return _render_diff(planned, target)
+
+
+def replace_owned(
+    root: Path, planned: PlannedFile, *, lock_path: Path | None = None
+) -> Path | None:
+    """Replace a file somebody owns with ``planned``, keeping a backup.
+
+    For an explicit hand-over only -- the experiment catalog adopting a
+    ``sample.md`` a person wrote, after they have seen the diff and said yes.
+    Deliberately separate from ``apply_scaffold(force=True)``: widening
+    ``--force`` to UNTRACKED files would let ``nrw init --force`` overwrite
+    files users brought themselves, which it has never done.
+
+    Args:
+        root: Project root.
+        planned: The file to install, recorded in the lock as installed.
+        lock_path: Override the lock location.
+
+    Returns:
+        Where the previous file was backed up, or ``None`` if there was none.
+
+    Raises:
+        LockProblemError: If the lock cannot be safely written.
+    """
+    root = Path(root).resolve()
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
+    with writing_scaffold(root):
+        trouble = lock_problem(lock_path)
+        if trouble:
+            raise LockProblemError(trouble)
+
+        target = root / planned.relpath
+        backup: Path | None = None
+        if target.exists():
+            backup_root = ProjectLayout(root=root).backups_dir / _stamp()
+            _backup(target, root, backup_root)
+            backup = backup_root / planned.relpath
+        _write(target, planned.content)
+
+        entries = load_lock(lock_path)
+        entries[planned.relpath] = _lock_entry(planned)
+        write_lock(lock_path, entries)
+        return backup
+
+
+def forget(root: Path, relpath: str, *, lock_path: Path | None = None) -> bool:
+    """Drop a file's lock entry, so nrw treats it as its owner's from now on.
+
+    The file is not touched. With no entry it classifies as UNTRACKED, which
+    no plan ever writes over.
+
+    Returns:
+        Whether there was an entry to drop.
+
+    Raises:
+        LockProblemError: If the lock cannot be safely written.
+    """
+    root = Path(root).resolve()
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
+    with writing_scaffold(root):
+        trouble = lock_problem(lock_path)
+        if trouble:
+            raise LockProblemError(trouble)
+        entries = load_lock(lock_path)
+        if relpath not in entries:
+            return False
+        del entries[relpath]
+        write_lock(lock_path, entries)
+        return True
+
+
+def record_installed(
+    root: Path, planned: PlannedFile, *, lock_path: Path | None = None
+) -> bool:
+    """Record that a file on disk is exactly ``planned``: nrw wrote it.
+
+    For a writer other than :func:`apply_scaffold` that has just put nrw's own
+    render in place -- the Settings page saving ``nrw.toml``. Without the
+    record the lock would still hold the previous content, and the next
+    template change would find the file "edited" and leave a ``.nrw-new``
+    beside it instead of upgrading it.
+
+    Returns:
+        Whether the lock now records the file. ``False``, with nothing
+        changed, when the lock cannot be written safely or the file is not
+        exactly ``planned``.
+    """
+    root = Path(root).resolve()
+    lock_path = lock_path or ProjectLayout(root=root).scaffold_lock
+    with writing_scaffold(root):
+        if lock_problem(lock_path):
+            return False
+        target = root / planned.relpath
+        if not target.is_file() or target.read_bytes() != planned.content:
+            return False
+        entries = load_lock(lock_path)
+        entry = _lock_entry(planned)
+        if entries.get(planned.relpath) != entry:
+            entries[planned.relpath] = entry
+            write_lock(lock_path, entries)
+        return True

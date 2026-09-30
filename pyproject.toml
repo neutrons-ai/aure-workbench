@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nr-workbench"
-version = "0.1.0"
+version = "0.2.0"
 description = "Project workbench for neutron reflectometry analysis at SNS REF_L (BL-4B)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -78,8 +78,24 @@ dependencies = [
   "click>=8.1",
   "jinja2>=3.1",
   "flask>=3.0",
+  # Explicit although Flask brings it: 3.0.3 is where the debugger gained its
+  # own trusted-host check (CVE-2024-34069). `nrw serve --debug` enables that
+  # debugger, and the server now accepts writes from the experiment page.
+  "werkzeug>=3.0.3",
   "markdown-it-py>=3.0",
-  "python-dotenv>=1.0",
+  # The experiment catalog (`experiment/*.parquet`) -- runs grouped into
+  # samples, and the context that renders each sample.md. Parquet because a
+  # production deployment may serve the same tables from the facility's data
+  # lakehouse, whose data-assembler writer uses this schema family. The floor
+  # is the fix for CVE-2023-47248 (arbitrary code execution on reading an
+  # untrusted file). Imported inside functions only: ~0.9 s, and `nrw --help`
+  # must stay instant -- tests/test_cli.py enforces it.
+  "pyarrow>=14.0.1",
+  # Its parser (`dotenv.parser`, `dotenv.variables`) edits the project's .env
+  # and replays loading for the Settings page: not its documented API, so a
+  # major version is not taken unread. tests/test_llm_settings.py pins what
+  # nrw relies on.
+  "python-dotenv>=1.0,<2",
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
@@ -213,6 +229,10 @@ extend-exclude = [
   # verbatim on purpose: reformatting it would weaken the comparison and
   # obscure what the generator is being measured against.
   "tests/data/reference",
+  # Markdown is prose, and the SKILL.md files are shipped data. Ruff 0.16
+  # formats the Python inside Markdown code blocks, the pinned pre-commit ruff
+  # does not, and `ruff format src` rewrote the shipped skills more than once.
+  "*.md",
 ]
 
 [tool.ruff.lint]

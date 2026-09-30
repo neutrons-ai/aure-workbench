@@ -379,7 +379,9 @@ def test_export_says_what_is_missing_rather_than_failing_obscurely(
 
     assert result.exit_code != 0
     assert "data-assembler is not installed" in result.output
-    assert "nr-workbench[isaac]" in result.output
+    # Not `pip install 'nr-workbench[isaac]'`: nothing on PyPI answers it.
+    assert "NRW_EXTRAS=isaac" in result.output
+    assert "pip install 'nr-workbench" not in result.output
 
 
 def test_export_reports_the_assembly_before_it_needs_any_tool(

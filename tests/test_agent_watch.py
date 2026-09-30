@@ -479,3 +479,85 @@ def test_ctrl_c_reports_what_the_night_managed(tmp_path: Path, monkeypatch) -> N
     )
 
     assert started == 1, "the completed session must still be reported"
+
+
+# --------------------------------------------------------------------------
+# The pieces the experiment page reuses against a facility folder
+# --------------------------------------------------------------------------
+
+
+def _measurement(run: int, names: dict[int, str]) -> object:
+    from nr_workbench.project.scan import SteadyMeasurement
+
+    return SteadyMeasurement(run=run, partials=dict(names))
+
+
+def test_segment_problems_accepts_absolute_paths() -> None:
+    """Only the names are read, so a path outside any project is fine."""
+    measurement = _measurement(
+        218386,
+        {
+            1: "/SNS/REF_L/IPTS-1/shared/REFL_218386_1_218386_partial.txt",
+            2: "/SNS/REF_L/IPTS-1/shared/REFL_218386_2_218387_partial.txt",
+        },
+    )
+    assert watch.segment_problems(measurement) == ""
+
+
+def test_segment_problems_names_a_gap_in_the_segments() -> None:
+    measurement = _measurement(
+        218386,
+        {
+            1: "/x/REFL_218386_1_218386_partial.txt",
+            3: "/x/REFL_218386_3_218388_partial.txt",
+        },
+    )
+    assert "not contiguous" in watch.segment_problems(measurement)
+
+
+def test_segment_problems_names_a_subrun_from_another_measurement() -> None:
+    measurement = _measurement(
+        218386,
+        {
+            1: "/x/REFL_218386_1_218386_partial.txt",
+            2: "/x/REFL_218386_2_218399_partial.txt",
+        },
+    )
+    assert "subrun 218399" in watch.segment_problems(measurement)
+
+
+def test_settle_state_counts_quiet_time_from_the_files() -> None:
+    state, quiet = watch.settle_state(1000.0, "a", None, now=1400.0, settle_seconds=300)
+    assert (state, quiet) == ("settled", 400.0)
+
+
+def test_settle_state_a_change_between_polls_restarts_the_clock() -> None:
+    state, quiet = watch.settle_state(1000.0, "b", "a", now=1400.0, settle_seconds=300)
+    assert (state, quiet) == ("arriving", 0.0)
+
+
+def test_settle_state_distinguishes_arriving_from_settling() -> None:
+    assert (
+        watch.settle_state(1000.0, "a", "a", now=1000.5, settle_seconds=300)[0]
+        == "arriving"
+    )
+    assert (
+        watch.settle_state(1000.0, "a", "a", now=1100.0, settle_seconds=300)[0]
+        == "settling"
+    )
+
+
+def test_fingerprint_entries_matches_fingerprint_for_the_same_files(
+    tmp_path: Path,
+) -> None:
+    """The listing-based digest must equal the stat-based one exactly."""
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text(name)
+    stats = {name: (tmp_path / name).stat() for name in ("a.txt", "b.txt")}
+
+    from_listing = watch.fingerprint_entries(
+        [(name, s.st_size, s.st_mtime_ns) for name, s in stats.items()]
+        + [("gone.txt", None, None)]
+    )
+
+    assert from_listing == watch.fingerprint(tmp_path, ["b.txt", "a.txt", "gone.txt"])

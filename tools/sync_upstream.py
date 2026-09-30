@@ -343,12 +343,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {report.checked} vendored entr(ies) registered")
     print(f"    {report.hash_verified} verified by content hash")
     if unverified:
-        print(
-            f"    {unverified} recorded for provenance only -- adapted files are"
-        )
-        print(
-            "      deliberately different from upstream, so a hash would assert"
-        )
+        print(f"    {unverified} recorded for provenance only -- adapted files are")
+        print("      deliberately different from upstream, so a hash would assert")
         print("      the wrong thing. Use --remote to check the commit instead.")
     if args.remote:
         print(f"    {report.commit_verified} checked against upstream's commit")

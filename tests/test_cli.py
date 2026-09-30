@@ -15,8 +15,17 @@ from nr_workbench.cli import main
 #: Modules that must not be imported just to print help. `aure` heads the list:
 #: `aure/__init__.py` eagerly imports its workflow package, which chains through
 #: every node module into langchain-core, periodictable and scipy -- roughly
-#: 1.5-3 seconds. refl1d and matplotlib are nearly as expensive.
-FORBIDDEN_ON_HELP = ("aure", "refl1d", "bumps", "matplotlib", "scipy", "langchain_core")
+#: 1.5-3 seconds. refl1d and matplotlib are nearly as expensive, and pyarrow
+#: (the experiment catalog) costs about a second on its own.
+FORBIDDEN_ON_HELP = (
+    "aure",
+    "refl1d",
+    "bumps",
+    "matplotlib",
+    "scipy",
+    "langchain_core",
+    "pyarrow",
+)
 
 
 def test_help_lists_the_command_surface() -> None:
@@ -68,7 +77,9 @@ def test_help_does_not_import_heavy_modules() -> None:
     )
 
 
-@pytest.mark.parametrize("group", ["aure", "model", "fit", "sample", "data"])
+@pytest.mark.parametrize(
+    "group", ["aure", "model", "fit", "sample", "data", "experiment"]
+)
 def test_group_help_does_not_import_heavy_modules(group: str) -> None:
     """A group's own `--help` must stay as cheap as the top-level one.
 
@@ -129,6 +140,28 @@ def test_skills_list_without_a_project_suggests_bundled(tmp_path, monkeypatch) -
 
     assert result.exit_code != 0
     assert "--bundled" in result.output
+
+
+@pytest.mark.parametrize(
+    "args", [["skills", "add", "metal-oxide-interfaces"], ["skills", "sync"]]
+)
+def test_skills_over_a_conflicted_lock_say_why_and_change_nothing(
+    project, monkeypatch, args
+) -> None:
+    """Writing a few skills' entries over it would drop every other file's."""
+    lock = project / ".nrw" / "scaffold.lock.json"
+    lock.write_text(
+        "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    conflicted = lock.read_bytes()
+    monkeypatch.chdir(project)
+
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 1
+    assert "conflict markers" in result.output
+    assert lock.read_bytes() == conflicted
 
 
 def test_skills_path_prints_an_existing_directory() -> None:

@@ -290,6 +290,28 @@ def test_import_writes_a_spec_that_validates(sample: Path) -> None:
     assert validated.exit_code == 0, validated.output
 
 
+def test_import_of_prose_layer_names_writes_a_spec_generate_takes(
+    sample: Path,
+) -> None:
+    """AuRE names layers in prose -- "silicon oxide" -- which a spec does not
+    take; imported as they were, `nrw model generate` refused the spec."""
+    from .test_aure_import import PROSE_MODEL
+
+    output = _finished_run(sample, model=PROSE_MODEL)
+
+    imported = _run(
+        "aure", "import", str(output), "--sample", "Sample1", "--name", "bilayer"
+    )
+    generated = _run("model", "generate", "samples/Sample1/models/bilayer.yaml")
+
+    assert imported.exit_code == 0, imported.output
+    assert "silicon_oxide  'silicon oxide'" in imported.output
+    spec = (sample / "samples" / "Sample1" / "models" / "bilayer.yaml").read_text()
+    # AuRE's own names stay in the file, to read it against AuRE's report.
+    assert "#   silicon_oxide = 'silicon oxide'" in spec
+    assert generated.exit_code == 0, generated.output
+
+
 def test_import_records_that_aure_proposed_the_stack(sample: Path) -> None:
     """Months later, a reader must be able to tell a proposal from a measurement
     without going looking."""
@@ -305,20 +327,61 @@ def test_import_records_that_aure_proposed_the_stack(sample: Path) -> None:
 def test_import_keeps_the_measured_angles(sample: Path) -> None:
     """Theta sets the resolution; the nominal 0.45/1.2/3.5 would be wrong.
 
-    AuRE does not report the angles back, so they are re-read from the files'
-    own headers at import -- this is what says that happened.
+    AuRE does not report the angles back. The imported spec carries none: each
+    is read from its file's own header when the spec is resolved.
     """
     import yaml
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
 
     output = _finished_run(sample)
 
     _run("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
-    document = yaml.safe_load(
-        (sample / "samples/Sample1/models/first.yaml").read_text()
+    path = sample / "samples/Sample1/models/first.yaml"
+    state = yaml.safe_load(path.read_text())["states"][0]
+    angles = [
+        m.theta for m in discover_measurements(load_spec(path), sample)[state["name"]]
+    ]
+
+    assert "thetas" not in state
+    assert 1.201 in [round(angle, 3) for angle in angles]
+    assert 1.2 not in angles
+
+
+def test_import_leaves_a_blank_for_a_file_that_records_no_angle(sample: Path) -> None:
+    """The same rule as `nrw model new`: named, blank, and refused until given.
+
+    Every comment line goes: the old table line still records the angle as
+    TwoTheta once the `# Meta:` line alone is removed.
+    """
+    import yaml
+
+    steady = sample / "samples/Sample1/data/steady"
+    unrecorded = steady / "REFL_218386_2_218387_partial.txt"
+    unrecorded.write_text(
+        "".join(
+            line
+            for line in unrecorded.read_text(encoding="utf-8").splitlines(True)
+            if not line.startswith("#")
+        ),
+        encoding="utf-8",
+    )
+    output = _finished_run(sample)
+
+    imported = _run(
+        "aure", "import", str(output), "--sample", "Sample1", "--name", "first"
+    )
+    text = (sample / "samples/Sample1/models/first.yaml").read_text(encoding="utf-8")
+    checked = CliRunner().invoke(
+        main, ["model", "validate", "samples/Sample1/models/first.yaml"]
     )
 
-    assert 1.201 in document["states"][0]["thetas"]
-    assert 1.2 not in document["states"][0]["thetas"]
+    assert f"no incident angle recorded for: {unrecorded.name}" in imported.output
+    assert f"#   {unrecorded.name}" in text
+    assert yaml.safe_load(text)["states"][0]["thetas"] == [0.45, None, 3.5003]
+    assert checked.exit_code != 0
+    assert unrecorded.name in checked.output
 
 
 def test_import_orders_the_stack_for_the_geometry(sample: Path) -> None:
@@ -355,6 +418,43 @@ def test_import_refuses_an_unfinished_run(sample: Path) -> None:
 
     assert result.exit_code != 0
     assert "resume" in result.output
+
+
+def test_import_stamps_the_spec_as_a_proposal_until_it_is_edited(
+    sample: Path,
+) -> None:
+    from nr_workbench.aure_import import is_unedited_proposal
+
+    output = _finished_run(sample)
+    _run("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
+    spec = sample / "samples" / "Sample1" / "models" / "first.yaml"
+    text = spec.read_text(encoding="utf-8")
+
+    assert is_unedited_proposal(text)
+    assert "#   from:        'samples/Sample1/aure/Sample1-218386/output'" in text
+    assert not is_unedited_proposal(text + "# my note\n")
+
+
+def test_replace_unedited_replaces_only_a_proposal_nobody_edited(
+    sample: Path,
+) -> None:
+    output = _finished_run(sample)
+    args = ("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
+    _run(*args)
+    spec = sample / "samples" / "Sample1" / "models" / "first.yaml"
+
+    replaced = _run(*args, "--replace-unedited")
+    spec.write_text(spec.read_text(encoding="utf-8") + "# my note\n", encoding="utf-8")
+    kept = _run(*args, "--replace-unedited")
+    after_refusal = spec.read_text(encoding="utf-8")
+    forced = _run(*args, "--force")
+
+    assert replaced.exit_code == 0, replaced.output
+    assert kept.exit_code != 0
+    assert "edited since AuRE proposed it" in kept.output
+    assert after_refusal.endswith("# my note\n")
+    assert forced.exit_code == 0, forced.output
+    assert "# my note" not in spec.read_text(encoding="utf-8")
 
 
 def test_import_does_not_overwrite_without_force(sample: Path) -> None:
@@ -775,7 +875,7 @@ def test_the_guard_refuses_the_command_line_too(sample: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", ["../evil", "a/b", ".."])
+@pytest.mark.parametrize("bad", ["../evil", "a/b", "..", "name\n"])
 def test_a_name_may_not_be_a_path(sample: Path, bad: str) -> None:
     """`--name` becomes a path segment; containment should not be accidental."""
     output = _finished_run(sample)

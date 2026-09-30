@@ -15,6 +15,7 @@ from nr_workbench.commands.init_cmd import plan_project_files
 from nr_workbench.commands.sample import plan_sample_files, validate_sample_id
 from nr_workbench.project.layout import SAMPLE_SUBDIRS, ProjectLayout
 from nr_workbench.project.render import RenderContext
+from nr_workbench.project.scaffold import LockProblemError
 
 #: The scaffold's own files. A golden list rather than a loose assertion,
 #: because the classic packaging failure is a file silently vanishing from the
@@ -77,6 +78,31 @@ def test_init_produces_the_expected_file_set(
     apply_scaffold(tmp_path, plan_project_files(context))
 
     assert installed_files(tmp_path) == expected_project_files()
+
+
+def test_a_fresh_nrw_toml_assumes_no_angles(tmp_path: Path) -> None:
+    """Each segment's angle is read from its own file.
+
+    ``nrw.toml`` once carried the group's usual settings (0.45, 1.2, 3.5 and
+    0.6). An angle taken from habit sets the fit's wavelength axis, and a wrong
+    one is absorbed into roughness rather than reported.
+    """
+    assert CliRunner().invoke(main, ["init", str(tmp_path)]).exit_code == 0
+    document = tomllib.loads((tmp_path / "nrw.toml").read_text(encoding="utf-8"))
+
+    def keys(table: dict, prefix: str = ""):
+        for key, value in table.items():
+            yield prefix + key
+            if isinstance(value, dict):
+                yield from keys(value, f"{prefix}{key}.")
+
+    def about_angles(key: str) -> bool:
+        return "theta" in key.lower() or "angle" in key.lower()
+
+    assert [key for key in keys(document) if about_angles(key)] == []
+    from nr_workbench.project.config import DEFAULT_CONVENTIONS
+
+    assert [key for key in DEFAULT_CONVENTIONS if about_angles(key)] == []
 
 
 def test_init_writes_skills_to_repo_root_not_dot_claude(project: Path) -> None:
@@ -171,6 +197,27 @@ def test_init_keeps_a_narrowed_harness_set_on_a_later_run(tmp_path: Path) -> Non
         f"a re-run should be clean, not pending: {second.output}"
     )
     assert not (tmp_path / ".github" / "agents").exists()
+
+
+def test_init_over_a_conflicted_lock_says_why_and_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    """The refusal is the point; a traceback made it look like a crash."""
+    runner = CliRunner()
+    assert runner.invoke(main, ["init", str(tmp_path)]).exit_code == 0
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    lock.write_text(
+        "<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> theirs\n",
+        encoding="utf-8",
+    )
+    conflicted = lock.read_bytes()
+
+    result = runner.invoke(main, ["init", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "conflict markers" in result.output
+    assert not isinstance(result.exception, LockProblemError)
+    assert lock.read_bytes() == conflicted
 
 
 def test_init_adds_a_harness_without_disturbing_the_existing_one(

@@ -18,6 +18,7 @@ from nr_workbench.aure_setup import (
     SetupError,
     compose,
     describe_sample,
+    measurement_context,
     reads_as_back_reflection,
     state_files,
 )
@@ -35,6 +36,27 @@ DESCRIBED = """# Cu on Ti
 
 Measured in d8-THF, through the silicon substrate.
 """
+
+
+#: The same sample, with what was written about its measurements: a condition
+#: in the table, the sample's own measurement conditions, and a note on a run.
+MEASURED = (
+    DESCRIBED
+    + """
+## Measurements
+
+| Run | Type | Condition |
+|---|---|---|
+| 218386 | steady | D2O, 25 C |
+
+## Measurement conditions
+
+The cell was filled the day before.
+
+- Run 218386: realigned after mounting
+- Run 218399: the beam dropped
+"""
+)
 
 
 def _sample_with_data(project: Path, notes: str = DESCRIBED, run: int = 218386) -> None:
@@ -259,7 +281,71 @@ def test_compose_writes_no_absolute_paths(project: Path) -> None:
 
 
 @pytest.mark.integration
-def test_composed_setup_loads_in_aure(project: Path) -> None:
+def test_compose_tells_aure_what_was_written_about_the_measurement(
+    project: Path,
+) -> None:
+    """A contrast or a condition written for the run reaches the language model:
+    in the sample's description, which every AuRE prompt reads. Not in a state's
+    extra_description, which AuRE declares but no prompt of its reads."""
+    _sample_with_data(project, notes=MEASURED)
+    scan = scan_sample(project, "Sample1")
+
+    composed = compose(
+        sample="Sample1", scan=scan, notes=MEASURED, root=project, run=218386
+    )
+
+    description = composed.document["sample_description"]
+    assert description.startswith("50 nm copper on 5 nm titanium")
+    assert description.splitlines()[-3:] == [
+        "The condition of run 218386: D2O, 25 C.",
+        "Measurement conditions: The cell was filled the day before.",
+        "Notes on run 218386: realigned after mounting",
+    ]
+    assert "extra_description" not in composed.document["states"][0]
+    assert "run 218386's condition" in composed.from_notes[0]
+
+
+def test_a_note_on_the_run_reaches_aure_though_no_table_lists_it(project: Path) -> None:
+    """Notes written by hand, before any table: the catalog cannot hold such a
+    note, but AuRE fitting that run should still read it."""
+    notes = DESCRIBED + "\n## Measurement conditions\n\n- Run 218386: in D2O\n"
+    _sample_with_data(project, notes=notes)
+    scan = scan_sample(project, "Sample1")
+
+    composed = compose(
+        sample="Sample1", scan=scan, notes=notes, root=project, run=218386
+    )
+
+    assert composed.document["sample_description"].endswith(
+        "\n\nNotes on run 218386: in D2O"
+    )
+
+
+def test_a_condition_written_as_a_sentence_gets_one_full_stop() -> None:
+    notes = (
+        DESCRIBED + "\n## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 218386 | steady | The ambient medium is D2O. |\n"
+    )
+
+    said = measurement_context(notes, 218386)
+
+    assert said == "The condition of run 218386: The ambient medium is D2O."
+
+
+def test_compose_adds_nothing_when_nothing_was_written_about_it(project: Path) -> None:
+    _sample_with_data(project)
+    scan = scan_sample(project, "Sample1")
+
+    composed = compose(
+        sample="Sample1", scan=scan, notes=DESCRIBED, root=project, run=218386
+    )
+
+    assert "extra_description" not in composed.document["states"][0]
+    assert composed.document["sample_description"] == describe_sample(DESCRIBED)
+
+
+@pytest.mark.parametrize("notes", [DESCRIBED, MEASURED], ids=["described", "measured"])
+def test_composed_setup_loads_in_aure(project: Path, notes: str) -> None:
     """AuRE itself must accept the document, not just our reading of its schema.
 
     It rejects unknown top-level keys, resolves every data file, and validates
@@ -272,10 +358,10 @@ def test_composed_setup_loads_in_aure(project: Path) -> None:
     from nr_workbench.aure_adapter import validate_setup
     from nr_workbench.aure_setup import setup_dir
 
-    _sample_with_data(project)
+    _sample_with_data(project, notes=notes)
     scan = scan_sample(project, "Sample1")
     composed = compose(
-        sample="Sample1", scan=scan, notes=DESCRIBED, root=project, run=218386
+        sample="Sample1", scan=scan, notes=notes, root=project, run=218386
     )
 
     target = setup_dir(project, "Sample1", "Sample1-218386") / "setup.yaml"

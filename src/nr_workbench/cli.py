@@ -30,7 +30,7 @@ def _fitter(ctx: click.Context, param: click.Parameter, value: str) -> str:
     looking at the model --- so the refusal carries it.
     """
     del ctx, param
-    if value not in FITTERS:
+    if value is not None and value not in FITTERS:
         raise click.BadParameter(refuse(value))
     return value
 
@@ -386,7 +386,8 @@ def model_generate_command(**kwargs: object) -> None:
 @click.option(
     "--print-prompt",
     is_flag=True,
-    help="Print the instruction to hand a coding assistant, and write nothing.",
+    help="Write the skeleton, and print the instruction to hand a coding "
+    "assistant, instead of asking a language model.",
 )
 def model_new_command(**kwargs: object) -> None:
     """Scaffold a spec for SAMPLE from the data found on disk.
@@ -510,6 +511,12 @@ def aure_run_command(**kwargs: object) -> None:
 @click.option("--name", required=True, help="Model name; also the filename.")
 @click.option("--run", type=int, default=None, help="Which steady run it fitted.")
 @click.option("--force", is_flag=True, help="Overwrite an existing spec.")
+@click.option(
+    "--replace-unedited",
+    is_flag=True,
+    help="Replace an existing spec only if it is a proposal of AuRE's that nobody "
+    "has edited since -- as a new quick fit of the model does.",
+)
 def aure_import_command(**kwargs: object) -> None:
     """Turn the fitted model in OUTPUT_DIR into a model spec.
 
@@ -538,27 +545,49 @@ def fit_group() -> None:
     "--method",
     metavar="[amoeba|de|dream]",
     callback=_fitter,
-    default="amoeba",
-    show_default=True,
+    default=None,
     help=(
         "amoeba while you are still changing the model, de when amoeba is "
         "stalling on the starting point rather than the model, dream to quote "
-        "a number."
+        "a number. [default: nrw.toml [fit] method, else dream]"
     ),
 )
-@click.option("--steps", type=int, default=None, help="Maximum optimizer steps.")
-@click.option("--samples", type=int, default=None, help="DREAM sample count.")
-@click.option("--burn", type=int, default=None, help="DREAM burn-in.")
-@click.option("--pop", type=int, default=None, help="Population size.")
 @click.option(
-    "--seed", type=int, default=None, help="Random seed, for a reproducible run."
+    "--steps",
+    type=int,
+    default=None,
+    help="Maximum optimizer steps. [default: nrw.toml [fit.<method>], else bumps']",
+)
+@click.option(
+    "--samples",
+    type=int,
+    default=None,
+    help="DREAM sample count. [default: nrw.toml [fit.dream], else 10000]",
+)
+@click.option(
+    "--burn",
+    type=int,
+    default=None,
+    help="DREAM burn-in. [default: nrw.toml [fit.dream], else 100]",
+)
+@click.option(
+    "--pop",
+    type=int,
+    default=None,
+    help="Population size, for de and dream. [default: nrw.toml, else 10]",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Random seed, for a reproducible run. [default: nrw.toml [fit], else none]",
 )
 @click.option(
     "--parallel",
     type=int,
-    default=0,
-    show_default=True,
-    help="CPUs to use; 0 means all of them, 1 forces serial.",
+    default=None,
+    help="CPUs to use; 0 means all of them, 1 forces serial. "
+    "[default: nrw.toml [fit], else 0]",
 )
 @click.option(
     "--plots",
@@ -598,6 +627,61 @@ def fit_run_command(**kwargs: object) -> None:
     from nr_workbench.commands.fit import run_fit_command
 
     run_fit_command(**kwargs)  # type: ignore[arg-type]
+
+
+@fit_group.command("star")
+@click.argument("fit_id")
+def fit_star(fit_id: str) -> None:
+    """Star FIT_ID: one worth coming back to."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("star", fit_id)
+
+
+@fit_group.command("unstar")
+@click.argument("fit_id")
+def fit_unstar(fit_id: str) -> None:
+    """Take FIT_ID's star away."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("unstar", fit_id)
+
+
+@fit_group.command("discard")
+@click.argument("fit_id")
+@click.option(
+    "--reason", required=True, help="Why it is set aside. Required; kept with it."
+)
+def fit_discard(fit_id: str, reason: str) -> None:
+    """Set FIT_ID aside: out of the listings, every file kept.
+
+    `nrw fit restore` brings it back; `nrw fit delete` then frees the disk.
+    """
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("discard", fit_id, reason=reason)
+
+
+@fit_group.command("restore")
+@click.argument("fit_id")
+def fit_restore(fit_id: str) -> None:
+    """Bring a discarded FIT_ID back into the listings."""
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("restore", fit_id)
+
+
+@fit_group.command("delete")
+@click.argument("fit_id")
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+def fit_delete(fit_id: str, yes: bool) -> None:
+    """Delete a discarded FIT_ID's files; the record that it ran stays.
+
+    Refused while a report, a figure, another fit or an ISAAC record uses it.
+    """
+    from nr_workbench.commands.curate import run_curate
+
+    run_curate("delete", fit_id, yes=yes)
 
 
 @main.group("tnr")
@@ -804,11 +888,14 @@ def whence_command(path: str, as_json: bool) -> None:
 @click.option("--sample", default=None, help="Restrict to one sample.")
 @click.option("--limit", type=int, default=50, show_default=True, help="Maximum rows.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
-def ls_command(sample: str | None, limit: int, as_json: bool) -> None:
+@click.option(
+    "--all", "show_all", is_flag=True, help="Include discarded and deleted fits."
+)
+def ls_command(sample: str | None, limit: int, as_json: bool, show_all: bool) -> None:
     """List recorded fits, newest first."""
     from nr_workbench.commands.provenance_cmd import run_ls
 
-    run_ls(sample=sample, as_json=as_json, limit=limit)
+    run_ls(sample=sample, as_json=as_json, limit=limit, show_all=show_all)
 
 
 @main.command("promote")
@@ -866,11 +953,42 @@ def isaac_export_command(**kwargs: object) -> None:
     portal reads them as one experiment.
 
     Needs `data-assembler` and `nr-isaac-format`, which own the schema
-    mapping: pip install 'nr-workbench[isaac]'.
+    mapping: re-run the installer with NRW_EXTRAS=isaac (docs/install.md).
     """
     from nr_workbench.commands.isaac_cmd import run_export
 
     run_export(**kwargs)  # type: ignore[arg-type]
+
+
+@isaac_group.command("push")
+@click.argument("fit_id")
+@click.option(
+    "--validate-only",
+    is_flag=True,
+    help="Ask the API whether the records would be accepted, without keeping them.",
+)
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+@click.option(
+    "--expect-host",
+    default=None,
+    metavar="HOST",
+    help="Refuse unless the portal is HOST: what was confirmed, when the page asked.",
+)
+def isaac_push_command(
+    fit_id: str, validate_only: bool, yes: bool, expect_host: str | None
+) -> None:
+    """Send FIT_ID's exported records to the ISAAC Portal.
+
+    The records `nrw isaac export` wrote, unchanged: what the server validated
+    is what is published. Only the final fit of a sample is published, and
+    each push is recorded in the fit index. ISAAC_URL and ISAAC_KEY are the
+    person's own -- the shell, ~/.nrw or ~/.aure -- never the project's .env.
+    """
+    from nr_workbench.commands.isaac_cmd import run_push
+
+    run_push(
+        fit_id=fit_id, validate_only=validate_only, yes=yes, expect_host=expect_host
+    )
 
 
 @main.group("agent")
@@ -1457,6 +1575,149 @@ def data_check_command(**kwargs: object) -> None:
     run_check(**kwargs)  # type: ignore[arg-type]
 
 
+@main.group("experiment")
+def experiment_group() -> None:
+    """The experiment's runs, organized into samples (also: nrw serve).
+
+    The data folder is watched for new runs; the catalog in experiment/ says
+    which sample each belongs to and renders each managed sample's sample.md;
+    `apply` copies the data and writes the files.
+    """
+
+
+@experiment_group.command("status")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_status_command(**kwargs: object) -> None:
+    """What the data source holds, what the catalog says, what is unassigned."""
+    from nr_workbench.commands.experiment_cmd import run_status
+
+    run_status(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("settings")
+@click.option("--ipts", default=None, help="The experiment's IPTS, e.g. IPTS-34347.")
+@click.option("--label", default=None, help="The beamtime label.")
+@click.option(
+    "--location",
+    default=None,
+    metavar="PATH",
+    help="The folder the reduced data is in; {ipts} is filled in.",
+)
+@click.option(
+    "--default-location",
+    is_flag=True,
+    help="Follow nrw's default data location again (it is provisional).",
+)
+@click.option(
+    "--settle",
+    type=float,
+    default=None,
+    help="Seconds a run's files must be unchanged.",
+)
+@click.option(
+    "--poll", type=float, default=None, help="Seconds between looks at the data folder."
+)
+@click.option("--check", is_flag=True, help="Say what the data folder holds.")
+@click.option(
+    "--confirm-ipts-change",
+    is_flag=True,
+    help="Change the IPTS even though the catalog already holds runs.",
+)
+@click.option(
+    "--write", is_flag=True, help="Save the change; without it, only show it."
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_settings_command(**kwargs: object) -> None:
+    """Show the IPTS, data folder and watcher; with options, change them.
+
+    The same settings as the Settings page of `nrw serve`, saved into
+    nrw.toml the same way: only nrw's own lines change. Shows the change
+    unless --write is given.
+    """
+    from nr_workbench.commands.experiment_cmd import run_settings
+
+    run_settings(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("assign")
+@click.argument("runs", nargs=-1, required=True)
+@click.option("--sample", default=None, help="The sample these runs belong to.")
+@click.option("--unassign", is_flag=True, help="Take the runs out of any sample.")
+@click.option(
+    "--type", "measurement", default=None, help="Measurement type, e.g. 'full Q'."
+)
+@click.option(
+    "--condition", default=None, help="Condition, e.g. 'OCV' or '-0.5 mA/cm2'."
+)
+@click.option(
+    "--note", default=None, help="A note for the page (not written to sample.md)."
+)
+@click.option("--exclude", is_flag=True, help="Record the runs as not used.")
+@click.option("--include", is_flag=True, help="Record the runs as used again.")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+def experiment_assign_command(**kwargs: object) -> None:
+    """Record which sample RUNS belong to, and how they were measured."""
+    from nr_workbench.commands.experiment_cmd import run_assign
+
+    run_assign(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("apply")
+@click.argument("samples", nargs=-1)
+@click.option(
+    "--write", is_flag=True, help="Carry the plan out; without it, only show it."
+)
+@click.option(
+    "--confirm",
+    multiple=True,
+    metavar="RUN",
+    help="Copy this unconfirmed run anyway (it settled, but nothing shows it ended).",
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_apply_command(**kwargs: object) -> None:
+    """Copy assigned data into samples/ and render each managed sample.md.
+
+    Shows what it would do unless --write is given. Nothing is overwritten:
+    a re-reduced source, an edited copy or a hand-edited sample.md is
+    reported, and exits non-zero, rather than replaced.
+    """
+    from nr_workbench.commands.experiment_cmd import run_apply
+
+    run_apply(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("adopt")
+@click.argument("samples", nargs=-1)
+@click.option(
+    "--write", is_flag=True, help="Record in the catalog; without it, only show."
+)
+@click.option(
+    "--rewrite",
+    is_flag=True,
+    help="Also replace sample.md with the catalog's rendering (backed up first).",
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_adopt_command(**kwargs: object) -> None:
+    """Bring hand-written samples into the catalog, or pull hand edits back."""
+    from nr_workbench.commands.experiment_cmd import run_adopt
+
+    run_adopt(**kwargs)  # type: ignore[arg-type]
+
+
+@experiment_group.command("release")
+@click.argument("sample")
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+def experiment_release_command(**kwargs: object) -> None:
+    """Make SAMPLE's sample.md yours again: no nrw command will rewrite it."""
+    from nr_workbench.commands.experiment_cmd import run_release
+
+    run_release(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("import")
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
@@ -1481,9 +1742,18 @@ def import_command(**kwargs: object) -> None:
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Interface.")
 @click.option("--port", default=8765, show_default=True, type=int, help="Port.")
-@click.option("--debug", is_flag=True, help="Enable the Flask reloader.")
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable the Flask reloader and its debugger (loopback only).",
+)
 def serve_command(**kwargs: object) -> None:
-    """Browse the project: every measurement, fit, and SLD curve on one page."""
+    """Browse the project, and organize the experiment's runs into samples.
+
+    Pages only read, except where they change the project -- the Experiment
+    and Settings pages, and curating and publishing fits -- and those work
+    only in a browser that opened the one-time link printed at start-up.
+    """
     from nr_workbench.commands.serve import run_serve
 
     run_serve(**kwargs)  # type: ignore[arg-type]

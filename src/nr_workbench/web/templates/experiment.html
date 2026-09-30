@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}Experiment — nr-workbench{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('experiment_api.overview') }}">API</a>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
+  <h1 class="h4 mb-0">Experiment <span id="expt-ipts" class="text-secondary mono"></span></h1>
+  <span id="expt-source" class="small text-secondary mono"></span>
+  <span id="expt-scan" class="small text-secondary ms-auto" aria-live="polite"></span>
+</div>
+
+<div id="expt-setup" class="alert alert-info py-2 d-none" role="status">
+  <strong>This experiment is not set up yet.</strong> Nothing can be watched
+  until nrw knows its IPTS and where its data is:
+  <a href="{{ url_for('settings_page') }}">open Settings</a>.
+</div>
+<div id="expt-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
+<div id="expt-message" class="alert py-2 d-none" role="alert"></div>
+<div id="expt-problems" class="alert alert-warning py-2 problem d-none">
+  <strong>Notes on this experiment</strong>
+  <ul class="mb-0 mt-1"></ul>
+</div>
+
+<div class="landscape">
+  <div>
+    <div class="panel">
+      <div class="panel-head flex-wrap">
+        <span>Runs</span>
+        <div class="btn-group btn-group-sm" role="group" id="expt-filters" aria-label="Show">
+          <button type="button" class="btn btn-outline-secondary active" data-filter="all">all</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="unassigned">unassigned</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="arriving">arriving</button>
+          <button type="button" class="btn btn-outline-secondary" data-filter="attention">needs a look</button>
+        </div>
+        <input id="expt-search" type="search" class="form-control form-control-sm expt-search ms-auto"
+               placeholder="run, title or sample" aria-label="Filter runs">
+      </div>
+
+      <div id="expt-bulk" class="expt-bulk d-none">
+        <span id="expt-selected" class="small"></span>
+        <select id="expt-sample" class="form-select form-select-sm" aria-label="Sample"></select>
+        <input id="expt-new-sample" class="form-control form-control-sm d-none" placeholder="new sample id"
+               aria-label="New sample id">
+        <span id="expt-type-slot"></span>
+        <input id="expt-condition" class="form-control form-control-sm" placeholder="condition (e.g. OCV)"
+               aria-label="Condition">
+        <button type="button" class="btn btn-sm btn-primary" id="expt-assign">Assign</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-unassign">Unassign</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-exclude">Exclude</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-include">Include</button>
+      </div>
+
+      <div class="expt-table">
+        <table class="table table-sm table-hover mb-0" id="expt-runs">
+          <thead><tr>
+            <th scope="col"><input type="checkbox" id="expt-select-all" aria-label="Select all shown"></th>
+            <th scope="col">run</th><th scope="col">state</th><th scope="col">title</th>
+            <th scope="col">segments</th><th scope="col">θ (°)</th>
+            <th scope="col">sample</th><th scope="col">type</th><th scope="col">condition</th>
+            <th scope="col"></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="expt-empty" class="p-3 small text-secondary mb-0 d-none"></p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span>Quick look</span>
+        <span class="hint">selected runs, read straight from the data source; segments are not stitched</span>
+        <div class="form-check form-switch ms-auto mb-0">
+          <input class="form-check-input" type="checkbox" id="rq4-toggle">
+          <label class="form-check-label small" for="rq4-toggle">R·Q⁴</label>
+        </div>
+      </div>
+      <div id="plot-quick" class="plot plot-rq"></div>
+      <p id="quick-hint" class="px-3 pb-2 small text-secondary mb-0">Select runs to plot them.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <span>Apply</span>
+        <span class="hint">copy assigned, complete runs into samples/ and write each sample.md</span>
+        <button type="button" class="btn btn-sm btn-outline-primary ms-auto" id="expt-review">Review</button>
+      </div>
+      <div id="expt-plan" class="p-3 small">
+        <p class="text-secondary mb-0">
+          Review shows exactly what would be copied, moved or written. Nothing
+          is written until you apply, and nothing is ever overwritten.
+        </p>
+      </div>
+    </div>
+
+    <div class="panel d-none" id="expt-models">
+      <div class="panel-head">
+        <span id="expt-models-title">Models</span>
+        <span class="hint">a spec is the model a fit reads, written from the sample's notes and data</span>
+      </div>
+      <div class="p-3 small">
+        <div id="expt-models-list" class="mb-2"></div>
+        <form id="expt-model-form" class="d-flex flex-wrap gap-2 align-items-center" novalidate>
+          <input class="form-control form-control-sm expt-model-name" id="expt-model-name"
+                 placeholder="model name, e.g. oxide" aria-label="new model name" maxlength="64">
+          <button type="submit" class="btn btn-sm btn-outline-primary" id="expt-model-create">New model</button>
+          <span class="text-secondary">or</span>
+          <select id="expt-model-run" class="form-select form-select-sm expt-model-run d-none"
+                  aria-label="run for AuRE to fit"></select>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="expt-model-quick">Quick fit with AuRE</button>
+        </form>
+        <div class="form-text">
+          <strong>New model</strong> writes a spec for you to check: its states
+          come from the data, and its stack is proposed by the language model
+          from the whole of sample.md, with each run's condition and notes set
+          out. <strong>Quick fit with AuRE</strong> has AuRE propose the stack
+          from the description, the fits to perform and the one run it fits, on
+          a quick budget; the spec it proposes is then fitted from AuRE's values
+          and recorded in Fits. Both ask the language model chosen under
+          <em>Language model</em> in <a href="/settings#s-llm">Settings</a>.
+          Without one, New model writes nrw's placeholder stack, and a quick fit
+          stops before AuRE runs.
+        </div>
+        <p id="expt-model-wait" class="small text-secondary mt-2 mb-0 d-none" aria-live="polite"></p>
+        <p id="expt-model-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
+        <form id="expt-fit-form" class="expt-fit d-none mt-3" novalidate>
+          <div class="fw-semibold mb-1" id="expt-fit-title">Fit</div>
+          <p id="expt-fit-placeholder" class="text-warning-emphasis small mb-2 d-none">
+            This spec still has nrw's placeholder stack &mdash; air on a film on
+            Si &mdash; not this sample's layers. Its fit would mean nothing: edit
+            the stack first, or write a new model once a language model is set
+            up.
+          </p>
+          <div class="d-flex flex-wrap gap-2 align-items-center">
+            <select id="expt-fit-method" class="form-select form-select-sm expt-fit-method" aria-label="fitter">
+              <option value="dream">dream: samples, for uncertainties</option>
+              <option value="de">de: explores the whole range</option>
+              <option value="amoeba">amoeba: explores downhill from the start, fast</option>
+            </select>
+            <div class="input-group input-group-sm expt-fit-setting d-none">
+              <span class="input-group-text">samples</span>
+              <input id="expt-fit-samples" type="number" min="1" class="form-control" aria-label="DREAM samples">
+            </div>
+            <div class="input-group input-group-sm expt-fit-setting d-none">
+              <span class="input-group-text">burn</span>
+              <input id="expt-fit-burn" type="number" min="0" class="form-control" aria-label="DREAM burn-in">
+            </div>
+            <div class="input-group input-group-sm expt-fit-setting">
+              <span class="input-group-text">steps</span>
+              <input id="expt-fit-steps" type="number" min="1" class="form-control" aria-label="steps">
+            </div>
+          </div>
+          <div class="form-text" id="expt-fit-defaults"></div>
+          <input id="expt-fit-note" class="form-control form-control-sm mt-2" maxlength="500"
+                 placeholder="why this fit (optional; kept in its record)" aria-label="why this fit">
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="checkbox" id="expt-fit-force">
+            <label class="form-check-label" for="expt-fit-force">run again even if nothing changed</label>
+          </div>
+          <div class="d-flex gap-2 mt-2">
+            <button type="submit" class="btn btn-sm btn-primary" id="expt-fit-run">Run fit</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-fit-close">Close</button>
+          </div>
+          <div class="form-text">
+            The fitter and each box start at what the fit would use: the
+            fitter from nrw.toml [fit], else dream; each box from nrw.toml,
+            else bumps' own default. Only what you change is sent with the fit.
+            The spec's script is generated again first; a script edited by hand
+            is refused.
+          </div>
+          <p id="expt-fit-problem" class="text-danger small mb-0 mt-1 d-none"></p>
+        </form>
+      </div>
+    </div>
+
+    <div class="panel d-none" id="expt-job-panel">
+      <div class="panel-head">
+        <span id="expt-job-title">Fit</span>
+        <span id="expt-job-state" class="badge text-bg-light"></span>
+        <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="expt-job-cancel">Cancel</button>
+        <button type="button" class="btn-close ms-auto d-none" id="expt-job-close" aria-label="close"></button>
+      </div>
+      <div class="p-3 small">
+        <p id="expt-job-result" class="mb-2" aria-live="polite"></p>
+        <pre id="expt-job-log" class="expt-output expt-job-log small mb-0"></pre>
+      </div>
+    </div>
+  </div>
+
+  <aside class="rail">
+    <div class="panel">
+      <div class="panel-head">
+        <span>Samples</span>
+      </div>
+      <div id="expt-samples" class="list-group list-group-flush small"></div>
+    </div>
+
+    <div class="panel d-none" id="expt-editor">
+      <div class="panel-head">
+        <span id="expt-editor-title">Sample</span>
+        <span id="expt-md-state" class="badge text-bg-light ms-auto"></span>
+      </div>
+      <form id="expt-form" class="p-3 small" novalidate>
+        <label class="form-label mb-1" for="f-title">Title</label>
+        <input class="form-control form-control-sm mb-2" id="f-title" name="title">
+        <label class="form-label mb-1" for="f-description">Description</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-description" name="description" rows="2"
+                  placeholder="What the sample is, what it is in, what you expect."></textarea>
+        <label class="form-label mb-1" for="f-details">Details</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-details" name="details" rows="3"
+                  placeholder="Composition, electrolyte, environment -- anything that constrains the model."></textarea>
+        <label class="form-label mb-1" for="f-mounting">Was the sample moved between measurements?</label>
+        <select class="form-select form-select-sm mb-2" id="f-mounting" name="mounting">
+          <option value="unknown">not recorded</option>
+          <option value="once">no -- mounted once for all of them</option>
+          <option value="remounted">yes -- remounted or realigned between them</option>
+        </select>
+        <label class="form-label mb-1" for="f-conditions">Measurement conditions</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-conditions" name="measurement_conditions"
+                  rows="2" placeholder="Alignment, flatness, background, normalization."></textarea>
+        <div class="form-label mb-1">Measurements</div>
+        <div id="f-measurements" class="expt-measurements mb-1"></div>
+        <div class="form-text mb-2">
+          Each run's type and condition go into sample.md's table; the notes on
+          it go under Measurement conditions, with the run named -- so nothing
+          said about one measurement is read as said about another. Slide a bad
+          run off to leave it out, and say why in its notes.
+        </div>
+        <label class="form-label mb-1" for="f-fits">Fits to perform</label>
+        <textarea class="form-control form-control-sm mb-2" id="f-fits" name="fits_to_perform" rows="3"
+                  placeholder="What to fit and what should change. An unattended session needs this."></textarea>
+        <div class="d-flex gap-2 align-items-center">
+          <button type="submit" class="btn btn-sm btn-primary" id="expt-save">Save</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="expt-adopt">Pull hand edits</button>
+        </div>
+        <p id="expt-form-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
+      </form>
+      <div id="expt-adopt-plan" class="px-3 pb-2 small d-none"></div>
+      <div class="p-3 markdown small border-top" id="expt-preview"></div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+  window.NRW_EXPERIMENT = {{ payload|nrwjson|safe }};
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
+<script src="{{ url_for('static', filename='experiment.js') }}"></script>
+<script src="{{ url_for('static', filename='models.js') }}"></script>
+{% endblock %}

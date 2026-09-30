@@ -10,6 +10,7 @@ from typing import Any
 import click
 
 from nr_workbench.instrument.reduced import find_segments
+from nr_workbench.problems import one_line
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
 
@@ -249,7 +250,7 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
     Raises:
         click.ClickException: If the spec is invalid or the target was edited.
     """
-    from nr_workbench.codegen.generator import generate, verify_self_hash
+    from nr_workbench.codegen.generator import generate, generated_at, verify_self_hash
     from nr_workbench.provenance.env import package_version
     from nr_workbench.spec.deprecation import is_deprecated, reason_of
     from nr_workbench.spec.models import SpecError
@@ -285,29 +286,46 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
         raise click.ClickException(str(exc)) from exc
 
     target = Path(out) if out else path.with_suffix(".py")
-    if target.exists() and not force:
-        existing = target.read_text(encoding="utf-8")
-        if existing.startswith("# ---") and not verify_self_hash(existing):
-            raise click.ClickException(
-                f"{target.name} has been edited by hand since it was generated.\n"
-                "Overwriting would discard those edits. Either re-apply them to the "
-                "spec, or run `nrw model fork` to take ownership of the script with "
-                "its provenance intact. Use --force to overwrite anyway."
-            )
+    existing = target.read_text(encoding="utf-8") if target.exists() else None
+    if (
+        existing is not None
+        and not force
+        and existing.startswith("# ---")
+        and not verify_self_hash(existing)
+    ):
+        raise click.ClickException(
+            f"{target.name} has been edited by hand since it was generated.\n"
+            "Overwriting would discard those edits. Either re-apply them to the "
+            "spec, or run `nrw model fork` to take ownership of the script with "
+            "its provenance intact. Use --force to overwrite anyway."
+        )
 
     versions = {
         name: version
         for name in ("refl1d", "bumps", "numpy", "nr-workbench")
         if (version := package_version(name))
     }
-    source = generate(
-        table,
-        spec_path=path.relative_to(layout.root),
-        spec_sha256=_spec_sha256(path),
-        versions=versions,
+
+    def render(now: Any = None) -> str:
+        return generate(
+            table,
+            spec_path=path.relative_to(layout.root),
+            spec_sha256=_spec_sha256(path),
+            versions=versions,
+            now=now,
+        )
+
+    # A script that would come out the same but for its timestamp is left as it
+    # is. Rewriting it would change its hash, and so the identity of every fit
+    # of it: an unchanged model, fitted again with unchanged settings, would
+    # read as a new run instead of being refused as the identical one it is.
+    previous = (
+        generated_at(existing) if existing and verify_self_hash(existing) else None
     )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(source, encoding="utf-8")
+    unchanged = previous is not None and render(previous) == existing
+    if not unchanged:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(render(), encoding="utf-8")
 
     # The explanation is derived from the same table, so it cannot describe a
     # different model than the one just written.
@@ -323,7 +341,13 @@ def run_generate(*, spec: str, out: str | None = None, force: bool = False) -> N
         encoding="utf-8",
     )
 
-    click.echo(f"Wrote {target.relative_to(layout.root)}")
+    if unchanged:
+        click.echo(
+            f"{target.relative_to(layout.root)} is up to date with its spec; "
+            "left as it is"
+        )
+    else:
+        click.echo(f"Wrote {target.relative_to(layout.root)}")
     click.echo(f"      {notes_target.relative_to(layout.root)}  (what it assumes)")
 
     click.echo(
@@ -401,8 +425,15 @@ def run_new(
             exists and ``force`` was not given.
     """
 
+    from nr_workbench.project.samples import validate_model_name
     from nr_workbench.project.scan import load_register, register_drift, scan_sample
 
+    # The name becomes a filename three times over; a path here would write
+    # the spec outside models/ -- the rule `nrw aure` and the page apply.
+    try:
+        validate_model_name(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     layout = _layout()
 
     # The register wins over the disk. `sample.yaml` is what this sample's
@@ -447,7 +478,7 @@ def run_new(
         )
 
     document = _scaffold_document(sample, name, found, layout.root)
-    assumed = document.pop("_nrw_assumed_angles", [])
+    blank = document.pop("_nrw_blank_angles", [])
     summed = document.pop("_nrw_summed_series", [])
 
     notes_path = layout.sample(sample) / "sample.md"
@@ -485,7 +516,10 @@ def run_new(
         "#   nrw model preview  <this file>\n"
         "#   nrw model generate <this file>\n"
     )
-    target.write_text(header + provenance + _emit_spec(document), encoding="utf-8")
+    target.write_text(
+        header + provenance + blank_angles_comment(blank) + _emit_spec(document),
+        encoding="utf-8",
+    )
 
     click.echo(f"Wrote {target.relative_to(layout.root)}")
     if print_prompt:
@@ -497,9 +531,9 @@ def run_new(
             f"  note  run {run} is in data/steady as a summed dataset and also\n"
             "        as a time-resolved series. Only the series is in the spec --\n"
             "        fitting both would count the same neutrons twice. The summed\n"
-            "        file is where the series' incident angle was read from."
+            "        file is where the series' incident angle is read from."
         )
-    warn_assumed_angles(assumed)
+    warn_blank_angles(blank)
 
     click.echo(
         f"  {len(document.get('states', []))} state(s), "
@@ -513,50 +547,38 @@ def run_new(
     click.echo(f"    nrw model validate {target.relative_to(layout.root)}")
 
 
-#: Fallback angles, used only where a file records none. These are this
-#: group's usual REF_L settings, not a measurement -- anything scaffolded from
-#: them is flagged so it gets checked rather than trusted.
-FALLBACK_THETAS = (0.45, 1.2, 3.5)
-
-#: Fallback for a time-resolved series. Slices carry no header at all, and the
-#: angle appears in neither the reduction JSON nor the tNR template, so there
-#: is nothing on disk to read. This is the usual setting and must be checked.
-TNR_FALLBACK_THETA = 0.6
-
-
-def _thetas_from_headers(paths: list[Path]) -> tuple[list[float], list[str]]:
+def _thetas_from_headers(paths: list[Path]) -> tuple[list[float | None], list[str]]:
     """Read each segment's incident angle from its own file.
 
-    The angle is recorded exactly, in radians, in the ``# Meta:`` JSON block
-    REF_L writes at the top of a reduced file. It was previously assumed from a
-    hardcoded ``[0.45, 1.2, 3.5]`` truncated to the segment count, which is
-    right only for a three-segment measurement at this group's usual settings
-    and silently wrong for anything else. theta sets the resolution through
-    ``dT = dq/q * tan(theta)``, so a wrong one is absorbed into roughness
-    rather than raising.
+    The angle is recorded exactly, in radians, in the header REF_L writes at
+    the top of a reduced file. A file that records none gets no angle at all:
+    it is left blank, never filled from the group's usual settings. Those were
+    once assumed -- ``[0.45, 1.2, 3.5]`` truncated to the segment count --
+    which is silently wrong for anything else. theta sets the wavelength axis
+    and the resolution, and a wrong one is absorbed into roughness rather than
+    raising.
 
     Args:
         paths: Segment files, in order.
 
     Returns:
-        ``(thetas, unreadable)`` -- angles in degrees, and the names of any
-        files that recorded none and therefore got a fallback.
+        ``(thetas, blank)`` -- the angle of each file in degrees, ``None``
+        where it records none, and the names of those files.
     """
-    from nr_workbench.instrument.header import read_header
+    from nr_workbench.instrument.header import recorded_angle
 
-    thetas: list[float] = []
-    unreadable: list[str] = []
-    for index, path in enumerate(paths):
-        angle: float | None = None
-        try:
-            angle = read_header(path).theta
-        except Exception:
-            angle = None
+    thetas: list[float | None] = []
+    blank: list[str] = []
+    for path in paths:
+        # The same reader resolving the spec uses, so the two cannot disagree
+        # about whether a file records its angle.
+        angle = recorded_angle(path).theta
         if angle is None:
-            unreadable.append(path.name)
-            angle = FALLBACK_THETAS[min(index, len(FALLBACK_THETAS) - 1)]
-        thetas.append(round(float(angle), 4))
-    return thetas or [FALLBACK_THETAS[0]], unreadable
+            blank.append(path.name)
+            thetas.append(None)
+        else:
+            thetas.append(round(angle, 4))
+    return thetas, blank
 
 
 def _dq_is_fwhm_from_headers(paths: list[Path]) -> tuple[bool, list[str]]:
@@ -629,48 +651,65 @@ def _dq_is_fwhm_from_headers(paths: list[Path]) -> tuple[bool, list[str]]:
     return convention == "fwhm", notes
 
 
-def _series_theta(root: Path, found_series, unknown: list[str]) -> float:
-    """Resolve a time-resolved series' incident angle.
+def _series_angle_is_recorded(root: Path, found_series) -> bool:
+    """Whether a time-resolved series' angle is on disk, for the spec to read.
 
     The slices carry no header, but the same run is also reduced as a summed
-    dataset into ``data/steady``, and that file does. So the angle is on disk,
-    one directory across -- which beats the group's usual setting, because
-    "usual" is 0.6 and the measured value for run 218389 is 0.5997.
+    dataset into ``data/steady``, and that file does -- which is where
+    resolving the spec reads it from (``spec.resolve.summed_dataset_dir``).
     """
     from nr_workbench.instrument.header import theta_for_run
+    from nr_workbench.spec.resolve import summed_dataset_dir
 
-    if found_series.run is not None:
-        steady = root / Path(found_series.directory).parent.parent / "steady"
-        theta, source = theta_for_run(steady, found_series.run)
-        if theta is not None:
-            return round(float(theta), 4)
-    unknown.append(f"{Path(found_series.directory).name} (series; no summed dataset)")
-    return TNR_FALLBACK_THETA
+    steady = summed_dataset_dir(found_series.directory)
+    if found_series.run is None or steady is None:
+        return False
+    theta, _ = theta_for_run(root / steady, found_series.run)
+    return theta is not None
 
 
-def warn_assumed_angles(assumed: list[str]) -> None:
-    """Report files whose incident angle had to be assumed.
+def blank_angles_comment(blank: list[str]) -> str:
+    """The spec's comment naming each file whose angle it leaves blank.
 
-    Shared by `nrw model new` and `nrw aure import`. Both had a reason to print
-    this and only one of them explained it -- a bare filename in yellow does not
-    tell anybody that a resolution-setting number was guessed, which is the one
-    thing the warning is for.
+    Shared by `nrw model new` and `nrw aure import`: both leave a ``null``
+    where no header records the angle, and the comment says whose it is.
+    """
+    if not blank:
+        return ""
+    # One line each, whatever the name: a line break in a directory name would
+    # end the comment and make the rest of the name keys of the spec.
+    return (
+        "# BLANK ANGLES. No header records the incident angle of:\n"
+        + "".join(f"#   {one_line(name)}\n" for name in blank)
+        + "# Each is `null` below. Give it in degrees; `nrw model validate`\n"
+        "# refuses this spec until then.\n"
+        "#\n"
+    )
+
+
+def warn_blank_angles(blank: list[str]) -> None:
+    """Report the files whose incident angle the spec leaves blank.
+
+    Shared by `nrw model new` and `nrw aure import`. A bare filename in yellow
+    would not say that a resolution-setting number is missing, which is the one
+    thing this is for.
 
     Args:
-        assumed: Names of files with no angle in their header.
+        blank: Names of files with no angle in their header.
     """
-    if not assumed:
+    if not blank:
         return
     click.secho(
-        "  !  no incident angle in the header of: "
-        + ", ".join(assumed[:6])
-        + ("" if len(assumed) <= 6 else f" (+{len(assumed) - 6} more)"),
+        "  !  no incident angle recorded for: "
+        + ", ".join(one_line(name) for name in blank[:6])
+        + ("" if len(blank) <= 6 else f" (+{len(blank) - 6} more)"),
         fg="yellow",
     )
     click.secho(
-        "     The standard angles were used instead. Theta sets the resolution\n"
-        "     through dT = dq/q * tan(theta), so a wrong one is absorbed into\n"
-        "     roughness rather than reported. Check them before fitting.",
+        "     The spec leaves each blank: give it, in degrees, before fitting.\n"
+        "     `nrw model validate` refuses the spec until then. Theta sets each\n"
+        "     probe's wavelength axis, and a guessed one would be absorbed into\n"
+        "     roughness rather than reported.",
         fg="yellow",
     )
 
@@ -681,49 +720,79 @@ def state_for_run(
     """Build one spec ``states`` entry from a steady run on disk.
 
     Shared by ``nrw model new`` and ``nrw aure import`` -- both need the same
-    thing (which files, and the incident angle each one was measured at), and
-    the angles are read from the files' own ``# Meta:`` headers rather than
-    assumed, so a second implementation would be a second chance to get them
-    wrong.
+    thing (which files, and where each one's incident angle comes from), so a
+    second implementation would be a second chance to get it wrong. The block
+    has no ``thetas`` when every file records its angle: resolving the spec
+    reads each from its header. Where one records none, ``thetas`` lists the
+    recorded angles with a ``null`` in its place, for a person to fill in.
 
     Args:
         root: The project root, which the recorded paths are relative to.
         measurement: A :class:`~nr_workbench.project.scan.SteadyMeasurement`.
 
     Returns:
-        ``(state, files, assumed_angles)`` -- the spec block, the data files it
-        names, and any file whose angle had to be assumed rather than read.
+        ``(state, files, blank)`` -- the spec block, the data files it names,
+        and any file whose angle it leaves blank.
 
     Raises:
         ValueError: If the run has no files on disk.
     """
     run = measurement.run
     if measurement.partials:
-        paths = [root / measurement.partials[k] for k in sorted(measurement.partials)]
-        thetas, missing = _thetas_from_headers(paths)
-        block = {
-            "name": f"run{run}",
-            "run": run,
-            "segments": "auto",
-            "thetas": thetas,
-            "data_dir": str(Path(next(iter(measurement.partials.values()))).parent),
-        }
-        return block, paths, missing
+        numbers = sorted(measurement.partials)
+        paths = [root / measurement.partials[k] for k in numbers]
+        thetas, blank = _thetas_from_headers(paths)
+        directory = Path(measurement.partials[numbers[0]]).parent
+        block: dict[str, Any] = {"name": f"run{run}", "run": run}
+        if _is_every_segment_on_disk(root, directory, measurement):
+            block["segments"] = "auto"
+            if blank:
+                block["thetas"] = thetas
+            block["data_dir"] = str(directory)
+        else:
+            # The register lists some of the run's segments, not all: `auto`
+            # would read the rest too. Listed, each still takes its angle from
+            # its file -- or is a blank for a person, where none is recorded.
+            block["segments"] = [
+                {"file": measurement.partials[k]}
+                | ({"theta": None} if theta is None else {})
+                for k, theta in zip(numbers, thetas, strict=True)
+            ]
+        return block, paths, blank
 
     if measurement.combined:
         path = root / measurement.combined
-        thetas, missing = _thetas_from_headers([path])
+        thetas, blank = _thetas_from_headers([path])
         block = {
             "name": f"run{run}",
             "run": run,
             "kind": "combined",
             "segments": "auto",
-            "thetas": thetas,
-            "data_dir": str(Path(measurement.combined).parent),
         }
-        return block, [path], missing
+        if blank:
+            block["thetas"] = thetas
+        block["data_dir"] = str(Path(measurement.combined).parent)
+        return block, [path], blank
 
     raise ValueError(f"run {run} has no reduced files on disk")
+
+
+def _is_every_segment_on_disk(root: Path, directory: Path, measurement) -> bool:
+    """Whether a registered run's segments are exactly what ``segments: auto`` reads.
+
+    ``sample.yaml`` is where a person says "co-refine only these", so a run it
+    lists with a segment left out must not be written as ``auto``, which would
+    read every segment in the folder.
+    """
+    from nr_workbench.spec.resolve import segments_on_disk
+
+    registered = {k: Path(v) for k, v in measurement.partials.items()}
+    if any(path.parent != directory for path in registered.values()):
+        return False
+    on_disk = segments_on_disk(root / directory, measurement.run)
+    return {k: [p.name for p in paths] for k, paths in on_disk.items()} == {
+        k: [path.name] for k, path in registered.items()
+    }
 
 
 def _scaffold_document(
@@ -737,9 +806,11 @@ def _scaffold_document(
         found: The scan result for this sample.
         root: Project root, needed to read the data-file headers.
     """
+    from nr_workbench.spec.authoring import placeholder_materials, placeholder_stack
+
     root = Path(root) if root is not None else Path.cwd()
     states = []
-    unknown_angles: list[str] = []
+    blank_angles: list[str] = []
     steady_files: list[Path] = []
 
     # A time-resolved run is *also* reduced as a summed dataset into
@@ -747,7 +818,7 @@ def _scaffold_document(
     # slices the series contributes, so including both would put the same
     # neutrons into the fit twice -- once whole, once in pieces -- and weight
     # that run roughly double. The series wins; the summed file stays on disk
-    # and is still what `_series_theta` reads the angle from.
+    # and is where the series' incident angle is read from.
     series_runs = {s.run for s in found.series if s.run is not None}
     summed_series: list[int] = []
 
@@ -762,7 +833,7 @@ def _scaffold_document(
             continue
         states.append(block)
         steady_files.extend(paths)
-        unknown_angles.extend(missing)
+        blank_angles.extend(missing)
 
     series = []
     for found_series in found.series:
@@ -772,11 +843,17 @@ def _scaffold_document(
             "name": f"tnr{found_series.run or ''}",
             "run": found_series.run,
             "reduced_dir": found_series.directory,
-            "theta": _series_theta(root, found_series, unknown_angles),
-            "time_from": "filename"
-            if found_series.kind == "time_binned"
-            else "reduction_json",
         }
+        if not _series_angle_is_recorded(root, found_series):
+            # Nothing on disk records it: a blank for a person, not a guess.
+            block["theta"] = None
+            blank_angles.append(
+                f"{Path(found_series.directory).name} (series; no summed dataset "
+                "of its run in data/steady)"
+            )
+        block["time_from"] = (
+            "filename" if found_series.kind == "time_binned" else "reduction_json"
+        )
         if found_series.t_step is not None:
             block["select"] = {
                 "t_start": found_series.t_start,
@@ -797,16 +874,8 @@ def _scaffold_document(
         "sample": sample,
         "description": f"TODO: describe {sample}.\n",
         # A minimal physically-sensible stack, deliberately obvious as a stub.
-        "materials": {
-            "Ambient": {"rho": 0.0},
-            "Film": {"rho": 4.0},
-            "Si": {"rho": 2.07},
-        },
-        "stack": [
-            {"name": "Ambient", "material": "Ambient", "thickness": 0, "roughness": 5},
-            {"name": "Film", "material": "Film", "thickness": 100, "roughness": 5},
-            {"name": "Si", "material": "Si"},
-        ],
+        "materials": placeholder_materials(),
+        "stack": placeholder_stack(),
         "probe": {"resolution": "angular_only", "dq_is_fwhm": dq_is_fwhm},
     }
     if states:
@@ -836,7 +905,7 @@ def _scaffold_document(
         {"path": "probe.intensity", "value": 1.0, "pm": 0.1, "per": "state"},
     ]
 
-    document["_nrw_assumed_angles"] = unknown_angles
+    document["_nrw_blank_angles"] = blank_angles
     document["_nrw_summed_series"] = summed_series
 
     if constrained:
@@ -860,7 +929,6 @@ def _scaffold_document(
                 "in": [s["name"] for s in series],
             }
         )
-    document["fit"] = {"method": "amoeba", "steps": 1000}
     return document
 
 
@@ -1014,8 +1082,11 @@ _SECTIONS: tuple[tuple[str, str], ...] = (
     ),
     ("stack", "# ambient -> substrate"),
     ("probe", ""),
-    ("states", "# Angles were read from each file's header. Do not round them."),
-    ("series", ""),
+    ("states", "# Each file's incident angle is read from its own header."),
+    (
+        "series",
+        "# A series' angle is read from its run's summed dataset in data/steady.",
+    ),
     (
         "parameters",
         "# `per:` is the whole parameter-identity system:\n"
@@ -1186,6 +1257,7 @@ def _author_from_notes(
     from nr_workbench.spec.authoring import (
         AuthoringError,
         build_prompt,
+        describe_measurements,
         find_skills,
         merge_proposal,
         missing_relevant,
@@ -1195,10 +1267,10 @@ def _author_from_notes(
 
     info = llm_info()
     if not info.get("available"):
-        from nr_workbench.aure_adapter import claude_code_supported
+        from nr_workbench.aure_adapter import CLAUDE_CODE, claude_code_supported
 
         get_one = (
-            "    a placeholder. Either set LLM_PROVIDER=claude_code to use the\n"
+            f"    a placeholder. Either set LLM_PROVIDER={CLAUDE_CODE} to use the\n"
             "    Claude Code CLI you already have (no key needed), or set\n"
             "    LLM_PROVIDER and LLM_API_KEY, or run:\n"
             if claude_code_supported()
@@ -1239,6 +1311,7 @@ def _author_from_notes(
         notes=notes,
         skills=skills,
         facts=_measured_facts(layout, document, notes),
+        measurements=describe_measurements(document, notes),
     )
 
     click.echo(

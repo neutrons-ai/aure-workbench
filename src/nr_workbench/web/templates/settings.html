@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Settings — nr-workbench{% endblock %}
+
+{# This page plots nothing: no Plotly, and so no "plots unavailable" banner. #}
+{% block plotly %}{% endblock %}
+{% block plotly_check %}{% endblock %}
+
+{% block navextra %}
+<a class="btn btn-sm btn-outline-secondary"
+   href="{{ url_for('experiment_api.settings') }}">API</a>
+{% endblock %}
+
+{% block content %}
+<div class="settings">
+  <div class="d-flex align-items-baseline gap-3 mb-2 flex-wrap">
+    <h1 class="h4 mb-0">Settings</h1>
+    <span class="small text-secondary">saved in <code>nrw.toml</code>, which you can also edit by hand &mdash; except the language model, saved in the project's <code>.env</code></span>
+  </div>
+
+  <div id="set-readonly" class="alert alert-secondary py-2 d-none" role="status"></div>
+  <div id="set-message" class="alert py-2 d-none" role="alert"></div>
+  <div id="set-problems" class="alert alert-warning py-2 problem d-none">
+    <strong>Notes on these settings</strong>
+    <ul class="mb-0 mt-1"></ul>
+  </div>
+
+  <form id="set-form" novalidate>
+    <section class="panel">
+      <div class="panel-head"><span>The experiment</span></div>
+      <div class="p-3">
+        <label class="form-label mb-1" for="s-ipts">IPTS</label>
+        <input id="s-ipts" class="form-control form-control-sm mono settings-short"
+               placeholder="e.g. IPTS-34347 or 34347" autocomplete="off" spellcheck="false">
+        <div id="s-ipts-hint" class="form-text"></div>
+        <label class="form-label mb-1 mt-3" for="s-label">Beamtime label</label>
+        <input id="s-label" class="form-control form-control-sm settings-short"
+               placeholder="e.g. april2026" autocomplete="off">
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>Where the data is</span></div>
+      <div class="p-3">
+        <div id="s-sources" role="radiogroup" aria-label="Data source"></div>
+        <div id="s-local" class="settings-indent">
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="radio" name="s-where" id="s-default" value="default">
+            <label class="form-check-label" for="s-default">
+              nrw's default location <span class="text-secondary">(provisional: it is expected to move)</span>
+            </label>
+            <div id="s-default-path" class="small mono text-secondary"></div>
+          </div>
+          <div class="form-check mt-1">
+            <input class="form-check-input" type="radio" name="s-where" id="s-custom" value="custom">
+            <label class="form-check-label" for="s-custom">Another folder</label>
+          </div>
+          <input id="s-location" class="form-control form-control-sm mono mt-1"
+                 placeholder="e.g. /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+                 autocomplete="off" spellcheck="false" aria-label="Data folder">
+          <div class="form-text">A full path. <code>{ipts}</code> is filled in from the IPTS.</div>
+          <div class="d-flex gap-2 mt-2 align-items-center">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="s-check">Check folder</button>
+            <span id="s-check-status" class="small text-secondary" aria-live="polite"></span>
+          </div>
+          <div id="s-check-result" class="small mt-2"></div>
+          <details class="mt-2">
+            <summary class="small">Advanced</summary>
+            <label class="form-label mb-1 mt-2" for="s-settle">Settle time, in seconds</label>
+            <input id="s-settle" type="number" class="form-control form-control-sm settings-short">
+            <div class="form-text">
+              How long a run's files must be unchanged before they count as settled.
+              Blank follows nrw's default.
+            </div>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>How new runs are noticed</span></div>
+      <div class="p-3">
+        <div id="s-feeds" role="radiogroup" aria-label="Watcher"></div>
+        <details class="mt-2">
+          <summary class="small">Advanced</summary>
+          <label class="form-label mb-1 mt-2" for="s-poll">Poll interval, in seconds</label>
+          <input id="s-poll" type="number" class="form-control form-control-sm settings-short">
+          <div class="form-text">How often the watcher looks while a page is open. Blank follows nrw's default.</div>
+        </details>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>Where samples and assignments are kept</span></div>
+      <div class="p-3">
+        <div id="s-catalogs" role="radiogroup" aria-label="Catalog"></div>
+      </div>
+    </section>
+
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <button type="submit" class="btn btn-sm btn-primary" id="s-save">Save</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('experiment') }}">Experiment page</a>
+      <span id="s-status" class="small text-secondary" aria-live="polite"></span>
+    </div>
+    <pre id="s-lines" class="small mt-2 p-2 border rounded d-none"></pre>
+    <details id="s-diff-box" class="mt-2 d-none">
+      <summary class="small">What changed in nrw.toml</summary>
+      <pre id="s-diff" class="small mt-1"></pre>
+    </details>
+  </form>
+
+  {# Its own form: saved in the project's .env, never in nrw.toml, which is
+     committed -- a language model is one person's, on one machine. #}
+  <form id="llm-form" class="mt-4" novalidate>
+    <section class="panel" id="s-llm">
+      <div class="panel-head">
+        <span>Language model</span>
+        <span class="hint">for New model, AuRE's quick fit and ISAAC's Export; saved in this project's <code>.env</code>, which git ignores</span>
+      </div>
+      <div class="p-3">
+        <p id="llm-now" class="small mb-2" aria-live="polite">Reading what is set…</p>
+        <div id="llm-environment" class="alert alert-warning py-2 small d-none" role="status"></div>
+        <div id="llm-problem" class="alert alert-warning py-2 small d-none" role="status"></div>
+        <div class="form-check">
+          {# Its value, the provider's id, is set from the server's answer:
+             AuRE owns the name. Every control starts disabled, and only the
+             section's own answer enables it. #}
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-claude" disabled>
+          <label class="form-check-label" for="llm-claude">Claude, through the Claude Code CLI</label>
+          <div class="small text-secondary">
+            No key: it answers as whatever <code>claude</code> is logged in as &mdash;
+            a subscription, an API key, or Bedrock, Vertex or Foundry.
+          </div>
+          <div id="llm-claude-problem" class="small text-warning-emphasis d-none"></div>
+          <div id="llm-claude-binary" class="small text-secondary d-none"></div>
+        </div>
+        <div class="settings-indent">
+          <input id="llm-model" class="form-control form-control-sm mono settings-short mt-1"
+                 list="llm-models" placeholder="the CLI's default" aria-label="Claude model"
+                 autocomplete="off" spellcheck="false" disabled>
+          <datalist id="llm-models">
+            <option value="sonnet"></option>
+            <option value="opus"></option>
+            <option value="haiku"></option>
+          </datalist>
+          <div class="form-text">
+            Blank for the CLI's default; <code>sonnet</code>, <code>opus</code> or
+            <code>haiku</code>, or a full model or deployment name.
+          </div>
+        </div>
+        <div class="form-check mt-2 d-none" id="llm-other-row">
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-other" value="other" disabled>
+          <label class="form-check-label" for="llm-other">As this project's <code>.env</code> sets it</label>
+          <div id="llm-other-detail" class="small text-secondary"></div>
+        </div>
+        <div class="form-check mt-2">
+          <input class="form-check-input" type="radio" name="llm-choice" id="llm-outside" value="outside" disabled>
+          <label class="form-check-label" for="llm-outside">As set outside this project</label>
+          <div id="llm-outside-detail" class="small text-secondary"></div>
+        </div>
+        <div class="d-flex gap-2 mt-3 align-items-center flex-wrap">
+          <button type="submit" class="btn btn-sm btn-primary" id="llm-save" disabled>Save</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="llm-check" disabled>Check</button>
+          <span id="llm-status" class="small text-secondary" aria-live="polite"></span>
+        </div>
+        <div class="form-text">
+          <strong>Check</strong> makes one real call to the model a job would use
+          now, as <code>nrw check-llm --endpoint</code> does: it is billed like any
+          other, and waits up to <code>LLM_TIMEOUT</code> (120 s by default) and a
+          minute more.
+        </div>
+        <div id="llm-result" class="small mt-2" aria-live="polite"></div>
+      </div>
+    </section>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+  window.NRW_SETTINGS = {{ payload|nrwjson|safe }};
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
+<script src="{{ url_for('static', filename='settings.js') }}"></script>
+<script src="{{ url_for('static', filename='settings_llm.js') }}"></script>
+{% endblock %}

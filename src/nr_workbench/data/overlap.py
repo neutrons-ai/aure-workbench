@@ -1,6 +1,6 @@
 """Consistency between the angle segments of one measurement.
 
-REF_L measures a curve in three angle settings (0.45, 1.2, 3.5 degrees here),
+REF_L measures a curve in several angle settings, chosen per experiment,
 each reduced separately and each carrying its own incident-intensity
 normalisation. Where two segments overlap in Q they are measuring the same
 sample and must agree. When they do not, the cause is almost always the

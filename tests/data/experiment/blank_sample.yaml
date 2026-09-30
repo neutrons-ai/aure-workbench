@@ -1,0 +1,16 @@
+# Machine register of the measurements on disk for this sample.
+#
+# `sample.md` is authoritative for intent -- what you meant to measure and why.
+# This file is authoritative for files -- what is actually here. `nrw sample
+# scan` maintains it and reports where the two disagree.
+schema: nrw-sample/1
+id: Sample1
+title: "Sample1"
+beamtime: "june2026"
+created: "2026-01-02T03:04:05Z"
+
+# Steady-state measurements. Populated by `nrw sample scan`.
+steady: []
+
+# Time-resolved series. Populated by `nrw sample scan`.
+series: []

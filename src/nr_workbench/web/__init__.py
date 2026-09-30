@@ -1,4 +1,4 @@
-"""The read-only web view of a workbench project.
+"""The web view of a workbench project, and its Experiment page.
 
 :mod:`~nr_workbench.web.project` holds the data access and imports no web
 framework; :mod:`~nr_workbench.web.app` is a thin Flask layer over it. Nothing

@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.scan import scan_sample
 from nr_workbench.provenance.index import FitIndex
@@ -65,23 +65,6 @@ def _trim(text: str) -> str:
 
 #: Cap on heatmap cells (intervals x Q bins). A 21 x 250 series is 5k.
 MAX_HEATMAP_CELLS = 400_000
-
-
-@dataclass(frozen=True)
-class Problem:
-    """Something the UI could not do, stated plainly enough to act on.
-
-    Attributes:
-        scope: What was being read, e.g. ``series:218389``.
-        message: What went wrong, in terms the reader can fix.
-    """
-
-    scope: str
-    message: str
-
-    def as_dict(self) -> dict[str, str]:
-        """Return the JSON form."""
-        return {"scope": self.scope, "message": self.message}
 
 
 class ProjectData:
@@ -470,21 +453,19 @@ class ProjectData:
             one, plus the ``description`` and ``change`` lines that tell a
             long list of hashes apart.
         """
-        promoted: dict[str, list[str]] = {}
-        for event in self.index.promotions():
-            fit_id = str(event.get("fit_id"))
-            label = str(event.get("label"))
-            promoted.setdefault(fit_id, [])
-            # Later promotions of the same label supersede earlier ones, but a
-            # fit can hold more than one label at once.
-            if label not in promoted[fit_id]:
-                promoted[fit_id].append(label)
+        from nr_workbench.provenance.curation import NONE, curation_of
+
+        # The labels a fit holds now -- a fit superseded as final is not final
+        # -- and whether it is starred, set aside, or its files deleted.
+        curated = curation_of(self.index.entries())
 
         rows = []
         for row in annotate(self.index.fits(sample=sample_id)):
             entry = dict(row)
             fit_id = str(row.get("fit_id"))
-            entry["labels"] = promoted.get(fit_id, [])
+            state = curated.get(fit_id, NONE)
+            entry["labels"] = list(state.labels)
+            entry["curation"] = state.as_dict()
             # The index is append-only on purpose -- that a fit happened stays
             # true even after someone clears out disk space. But its artifacts
             # may be gone, and a row that links to a 404 is worse than one that
@@ -976,6 +957,11 @@ class ProjectData:
 
     def _fit_dir(self, fit_id: str, sample: Any) -> Path:
         """Locate a fit directory, searching all samples if needed."""
+        from nr_workbench.provenance.lookup import plain_name
+
+        # The index is committed: a name in it is refused unless it is one.
+        if not plain_name(fit_id) or (sample and not plain_name(sample)):
+            raise FileNotFoundError(f"{fit_id!r} does not name a fit directory here.")
         if sample:
             candidate = self.layout.sample(str(sample)) / "results" / fit_id
             if candidate.is_dir():
@@ -984,6 +970,10 @@ class ProjectData:
             candidate = self.layout.sample(sample_id) / "results" / fit_id
             if candidate.is_dir():
                 return candidate
+        # A script run from outside samples/ records its fit at the root.
+        candidate = self.root / "results" / fit_id
+        if candidate.is_dir():
+            return candidate
         raise FileNotFoundError(
             f"Fit {fit_id} is recorded in the index but its result directory "
             "is gone. The index is append-only, so the record of the run "
@@ -991,14 +981,10 @@ class ProjectData:
         )
 
     def _labels_for(self, fit_id: str) -> list[str]:
-        """Return promotion labels currently held by a fit."""
-        labels = []
-        for event in self.index.promotions():
-            if str(event.get("fit_id")) == fit_id:
-                label = str(event.get("label"))
-                if label not in labels:
-                    labels.append(label)
-        return labels
+        """Return the labels a fit holds now: not one it was superseded in."""
+        from nr_workbench.provenance.curation import NONE, curation_of
+
+        return list(curation_of(self.index.entries()).get(fit_id, NONE).labels)
 
     def _series_dir(self, sample_id: str, name: str) -> Path:
         """Resolve a series directory, rejecting anything outside the sample."""

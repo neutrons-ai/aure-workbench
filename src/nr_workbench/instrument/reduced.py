@@ -35,9 +35,10 @@ before it could ask.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Any
 
 #: The complete curve: every segment spliced into one file.
 COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
@@ -113,6 +114,114 @@ def parse_combined_name(name: str) -> int | None:
     return int(match.group("run")) if match else None
 
 
+# ---------------------------------------------------------------------------
+# Names about to be *written* -- stricter than names being read
+# ---------------------------------------------------------------------------
+
+#: The longest filename most filesystems accept, in bytes.
+MAX_NAME_BYTES = 255
+
+
+def segment_filename(run: int, segment: int, subrun: int, dialect: str) -> str:
+    """The exact filename the reduction writes for one segment.
+
+    Args:
+        run: The measurement.
+        segment: 1-based segment index.
+        subrun: The run that produced this segment.
+        dialect: :data:`PARTIAL_DIALECT` or :data:`AUTOREDUCTION_DIALECT`.
+
+    Returns:
+        The canonical name, e.g. ``REFL_218386_2_218387_partial.txt``.
+
+    Raises:
+        ValueError: If the dialect is not one this module knows.
+    """
+    suffixes = {
+        PARTIAL_DIALECT: _SEGMENT_SUFFIXES[0],
+        AUTOREDUCTION_DIALECT: _SEGMENT_SUFFIXES[1],
+    }
+    if dialect not in suffixes:
+        raise ValueError(f"unknown reduction dialect {dialect!r}")
+    return f"REFL_{run}_{segment}_{subrun}{suffixes[dialect]}"
+
+
+def combined_filename(run: int) -> str:
+    """The exact filename the reduction writes for a combined curve."""
+    return f"REFL_{run}_combined_data_auto.txt"
+
+
+def canonical_name(name: str) -> ReducedName | int | None:
+    """Parse *name* only if it is exactly a name the reduction would write.
+
+    The patterns above are for *reading* and are deliberately forgiving: `$`
+    also matches before a trailing newline, and ``\\d`` accepts any Unicode
+    digit, which ``int()`` then quietly converts. That is harmless when
+    classifying files already on disk. It is not harmless for a name that is
+    about to become a path inside a project -- copied from a shared facility
+    folder that anyone on the team can write to, or later from a remote
+    source. So a name is accepted here only if rebuilding it from the parsed
+    integers reproduces it byte for byte, which rules out trailing newlines,
+    non-ASCII digits, leading zeros, separators, and anything else a pattern
+    match would let through.
+
+    Args:
+        name: A bare filename. A path is rejected rather than reduced to its
+            final component, because the caller is about to write it.
+
+    Returns:
+        The parsed segment, the run of a combined curve, or ``None`` when the
+        name is not exactly canonical.
+    """
+    if not name or "\x00" in name or len(name.encode("utf-8")) > MAX_NAME_BYTES:
+        return None
+    if Path(name).name != name or "/" in name or "\\" in name:
+        return None
+
+    segment = parse_segment_name(name)
+    if segment is not None:
+        rebuilt = segment_filename(
+            segment.run, segment.segment, segment.subrun, segment.dialect
+        )
+        return segment if rebuilt == name else None
+
+    run = parse_combined_name(name)
+    if run is not None:
+        return run if combined_filename(run) == name else None
+    return None
+
+
+#: What a reduced file is to its measurement, in nrw's words. A measurement
+#: (keyed by its first run number) is N angle segments -- the curves a fit
+#: co-refines -- plus other artifacts, of which the combined curve, every
+#: segment stitched into one, is the one nrw reads today. :func:`role` speaks
+#: AuRE's words, "partial" for a segment, to compare the two tools; nrw says
+#: "segment" because "partial" is also the name of one reduction dialect.
+SEGMENT = "segment"
+COMBINED = "combined"
+
+
+def fitting_names(names: Iterable[str]) -> list[str]:
+    """Which of one measurement's reduced files a fit uses.
+
+    Its angle segments; or its combined curve when it has no segments at all.
+    The combined curve is a stitched convenience, fitted only when nothing
+    else exists -- the rule ``nrw model new`` follows. Here so that the files
+    apply copies into a sample are the files a fit of it will read.
+
+    Args:
+        names: File names of one measurement.
+
+    Returns:
+        The names to fit, in the order given.
+    """
+    names = list(names)
+    segments = [name for name in names if parse_segment_name(name) is not None]
+    if segments:
+        return segments
+    return [name for name in names if parse_combined_name(name) is not None]
+
+
 def segment_globs(run: int | str, segment: int | str = "*") -> list[str]:
     """Glob patterns matching one run's segment files, in both dialects.
 
@@ -132,7 +241,9 @@ def segment_globs(run: int | str, segment: int | str = "*") -> list[str]:
     return [f"REFL_{run}_{segment}_*{suffix}" for suffix in _SEGMENT_SUFFIXES]
 
 
-def find_segments(directory: Path, run: int | str, segment: int | str = "*") -> list[Path]:
+def find_segments(
+    directory: Path, run: int | str, segment: int | str = "*"
+) -> list[Path]:
     """Every segment file for *run* in *directory*, both dialects, sorted."""
     return sorted(
         match
@@ -220,3 +331,50 @@ def disagreement(path: str | Path) -> str | None:
 def disagreements(paths: Iterable[str | Path]) -> list[str]:
     """:func:`disagreement` over several paths, empty when all agree."""
     return [msg for msg in (disagreement(p) for p in paths) if msg]
+
+
+class ReducedDataError(ValueError):
+    """Bytes that are not a reduced reflectivity file, whatever they are named."""
+
+
+def reduced_table(data: bytes) -> Any:
+    """Parse a reduced file's bytes into its table: Q, R, dR, and dQ if present.
+
+    One parser for everything that is handed bytes rather than a path -- the
+    Experiment page's quick look and apply's check before it copies -- so a
+    file the page can plot is exactly a file apply will copy, and the reverse.
+
+    Args:
+        data: The file's content.
+
+    Returns:
+        A two-dimensional ``numpy`` array, one row per point.
+
+    Raises:
+        ReducedDataError: The bytes contain NUL, do not parse as a numeric
+            table, or have fewer than three columns. The message reads as a
+            predicate of the file: ``f"{name} {exc}"``.
+    """
+    import io
+
+    import numpy as np
+
+    if b"\x00" in data:
+        raise ReducedDataError("contains NUL bytes, so it is not a reduced text file")
+    # Said here rather than left to numpy, which warns on stderr for an empty
+    # table -- and silencing a warning is process-wide, in a threaded server.
+    if not any(
+        line.strip() and not line.lstrip().startswith(b"#")
+        for line in data.splitlines()
+    ):
+        raise ReducedDataError("has no data rows")
+    try:
+        table = np.loadtxt(io.BytesIO(data), ndmin=2)
+    except ValueError as exc:
+        raise ReducedDataError(f"is not reduced data ({exc})") from exc
+    if table.size == 0 or table.shape[1] < 3:
+        columns = table.shape[1] if table.size else 0
+        raise ReducedDataError(
+            f"has {columns} column(s); reduced data has at least Q, R and dR"
+        )
+    return table

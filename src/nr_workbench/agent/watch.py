@@ -33,11 +33,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-#: How long a measurement's files must be unchanged before it counts as
-#: complete. Reduction writes segments minutes apart, so this is generous ---
-#: waiting five minutes too long costs nothing, and starting one minute too
-#: early costs a fit on partial data that looks perfectly reasonable.
-DEFAULT_SETTLE_SECONDS = 300
+# Shared with the Experiment page, which judges the facility's folder by the
+# same rule and in the same words. Kept importable from here.
+from nr_workbench.arrival import (
+    DEFAULT_SETTLE_SECONDS,
+    fingerprint_entries,
+    segment_problems,
+    settle_state,
+)
 
 #: Seconds between polls. Nothing here is urgent: the beam is slower than this.
 DEFAULT_POLL_SECONDS = 60
@@ -120,44 +123,7 @@ def quarantine_reason(scan: Any, run: int) -> str:
             "which one is a question for a person."
         )
 
-    segments = sorted(measurement.partials)
-    if segments and segments != list(range(1, len(segments) + 1)):
-        return (
-            f"run {run} has angle segments {segments}, which are not "
-            "contiguous from 1. A segment is missing, or a file from another "
-            "run landed here."
-        )
-
-    mismatched = _subrun_mismatches(measurement)
-    if mismatched:
-        return (
-            f"run {run}: segment {mismatched[0][0]} names subrun "
-            f"{mismatched[0][1]}, but consecutive segments of run {run} should "
-            f"be subrun {mismatched[0][2]}. These files are probably not all "
-            "the same measurement."
-        )
-
-    return ""
-
-
-def _subrun_mismatches(measurement: Any) -> list[tuple[int, int, int]]:
-    """Segments whose subrun does not follow from the run number.
-
-    Returns:
-        ``(segment, found_subrun, expected_subrun)`` for each mismatch.
-    """
-    from nr_workbench.instrument.reduced import parse_segment_name
-
-    found: list[tuple[int, int, int]] = []
-    for segment, path in sorted(measurement.partials.items()):
-        parsed = parse_segment_name(Path(path).name)
-        if parsed is None:
-            continue
-        subrun = parsed.subrun
-        expected = measurement.run + segment - 1
-        if subrun != expected:
-            found.append((segment, subrun, expected))
-    return found
+    return segment_problems(measurement)
 
 
 def series_complete(root: Path, series: Any) -> str:
@@ -226,18 +192,15 @@ def fingerprint(root: Path, paths: list[str]) -> str:
     rewriting a file always changes its mtime, and these are megabytes each,
     polled every minute.
     """
-    import hashlib
-
-    digest = hashlib.sha256()
-    for relative in sorted(paths):
-        path = root / relative
+    entries: list[tuple[str, int, int] | tuple[str, None, None]] = []
+    for relative in paths:
         try:
-            stat = path.stat()
+            stat = (root / relative).stat()
         except OSError:
-            digest.update(f"{relative}:missing".encode())
+            entries.append((relative, None, None))
             continue
-        digest.update(f"{relative}:{stat.st_size}:{stat.st_mtime_ns}".encode())
-    return digest.hexdigest()
+        entries.append((relative, stat.st_size, stat.st_mtime_ns))
+    return fingerprint_entries(entries)
 
 
 def _last_change(root: Path, paths: list[str]) -> float | None:
@@ -358,25 +321,19 @@ def _judge_steady(
     if measurement.combined:
         paths.append(measurement.combined)
 
-    # How long since anything changed, from the files themselves rather than
-    # from what previous polls saw. A cross-poll counter cannot answer this on
-    # the first poll, which would make `--dry-run` report every measurement as
-    # "arriving" no matter how old it is --- the state a person checking the
-    # queue most wants to see through.
     changed_at = _last_change(root, paths)
-    quiet_for = now - changed_at if changed_at is not None else 0.0
-
     current = fingerprint(root, paths)
-    if state.fingerprints.get(run) not in (None, current):
-        # Changed between two polls. The mtime says the same thing, but a
-        # filesystem with coarse timestamps may not, and a rewrite mid-poll is
-        # exactly the case worth being conservative about.
-        quiet_for = 0.0
+    state_name, quiet_for = settle_state(
+        changed_at,
+        current,
+        state.fingerprints.get(run),
+        now=now,
+        settle_seconds=settle_seconds,
+    )
     state.fingerprints[run] = current
     state.quiet_since[run] = changed_at if changed_at is not None else now
 
-    if quiet_for < settle_seconds:
-        state_name = "arriving" if quiet_for < 1.0 else "settling"
+    if state_name != "settled":
         return Verdict(
             run,
             ready=False,

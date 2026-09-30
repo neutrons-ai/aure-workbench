@@ -67,6 +67,27 @@ _REASONS = {
         "say in ESCALATIONS.md that it is ready to run, and stop. "
         "`nrw aure run --dry-run` is allowed and validates it."
     ),
+    "experiment": (
+        "Which sample a run belongs to, under what condition, whether it is "
+        "used at all, and where the experiment's data is read from are a "
+        "person's claims about the experiment -- like a promotion, they decide "
+        "what every later fit is built from. Write in ESCALATIONS.md what you "
+        "would assign, apply or change, and why, and stop. `nrw experiment "
+        "status`, and `apply`, `adopt` or `settings` without --write, are "
+        "allowed: they show what would happen and change nothing."
+    ),
+    "reset": (
+        "`nrw sample reset` deletes every fit and model of a sample: the record "
+        "of what was tried, and why, which the next person reading the project "
+        "needs. Write in ESCALATIONS.md what you would reset, and why, and stop. "
+        "`nrw sample reset --dry-run` is allowed: it shows what would go."
+    ),
+    "curate": (
+        "Which fits are good, set aside or deleted is a person's judgement, like "
+        "a promotion: a star, a discarded fit and a deleted one all change what "
+        "the next person reading the project believes. Write in ESCALATIONS.md "
+        "which fits you would star, discard or delete, and why, and stop."
+    ),
     "nested": (
         "`nrw init --nested` was refused because an ancestor directory is "
         "already a project -- this would create a second nrw.toml, a second "
@@ -177,17 +198,39 @@ def _segments(command: str) -> list[str]:
     return [p for p in pieces if p.strip()]
 
 
+#: What `nrw fit` does to a fit rather than with it: each is a person's call.
+_CURATION = ("star", "unstar", "discard", "restore", "delete")
+
+
 def _judge_text(piece: str) -> Verdict:
     """Judge raw text that could not be tokenised.
 
     The floor under the parser. It cannot tell a flag from a filename, so it
-    only fires when the text names this tool *and* one of the three refused
-    things --- which is enough to stop a quoting accident from being a hole.
+    only fires when the text names this tool *and* one of the refused things
+    --- which is enough to stop a quoting accident from being a hole.
     """
     if not re.search(r"(?<![\w./-])(nrw|nr-workbench)(?![\w-])", piece):
         return Verdict(allowed=True)
+    # The two whose preview stays allowed: `--dry-run` anywhere in the text
+    # lets them through here, as it does in the parser.
+    previewed = re.search(r"--dry-run(?![\w-])", piece)
+    for pattern, rule in (
+        (r"(?<![\w-])sample\s+reset(?![\w-])", "reset"),
+        (r"(?<![\w-])aure\s+run(?![\w-])", "aure-run"),
+    ):
+        if re.search(pattern, piece) and not previewed:
+            return Verdict(allowed=False, rule=rule, reason=_REASONS[rule])
+    experiment = re.search(r"(?<![\w-])experiment(?![\w-])", piece)
+    if experiment and re.search(
+        r"(?<![\w-])(assign|release)(?![\w-])|--write(?![\w-])",
+        piece[experiment.end() :],
+    ):
+        return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
+    if re.search(r"(?<![\w-])isaac\s+push(?![\w-])", piece):
+        return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
     for pattern, rule in (
         (r"(?<![\w-])promote(?![\w-])", "promote"),
+        (r"(?<![\w-])fit\s+(?:" + "|".join(_CURATION) + r")(?![\w-])", "curate"),
         (r"--upload(?![\w-])", "upload"),
         (r"--force(?![\w-])", "force"),
         (r"--nested(?![\w-])", "nested"),
@@ -224,7 +267,24 @@ def _judge_one(tokens: list[str]) -> Verdict:
     if "promote" in subcommands:
         return Verdict(allowed=False, rule="promote", reason=_REASONS["promote"])
 
-    if "isaac" in subcommands and "--upload" in flags:
+    if "experiment" in subcommands and (
+        {"assign", "release"} & set(subcommands)
+        or ({"apply", "adopt", "settings"} & set(subcommands) and "--write" in flags)
+    ):
+        return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
+
+    if "sample" in subcommands and "reset" in subcommands and "--dry-run" not in flags:
+        return Verdict(allowed=False, rule="reset", reason=_REASONS["reset"])
+
+    # `fit` then the action, next to each other: `nrw fit run x.py --note
+    # discard` is a fit run, not a discard.
+    for place, word in enumerate(words[:-1]):
+        if word == "fit" and words[place + 1] in _CURATION:
+            return Verdict(allowed=False, rule="curate", reason=_REASONS["curate"])
+
+    # `isaac push` sends the records, and the key, off the machine: to publish
+    # or only to validate, it is not done unattended.
+    if "isaac" in subcommands and ("--upload" in flags or "push" in subcommands):
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
 
     if "--force" in flags:
@@ -340,6 +400,15 @@ def agent_is_driving() -> bool:
     return bool(os.environ.get(AGENT_ENV))
 
 
+def reason_for(action: str) -> str:
+    """Why *action* is refused unattended, and what to do instead.
+
+    Raises:
+        KeyError: An action with no recorded reason -- a programming error.
+    """
+    return _REASONS[action]
+
+
 def refuse_if_agent(action: str) -> None:
     """Refuse an action when running unattended.
 
@@ -348,8 +417,8 @@ def refuse_if_agent(action: str) -> None:
     configured is still protected and a hook that was bypassed still is.
 
     Args:
-        action: ``promote``, ``upload``, ``force``, ``nested`` or
-            ``aure-run``.
+        action: ``promote``, ``upload``, ``force``, ``nested``,
+            ``aure-run``, ``experiment``, ``curate`` or ``reset``.
 
     Raises:
         click.ClickException: When ``NRW_AGENT`` is set.

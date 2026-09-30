@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import sys
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
 
-from nr_workbench.harness import DEFAULT_HARNESSES, resolve
-from nr_workbench.project.render import RenderContext, render_tree
+from nr_workbench.harness import resolve
+from nr_workbench.project.render import RenderContext, init_context, render_tree
 from nr_workbench.project.scaffold import (
+    LockProblemError,
     Outcome,
     PlannedFile,
     ScaffoldReport,
     apply_scaffold,
+    writing_scaffold,
 )
 from nr_workbench.skills_install import discover_skills, plan_skill_files
 
@@ -223,30 +226,49 @@ def run_init(
     if not (root / "nrw.toml").is_file():
         _refuse_if_nested(root, allow=nested)
 
-    try:
-        context = _build_context(
-            root,
-            project_name=project_name,
-            beamtime=beamtime,
-            ipts=ipts,
-            harnesses=harnesses,
-        )
-        planned = plan_project_files(context, include_skills=not no_skills)
-    except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
+    # One writer at a time, from planning to writing: a settings save landing
+    # between init's plan and its write would otherwise be put back -- the
+    # save records nrw.toml as nrw's, and init's older plan then "upgrades"
+    # it. A check writes nothing, so it needs no lock and takes none.
+    with writing_scaffold(root) if not check else nullcontext():
+        try:
+            context = init_context(
+                root,
+                project_name=project_name,
+                beamtime=beamtime,
+                ipts=ipts,
+                harnesses=harnesses,
+            )
+            planned = plan_project_files(context, include_skills=not no_skills)
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
 
-    for sample_id in sample_ids:
-        planned.extend(_plan_sample(context, sample_id))
+        from nr_workbench.experiment.render import SampleRenderError
 
-    diffs: list[str] = []
-    report = apply_scaffold(
-        root,
-        planned,
-        dry_run=check,
-        show_diff=show_diff,
-        force=force,
-        diff_sink=diffs if show_diff else None,
-    )
+        for sample_id in sample_ids:
+            try:
+                planned.extend(_plan_sample(root, context, sample_id))
+            except (SampleRenderError, ValueError) as exc:
+                # A catalog that cannot be read, or an unusable sample id: both
+                # are the person's to fix, and neither is worth a traceback.
+                raise click.ClickException(str(exc)) from exc
+
+        diffs: list[str] = []
+        try:
+            report = apply_scaffold(
+                root,
+                planned,
+                # `init` plans the whole project, so it may rebuild a damaged lock
+                # -- that is how a project recovers. Conflict markers are still
+                # refused: they mean two people's entries, and the merge is theirs.
+                rebuild_lock=True,
+                dry_run=check,
+                show_diff=show_diff,
+                force=force,
+                diff_sink=diffs if show_diff else None,
+            )
+        except LockProblemError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     if show_diff:
         for diff in diffs:
@@ -419,76 +441,13 @@ def _refuse_if_nested(root: Path, *, allow: bool) -> None:
     )
 
 
-def _build_context(
-    root: Path,
-    *,
-    project_name: str | None,
-    beamtime: str | None,
-    ipts: str | None,
-    harnesses: tuple[str, ...] = (),
-) -> RenderContext:
-    """Build the render context, preserving existing project identity.
+def _plan_sample(
+    root: Path, context: RenderContext, sample_id: str
+) -> list[PlannedFile]:
+    """Plan the files for one sample directory, consulting the catalog."""
+    from nr_workbench.experiment.render import plan_sample
 
-    Re-running `init` must be a genuine no-op when nothing has changed. Two
-    things would otherwise break that:
-
-    * ``created`` is stamped into ``nrw.toml`` and ``README.md``. Regenerating
-      it every run makes those files differ on every invocation, so `init`
-      reports an upgrade forever -- and the field would come to mean "last
-      init" rather than "created", which is not what a provenance record wants.
-    * Omitting ``--beamtime`` on a later run would silently blank a value the
-      user set on the first one.
-
-    So existing values win unless explicitly overridden on the command line.
-
-    Args:
-        root: Project root, which may or may not already hold an ``nrw.toml``.
-        project_name: Explicit project name, or None to keep/derive it.
-        beamtime: Explicit beamtime label, or None to keep the existing one.
-        ipts: Explicit IPTS identifier, or None to keep the existing one.
-        harnesses: Explicit harness names from ``--harness``, or empty to keep
-            what the project records.
-
-    Returns:
-        The render context to scaffold with.
-    """
-    from nr_workbench.project.config import ProjectConfigError, load_config
-
-    existing = None
-    if (root / "nrw.toml").is_file():
-        try:
-            existing = load_config(root)
-        except ProjectConfigError:
-            # A malformed nrw.toml must not block a repair run; fall back to
-            # defaults and let the scaffold offer a fresh copy alongside it.
-            existing = None
-
-    created = ""
-    if existing is not None:
-        created = str(existing.raw.get("project", {}).get("created", "") or "")
-
-    # --harness wins, then what the project already records, then the default.
-    # Resolving here rather than at the call site normalises order and case, so
-    # `--harness copilot --harness claude` and a reordered nrw.toml both plan
-    # the same files in the same sequence.
-    selected = harnesses or (existing.harnesses if existing else DEFAULT_HARNESSES)
-
-    return RenderContext(
-        project_name=project_name or (existing.name if existing else root.name),
-        facility=existing.facility if existing else "SNS",
-        instrument=existing.instrument if existing else "REF_L",
-        beamtime=beamtime or (existing.beamtime if existing else None),
-        ipts=ipts or (existing.ipts if existing else None),
-        created=created,
-        harnesses=tuple(h.name for h in resolve(selected)),
-    )
-
-
-def _plan_sample(context: RenderContext, sample_id: str) -> list[PlannedFile]:
-    """Plan the files for one sample directory."""
-    from nr_workbench.commands.sample import plan_sample_files
-
-    return plan_sample_files(context, sample_id)
+    return plan_sample(root, context, sample_id)
 
 
 def _report(
@@ -556,4 +515,7 @@ def _report(
         click.echo()
         click.echo("Next:")
         click.echo("  nrw doctor              check the environment")
+        click.echo(
+            "  nrw serve               set the IPTS and data folder, and watch the runs"
+        )
         click.echo("  nrw sample new <ID>     create a sample and its data folders")

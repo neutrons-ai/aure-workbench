@@ -44,12 +44,6 @@ _SETTINGS: dict[str, list[tuple[str, float]]] = {
 #: Before this, there is no recorded geometry.
 EARLIEST = date(2014, 10, 10)
 
-#: The standard REF_L angle settings for a full-Q measurement here, and the
-#: single angle used for time-resolved runs. Not a physical constant -- a
-#: convention this group follows -- but it is what `nrw model new` scaffolds.
-STEADY_THETAS = (0.45, 1.2, 3.5)
-TNR_THETA = 0.6
-
 
 class GeometryError(Exception):
     """Raised when geometry is requested for a date with no recorded values."""

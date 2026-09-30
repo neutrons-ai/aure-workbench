@@ -2,24 +2,43 @@
 {% block title %}Fits — nr-workbench{% endblock %}
 
 {% block content %}
-<h1 class="h4 mb-3">Fits <span class="text-secondary small">{{ fits|length }} recorded</span></h1>
+{% set discarded = fits|selectattr('curation.discarded')|list %}
+<h1 class="h4 mb-3">Fits <span class="text-secondary small">{{ fits|length - discarded|length }} recorded{% if discarded %}, and {{ discarded|length }} discarded{% endif %}</span></h1>
 
 {% if not fits %}
 <div class="alert alert-secondary">
-  No fits recorded yet. Run one with <code>nrw fit run &lt;script.py&gt;</code>.
+  No fits recorded yet. Run one with <strong>Fit…</strong> on the Experiment
+  page, or with <code>nrw fit run &lt;script.py&gt;</code>.
 </div>
 {% else %}
-<table class="table table-sm table-hover">
+{% if discarded %}
+<div class="form-check form-switch small mb-2">
+  <input class="form-check-input" type="checkbox" id="fits-show-discarded">
+  <label class="form-check-label" for="fits-show-discarded">Show the discarded</label>
+</div>
+{% endif %}
+{# One tbody per fit: its row and its story row are shown and hidden together. #}
+<table class="table table-sm table-hover" id="fits-table">
   <thead><tr>
+    <th class="fit-star-col" title="starred"></th>
     <th>fit_id</th><th>sample</th><th>model</th>
     <th class="text-end">χ²</th><th class="text-end">free</th>
     <th>origin</th><th>when</th><th></th>
   </tr></thead>
-  <tbody>
   {% for row in fits %}
+  <tbody{% if row.curation.discarded %} data-discarded class="d-none"{% endif %}>
     <tr>
+      <td class="fit-star-col">
+        {% if page_token and not row.curation.discarded %}
+        <button type="button" class="btn btn-link btn-sm p-0 fit-star" data-fit-id="{{ row.fit_id }}"
+                aria-pressed="{{ 'true' if row.curation.starred else 'false' }}"
+                aria-label="star {{ row.fit_id }}"
+                title="{{ 'starred: click to take the star away' if row.curation.starred else 'star it' }}">{{ '★' if row.curation.starred else '☆' }}</button>
+        {% elif row.curation.starred %}<span title="starred">★</span>{% endif %}
+      </td>
       <td>{% if row.present is not defined or row.present %}<a class="mono" href="{{ url_for('fit', fit_id=row.fit_id) }}">{{ row.fit_id }}</a>{% else %}<span class="mono text-secondary">{{ row.fit_id }}</span> <span class="badge text-bg-secondary" title="the result directory was deleted; the index keeps the record that the run happened">deleted</span>{% endif %}
         {% for label in row.labels %}<span class="badge text-bg-success">{{ label }}</span>{% endfor %}
+        {% if row.curation.discarded and row.present %}<span class="badge text-bg-secondary" title="{{ row.curation.discarded.reason }}">discarded</span>{% endif %}
       </td>
       <td class="small">
         {% if row.sample %}<a href="{{ url_for('sample', sample_id=row.sample) }}">{{ row.sample }}</a>{% endif %}
@@ -31,9 +50,17 @@
       <td class="small text-secondary">{{ row.started_at }}</td>
       <td>{% if row.status != 'ok' %}<span class="badge text-bg-danger">{{ row.status }}</span>{% endif %}</td>
     </tr>
-    {% with span = 8 %}{% include "_fit_story.html" %}{% endwith %}
-  {% endfor %}
+    {% with span = 9 %}{% include "_fit_story.html" %}{% endwith %}
   </tbody>
+  {% endfor %}
 </table>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}">
+  window.NRW_WRITE_TOKEN = {{ page_token|nrwjson|safe }};
+</script>
+<script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
+<script src="{{ url_for('static', filename='curation.js') }}"></script>
 {% endblock %}

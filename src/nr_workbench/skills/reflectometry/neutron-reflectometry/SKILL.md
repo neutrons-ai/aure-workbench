@@ -57,9 +57,12 @@ failure modes.
 | `REFL_{run}_combined_data_auto.txt` | All angle segments merged. No header row; 4 columns `Q, R, dR, dQ`. |
 | `REFL_{run}_{seg}_{subrun}_partial.txt` | One angle segment. One header line, then the same 4 columns. |
 
-Standard incident angles are `[0.45, 1.2, 3.5]` degrees (theta, not two-theta);
-tNR runs use a single angle, usually 0.6°. The header table of a combined file
-lists `TwoTheta(deg)` per segment — **halve it** to get theta.
+Every file records its own incident angle (theta, not two-theta). Read it; never
+assume one — angles are chosen per experiment, and a wrong one is absorbed into
+the fit rather than reported. A segment file's `# Meta:` header holds `theta` in
+**radians**; the header table of a combined file lists `TwoTheta(deg)` per
+segment — **halve it** to get theta. tNR slices carry no header: the run's
+summed dataset in `data/steady` does.
 
 ### 2. Build the probe
 

@@ -16,7 +16,6 @@ refuses anything; it changes how much is explained, and in which order.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,28 +49,6 @@ DEFAULTS: dict[str, str] = {
     "domain": "practitioner",
     "role": "collaborates",
 }
-
-_SECTION = "[audience]"
-
-#: The block appended to an ``nrw.toml`` that predates this feature.
-TEMPLATE = """
-# Who reads what comes out of this project. These change how much an assistant
-# explains and in what order -- they refuse nothing. Set them with
-# `nrw audience --ask`, or edit here.
-#
-#   reflectometry / statistics / domain : newcomer | practitioner | expert
-#   role                                : drives | collaborates | delegates
-#
-# The three knowledge axes are independent on purpose: a reflectometry expert
-# who wants the statistics spelled out is a real and common reader, and a
-# single novice/expert dial gets that reader wrong twice.
-[audience]
-reflectometry = "practitioner"
-statistics = "practitioner"
-domain = "practitioner"
-role = "collaborates"
-notes = ""
-"""
 
 
 @dataclass(frozen=True)
@@ -164,69 +141,32 @@ def validate(axis: str, value: str) -> str:
 
 
 def write(root: Path, audience: Audience) -> None:
-    """Update the ``[audience]`` block in ``nrw.toml`` in place.
+    """Update the ``[audience]`` block in ``nrw.toml``.
 
-    A line-oriented edit rather than a re-serialisation: ``nrw.toml`` is mostly
-    comments explaining why the instrument conventions are what they are, and a
-    TOML round-trip through the standard library would silently delete all of
-    them. Only the assignment lines inside ``[audience]`` are touched.
+    Through the one writer every change to ``nrw.toml`` goes through
+    (:func:`nr_workbench.project.nrwtoml.write_as_nrw`): only the assignment
+    lines of ``[audience]`` change, every comment stays, the edit is proved
+    before it is written, and a file that was nrw's own stays nrw's, so the
+    next ``nrw init`` finds nothing to put beside it. A project from before
+    this block gets a bare ``[audience]`` table; ``nrw init`` adds its
+    explanation around it.
 
     Args:
         root: Project root.
         audience: Values to write.
 
     Raises:
+        TomlEditError: ``nrw.toml`` cannot be edited safely; the message says
+            why and what to change by hand.
         OSError: If ``nrw.toml`` cannot be read or written.
     """
-    path = Path(root) / "nrw.toml"
-    text = path.read_text(encoding="utf-8")
-    values = audience.as_dict()
+    from nr_workbench.project.nrwtoml import write_as_nrw
+    from nr_workbench.project.tomlfile import Set
 
-    if _SECTION not in text:
-        path.write_text(text.rstrip("\n") + "\n" + TEMPLATE, encoding="utf-8")
-        text = path.read_text(encoding="utf-8")
-
-    lines = text.splitlines(keepends=True)
-    out: list[str] = []
-    inside = False
-    seen: set[str] = set()
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("["):
-            if inside and stripped != _SECTION:
-                # Leaving the block: emit anything the file did not already have.
-                out.extend(
-                    f'{key} = "{_escape(values[key])}"\n'
-                    for key in values
-                    if key not in seen
-                )
-                inside = False
-            elif stripped == _SECTION:
-                inside = True
-            out.append(line)
-            continue
-
-        if inside:
-            match = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*=", line)
-            if match and match.group(2) in values:
-                key = match.group(2)
-                seen.add(key)
-                out.append(f'{match.group(1)}{key} = "{_escape(values[key])}"\n')
-                continue
-        out.append(line)
-
-    if inside:
-        out.extend(
-            f'{key} = "{_escape(values[key])}"\n' for key in values if key not in seen
-        )
-
-    path.write_text("".join(out), encoding="utf-8")
-
-
-def _escape(value: str) -> str:
-    """Escape a value for a TOML basic string."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    write_as_nrw(
+        Path(root),
+        {"audience": {key: Set(value) for key, value in audience.as_dict().items()}},
+    )
 
 
 def guidance(audience: Audience) -> list[str]:

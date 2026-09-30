@@ -20,6 +20,27 @@ CONFIG_FILENAME = "nrw.toml"
 #: Bumped when the on-disk contract changes in a way that needs migration.
 CONTRACT_VERSION = 1
 
+#: Where REF_L's ``new_reduction`` pipeline writes reduced runs: the default
+#: for ``[experiment.source] location``, with ``{ipts}`` from ``[beamtime]``.
+#:
+#: **Provisional.** This is where the pipeline writes today, and it is expected
+#: to move -- which is why it is one constant rather than a string repeated in
+#: the docs, the template and the code. It lives here, beside the loader of
+#: ``nrw.toml``, so the scaffold can write it without importing the experiment
+#: package; :mod:`nr_workbench.experiment.config` reads it from here.
+DEFAULT_EXPERIMENT_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+
+#: Seconds between polls of the experiment's feed and data source while
+#: someone is watching the page.
+DEFAULT_EXPERIMENT_POLL_SECONDS = 30
+
+#: What a project that says nothing reads its data from, learns of runs by,
+#: and keeps its catalog in. Named, not "whichever choice is listed first":
+#: listing a new choice first must not switch every project that never chose.
+DEFAULT_SOURCE_KIND = "local"
+DEFAULT_FEED_KIND = "directory"
+DEFAULT_CATALOG_KIND = "parquet"
+
 #: BL-4B conventions -- see skills/reflectometry/refl-bl4b-instrument.
 #:
 #: **The glob and dq entries are descriptive; nothing reads them.** The
@@ -27,15 +48,12 @@ CONTRACT_VERSION = 1
 #: :mod:`nr_workbench.instrument.reduced`, which is also what asks AuRE.
 #: Editing a glob here changes nothing, which is the trap this comment exists
 #: to spring: it is the first place anyone looks when a new filename is not
-#: found. ``standard_thetas`` and ``tnr_theta`` *are* read, by ``nrw
-#: reconcile``.
+#: found. There are no angles: each segment's is read from its file's header.
 DEFAULT_CONVENTIONS: dict[str, Any] = {
     "steady_state_glob": "REFL_{run}_combined_data_auto.txt",
     "partial_glob": "REFL_{run}_{seg}_{subrun}_partial.txt or _autoreduction.dat",
     "tnr_slice_glob": "r{run}_t{t_s:06d}.txt",
     "tnr_intervals_glob": "r{run}_*reduction.json",
-    "standard_thetas": [0.45, 1.2, 3.5],
-    "tnr_theta": 0.6,
     # No longer one value. `_partial.txt` writes the 4th column as FWHM and
     # `_autoreduction.dat` writes it as sigma; the two differ by 2.355 and a
     # fit hides the difference in roughness, so it is read per file from the
@@ -101,7 +119,33 @@ def load_config(root: Path) -> ProjectConfig:
         with config_path.open("rb") as handle:
             document = tomllib.load(handle)
     except tomllib.TOMLDecodeError as exc:
-        raise ProjectConfigError(f"{config_path} is not valid TOML: {exc}") from exc
+        hint = ""
+        if "twice" in str(exc) or "overwrite" in str(exc):
+            # The likely cause: a table added below one the file already has
+            # -- by following advice to "add [experiment.source]" to a file
+            # where it is already written out.
+            hint = (
+                " A table or key is set twice: keep one, and move its settings into it."
+            )
+        raise ProjectConfigError(
+            f"{config_path} is not valid TOML: {exc}.{hint}"
+        ) from exc
+
+    # Valid TOML can still have the wrong shape -- `beamtime = "x"` where a
+    # table belongs -- and every caller would then fail on `.get` with an
+    # AttributeError instead of a sentence.
+    for table in ("project", "beamtime", "conventions", "harness", "audience"):
+        if table in document and not isinstance(document[table], dict):
+            raise ProjectConfigError(
+                f"{config_path}: [{table}] must be a table, not "
+                f"{type(document[table]).__name__} {document[table]!r}."
+            )
+    try:
+        contract_version = int(document.get("contract_version", CONTRACT_VERSION))
+    except (TypeError, ValueError) as exc:
+        raise ProjectConfigError(
+            f"{config_path}: contract_version must be a whole number."
+        ) from exc
 
     project = document.get("project", {})
     beamtime = document.get("beamtime", {})
@@ -120,7 +164,7 @@ def load_config(root: Path) -> ProjectConfig:
     return ProjectConfig(
         root=Path(root).resolve(),
         name=project.get("name", Path(root).resolve().name),
-        contract_version=int(document.get("contract_version", CONTRACT_VERSION)),
+        contract_version=contract_version,
         facility=project.get("facility", "SNS"),
         instrument=project.get("instrument", "REF_L"),
         beamtime=beamtime.get("label"),

@@ -10,6 +10,7 @@ the same record shape.
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import sys
 from dataclasses import dataclass
@@ -51,6 +52,18 @@ class ResolvedTarget:
 
     sample: str | None
     results_dir: Path
+
+
+#: The line a fit prints as it starts, naming its result directory -- whose name
+#: is the fit id. The Experiment page reads it back from a job's output to link
+#: the fit that job recorded, rather than guess which of the model's fits it was.
+RUNNING_LINE = "Running {method} fit -> {directory}"
+RUNNING_RE = re.compile(r"^Running \S+ fit -> (?P<directory>\S.*?)\s*$", re.MULTILINE)
+
+#: How a fit refused as identical to one already recorded names that one, so
+#: the page can link it and offer to run again anyway.
+IDENTICAL_LINE = "An identical run already exists: {fit_id}"
+IDENTICAL_RE = re.compile(r"An identical run already exists: (?P<fit_id>\S+)")
 
 
 def resolve_target(
@@ -198,13 +211,13 @@ def run_fit_command(
     *,
     script: str,
     sample: str | None = None,
-    method: str = "amoeba",
+    method: str | None = None,
     steps: int | None = None,
     samples: int | None = None,
     burn: int | None = None,
     pop: int | None = None,
     seed: int | None = None,
-    parallel: int = 0,
+    parallel: int | None = None,
     plots: bool = False,
     note: str | None = None,
     model_name: str | None = None,
@@ -218,12 +231,15 @@ def run_fit_command(
     Args:
         script: Path to the refl1d script.
         sample: Sample to record the fit under. Inferred from the path if omitted.
-        method: Bumps fitter name.
+        method: Bumps fitter name; unset, the project's ``nrw.toml`` [fit]
+            names it, or it is DREAM. See :mod:`nr_workbench.fitting.settings`.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
         pop: Population size.
         seed: Random seed.
+        parallel: CPUs to use; 0 means all of them. Each setting left unset is
+            taken from ``nrw.toml`` [fit], else bumps' default.
         note: Free-text note stored in the record.
         model_name: Model name. Defaults to the script stem.
         force: Run even if an identical run already exists.
@@ -245,22 +261,43 @@ def run_fit_command(
 
     try:
         layout = ProjectLayout.discover(script_path.parent)
-        load_config(layout.root)
+        config = load_config(layout.root)
     except (ProjectNotFoundError, ProjectConfigError) as exc:
         raise click.ClickException(str(exc)) from exc
 
     target = resolve_target(layout, script_path, sample)
     index = FitIndex(layout.index_file)
 
-    settings = {
-        "method": method,
-        "steps": steps,
-        "samples": samples,
-        "burn": burn,
-        "pop": pop,
-        "seed": seed,
-        "parallel": parallel,
-    }
+    # The command line, then nrw.toml [fit], then bumps: see fitting/settings.
+    from nr_workbench.fitting.settings import (
+        FitSettingsError,
+        read_fit_defaults,
+        resolve,
+    )
+
+    try:
+        defaults = read_fit_defaults(config.raw)
+    except FitSettingsError as exc:
+        raise click.ClickException(f"{layout.root / 'nrw.toml'}: {exc}") from exc
+    try:
+        fit = resolve(
+            defaults,
+            method=method,
+            given={
+                "steps": steps,
+                "samples": samples,
+                "burn": burn,
+                "pop": pop,
+                "seed": seed,
+                "parallel": parallel,
+            },
+        )
+    except FitSettingsError as exc:
+        raise click.ClickException(str(exc)) from exc
+    method = fit.method
+    settings: dict[str, Any] = {"method": method, **fit.settings}
+    if not as_json:
+        _report_origins(fit)
 
     # Load the script once, under observation, so the recorded inputs are the
     # files it genuinely read rather than a guess from its source. --dry-run
@@ -296,7 +333,7 @@ def run_fit_command(
     if duplicates and not force and not dry_run:
         previous = duplicates[0]
         raise click.ClickException(
-            f"An identical run already exists: {previous['fit_id']} "
+            IDENTICAL_LINE.format(fit_id=previous["fit_id"]) + " "
             f"(status {previous.get('status')}, chisq {previous.get('chisq')}).\n"
             "Nothing changed: script, inputs, settings and environment all match.\n"
             "  --force   run anyway, recorded as a replicate\n"
@@ -370,7 +407,11 @@ def run_fit_command(
     directory.write_manifest(record)
 
     if not as_json:
-        click.echo(f"Running {method} fit -> {fit_dir.relative_to(layout.root)}")
+        click.echo(
+            RUNNING_LINE.format(
+                method=method, directory=fit_dir.relative_to(layout.root)
+            )
+        )
 
     from nr_workbench.fitting.runner import FitError, run_fit
 
@@ -380,12 +421,12 @@ def run_fit_command(
             loaded.problem,
             fit_dir / "fit",
             method=method,
-            steps=steps,
-            samples=samples,
-            burn=burn,
-            pop=pop,
-            seed=seed,
-            parallel=parallel,
+            steps=settings["steps"],
+            samples=settings["samples"],
+            burn=settings["burn"],
+            pop=settings["pop"],
+            seed=settings["seed"],
+            parallel=settings["parallel"],
             plots=plots,
             # Quiet by default, for two reasons. It would sit in front of the
             # JSON and make it unparseable for a driver that asked for JSON. And
@@ -442,6 +483,21 @@ def _command_line() -> str:
     return " ".join(shlex.quote(part) for part in sys.argv)
 
 
+def _report_origins(fit: Any) -> None:
+    """Say which settings did not come from the command line, and whence.
+
+    A fit that takes its fitter from nrw.toml, or from nrw's own default, looks
+    exactly like one told it on the command line; this line is the difference.
+    """
+    said = [
+        f"{key} {fit.method if key == 'method' else fit.settings[key]} ({origin})"
+        for key, origin in fit.origins.items()
+        if origin != "command line"
+    ]
+    if said:
+        click.echo("  settings  " + ", ".join(said))
+
+
 def _report_dry_run(
     fit_id: str,
     fit_dir: Path,
@@ -453,6 +509,12 @@ def _report_dry_run(
     click.echo(f"Would create {fit_dir}")
     click.echo(f"  fit_id    {fit_id}")
     click.echo(f"  method    {settings['method']}")
+    given = [
+        f"{key} {value}"
+        for key, value in settings.items()
+        if key != "method" and value is not None
+    ]
+    click.echo(f"  with      {', '.join(given)}; the rest bumps' defaults")
     click.echo(f"  inputs    {len(inputs)} file(s)")
     for digest in inputs:
         click.echo(f"    {digest.role:<24} {digest.path}  {digest.sha256[:12]}")

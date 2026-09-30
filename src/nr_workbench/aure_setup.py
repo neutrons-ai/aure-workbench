@@ -66,6 +66,11 @@ HYPOTHESIS_SECTION = "Fits to perform"
 #: Where a sample's AuRE runs live, under ``samples/<id>/``.
 AURE_DIR = "aure"
 
+#: One run's setup, and the folder AuRE writes its results to, both in
+#: :func:`setup_dir`.
+SETUP_FILE = "setup.yaml"
+OUTPUT_DIR = "output"
+
 
 class SetupError(Exception):
     """Raised when a setup cannot be composed from what is on disk."""
@@ -121,6 +126,41 @@ def read_hypothesis(notes: str) -> str:
     from nr_workbench.notes import read_section
 
     return read_section(notes, HYPOTHESIS_SECTION).strip()
+
+
+def measurement_context(notes: str, run: int) -> str:
+    """What ``sample.md`` says about one measurement, for AuRE to read.
+
+    Its condition in the Measurements table, the sample's own *Measurement
+    conditions*, and the notes on that run -- read with the catalog's parser,
+    which keeps a run's notes apart from the sample's text. :func:`compose`
+    adds it to the sample's description, which every AuRE prompt reads, so a
+    contrast or a condition written there reaches the proposal.
+
+    Args:
+        notes: The full text of ``sample.md``.
+        run: The run AuRE is fitting.
+
+    Returns:
+        One line per thing said, or ``""`` when it says nothing about it.
+    """
+    from nr_workbench.experiment.adopt import measurements_of
+
+    try:
+        measured = measurements_of(notes)
+    except Exception:  # noqa: BLE001 - AuRE still gets the description
+        return ""
+    lines: list[str] = []
+    condition = measured.conditions.get(run, "")
+    if condition:
+        # Often written as a sentence already: one full stop, not two.
+        end = "" if condition.endswith((".", "!", "?")) else "."
+        lines.append(f"The condition of run {run}: {condition}{end}")
+    if measured.shared:
+        lines.append(f"Measurement conditions: {measured.shared}")
+    if measured.notes.get(run):
+        lines.append(f"Notes on run {run}: {measured.notes[run]}")
+    return "\n".join(lines)
 
 
 def reads_as_back_reflection(notes: str) -> bool:
@@ -272,6 +312,13 @@ def compose(
     }
     if back_reflection:
         state["back_reflection"] = True
+    # In the description, which AuRE's intake and modeling prompts read. AuRE
+    # declares a state's `extra_description` as appended to it, but no prompt
+    # of AuRE 1.0.2 reads one: a contrast written only there -- "the ambient
+    # medium is D2O" -- never reached the model, and the fit was in air.
+    context = measurement_context(notes, chosen)
+    if context:
+        description = f"{description}\n\n{context}"
 
     document: dict[str, Any] = {
         "name": run_name,
@@ -295,7 +342,13 @@ def compose(
         ),
     ]
     from_notes = [
-        f"sample_description: ## Description + ## Details ({len(description)} chars)"
+        "sample_description: ## Description + ## Details"
+        + (
+            f", and run {chosen}'s condition and notes and ## Measurement conditions"
+            if context
+            else ""
+        )
+        + f" ({len(description)} chars)"
     ]
     if hypothesis:
         from_notes.append("hypothesis: ## Fits to perform")

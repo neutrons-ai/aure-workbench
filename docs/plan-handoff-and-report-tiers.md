@@ -7,10 +7,14 @@ interactive Claude Code session that took the analysis to publishable form.
 Nothing here is to be applied to `jen-jun2026`. It is written to be executed
 upstream and then tested in a fresh project.
 
+> **A design record, kept for its reasoning.** What the code does now is in
+> the README and `docs/agent.md`; where they disagree with this plan, they are
+> right.
+>
 > **Status: implemented.** Everything in parts B and C is built and tested;
 > the surface it produced is listed under "What was built" at the end, along
 > with the two places the plan was wrong. Part D is the acceptance test, and
-> is still to run.
+> no run of it has been recorded.
 >
 > One finding changed a design during implementation and is worth recording
 > here because the plan asserted the opposite: **harness settings do not

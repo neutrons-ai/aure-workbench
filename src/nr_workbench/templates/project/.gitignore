@@ -34,6 +34,10 @@ samples/*/aure/*/output/
 .nrw/cache/
 .nrw/backups/
 .nrw/lock
+# What a fit started from the Experiment page printed. The fit's own record is
+# in samples/<id>/results/ and the index; a DREAM log is long, and this copy
+# is the page's.
+.nrw/jobs/
 
 # Where `nrw` lives on *this* machine. These files name an absolute path, which
 # is exactly what must not be committed -- and the right answer differs per

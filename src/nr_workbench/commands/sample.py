@@ -5,89 +5,16 @@ from __future__ import annotations
 import click
 
 from nr_workbench.project.config import ProjectConfigError, load_config
-from nr_workbench.project.layout import (
-    SAMPLE_SUBDIRS,
-    ProjectLayout,
-    ProjectNotFoundError,
+from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+
+# `plan_sample_files` and `validate_sample_id` live in project/samples.py so the
+# experiment catalog can plan samples without importing a command module. They
+# stay importable from here, where tests and older callers look for them.
+from nr_workbench.project.samples import (
+    plan_sample_files as plan_sample_files,  # re-exported
 )
-from nr_workbench.project.render import RenderContext, render_tree
-from nr_workbench.project.scaffold import Outcome, PlannedFile, apply_scaffold
-
-#: Sample IDs become directory names and appear in generated scripts, so keep
-#: them to characters that are safe in both.
-_ALLOWED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-
-
-def validate_sample_id(sample_id: str) -> str:
-    """Check a sample identifier is usable as a directory and script token.
-
-    Args:
-        sample_id: The proposed identifier.
-
-    Returns:
-        The identifier, unchanged.
-
-    Raises:
-        ValueError: If it is empty or contains characters outside
-            ``[A-Za-z0-9_-]``.
-    """
-    if not sample_id:
-        raise ValueError("Sample ID must not be empty")
-    bad = sorted(set(sample_id) - _ALLOWED)
-    if bad:
-        raise ValueError(
-            f"Sample ID {sample_id!r} contains disallowed character(s) {bad}. "
-            "Use letters, digits, hyphen, and underscore only."
-        )
-    return sample_id
-
-
-def plan_sample_files(
-    context: RenderContext,
-    sample_id: str,
-    *,
-    title: str | None = None,
-) -> list[PlannedFile]:
-    """Plan every file for one sample directory.
-
-    Args:
-        context: The project's render context, used for facility and beamtime.
-        sample_id: The sample identifier.
-        title: Human-readable title. Defaults to the sample ID.
-
-    Returns:
-        Planned files: the rendered sample templates plus a ``.gitkeep`` in each
-        standard subdirectory, so the layout is visible before data arrives.
-
-    Raises:
-        ValueError: If the sample ID is not usable.
-    """
-    validate_sample_id(sample_id)
-    prefix = f"samples/{sample_id}"
-
-    sample_context = RenderContext(
-        project_name=context.project_name,
-        facility=context.facility,
-        instrument=context.instrument,
-        beamtime=context.beamtime,
-        ipts=context.ipts,
-        sample_id=sample_id,
-        title=title or sample_id,
-        created=context.created,
-    )
-
-    planned = render_tree("sample", sample_context, prefix=prefix)
-
-    for subdir in SAMPLE_SUBDIRS:
-        planned.append(
-            PlannedFile(
-                relpath=f"{prefix}/{subdir}/.gitkeep",
-                content=b"",
-                template_id=f"dir/sample/{subdir}",
-            )
-        )
-
-    return planned
+from nr_workbench.project.samples import validate_sample_id
+from nr_workbench.project.scaffold import LockProblemError, Outcome, apply_scaffold
 
 
 def run_sample_new(
@@ -98,6 +25,10 @@ def run_sample_new(
 ) -> None:
     """Create ``samples/<sample_id>/`` with the standard layout.
 
+    A sample the experiment catalog has gets its ``sample.md`` from the
+    catalog, exactly as the Experiment page previews it: both render with the
+    project's own context.
+
     Args:
         sample_id: The sample identifier.
         title: Human-readable title for ``sample.md``.
@@ -106,10 +37,11 @@ def run_sample_new(
     Raises:
         click.ClickException: If there is no project here, or the ID is invalid.
     """
+    import dataclasses
+
     try:
         layout = ProjectLayout.discover()
-        config = load_config(layout.root)
-    except (ProjectNotFoundError, ProjectConfigError) as exc:
+    except ProjectNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 
     try:
@@ -117,22 +49,40 @@ def run_sample_new(
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    context = RenderContext(
-        project_name=config.name,
-        facility=config.facility,
-        instrument=config.instrument,
-        beamtime=beamtime or config.beamtime,
-        ipts=config.ipts,
+    # Through the one entry point that consults the experiment catalog: a
+    # sample.md the catalog rendered must not be planned as the blank template.
+    from nr_workbench.experiment.render import (
+        SampleRenderError,
+        load_catalog,
+        plan_sample,
+        project_context,
     )
 
-    planned = plan_sample_files(context, sample_id, title=title)
-    report = apply_scaffold(layout.root, planned)
+    try:
+        # The project's own context -- the Experiment page's. This command
+        # used to build one of its own, and left the project's harnesses out.
+        context = project_context(layout.root)
+        if beamtime:
+            context = dataclasses.replace(context, beamtime=beamtime)
+        catalog = load_catalog(layout.root)
+        planned = plan_sample(
+            layout.root, context, sample_id, title=title, catalog=catalog
+        )
+    except SampleRenderError as exc:
+        raise click.ClickException(str(exc)) from exc
+    try:
+        report = apply_scaffold(layout.root, planned)
+    except LockProblemError as exc:
+        raise click.ClickException(str(exc)) from exc
 
+    managed = catalog.manages(sample_id)
     created = report.count(Outcome.CREATE)
     if created == 0:
         click.echo(f"Sample '{sample_id}' already exists at {layout.sample(sample_id)}")
     else:
         click.echo(f"Created sample '{sample_id}' ({created} file(s))")
+        if managed:
+            click.echo("  sample.md is written from the experiment catalog")
 
     if report.drifted:
         click.echo("  files you have edited were left alone:")
@@ -141,6 +91,15 @@ def run_sample_new(
 
     click.echo()
     click.echo("Next:")
+    if managed:
+        click.echo(
+            "  1. Describe the sample on the Experiment page (`nrw serve`), "
+            "where the catalog keeps it"
+        )
+        click.echo(
+            "  2. `nrw experiment apply --write` copies its runs into data/steady/"
+        )
+        return
     click.echo(f"  1. Describe the sample in samples/{sample_id}/sample.md")
     click.echo(
         f"  2. Copy reduced data into samples/{sample_id}/data/steady/ and data/tnr/"
@@ -294,8 +253,11 @@ def run_sample_reset(
     """
     import shutil
 
+    from nr_workbench.agent.guard import refuse_if_agent
     from nr_workbench.provenance.index import FitIndex
 
+    if not dry_run:
+        refuse_if_agent("reset")
     try:
         layout = ProjectLayout.discover()
     except ProjectNotFoundError as exc:
@@ -307,20 +269,28 @@ def run_sample_reset(
     index = FitIndex(layout.index_file)
     entries = index.fits(sample=sample_id)
 
-    # A promoted fit is a citable result; resetting past one silently unpublishes
-    # it. Refusing is the whole reason `nrw promote` is a separate decision.
-    promoted = {
-        str(entry.get("fit_id"))
-        for label in {str(e.get("label")) for e in index.promotions()}
-        if (entry := index.current_label(label)) is not None
-        and entry.get("sample") == sample_id
-    }
-    if promoted:
+    # A promoted fit is a citable result, and a published one is held by a
+    # portal: resetting past either deletes a result something already cites,
+    # and forgets the record of where it went. The replay says which, for this
+    # sample -- not "the project's last promotion", which misses every sample
+    # but the one promoted most recently.
+    from nr_workbench.provenance.curation import replay
+
+    replayed = replay(index.entries())
+    held: list[str] = []
+    for entry in entries:
+        state = replayed.of(entry.get("fit_id"))
+        reasons = ["promoted as " + "/".join(state.labels)] if state.labels else []
+        if state.published:
+            reasons.append("was pushed to ISAAC")
+        if reasons:
+            held.append(f"{entry.get('fit_id')} ({', '.join(reasons)})")
+    if held:
         raise click.ClickException(
-            f"{sample_id} holds a promoted fit ({', '.join(sorted(promoted))}). "
-            "Resetting would delete a result something may already cite.\n"
-            "Promotion is a separate decision on purpose; undo it deliberately "
-            "before resetting."
+            f"{sample_id} has fits that are results: {', '.join(held)}. "
+            "Resetting would delete them, and forget the record of them.\n"
+            "Promotion and publishing are separate decisions on purpose; a reset "
+            "is not the way to undo them."
         )
 
     results = sorted(p for p in (directory / "results").glob("*") if p.is_dir())

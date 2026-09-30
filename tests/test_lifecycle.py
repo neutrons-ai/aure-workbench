@@ -19,17 +19,29 @@ from nr_workbench.cli import main
 pytestmark = pytest.mark.integration
 
 
-def write_partials(directory: Path, run: int, segments: int = 3) -> None:
-    """Write plausible REF_L partial files for one run."""
+#: The angle each synthetic segment records, in degrees, as REF_L's header
+#: does (in radians). What was measured, for this data -- not a default, and
+#: the middle one is not the usual 1.2, so a test that sees it read the file.
+SEGMENT_ANGLES = (0.45, 1.251, 3.5)
+
+
+def write_partials(
+    directory: Path, run: int, segments: int = 3, angles: tuple[float, ...] = ()
+) -> None:
+    """Write plausible REF_L partial files for one run, each recording its angle."""
+    import math
+
     directory.mkdir(parents=True, exist_ok=True)
+    angles = angles or SEGMENT_ANGLES
     for segment in range(1, segments + 1):
+        meta = f'# Meta:{{"theta": {math.radians(angles[segment - 1])!r}}}\n'
         rows = "\n".join(
             f"{0.01 + 0.001 * i:.6f} {1e-3 / (i + 1):.6e} {1e-4:.6e} {2e-4:.6e}"
             for i in range(30)
         )
         (
             directory / f"REFL_{run}_{segment}_{run + segment - 1}_partial.txt"
-        ).write_text(rows + "\n", encoding="utf-8")
+        ).write_text(meta + rows + "\n", encoding="utf-8")
 
 
 def write_slices(directory: Path, run: int, count: int = 6, step: int = 240) -> None:
@@ -56,6 +68,9 @@ def project(tmp_path: Path) -> Path:
     write_partials(data / "steady", 100001)
     write_partials(data / "steady", 100005)
     write_slices(data / "tnr" / "100003", 100003)
+    # The same run, summed, as the reduction also writes it: the slices carry
+    # no header, so this is where the series' angle is recorded.
+    write_partials(data / "steady", 100003, segments=1, angles=(0.6,))
     return root
 
 
@@ -75,7 +90,8 @@ def test_scan_registers_what_is_on_disk(project: Path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)[0]
-    assert payload["steady_runs"] == [100001, 100005]
+    # 100003 too: the series' run, summed, as the reduction also writes it.
+    assert payload["steady_runs"] == [100001, 100003, 100005]
     assert len(payload["series"]) == 1
     assert payload["series"][0]["n_slices"] == 6
 
@@ -87,7 +103,7 @@ def test_scan_writes_sample_yaml(project: Path, monkeypatch) -> None:
 
     document = yaml.safe_load((project / "samples" / "S1" / "sample.yaml").read_text())
     assert document["schema"] == "nrw-sample/1"
-    assert [entry["run"] for entry in document["steady"]] == [100001, 100005]
+    assert [entry["run"] for entry in document["steady"]] == [100001, 100003, 100005]
 
 
 def test_scan_detects_a_uniform_time_step(project: Path, monkeypatch) -> None:
@@ -161,6 +177,238 @@ def test_model_new_produces_a_spec_that_validates(project: Path, monkeypatch) ->
     checked = run(project, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
 
     assert checked.exit_code == 0, checked.output
+
+
+@pytest.mark.parametrize("name", ["../x", "a/b", "x\n"])
+def test_model_new_refuses_a_name_that_is_a_path(
+    project: Path, monkeypatch, name: str
+) -> None:
+    before = sorted(p for p in (project / "samples").rglob("*") if p.is_file())
+
+    result = run(project, monkeypatch, "model", "new", "S1", "--name", name)
+
+    assert result.exit_code != 0
+    assert "plain name" in result.output
+    assert sorted(p for p in (project / "samples").rglob("*") if p.is_file()) == before
+
+
+def test_a_new_spec_says_nothing_about_how_it_is_fitted(
+    project: Path, monkeypatch
+) -> None:
+    """Its `fit:` block was never read, yet said `method: amoeba` in every spec:
+    how a model is fitted is nrw.toml's, or the command line's."""
+    import yaml
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+
+    assert "fit" not in yaml.safe_load(spec.read_text(encoding="utf-8"))
+
+
+def test_validate_says_a_specs_fit_block_is_not_read(
+    project: Path, monkeypatch
+) -> None:
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+    with spec.open("a", encoding="utf-8") as handle:
+        handle.write("fit: {method: amoeba, steps: 1000}\n")
+
+    result = run(project, monkeypatch, "model", "validate", str(spec))
+
+    assert result.exit_code == 0, result.output
+    assert "`fit:` block is not read" in result.output
+
+
+def test_model_generate_leaves_a_script_that_would_not_change_as_it_is(
+    project: Path, monkeypatch
+) -> None:
+    # Restamped, an unchanged script would hash differently, and a fit of it
+    # would no longer be refused as the identical run it is.
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+    assert run(project, monkeypatch, "model", "generate", str(spec)).exit_code == 0
+    script = spec.with_suffix(".py")
+    first = script.read_bytes()
+
+    again = run(project, monkeypatch, "model", "generate", str(spec))
+    spec.write_text(spec.read_text(encoding="utf-8") + "# edited\n", encoding="utf-8")
+    edited = run(project, monkeypatch, "model", "generate", str(spec))
+
+    assert again.exit_code == 0, again.output
+    assert "up to date with its spec" in again.output
+    assert edited.exit_code == 0, edited.output
+    assert "Wrote samples/S1/models/m.py" in edited.output
+    assert script.read_bytes() != first
+
+
+def test_model_new_writes_no_angles_when_every_file_records_its_own(
+    project: Path, monkeypatch
+) -> None:
+    """Each is read from its file when the spec is resolved: no copy to go stale."""
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (project / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+    document = yaml.safe_load(text)
+
+    assert [state.get("thetas") for state in document["states"]] == [None, None]
+    assert "theta" not in document["series"][0]
+    assert "BLANK" not in text
+
+
+def fresh_project(tmp_path: Path) -> Path:
+    root = tmp_path / "proj"
+    result = CliRunner().invoke(main, ["init", str(root), "--sample", "S1"])
+    assert result.exit_code == 0, result.output
+    return root
+
+
+def test_model_new_leaves_a_blank_for_a_file_that_records_no_angle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Never a guess: the spec is refused until a person gives the angle."""
+    root = fresh_project(tmp_path)
+    steady = root / "samples/S1/data/steady"
+    write_partials(steady, 100001)
+    unrecorded = steady / "REFL_100001_2_100002_partial.txt"
+    unrecorded.write_text(
+        "".join(line for line in unrecorded.read_text().splitlines(True)[1:]),
+        encoding="utf-8",
+    )
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec_path = root / "samples/S1/models/m.yaml"
+    text = spec_path.read_text(encoding="utf-8")
+    refused = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+
+    assert created.exit_code == 0, created.output
+    assert f"no incident angle recorded for: {unrecorded.name}" in created.output
+    assert f"#   {unrecorded.name}" in text
+    assert yaml.safe_load(text)["states"][0]["thetas"] == [0.45, None, 3.5]
+    assert refused.exit_code != 0
+    assert unrecorded.name in refused.output
+
+    document = yaml.safe_load(text)
+    document["states"][0]["thetas"][1] = 1.2  # a person fills in the blank
+    spec_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    filled = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+    assert filled.exit_code == 0, filled.output
+
+
+def test_model_new_leaves_a_series_angle_blank_when_nothing_records_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Slices carry no header; with no summed dataset, nothing on disk says."""
+    root = fresh_project(tmp_path)
+    data = root / "samples/S1/data"
+    write_partials(data / "steady", 100001)
+    write_partials(data / "steady", 100005)
+    write_slices(data / "tnr" / "100003", 100003)
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (root / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+    refused = run(root, monkeypatch, "model", "validate", "samples/S1/models/m.yaml")
+
+    assert created.exit_code == 0, created.output
+    assert yaml.safe_load(text)["series"][0]["theta"] is None
+    assert "#   100003 (series" in text
+    assert refused.exit_code != 0
+    assert "no file of run 100003 in samples/S1/data/steady" in refused.output
+
+
+def test_the_generated_fit_uses_the_angle_each_file_records(
+    project: Path, monkeypatch
+) -> None:
+    """The last place a wrong angle could come from: the probe the fit builds."""
+    import re
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    generated = run(
+        project, monkeypatch, "model", "generate", "samples/S1/models/m.yaml"
+    )
+    script = (project / "samples/S1/models/m.py").read_text(encoding="utf-8")
+
+    assert generated.exit_code == 0, generated.output
+    angles = {
+        Path(name).name: float(theta)
+        for name, theta in re.findall(
+            r"create_probe\(PROJECT_ROOT / '([^']+)', ([\d.]+)", script
+        )
+    }
+    assert angles["REFL_100001_2_100002_partial.txt"] == pytest.approx(1.251)
+    assert angles["r100003_t000000.txt"] == pytest.approx(0.6)
+
+
+def test_model_new_keeps_the_segments_sample_yaml_lists(
+    project: Path, monkeypatch
+) -> None:
+    """The register is where a person says "only these"; `auto` would read all."""
+    run(project, monkeypatch, "sample", "scan", "S1")
+    register = project / "samples/S1/sample.yaml"
+    document = yaml.safe_load(register.read_text(encoding="utf-8"))
+    entry = next(e for e in document["steady"] if e["run"] == 100001)
+    entry["segments"] = entry["segments"][:2]
+    register.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec_path = project / "samples/S1/models/m.yaml"
+    state = next(
+        s
+        for s in yaml.safe_load(spec_path.read_text(encoding="utf-8"))["states"]
+        if s["run"] == 100001
+    )
+
+    from nr_workbench.spec.models import load_spec
+    from nr_workbench.spec.resolve import discover_measurements
+
+    assert state["segments"] != "auto"
+    resolved = discover_measurements(load_spec(spec_path), project)[state["name"]]
+    assert [m.theta for m in resolved] == [pytest.approx(0.45), pytest.approx(1.251)]
+
+
+@pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "blank"])
+def test_a_combined_run_is_scaffolded_like_any_other(
+    tmp_path: Path, recorded: bool
+) -> None:
+    import math
+
+    from nr_workbench.commands.model import state_for_run
+    from nr_workbench.project.scan import SteadyMeasurement
+
+    steady = tmp_path / "samples/S1/data/steady"
+    steady.mkdir(parents=True)
+    name = "REFL_100001_combined_data_auto.txt"
+    meta = f'# Meta:{{"theta": {math.radians(0.5)!r}}}\n' if recorded else ""
+    (steady / name).write_text(meta + "0.01 1.0 0.1 0.001\n", encoding="utf-8")
+
+    block, _, blank = state_for_run(
+        tmp_path,
+        SteadyMeasurement(run=100001, combined=f"samples/S1/data/steady/{name}"),
+    )
+
+    if recorded:
+        assert "thetas" not in block and blank == []
+    else:
+        assert block["thetas"] == [None] and blank == [name]
+
+
+@pytest.mark.parametrize("breaker", ["\n", "\r", "\x85", "\u2028", "\u2029"], ids=repr)
+def test_a_directory_name_cannot_write_keys_into_the_spec(
+    tmp_path: Path, monkeypatch, breaker: str
+) -> None:
+    """Each ends a YAML comment; a name carrying one reaches the blank-angle note."""
+    root = fresh_project(tmp_path)
+    data = root / "samples/S1/data"
+    write_partials(data / "steady", 100001)
+    hostile = f"x{breaker}post_build: \"print('run')\"{breaker}#"
+    write_slices(data / "tnr" / hostile, 999999)
+
+    created = run(root, monkeypatch, "model", "new", "S1", "--name", "m")
+    text = (root / "samples/S1/models/m.yaml").read_text(encoding="utf-8")
+
+    from nr_workbench.spec.models import load_spec
+
+    assert created.exit_code == 0, created.output
+    assert "post_build" not in yaml.safe_load(text)
+    assert load_spec(root / "samples/S1/models/m.yaml").post_build is None
 
 
 def test_model_new_produces_a_spec_that_generates(project: Path, monkeypatch) -> None:
@@ -431,6 +679,10 @@ def two_fits(generated: Path, monkeypatch) -> tuple[Path, str, str]:
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert first.exit_code == 0, first.output
     second = run(
@@ -444,6 +696,10 @@ def two_fits(generated: Path, monkeypatch) -> tuple[Path, str, str]:
         "--steps",
         "14",
         "--seed",
+        "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
         "1",
     )
     assert second.exit_code == 0, second.output
@@ -489,6 +745,10 @@ def test_diff_does_not_call_a_model_edit_a_data_change(two_fits, monkeypatch) ->
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert later.exit_code == 0, later.output
     b = json.loads(run(root, monkeypatch, "ls", "--json").stdout)[0]["fit_id"]
@@ -532,6 +792,8 @@ def test_ls_shows_the_note_a_fit_was_run_with(project: Path, monkeypatch) -> Non
         "6",
         "--note",
         "oxide freed",
+        "--parallel",
+        "1",
     )
 
     text = run(project, monkeypatch, "ls").output
@@ -562,6 +824,10 @@ def test_diff_calls_out_a_data_change_above_everything_else(
         "8",
         "--seed",
         "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
+        "1",
     )
     assert third.exit_code == 0, third.output
     c = json.loads(run(root, monkeypatch, "ls", "--json").stdout)[0]["fit_id"]
@@ -586,6 +852,10 @@ def test_diff_reports_identical_runs_as_replicates(two_fits, monkeypatch) -> Non
         "--steps",
         "8",
         "--seed",
+        "1",
+        # One CPU: a pool on every core starves the browser tests on the
+        # other xdist workers, as every other module's fits do.
+        "--parallel",
         "1",
         "--force",
     )

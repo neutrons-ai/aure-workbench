@@ -16,8 +16,8 @@ import pytest
 from nr_workbench.instrument.header import (
     HeaderError,
     read_header,
+    recorded_angle,
     theta_for_run,
-    thetas_for,
 )
 
 META = (
@@ -102,17 +102,42 @@ def test_a_corrupt_meta_line_raises(tmp_path: Path) -> None:
         read_header(path)
 
 
-def test_thetas_for_keeps_position_when_one_file_is_headerless(tmp_path: Path) -> None:
-    """A missing angle must not shift the others onto the wrong segments."""
-    a = write(tmp_path / "a.txt", META)
-    b = write(tmp_path / "b.txt", "")
-    c = write(tmp_path / "c.txt", META)
+def test_recorded_angle_says_why_a_file_has_none(tmp_path: Path) -> None:
+    """A person has to act on it, so "no angle" comes with the reason."""
+    recorded = write(tmp_path / "a.txt", META)
+    headerless = write(tmp_path / "b.txt", "")
 
-    angles = thetas_for([a, b, c])
+    assert recorded_angle(recorded).theta == pytest.approx(0.44998, abs=1e-4)
+    assert recorded_angle(headerless).theta is None
+    assert "records no incident angle" in recorded_angle(headerless).why
+    assert recorded_angle(tmp_path / "gone.txt").missing
 
-    assert angles[1] is None, "the headerless file must not borrow a neighbour's angle"
-    assert angles[0] == pytest.approx(0.44998, abs=1e-4)
-    assert angles[2] == pytest.approx(0.44998, abs=1e-4)
+
+def test_an_unknown_dq_label_does_not_hide_the_angle(tmp_path: Path) -> None:
+    """Two separate facts: the label is reported where the convention is read."""
+    path = write(tmp_path / "a.txt", META + "\n# Q [1/A]  R  dR  dQ [whatever]")
+
+    with pytest.raises(HeaderError, match="neither"):
+        read_header(path)
+    assert recorded_angle(path).theta == pytest.approx(0.44998, abs=1e-4)
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="no named pipes")
+def test_a_pipe_named_like_a_reduced_file_is_refused_not_waited_on(
+    tmp_path: Path,
+) -> None:
+    """Opening a pipe waits for a writer; a header read must not hang on one."""
+    import os
+
+    from nr_workbench.bounded import Bounded
+
+    pipe = tmp_path / "REFL_100001_1_100001_partial.txt"
+    os.mkfifo(pipe)
+    once = Bounded(slots=1, timeout=10, name="test-header")
+
+    with pytest.raises(HeaderError, match="not a regular file"):
+        once.run(read_header, pipe)
+    assert "not a regular file" in once.run(recorded_angle, pipe).why
 
 
 def test_a_series_angle_comes_from_its_summed_dataset(tmp_path: Path) -> None:
@@ -458,3 +483,44 @@ def test_warnings_reach_as_dict(tmp_path: Path) -> None:
     write(path, DOUBLED)
 
     assert read_header(path).as_dict()["warnings"] == []
+
+
+# --------------------------------------------------------------------------
+# How many segments the measurement was planned with
+# --------------------------------------------------------------------------
+
+
+def test_autoreduction_reports_the_planned_segment_count(tmp_path: Path) -> None:
+    """`DB`, `scale_factor` and `ThetaShift` are sized by the template.
+
+    Read from segment 1's file, before segments 2 and 3 exist: the count is
+    what lets the experiment page tell "complete" from "one third arrived and
+    the rest has not been reduced yet".
+    """
+    header = read_header(write_autored(tmp_path, 1, 234277))
+
+    assert header.n_segments == 3
+    assert header.as_dict()["n_segments"] == 3
+
+
+def test_autoreduction_segment_count_is_none_when_the_arrays_disagree(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "REFL_234277_1_234277_autoreduction.dat"
+    write(
+        path,
+        "# DB = ['A1_Si.txt', 'A2_Si.txt']\n"
+        '# Config: {"ThetaShift": [0, 0, 0]}\n'
+        '# Angles: {"THS": [-0.45]}\n'
+        "# columns = Q, R, dR, dQ (sigma)\n",
+    )
+
+    assert read_header(path).n_segments is None
+
+
+def test_the_meta_dialect_does_not_claim_a_segment_count(tmp_path: Path) -> None:
+    """`# Meta:` has no per-segment arrays, so it must not invent a count."""
+    path = tmp_path / "REFL_218386_1_218386_partial.txt"
+    write(path, META)
+
+    assert read_header(path).n_segments is None

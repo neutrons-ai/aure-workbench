@@ -29,21 +29,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
+from nr_workbench.sample_md import RUN_HEADERS, table_cells
 from nr_workbench.web.prose import strip_comments
-
-#: A markdown table row: ``| 218393 | full Q | -0.5 mA/cm2 |``.
-_ROW = re.compile(r"^\s*\|(.+)\|\s*$")
 
 #: A cell that is only dashes and colons is the header underline.
 _RULE = set("-: ")
-
-#: How far two angles may differ and still count as the same setting, in
-#: degrees. Reduction records theta to four decimals and the motor repeats to
-#: better than this; a real difference is tenths.
-THETA_TOLERANCE = 0.02
 
 
 @dataclass
@@ -126,11 +118,10 @@ def read_table(markdown: str) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     header: list[str] = []
     for line in markdown.splitlines():
-        match = _ROW.match(line)
-        if not match:
+        cells = table_cells(line)
+        if cells is None:
             header = []  # a table ended
             continue
-        cells = [c.strip() for c in match.group(1).split("|")]
         if set("".join(cells)) <= _RULE:
             continue
         if not header:
@@ -157,7 +148,7 @@ def documented_runs(markdown: str) -> dict[int, dict[str, str]]:
     """
     found: dict[int, dict[str, str]] = {}
     for row in read_table(strip_comments(markdown)):
-        raw = row.get("run") or row.get("run number") or ""
+        raw = next((row[name] for name in RUN_HEADERS if row.get(name)), "")
         digits = re.fullmatch(r"\s*(\d{4,})\s*", raw)
         if digits:
             found[int(digits.group(1))] = row
@@ -170,7 +161,6 @@ def reconcile(
     markdown: str,
     *,
     series_runs: set[int] | None = None,
-    standard_thetas: list[float] | None = None,
 ) -> Reconciliation:
     """Compare what the files record against what the notes claim.
 
@@ -179,7 +169,6 @@ def reconcile(
         headers: A :class:`ReducedHeader` per steady-state file.
         markdown: The sample's ``sample.md``.
         series_runs: Runs that also exist as a time-resolved series.
-        standard_thetas: The project's usual angles.
 
     Returns:
         The disagreements found.
@@ -197,7 +186,6 @@ def reconcile(
     result.findings.extend(_titles(by_run, documented))
     result.findings.extend(_direct_beams(by_run))
     result.findings.extend(_series_in_steady(by_run, series_runs or set()))
-    result.findings.extend(_angles(by_run, standard_thetas or []))
     return result
 
 
@@ -378,34 +366,6 @@ def _series_in_steady(by_run: dict[int, list[Any]], series: set[int]) -> list[Fi
                 from_file="present in data/steady/ and data/tnr/",
             )
         )
-    return findings
-
-
-def _angles(by_run: dict[int, list[Any]], standard: list[float]) -> list[Finding]:
-    """Angles that are not one of the project's usual settings."""
-    if not standard:
-        return []
-    findings = []
-    for run, headers in sorted(by_run.items()):
-        for header in headers:
-            if header.theta is None:
-                continue
-            if any(abs(header.theta - s) <= THETA_TOLERANCE for s in standard):
-                continue
-            findings.append(
-                Finding(
-                    kind="unusual-angle",
-                    severity="info",
-                    run=run,
-                    message=(
-                        f"Run {run} has a segment at {header.theta:.4f} deg, "
-                        "which is not one of this project's standard angles. "
-                        "Worth confirming it is the measurement you think."
-                    ),
-                    from_file=f"{header.theta:.4f} deg ({Path(header.path).name})",
-                    from_notes=", ".join(f"{s:g}" for s in standard),
-                )
-            )
     return findings
 
 

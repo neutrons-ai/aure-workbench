@@ -58,7 +58,7 @@ has no way to receive any — so everything is an environment variable.
 | `NRW_VERSION` | `main` | Git ref (branch, tag or commit) to install |
 | `NRW_REPO` | this repository | Git URL to install from |
 | `NRW_PYTHON` | `3.13` | Python version for the tool environment |
-| `NRW_EXTRAS` | *(none)* | Extras to include, e.g. `nexus` for HDF5/NeXus reading |
+| `NRW_EXTRAS` | *(none)* | Extras to include, comma-separated: `nexus` for HDF5/NeXus reading, `isaac` for publishing fits to the ISAAC Portal |
 | `NRW_UV_VERSION` | *(latest)* | Pin uv to a version, e.g. `0.12.17` |
 | `NRW_SYSTEM_CERTS` | `0` | `1` to use the system trust store from the start |
 | `NRW_INSTALL_DRY_RUN` | `0` | `1` prints what would run and exits, changing nothing |
@@ -66,7 +66,11 @@ has no way to receive any — so everything is an environment variable.
 ```bash
 # a tagged release, with the NeXus extra
 curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
-  | NRW_VERSION=v0.1 NRW_EXTRAS=nexus sh
+  | NRW_VERSION=v0.2 NRW_EXTRAS=nexus sh
+
+# with the tools that export and push fits to the ISAAC Portal
+curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
+  | NRW_EXTRAS=isaac sh
 
 # see what it would do, without doing it
 curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
@@ -143,7 +147,8 @@ For development, clone and install editable:
 ```bash
 git clone https://github.com/neutrons-ai/aure-workbench.git
 cd aure-workbench
-pip install -e ".[dev]"
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"            # ".[dev,isaac]" to work on ISAAC publishing
 pre-commit install
 ```
 

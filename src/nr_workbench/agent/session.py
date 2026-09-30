@@ -271,7 +271,6 @@ def _observe_quarantine(root: Path, sample: str) -> str:
 def _observe_data(root: Path, sample: str) -> str:
     """Headers against the notes: mislabelled runs, stray reductions."""
     from nr_workbench.instrument.header import read_header
-    from nr_workbench.project.config import load_config
     from nr_workbench.project.scan import scan_sample
     from nr_workbench.reconcile import reconcile
 
@@ -295,18 +294,11 @@ def _observe_data(root: Path, sample: str) -> str:
 
     notes_path = root / "samples" / sample / "sample.md"
     notes = notes_path.read_text(encoding="utf-8") if notes_path.is_file() else ""
-    try:
-        standard = list(getattr(load_config(root), "standard_thetas", []) or [])
-    except Exception:  # noqa: BLE001 - a missing config only costs one check
-        standard = None
     found = reconcile(
         sample,
         headers,
         notes,
         series_runs={s.run for s in scan.series if s.run},
-        # Without this the non-standard-angle check silently does nothing, and
-        # the block would claim to be `nrw data reconcile` while being less.
-        standard_thetas=standard,
     )
     if not found.findings:
         return ""
@@ -329,7 +321,7 @@ def _observe_specs(root: Path, sample: str) -> str:
     # `_paths_against_implied_change` and `_constraint_on_a_flat_run` all
     # return nothing --- three of the five checks, including the one the
     # skills call the most-repeated Red Flag. The block would still be
-    # labelled `nrw check --contradictions` while being a fraction of it.
+    # labelled with `nrw check` while being a fraction of what it checks.
     assessment = _latest_assessment(root / "samples" / sample)
 
     # Grouped by finding, not by file. A sample accumulates near-identical
@@ -383,7 +375,7 @@ def _observe_specs(root: Path, sample: str) -> str:
                 specs[0] if len(specs) == 1 else f"{len(specs)} specs incl. {specs[0]}"
             )
             lines.append(f"  {where}: {message}")
-        sections.append("Specs (`nrw check --contradictions`):\n" + "\n".join(lines))
+        sections.append("Specs (as `nrw check` finds them):\n" + "\n".join(lines))
     return "\n\n".join(sections)
 
 

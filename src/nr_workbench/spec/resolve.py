@@ -28,7 +28,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from nr_workbench.instrument.reduced import find_segments, segment_globs
+from nr_workbench.arrival import segment_gap
+from nr_workbench.instrument.header import RecordedAngle, recorded_angle, theta_for_run
+from nr_workbench.instrument.reduced import (
+    find_segments,
+    parse_segment_name,
+    segment_globs,
+)
+from nr_workbench.problems import one_line
 from nr_workbench.spec.constraints import FORMS, ConstraintError, FormContext
 from nr_workbench.spec.models import (
     Constraint,
@@ -39,6 +46,12 @@ from nr_workbench.spec.models import (
     SpecError,
     State,
 )
+
+#: How far an angle a spec states may stray from the one its file records, in
+#: degrees: the precision of a value typed to two decimals. The file's value is
+#: the one fitted, so a stated angle is only a check -- and one further off than
+#: rounding explains is a guess, or a copy from another run.
+STATED_ANGLE_TOLERANCE = 0.005
 
 #: Filename pattern for a time-binned tNR slice: r<run>_t<seconds>.txt.
 _SLICE_RE = re.compile(r"^r(?P<run>\d+)_t(?P<t>\d+)\.txt$")
@@ -208,49 +221,237 @@ def discover_measurements(spec: ModelSpec, root: Path) -> dict[str, list[Measure
 
 
 def _discover_state(state: State, root: Path) -> list[Measurement]:
-    """Resolve one steady-state measurement's files."""
+    """Resolve one steady-state measurement's files, each at its own angle."""
+    owner = f"state {state.name!r}"
     if state.segments != "auto":
         return [
-            Measurement(state.name, i, seg.file, seg.theta)
+            Measurement(
+                state.name,
+                i,
+                seg.file,
+                file_angle(
+                    owner,
+                    f"listed segment {i + 1}",
+                    root / seg.file,
+                    seg.theta,
+                    how="as that segment's `theta`",
+                ),
+            )
             for i, seg in enumerate(state.segments)
         ]
 
     directory = Path(state.data_dir) if state.data_dir else Path("data/steady")
     absolute = root / directory
     if not absolute.is_dir():
-        raise SpecError(f"state {state.name!r}: no such data directory: {directory}")
+        raise SpecError(f"{owner}: no such data directory: {directory}")
 
     if state.kind == "combined":
         name = f"REFL_{state.run}_combined_data_auto.txt"
         if not (absolute / name).is_file():
-            raise SpecError(f"state {state.name!r}: missing {directory / name}")
-        return [
-            Measurement(state.name, 0, (directory / name).as_posix(), state.thetas[0])
-        ]
+            raise SpecError(f"{owner}: missing {directory / name}")
+        if state.thetas is not None and len(state.thetas) != 1:
+            raise SpecError(
+                f"{owner}: a combined curve is one file, so `thetas` holds one "
+                f"angle, not {len(state.thetas)}."
+            )
+        theta = file_angle(
+            owner,
+            "the combined curve",
+            absolute / name,
+            state.thetas[0] if state.thetas else None,
+            how="under `thetas`",
+        )
+        return [Measurement(state.name, 0, (directory / name).as_posix(), theta)]
 
-    # The subrun usually but not always runs consecutively from the run
-    # number, so glob on the segment rather than assuming run+i. Both
-    # reduction dialects are matched -- a beamtime mid-migration has both --
-    # and the error names both, or it sends someone looking for a file under a
-    # name their reduction never writes. The patterns come from
-    # `instrument/reduced.py`, which is the only place that knows them.
+    # Every segment of the run in the directory, found by its name: the
+    # subrun usually but not always runs consecutively from the run number, so
+    # nothing here assumes it, and nothing assumes how many segments there are.
+    # Both reduction dialects are matched -- a beamtime mid-migration has both
+    # -- through `instrument/reduced.py`, the only place that knows the names.
+    found = segments_on_disk(absolute, state.run)
+    if not found:
+        raise SpecError(
+            f"{owner}: no file matching "
+            f"{' or '.join(segment_globs(state.run))} in {directory}"
+        )
+    for number, paths in sorted(found.items()):
+        if len(paths) > 1:
+            raise SpecError(
+                f"{owner}: {len(paths)} files match segment {number}: "
+                f"{[one_line(p.name) for p in paths]}. List them explicitly under "
+                "`segments`."
+            )
+    gap = segment_gap(state.run, found)
+    if gap:
+        raise SpecError(
+            f"{owner}: {gap} If fitting only some is deliberate, list them under "
+            "`segments`."
+        )
+    numbers = sorted(found)
+    if state.thetas is not None and len(state.thetas) != len(numbers):
+        raise SpecError(
+            f"{owner}: `thetas` gives {len(state.thetas)} angle(s), but run "
+            f"{state.run} has {len(numbers)} segment(s) in {directory}. Leave "
+            "`thetas` out to read each angle from its file, or give one per "
+            "segment; to fit only some, list them under `segments`."
+        )
+    files = [found[number][0] for number in numbers]
+    records = [recorded_angle(path) for path in files]
+    # Segments 1 and 2 of a run whose headers plan three are contiguous, and
+    # still not the measurement: the third may not be reduced yet.
+    planned = {record.planned for record in records if record.planned is not None}
+    if len(planned) == 1 and (expected := planned.pop()) > len(numbers):
+        raise SpecError(
+            f"{owner}: run {state.run}'s headers plan {expected} segments, but "
+            f"only {len(numbers)} are in {directory}. The rest may not be "
+            "reduced yet; to fit only these, list them under `segments`."
+        )
+
     measurements: list[Measurement] = []
-    for i, theta in enumerate(state.thetas, start=1):
-        patterns = segment_globs(state.run, i)
-        matches = find_segments(absolute, state.run, i)
-        if not matches:
-            raise SpecError(
-                f"state {state.name!r}: no file matching "
-                f"{' or '.join(patterns)} in {directory}"
-            )
-        if len(matches) > 1:
-            raise SpecError(
-                f"state {state.name!r}: {len(matches)} files match segment {i}: "
-                f"{[m.name for m in matches]}. List them explicitly under `segments`."
-            )
-        relative = matches[0].relative_to(root).as_posix()
-        measurements.append(Measurement(state.name, i - 1, relative, theta))
+    for index, (number, path, record) in enumerate(
+        zip(numbers, files, records, strict=True)
+    ):
+        given = state.thetas[index] if state.thetas is not None else None
+        theta = file_angle(
+            owner,
+            f"segment {number}",
+            path,
+            given,
+            how="under `thetas`, one per segment -- `null` for any whose file "
+            "records its own",
+            recorded=record,
+        )
+        measurements.append(
+            Measurement(state.name, index, path.relative_to(root).as_posix(), theta)
+        )
     return measurements
+
+
+def segments_on_disk(directory: Path, run: int | None) -> dict[int, list[Path]]:
+    """Each segment number of *run* in *directory*, and the files that claim it.
+
+    What ``segments: auto`` reads, so that `nrw model new` can tell whether a
+    registered run is all of it -- and write the segments out when it is not.
+    """
+    found: dict[int, list[Path]] = {}
+    for path in find_segments(directory, run):
+        parsed = parse_segment_name(path.name)
+        if parsed is not None and parsed.run == run:
+            found.setdefault(parsed.segment, []).append(path)
+    return found
+
+
+def file_angle(
+    owner: str,
+    what: str,
+    path: Path,
+    given: float | None,
+    *,
+    how: str,
+    recorded: RecordedAngle | None = None,
+) -> float:
+    """The incident angle of one file: its own record, checked against the spec.
+
+    There is no fallback. An angle assumed from habit fits without complaint:
+    it sets the wavelength axis through ``wl = 4*pi*sin(theta)/q``, and the fit
+    absorbs a wrong one into roughness. So an angle comes from the file's
+    header, or from the spec where the header has none -- and one the spec
+    gives for a file that records its own must agree with it.
+
+    Args:
+        owner: The state or series, for the message.
+        what: Which of its files, for the message.
+        path: The file.
+        given: The spec's angle for it, in degrees, or ``None``.
+        how: Where in the spec to give an angle, for the message.
+        recorded: The file's record, when the caller has read it already.
+
+    Returns:
+        The angle in degrees: the file's own where it has one.
+
+    Raises:
+        SpecError: The file is missing, neither gives an angle, or the two
+            disagree by more than :data:`STATED_ANGLE_TOLERANCE`.
+    """
+    record = recorded if recorded is not None else recorded_angle(path)
+    if record.missing:
+        raise SpecError(f"{owner}: {what}: no such file: {one_line(str(path))}")
+    if record.theta is None:
+        if given is None:
+            raise SpecError(
+                f"{owner}: {what} ({one_line(path.name)}): {one_line(record.why)}. "
+                f"Give it {how}, in degrees."
+            )
+        return float(given)
+    if given is not None and abs(given - record.theta) > STATED_ANGLE_TOLERANCE:
+        raise SpecError(
+            f"{owner}: {what} is given as {given:g} deg, but {one_line(path.name)} "
+            f"records {record.theta:.4f} deg. Leave it out to use the file's "
+            "angle, or correct it -- a known misalignment belongs in a "
+            "`theta_offset` parameter, not here."
+        )
+    return record.theta
+
+
+def summed_dataset_dir(reduced_dir: str | Path) -> Path | None:
+    """Where a series' run is also reduced as one summed dataset, or ``None``.
+
+    The ``steady`` folder beside the nearest ``tnr`` folder holding the slices:
+    ``samples/S/data/tnr/218389`` and a flat ``samples/S/data/tnr`` both give
+    ``samples/S/data/steady``. That file has the header the slices lack, so it
+    is where a series' incident angle is read from. Outside any ``tnr`` folder
+    there is no telling where it would be.
+    """
+    path = Path(reduced_dir)
+    for folder in (path, *path.parents):
+        if folder.name == "tnr":
+            return folder.parent / "steady"
+    return None
+
+
+def _series_angle(series: Series, root: Path, run: int | None) -> float:
+    """A series' incident angle: from its run's summed dataset, checked against the spec.
+
+    Args:
+        series: The series.
+        root: Project root.
+        run: The run its slices belong to -- the sidecar's, for a series read
+            from one -- which is the run whose summed dataset is looked up.
+    """
+    owner = f"series {series.name!r}"
+    steady = summed_dataset_dir(series.reduced_dir)
+    recorded, source = (
+        theta_for_run(root / steady, run)
+        if steady is not None and run is not None
+        else (None, None)
+    )
+    if recorded is None:
+        if series.theta is None:
+            if run is None:
+                where = "it names no `run` to look one up by"
+            elif steady is None:
+                where = (
+                    f"{series.reduced_dir} is in no `tnr` folder, so there is no "
+                    "summed dataset beside it"
+                )
+            else:
+                where = f"no file of run {run} in {steady} records one"
+            raise SpecError(
+                f"{owner}: its slices carry no header, and {where}. Give its "
+                "`theta`, in degrees."
+            )
+        return float(series.theta)
+    if (
+        series.theta is not None
+        and abs(series.theta - recorded) > STATED_ANGLE_TOLERANCE
+    ):
+        raise SpecError(
+            f"{owner}: `theta` is given as {series.theta:g} deg, but "
+            f"{one_line(source or '')} -- the same run, summed -- records "
+            f"{recorded:.4f} deg. Leave it out to use the file's angle, or "
+            "correct it."
+        )
+    return float(recorded)
 
 
 def _discover_series(series: Series, root: Path) -> list[Measurement]:
@@ -262,6 +463,7 @@ def _discover_series(series: Series, root: Path) -> list[Measurement]:
 
     if series.time_from == "reduction_json":
         return _discover_series_from_json(series, root, absolute, directory)
+    theta = _series_angle(series, root, series.run)
 
     select = series.select
     available: dict[int, Path] = {}
@@ -295,7 +497,7 @@ def _discover_series(series: Series, root: Path) -> list[Measurement]:
                 series.name,
                 len(measurements),
                 path.relative_to(root).as_posix(),
-                series.theta,
+                theta,
                 time=float(t),
                 label=path.stem,
             )
@@ -329,13 +531,32 @@ def _discover_series_from_json(
 
     candidates = sorted(absolute.glob("*_reduction.json"))
     if series.run is not None:
-        preferred = [c for c in candidates if str(series.run) in c.name]
-        candidates = preferred or candidates
+        # Only the series' own run: a sidecar from another would pick that
+        # run's slices, and its angle, under this series' name.
+        candidates = [c for c in candidates if str(series.run) in c.name]
+        if not candidates:
+            raise SpecError(
+                f"series {series.name!r}: no *_reduction.json for run "
+                f"{series.run} in {directory}"
+            )
     if not candidates:
         raise SpecError(f"series {series.name!r}: no *_reduction.json in {directory}")
 
     payload = json.loads(candidates[0].read_text(encoding="utf-8"))
     run = payload.get("run_number", series.run)
+    try:
+        run = int(run) if run is not None else None
+    except (TypeError, ValueError):
+        raise SpecError(
+            f"series {series.name!r}: {one_line(candidates[0].name)} gives its run "
+            f"number as {run!r}"
+        ) from None
+    if series.run is not None and run != series.run:
+        raise SpecError(
+            f"series {series.name!r}: {one_line(candidates[0].name)} is the "
+            f"reduction of run {run}, not {series.run}."
+        )
+    theta = _series_angle(series, root, run)
     intervals = payload.get("intervals") or []
     if not intervals:
         raise SpecError(
@@ -368,7 +589,7 @@ def _discover_series_from_json(
                 series.name,
                 len(measurements),
                 path.relative_to(root).as_posix(),
-                series.theta,
+                theta,
                 time=elapsed,
                 label=label,
             )
@@ -473,8 +694,9 @@ _RANK_MEASUREMENT = 2
 #: degrees. The same nominal angle is recorded slightly differently per run --
 #: 0.37 against 0.3698, 1.2002 against 1.2001 -- because each theta is read from
 #: its own file rather than tidied to the nominal value. Grouping has to see
-#: through that, while staying far below the gap between real settings (0.45,
-#: 1.2, 3.5), so anything from 0.005 to 0.1 would do and 0.02 is the middle of it.
+#: through that, while staying far below the gap between two settings anyone
+#: measures at -- tenths of a degree -- so anything from 0.005 to 0.1 would do,
+#: and 0.02 is the middle of it.
 ANGLE_TOLERANCE = 0.02
 
 

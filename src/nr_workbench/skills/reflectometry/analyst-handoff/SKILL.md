@@ -162,6 +162,11 @@ usually structural, and it is where the real work is:
 | Refused to it | So look for |
 |---|---|
 | `nrw promote` | Nothing is marked final. Deciding that is the scientist's. |
+| Curating fits (`nrw fit star`, `discard`, `delete`, …) | Nothing starred or set aside, however poor a fit. Judge them from the reports and `nrw ls`. |
+| `nrw isaac push`, `nrw isaac export --upload` | Nothing published. Records may be exported and ready to send. |
+| `nrw aure run` | A setup written, perhaps checked with `--dry-run`, never run. |
+| Organizing the experiment (`nrw experiment assign`, `release`, `--write`) | Runs where the scientist left them; an assignment it wanted, in an escalation. |
+| `nrw sample reset` | Old fits and models still in place. |
 | Any `--force` | A blocked path it worked around rather than through. |
 | Anything needing a judgement call | An escalation naming the decision. |
 | Sustained systematics sweeps | Background, resolution and scale tests it had no mandate to run. On the reference project, adding a free background was the scientist's first instruction to the takeover session. |
@@ -189,7 +194,7 @@ When a new report supersedes an old one, say so in both directions rather than
 deleting the old:
 
 ```bash
-nrw report supersede <old-slug> --by <new-slug> --reason "..."
+nrw supersede <sample> <old-stem> --by <new-stem> --reason "..."
 ```
 
 ### 7. Write for the person who is actually reading

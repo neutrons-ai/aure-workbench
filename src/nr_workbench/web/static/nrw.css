@@ -203,3 +203,127 @@ tr.fit-story > td > span + span::before {
 .table-hover > tbody > tr.fit-story:hover > * {
   background-color: transparent;
 }
+
+/* The Experiment page. */
+.expt-search {
+  max-width: 16rem;
+}
+
+.expt-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--bs-border-color);
+  background: var(--bs-tertiary-bg);
+}
+
+.expt-bulk .form-control,
+.expt-bulk .form-select {
+  width: auto;
+  min-width: 9rem;
+}
+
+.expt-table {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.expt-title {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.expt-plan-list li {
+  word-break: break-all;
+}
+
+/* The sample's measurements, in the editor: one run per block, its type and
+   condition on one line and the notes on it below. */
+.expt-measurement {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--bs-border-color-translucent);
+}
+
+.expt-measurement:last-child {
+  border-bottom: 0;
+}
+
+.expt-measurement-bad .mono,
+.expt-measurement-bad .form-check-label {
+  color: var(--bs-secondary-color);
+  text-decoration: line-through;
+}
+
+.expt-measurement-bad .form-check-label {
+  text-decoration: none;
+}
+
+/* The type chooser at the width of its short names: "Add a type…" is only
+   ever read in the open list. */
+.expt-measurement .expt-type-field .form-select {
+  width: 6.5rem;
+}
+
+.expt-bulk .expt-type-field .form-control {
+  min-width: 7rem;
+}
+
+/* Settings: a form, not a dashboard. */
+.settings {
+  max-width: 52rem;
+}
+
+.settings-short {
+  max-width: 18rem;
+}
+
+.settings-indent {
+  margin-left: 1.5rem;
+}
+
+/* The Models panel: a new model's name, and what a command printed. */
+.expt-model-name {
+  max-width: 16rem;
+}
+.expt-output {
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--bs-tertiary-bg, #f8f9fa);
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+}
+.expt-fit {
+  border-top: 1px solid var(--bs-border-color, #dee2e6);
+  padding-top: 0.75rem;
+}
+.expt-fit-method {
+  max-width: 22rem;
+}
+.expt-fit-setting {
+  max-width: 11rem;
+}
+.expt-job-log {
+  max-height: 24rem;
+}
+.expt-model-run {
+  max-width: 9rem;
+}
+
+/* Curating fits: the star column of the Fits list, and the reason form. */
+.fit-star-col {
+  width: 1.6rem;
+  text-align: center;
+}
+.fit-star {
+  text-decoration: none;
+  color: var(--bs-warning-text-emphasis);
+  line-height: 1;
+}
+.curate-form {
+  max-width: 42rem;
+}

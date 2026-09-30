@@ -71,6 +71,26 @@ Then copy reduced data into `samples/Sample4/data/steady/` and
 Code. `nrw init` is idempotent and safe to run on top of an existing beamtime
 folder — it never overwrites a file you have edited.
 
+### Organizing a beamtime's runs
+
+While an experiment is running, `nrw serve` has an **Experiment** page that
+lists every run as the reduction writes it, with whether it has finished
+arriving. From an empty folder, `nrw init` then `nrw serve` is enough: the link
+it prints opens **Settings**, where you set the IPTS and the data folder, and
+check the folder before choosing it. Select runs, assign them to a sample with a condition, describe the
+sample, and **apply**. The data is copied into the sample and its `sample.md`
+is written. Nothing is overwritten, and only complete runs are copied. The same
+from the command line:
+
+```bash
+nrw experiment status
+nrw experiment assign 234277 234280 --sample Sample4 --condition OCV
+nrw experiment apply --write
+```
+
+The organization is kept in `experiment/*.parquet`.
+**[docs/experiment.md](docs/experiment.md)** walks through it.
+
 ### Choosing an assistant
 
 A scaffolded project carries the instructions, subagent stubs and limits for
@@ -86,12 +106,13 @@ Sites that cannot install Claude Code, or that need to point an assistant at a
 locally hosted model, want OpenCode: it takes a provider and model in its own
 `opencode.json` rather than being tied to one vendor.
 
-Two things to know about the current state. **`nrw agent run` still drives
-Claude Code only** — the unattended session builds a Claude Code command line
-and verifies a Claude Code `PreToolUse` hook, and until OpenCode has both, it
-refuses to start rather than running unlimited. And **narrowing the set never
-deletes anything**: files for an assistant you drop stay on disk, because a
-scientist may have edited them.
+Two things to know. **`nrw agent run` drives Claude Code or OpenCode**
+(`--harness opencode`), and checks each one's limit before a session starts:
+Claude Code's `PreToolUse` hook, or OpenCode's guard plugin and deny rules.
+OpenCode has no turn cap, so a session there needs `--timeout`, and refuses to
+start without one rather than run unbounded. And **narrowing the set never
+deletes anything**: files for an assistant you drop stay on disk, and nrw stops
+updating them, because a scientist may have edited them.
 
 ### Your first fit
 
@@ -103,16 +124,19 @@ plain-English description and iterates it against the data:
 ```bash
 # answer six questions in samples/Cu4/sample.md first -- what the layers are,
 # what it sits in, and which side the beam enters
-nrw aure new Cu4
+nrw aure new Cu4               # --run N when the sample has several steady runs
 nrw aure run samples/Cu4/aure/Cu4-218386/setup.yaml
 nrw aure import samples/Cu4/aure/Cu4-218386/output --sample Cu4 --name first
+nrw model generate samples/Cu4/models/first.yaml
+nrw fit run samples/Cu4/models/first.py
 ```
 
-That leaves an ordinary `models/first.yaml`, and everything after it is the
-normal path. **An AuRE run is reconnaissance**: it carries no fit record, so the
-fit that counts is the `nrw fit run` on the imported spec. It needs a
-language-model endpoint; without one, `nrw model new --print-prompt` gives your
-coding assistant the same job with the facts already filled in.
+That leaves an ordinary `samples/Cu4/models/first.yaml`, and everything after
+it is the normal path. **An AuRE run is reconnaissance**: it carries no fit
+record, so the fit that counts is the `nrw fit run` on the script generated
+from the imported spec. It needs a language-model endpoint; without one,
+`nrw model new --print-prompt` gives your coding assistant the same job with the
+facts already filled in.
 
 **[docs/first-fit.md](docs/first-fit.md) walks it through**, and
 `skills/reflectometry/aure-first-fit/SKILL.md` is what an assistant follows.
@@ -124,6 +148,111 @@ directory to a promoted χ² = 1.83 result. Every command and number in it was
 produced by running it.
 
 Run `nrw --help` for the full command surface.
+
+## Fitting options
+
+A project fits in two ways, and each is set up in its own place.
+
+**nrw's fits** are the ones recorded in the fit index and shown under Fits. They
+come from `nrw fit run`, or from **Fit…** on the Experiment page, which runs
+`nrw fit run`. Each setting comes from the first of these that sets it:
+
+1. the command line (`nrw fit run model.py --method amoeba --steps 500`), or
+   the page's Fit form;
+2. the project's `nrw.toml`, under `[fit]`;
+3. bumps' own default for that fitter.
+
+When nothing names a fitter, it is **DREAM**: it samples the posterior, so its
+answer comes with uncertainties. In `nrw.toml`, `[fit]` names the fitter and
+holds what every fitter takes. Each fitter's own settings go in its own table,
+and apply only when that fitter runs:
+
+```toml
+[fit]
+method = "dream"    # dream | de | amoeba
+seed = 12345        # a fixed seed makes a fit repeatable; none by default
+parallel = 0        # CPUs to use: 0 means all of them
+
+[fit.dream]
+samples = 20000     # bumps' default: 10000
+burn = 1000         # bumps' default: 100
+
+[fit.de]
+steps = 2000        # bumps' default: 1000
+
+[fit.amoeba]
+steps = 1000        # bumps' default: 1000
+```
+
+With these settings:
+
+- `nrw fit run model.py` runs DREAM with 20000 samples and 1000 burn-in steps.
+- `nrw fit run model.py --method amoeba` runs amoeba for 1000 steps.
+- A setting a fitter does not take, such as `samples` for amoeba, is refused
+  rather than ignored.
+
+Each fit prints which settings it took from `nrw.toml`. Its record keeps every
+setting it ran with, so it can be reproduced after `nrw.toml` changes.
+`nrw init` writes these tables into a new project's `nrw.toml` commented out,
+holding bumps' own defaults (with `pop` for DREAM and DE), so uncommenting one
+changes nothing until you edit a value. For an older project, paste them in.
+
+A model spec's `fit:` block is **not** read, and `nrw model validate` says so.
+Put fit settings in `nrw.toml` or on the command line.
+
+**AuRE's fits** are reconnaissance: they happen inside `nrw aure run`, and in
+the page's **Quick fit with AuRE**. AuRE sets them up itself, from these
+sources:
+
+- **`--budget quick`**, the default: nrw writes DE, 300 steps and one
+  refinement into the run's `setup.yaml`, and that wins over everything else.
+- **`--budget standard`**: nrw leaves the fit to AuRE. AuRE reads `FIT_METHOD`,
+  `FIT_STEPS` and `FIT_BURN` from its environment, else uses its defaults
+  (DREAM, 1000 steps, 1000 burn-in). For a run nrw starts, that environment is
+  the first of: the shell, the project's `.env`, `~/.nrw`, `~/.aure`.
+- **AuRE's physics knobs** (`MODE_ENUMERATION` and the others): nrw sets every
+  one for each run, over the shell's too, and records them in `run-env.json`
+  beside the setup. A value for one of them in `~/.aure` is not used by a run
+  that nrw starts.
+- **The fit you keep**: after a quick fit on the page, the spec AuRE proposed is
+  fitted with `nrw fit run --method amoeba`. That fit is the one that appears
+  under Fits.
+- **Again**: **Quick fit again** on a model AuRE proposed asks AuRE again, for
+  example after you have added to `sample.md`. What AuRE reads there includes
+  the run's condition and notes. A spec you have edited is never replaced.
+
+`nrw.toml` says nothing about AuRE's fits, and `~/.aure` says nothing about
+nrw's.
+
+**Which file holds what:**
+
+| File | Belongs to | Holds | Committed |
+|---|---|---|---|
+| `nrw.toml` | the project | the IPTS, the data folder, the watcher, the assistants, and how nrw fits (`[fit]`) | yes |
+| `.env` in the project | you, on this machine | the language-model endpoint and its key; the Settings page's *Language model* writes it | no (gitignored) |
+| `~/.nrw` | you | the same, for all your projects; and the ISAAC Portal and its key (`ISAAC_URL`, `ISAAC_KEY`) | — |
+| `~/.aure` | you, and AuRE | the endpoint too, and AuRE's own fit defaults (`FIT_METHOD`, `FIT_STEPS`, `FIT_BURN`) | — |
+
+For the language-model endpoint, nrw takes each variable from the first of:
+
+1. the shell's environment;
+2. the project's `.env`;
+3. `~/.nrw`;
+4. `~/.aure`.
+
+The ISAAC Portal's `ISAAC_URL` and `ISAAC_KEY` follow the same order but skip
+the project's `.env`: anyone who can write the project can write that file, and
+it would choose where your key and your records are sent.
+
+`nrw doctor` lists the files it read and the settings it found, with keys
+redacted. Keys and endpoints never go in `nrw.toml`, because it is committed
+and shared. `.env.example` in the project lists the variables.
+
+To use Claude through the Claude Code CLI, which needs no key, choose it under
+*Language model* on the Settings page of `nrw serve`. That writes
+`LLM_PROVIDER=claude_code` into the project's `.env`, which then wins over
+`~/.aure`, and **Check** makes one call to prove it answers. See
+[docs/experiment.md](docs/experiment.md#language-model).
 
 ## Provenance
 
@@ -142,11 +271,21 @@ nrw pack <fit_id>             # a zip a collaborator runs with only refl1d
 Each fit writes an immutable directory holding the frozen script, every input
 file with its sha256, the exact package versions and git state (with a patch if
 the tree was dirty), and the bumps output. `nrw whence` traces a figure back to
-that record even after it has been copied out of the project, because figures
-are stamped at write time.
+that record even after it has been copied out of the project, because the
+figures a fit writes are stamped with its id when it finishes.
 
 Re-running an identical fit is refused by default, and a result whose data has
 changed underneath it is reported as `STALE` everywhere it appears.
+
+Fits are curated on the fit pages of `nrw serve` — star, finalize, discard,
+restore and delete — or with `nrw fit star`, `unstar`, `discard`, `restore`
+and `delete`; **Finalize** on a page is `nrw promote --as final`. A discarded
+fit leaves the listings (`nrw ls --all` shows it) but keeps its files until you
+delete them, which is refused while anything uses them, and the record that it
+ran is never lost. A sample's final fit is published to the ISAAC Portal from
+its page, or with `nrw isaac export` and `nrw isaac push`, and each push is
+recorded with the fit. See
+[docs/experiment.md](docs/experiment.md#curating-fits).
 
 `nrw pack` closes the last gap. A result directory records the *hashes* of its
 data, not the data, so it describes a fit nobody else can run. A bundle carries
@@ -172,9 +311,12 @@ findings, 1 was reachable by arithmetic and 11 needed judgement, and
 chi-squared ranks that corpus *backwards* — both promoted fits are worse in
 chi-squared than the best in their arm. So the harness decides, and this
 package supplies what has to exist around it: the offline checks it reads
-first, limits it cannot talk past (`promote`, `--upload` and `--force` are
-refused by a `PreToolUse` hook *and* by `nrw` itself under `NRW_AGENT=1`), a
-bounded session, and a transcript.
+first, limits it cannot talk past, a bounded session, and a transcript.
+Promoting or curating fits, publishing to ISAAC, `nrw aure run`, organizing the
+experiment, `nrw sample reset`, `init --nested` and any `--force` are refused by
+the harness's hook *and* by `nrw` itself under `NRW_AGENT=1`; the full list,
+with what stays allowed, is in
+[docs/agent.md](docs/agent.md#the-limits-and-why-there-are-two-of-them).
 
 A session refuses to start unless `## Fits to perform` in the sample's notes
 says what you want. Deciding that is the one thing it must not do for itself.
@@ -187,18 +329,22 @@ what is only asked for, and the evidence behind the split.
 ## Status
 
 Working. The scaffold and skills, the provenance spine, the tNR assessment
-tools, the model spec and generator, the web UI, and the data tools are all
+tools, the model spec and generator, the web UI — its Experiment page, fit
+curation and ISAAC publishing included — and the data tools are all
 implemented, along with `nrw pack`, `nrw note`, `nrw assess`, `nrw isaac
-export` and the unattended agent above. See
-[docs/project.md](docs/project.md) for the original requirement.
+export` and `push`, and the unattended agent above.
 
 ## Development
 
 ```bash
-pytest                       # tests
-ruff check . && ruff format . # lint and format (ruff does both; no black)
-pre-commit run --all-files   # exactly what CI runs
+pytest                          # tests
+ruff check src tests            # lint (ruff lints and formats; no black)
+ruff format --check src tests   # format
+pre-commit run --all-files      # exactly what CI runs
 ```
+
+`pre-commit` only checks files git tracks, so stage a new file before running
+it.
 
 The workflow, code standards, and review process are in
 [.github/copilot-instructions.md](.github/copilot-instructions.md), imported by

@@ -5,7 +5,13 @@ from __future__ import annotations
 import click
 
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
-from nr_workbench.project.scaffold import Outcome, PlannedFile, apply_scaffold
+from nr_workbench.project.scaffold import (
+    LockProblemError,
+    Outcome,
+    PlannedFile,
+    ScaffoldReport,
+    apply_scaffold,
+)
 from nr_workbench.skills_install import (
     SkillError,
     bundled_skills_root,
@@ -142,7 +148,7 @@ def run_skills_add(*, names: tuple[str, ...], force: bool = False) -> None:
             bundled[name], harnesses=_project_harnesses(layout)
         )
     ]
-    report = apply_scaffold(layout.root, planned, force=force)
+    report = _scaffold(layout, planned, force=force)
     click.echo(
         f"{report.count(Outcome.CREATE)} added, "
         f"{report.count(Outcome.UPGRADE)} updated, "
@@ -191,7 +197,7 @@ def run_skills_sync(*, force: bool = False) -> None:
         )
     ]
 
-    report = apply_scaffold(layout.root, planned, force=force)
+    report = _scaffold(layout, planned, force=force)
 
     click.echo(
         f"{report.count(Outcome.CREATE)} added, "
@@ -216,4 +222,16 @@ def run_skills_path() -> None:
     try:
         click.echo(str(bundled_skills_root()))
     except SkillError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+def _scaffold(
+    layout: ProjectLayout, planned: list[PlannedFile], *, force: bool
+) -> ScaffoldReport:
+    """Write the skills' files, or say why the lock must be fixed first."""
+    try:
+        return apply_scaffold(layout.root, planned, force=force)
+    except LockProblemError as exc:
+        # A plan of a few skills written over a lock that failed to load would
+        # keep their entries and drop every other file's.
         raise click.ClickException(str(exc)) from exc

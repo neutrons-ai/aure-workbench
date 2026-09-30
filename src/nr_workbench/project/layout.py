@@ -17,6 +17,10 @@ from nr_workbench.project.config import CONFIG_FILENAME
 #: Machine-owned state directory at the project root.
 STATE_DIR = ".nrw"
 
+#: The experiment catalog: which runs belong to which sample, and the context
+#: each sample.md is rendered from. Committed -- it is what a person decided.
+EXPERIMENT_DIR = "experiment"
+
 #: Per-sample subdirectories created by `nrw sample new`.
 SAMPLE_SUBDIRS = (
     "data/steady",
@@ -153,6 +157,22 @@ class ProjectLayout:
         return tuple(
             self.root / relpath for relpath in harness_agent_dirs(resolve(harnesses))
         )
+
+    @property
+    def experiment_dir(self) -> Path:
+        """Path to the committed experiment catalog, ``experiment/``."""
+        return self.root / EXPERIMENT_DIR
+
+    @property
+    def experiment_cache_dir(self) -> Path:
+        """Path to the catalog's temp and recovery files, under the cache.
+
+        Kept out of ``experiment/`` on purpose: that directory is committed,
+        and a temp file or a ``.prev`` copy left there would be committed too.
+        It is on the same filesystem as the catalog, which ``os.replace``
+        needs to be atomic.
+        """
+        return self.cache_dir / "experiment"
 
     @property
     def samples_dir(self) -> Path:

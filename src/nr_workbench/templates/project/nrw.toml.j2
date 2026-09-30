@@ -1,24 +1,24 @@
 contract_version = {{ contract_version }}
 
 [project]
-name = "{{ project_name }}"
-created = "{{ created }}"
-facility = "{{ facility }}"
-instrument = "{{ instrument }}"
+name = {{ project_name|toml }}
+created = {{ created|toml }}
+facility = {{ facility|toml }}
+instrument = {{ instrument|toml }}
 
 [beamtime]
-label = {% if beamtime %}"{{ beamtime }}"{% else %}""{% endif %}
-ipts = {% if ipts %}"{{ ipts }}"{% else %}""{% endif %}
+label = {{ beamtime|toml }}
+ipts = {{ ipts|toml }}
 
 # Which coding assistants this project is set up for. Each one reads its
 # instructions, its subagent stubs and its limits from a different place, so
 # `nrw init` writes a different set of files for each.
 #
 # Changing this list and re-running `nrw init` adds the new harness's files.
-# Removing a name never deletes anything -- the files stay where they are and
-# `nrw doctor` reports them as no longer maintained.
+# Removing a name never deletes anything -- the files stay where they are, and
+# `nrw init` stops updating them.
 [harness]
-kinds = [{% for name in harnesses %}"{{ name }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+kinds = [{% for name in harnesses %}{{ name|toml }}{% if not loop.last %}, {% endif %}{% endfor %}]
 
 # Who reads what comes out of this project. These change how much an assistant
 # explains and in what order -- they refuse nothing. Set them with
@@ -31,11 +31,46 @@ kinds = [{% for name in harnesses %}"{{ name }}"{% if not loop.last %}, {% endif
 # who wants the statistics spelled out is a real and common reader, and a
 # single novice/expert dial gets that reader wrong twice.
 [audience]
-reflectometry = "practitioner"
-statistics = "practitioner"
-domain = "practitioner"
-role = "collaborates"
-notes = ""
+reflectometry = {{ audience.reflectometry|toml }}
+statistics = {{ audience.statistics|toml }}
+domain = {{ audience.domain|toml }}
+role = {{ audience.role|toml }}
+notes = {{ audience.notes|toml }}
+
+# How a model is fitted when the command line does not say. `nrw fit run`
+# and the Fit button on the Experiment page read these; an option given there
+# -- `nrw fit run model.py --method amoeba` -- wins over what is set here, and
+# a setting set nowhere is bumps' own default: the commented values below,
+# except the example seed. Every fit's
+# record keeps what it ran with, wherever that came from.
+#
+#   method = "dream"   samples the posterior: the one fitter that gives
+#                      uncertainties. nrw's default.
+#            "de"      searches the whole range of every parameter.
+#            "amoeba"  walks downhill from the starting values; fast, while a
+#                      model is still changing.
+#
+# A fitter's own settings go in its own table, and apply only to fits with
+# that fitter. To set one, remove the `# ` from its line and from its table's
+# [...] line. This is not where AuRE's settings live: see nr-workbench's
+# README, "Fitting options".
+#
+# [fit]
+# method = "dream"
+# seed = 12345       # a fixed seed makes a fit repeatable; none by default
+# parallel = 0       # CPUs to use: 0 means all of them, 1 serial
+#
+# [fit.dream]
+# samples = 10000
+# burn = 100
+# pop = 10
+#
+# [fit.de]
+# steps = 1000
+# pop = 10
+#
+# [fit.amoeba]
+# steps = 1000
 
 # Filename and instrument conventions for REF_L / BL-4B.
 #
@@ -47,8 +82,9 @@ notes = ""
 # `_autoreduction.dat` arrived, and editing it eliminated the filename as a
 # suspect while changing nothing at all.
 #
-# `standard_thetas` and `tnr_theta` ARE read (by `nrw reconcile`, to flag a
-# segment measured at an unexpected angle).
+# There are no angles here, on purpose. Each segment's incident angle is read
+# from its own file's header; an angle assumed from habit sets the wavelength
+# axis, and a wrong one is absorbed into the fit rather than reported.
 #
 # dq_convention is DESCRIPTIVE and no longer a single value. REF_L now has two
 # live reductions and they disagree: `_partial.txt` writes the 4th column as
@@ -61,6 +97,20 @@ steady_state_glob = "REFL_{run}_combined_data_auto.txt"
 partial_glob = "REFL_{run}_{seg}_{subrun}_partial.txt or _autoreduction.dat"
 tnr_slice_glob = "r{run}_t{t_s:06d}.txt"
 tnr_intervals_glob = "r{run}_*reduction.json"
-standard_thetas = [0.45, 1.2, 3.5]
-tnr_theta = 0.6
 dq_convention = "per-file, read from the header"
+
+# The experiment: where its runs are read from, and how new ones are noticed.
+# Set these on the Settings page of `nrw serve`, or here. `nrw experiment
+# status` shows what they find, and names any key it does not recognise -- a
+# setting that changes nothing is never silently accepted.
+#
+# A setting left commented out follows nrw's default, shown beside it; once
+# one of a table's settings is set, the table is written out. To set one by
+# hand, remove the `# ` from its line AND from its table's `[...]` line: a value
+# typed inside a comment is not read. Edit that table rather than adding a
+# second one: TOML allows each table once. The default
+# location is PROVISIONAL: it is where REF_L's new_reduction pipeline writes
+# today, and it is expected to move. `{ipts}` is filled from [beamtime] ipts.
+# The "directory" feed notices a run when its reduced files appear.
+#
+{{ experiment_block }}

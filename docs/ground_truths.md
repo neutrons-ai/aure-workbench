@@ -2770,3 +2770,1201 @@ Two things deliberately left out. Data and model readiness are not gated —
 guessing at intent. And nothing hard-blocks: a `PreToolUse` hook would cover
 Claude Code only, while the refusals cover every harness, including a
 scientist typing the command themselves.
+
+### 2026-09-25: the experiment catalog owns sample.md, so the lock records an owner
+
+The Experiment page renders `samples/<id>/sample.md` from `experiment/*.parquet`,
+through the scaffold's three-way rule. That opened a reset trap in
+`classify()`: once the catalog has written the file, the lock records *its*
+content as "what nrw installed", so a later `nrw sample new <id>` (or
+`nrw init --sample <id>`), which plans the **blank** template, sees an
+unedited file with a newer template and returns UPGRADE. The file is reset
+to the blank scaffold, silently, since nothing about it is an error.
+
+Closed twice, because one mechanism is not two:
+
+- `experiment.render.plan_sample` is the only way a sample's files are planned,
+  and it consults the catalog.
+- A lock entry now carries an optional `owner`, and a plan from a *different*
+  owner is DRIFTED, never UPGRADE. That also covers a fourth caller nobody
+  has written yet.
+
+`plan_sample` also refuses when the lock says the catalog wrote a file the
+catalog no longer lists. `nrw experiment release <id>` drops the entry so the
+file becomes its people's (UNTRACKED) instead.
+
+### 2026-09-25: settled is not complete
+
+`nrw agent watch` calls a run ready once its files have been unchanged for 300
+seconds. The reference corpus shows why that is not "finished". Run 218386's
+three segments were reduced at 09:45, 10:00 and 10:53 (its `# Reduction time:`
+lines). The files sat unchanged for 15 minutes after segment 1 and for 52
+minutes after segment 2, so a five-minute settle calls the run finished twice
+before it is. A copy made at either point is part of a measurement, and it
+fits.
+
+The Experiment page therefore requires evidence the run ended before it copies
+anything (`experiment/status.py`), and one kind counts: **a later run has
+reduced files**. A later run that a feed merely *announces* does not count,
+because acquisition starting is not reduction finishing. A settled run without
+that evidence is *unconfirmed*, and only a person can confirm it; the last run
+of a beamtime always needs one.
+
+**The header's planned segment count only vetoes.** The `new_reduction`
+header's per-segment arrays (`DB`, `scale_factor`, `ThetaShift`) appear to be
+sized by the reduction template. When they say three and two segments are
+present, the run is unconfirmed whatever else is true. A *fulfilled* plan was
+first accepted as proof as well, and review took that back: it rests on the
+arrays being full length already in segment 1's file, which no real
+first-segment file has confirmed. The trimmed fixture from run 234277 suggests
+so. If they grow with each segment instead, segment 1's header says "1 of 1",
+and a five-minute-old third of a measurement is "complete". Once a real
+first-segment file shows the arrays are full length, the plan can prove
+completion too, and the last run of a beamtime will no longer need a person.
+
+Copies are written with a fresh mtime, not the source's (`copy2` would keep
+it). A copy dated an hour ago looks settled to `nrw agent watch` the moment
+it lands.
+
+### 2026-09-25: one header, two clocks, and the new dialect has neither
+
+A `_partial.txt` header's `Run start time` is UTC. Its `Reduction time` is
+local: 218386 says it started at 13:42 and was reduced at 09:45 the same
+morning. The tNR sidecar's interval times are local too. Sorting runs by time
+put 218389 before 218386.
+
+The `new_reduction` header carries no start time at all. So the catalog stores
+whatever start time a header gives verbatim, invents none, never compares times
+across sources, and orders runs by run number.
+
+### 2026-09-25: a binary merge conflict has no conflict markers
+
+The catalog is parquet, the lakehouse's format. When two branches both change
+it, git cannot merge it: it leaves "ours" in the working tree with no markers,
+the file loads cleanly, and the next save commits the other side's loss. The
+store refuses to load or save while `git ls-files -u -- experiment/` is
+non-empty.
+
+A related trap in the same place: pyarrow's `ArrowInvalid` is a `ValueError`,
+so the house pattern `except (OSError, ValueError): return {}` would read a
+truncated catalog as an *empty* one, and the next save would replace every
+decision in it. The store's errors deliberately do not subclass `ValueError`,
+and an unreadable catalog is shown read-only, never empty.
+
+The manifest (`catalog.json`) is written after both tables, so a crash between
+the two replacements is detected. The last complete pair, kept in
+`.nrw/cache/experiment/`, is restored only when the manifest describes it
+exactly.
+
+### 2026-09-25: an analysis node's loopback is shared
+
+The web server had no authentication because it only read and bound to
+127.0.0.1. The Experiment page writes. On an SNS analysis node, loopback is
+reachable by every logged-in account, so a token embedded in the page protects
+nothing: another user can fetch the page and read it.
+
+Writes therefore need a secret that is on no page. `nrw serve` prints a one-time
+link that sets an HttpOnly, SameSite=Strict cookie. On top of that, every write
+needs all of:
+
+- the page's own token;
+- a JSON body (a `text/plain` POST needs no CORS preflight);
+- an `Origin` matching this server including its port (every localhost app is
+  "same-site");
+- a loopback peer.
+
+The `Host` header is checked on *every* request, because DNS rebinding makes a
+hostile page same-origin. Writes are disabled outright when the server is bound
+elsewhere or runs under `NRW_AGENT`.
+
+Two details learned on the way:
+
+- **Flask resolves error handlers by status code at every level before any
+  class-based handler**, so the app's HTML 403 page answered the API blueprint's
+  refusals until the blueprint registered its own handler per status code.
+- **`</` was not the only way out of a script block.** `<!--<script>` puts the
+  HTML tokeniser into a state where the block's own `</script>` no longer
+  closes it. The embedded JSON now escapes `<`, `>` and `&` as `\u` sequences.
+
+### 2026-09-25: an empty Condition cell was read as the condition
+
+`conditions.from_table` fell back to "the last non-empty cell" whenever the
+Condition cell was empty, so `| 218393 | full Q |  |` gave the condition
+`full Q`, and that is what the ISAAC record said. A Condition column is now
+authoritative even when empty. This bit hand-written tables too, not only
+rendered ones.
+
+Related, for the renderer:
+
+- **Catalog context is human prose, not generated text.** It must never be
+  fenced `<!-- nrw:generated -->`: `notes.human_text` drops those regions, and
+  every reader asking "did a person write this?" would discount the
+  scientist's own words.
+- **Run titles are never copied into the measurement table.** The title
+  beside the condition is what lets `nrw data reconcile` catch 218393, a run
+  whose own title says CA while the table said OCV.
+
+### 2026-09-25: three defects only a browser found
+
+The server-side tests were green; driving the page in headless Chrome over the
+DevTools protocol found three things they could not:
+
+- **A plan reviewed in one second was "changed" in the next.** The plan digest
+  hashed every scaffold file's bytes, and a new sample's `sample.yaml` is
+  stamped with the current second. The unit tests never crossed a second
+  boundary *and* pinned `created` in their render context, which the real
+  page does not. The digest now covers `sample.md`'s bytes and only the names
+  of the other files. The regression test builds its context the way the page
+  does, and fails without the fix.
+- **Plotly's `scattergl` needs `'unsafe-eval'`.** regl compiles shaders at run
+  time. Without it the quick-look plot fails silently under the page's CSP.
+- **`replaceChildren(null)` renders the text "null".** Optional children now go
+  through the page's `el()` helper, or are filtered out.
+
+### 2026-09-25: where the experiment's data is, and what else could say so
+
+Recorded from the user, not derivable from the code:
+
+- **The location is provisional.** The default data location,
+  `/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction`, is where REF_L's
+  `new_reduction` pipeline writes today, and is expected to move. It is one
+  constant (`project.config.DEFAULT_EXPERIMENT_LOCATION`), rendered into the
+  scaffolded `nrw.toml` rather than copied.
+- **The IPTS is used verbatim.** Its digits are kept as written: `int()` would
+  turn IPTS-00001 into IPTS-1, a different directory.
+- **Unsliced tNR arrives as an ordinary run.** The unsliced tNR run lands in
+  the same folder as an ordinary reduced file. Sliced series come later.
+- **New runs can be announced by other feeds.** Besides files appearing, the
+  SNS web monitor (`monitor.sns.gov`, whose run lists need an ORNL login) and
+  Tiled can announce runs. The run feed is therefore its own seam, apart from
+  data access.
+- **ONCat is out of scope.** The facility catalog would add a dependency for
+  information the files and the feed already carry.
+
+### 2026-09-25: a lock that failed to load must not be written over
+
+`load_lock` reads an unreadable `.nrw/scaffold.lock.json` as empty. That is
+safe for a full `nrw init`, where every file then reads as UNTRACKED and is
+left alone. It is not safe for a *partial* plan: `nrw sample new`, apply and
+adopt each plan one sample's files, and writing their lock over one that failed
+to load keeps their entries and permanently drops every other. The lock is
+tracked and shared, so the likely cause is a git conflict.
+
+`apply_scaffold` now refuses to write over a lock it could not read unless the
+caller passes `rebuild_lock=True`. Only `nrw init`, which plans the whole
+project, does. Conflict markers are refused even then, because the right merge
+is a person's. Adopt checks the lock *before* it updates the catalog, since
+refusing afterwards would leave a sample adopted in the catalog and its
+`sample.md` not rewritten.
+
+### 2026-09-25: the one-time link works once, and reads have a deadline
+
+Two review findings about the web server's new write surface:
+
+- **The link's secret is exactly the kind of value that leaks.** It is printed
+  to a terminal and travels in a URL, so copies end up in scrollback, shell
+  history and chat. Redeeming it now mints a fresh, unrelated session value for
+  that browser's cookie, and the link is dead after one use. A leaked copy
+  opens nothing, and a second browser needs a restarted server.
+- **Reading a file on a dead NFS mount does not fail, it blocks.** Listing
+  already happened only on the background poller. But apply and its review
+  also read file bytes on the request thread, to copy them and to tell a
+  re-reduced source from a touched one. Every such read now goes through a
+  two-worker pool with a 15-second deadline (`web/experiment.py`,
+  `SOURCE_TIMEOUT`). A read that times out fails that file the way any other
+  read failure does, and apply releases its lock. The source is wrapped once,
+  where the page gets it, so no call site has to remember the rule.
+
+### 2026-09-25: four readers of the measurement table disagreed about its columns
+
+ISAAC's conditions, `nrw data reconcile`, adoption into the catalog, and the
+catalog's check against a second table in the prose each decided for themselves
+which column is the run and which the condition. `| Run | Type | Conditions |`
+gave ISAAC a condition and gave adoption an empty one. A guard that recognizes a
+narrower table shape than a reader does is also a way in: prose the guard
+accepts would be read as measurements. The shared vocabulary (`RUN_HEADERS`,
+`CONDITION_HEADERS`, `table_cells`) now lives in `nr_workbench/sample_md.py`,
+and all four use it.
+
+### 2026-09-25: two refactors the design review asked for, and why they wait
+
+The review's structural findings were fixed in place:
+
+- `nr_workbench/arrival.py` holds what `nrw agent watch` and the Experiment page
+  share, so the experiment's data layer no longer imports the agent.
+- `fsutil.py` has the one advisory lock and the one atomic write. The shared
+  scaffold lock is now written through a unique temp file. A single `.tmp`
+  name let a request thread and a terminal rename each other's half-written
+  lock.
+- One builder for a run's row and a sample's card (`experiment/views.py`).
+- The copy record is typed (`CopyEntry`), and keeps keys it does not know.
+- The API maps only the errors nrw raises on purpose. Anything else is a
+  logged 500, not a 400 blamed on the caller.
+
+Two refactors were deliberately left for later:
+
+- **Splitting `experiment/apply.py` (about 1,100 lines) into a package**
+  (plan, copy, move, record). The seams are visible: `_plan_run`,
+  `_copy_runs`, `_move`, `read_sources`/`write_sources`. But every piece
+  shares the `FileAction` vocabulary and the same safety argument. Splitting
+  it before the tNR series copy arrives would pick the boundaries twice.
+- **A service layer between the surfaces and the experiment package.** The
+  command line and `web/experiment.py` each still wire up the workspace, the
+  poller and the catalog. With two surfaces, that is two short call sequences,
+  and the error-mapping differences between them are real (a script's exit
+  code versus a status code). A third surface, such as an agent tool, is the
+  point where a shared service pays for itself.
+
+### 2026-09-25: one `.dat` per angle, and what the web monitor will add
+
+From the user, while planning the Settings page:
+
+- **Each angle's `_autoreduction.dat` is written once that angle has been
+  measured.** A file is never a partly acquired angle, but a run's segments
+  still arrive one at a time. So "all planned segments present and settled" is
+  not proof on its own, and completeness still waits for a later *reduced* run
+  or a person (`experiment/status.py`).
+- **The SNS web monitor reports the run being measured now.** That is the
+  evidence a monitor feed will bring. "Measuring run M" proves every segment of
+  an earlier run with a subrun below M has been *acquired*. Once those are
+  reduced and settled, the run is complete, without waiting for the next run's
+  reduction. The last run of a beamtime can then complete without a person
+  too, because the monitor then reports that nothing is being measured.
+  `docs/experiment-sources.md` words the rule; the feed waits for the
+  monitor's URL and login.
+- **A measurement is N segments plus other artifacts**, such as the combined
+  curve stitching them. A fit co-refines the segments. The combined curve is
+  fitted only when a run has no segments, which is what `nrw model new`
+  already did. The rule now lives once, in `instrument/reduced.fitting_names`,
+  and apply copies exactly those files. Before this, apply copied every file
+  it listed, a combined curve included.
+
+### 2026-09-25: nrw.toml must render back exactly what nrw writes into it
+
+`nrw init` re-renders `nrw.toml` on every run, and any file that differs from
+both the render and the lock is DRIFTED, which leaves `nrw.toml.nrw-new` beside
+it on every later `init`. `[beamtime]` was rendered from the existing file, so
+editing the IPTS by hand was fine. Two things nrw itself told people to do were
+not:
+
+- `nrw audience --ask` edited `[audience]`, which the template hard-coded.
+- The template's own comment said to uncomment the `[experiment]` block.
+
+Now everything nrw writes into `nrw.toml` renders from what the file already
+says. That covers `[audience]` and the experiment block, whose one renderer
+(`settings.experiment_block`) the Settings page shares. So `nrw init --check`
+is clean after any save. Every string goes through one TOML encoder: a folder
+name or beamtime label containing `"` or `\` used to make the file unreadable,
+and every `nrw` command with it.
+
+A save also refreshes the scaffold lock when the result is exactly the render
+(`scaffold.record_installed`). Without that, the lock still holds the old
+bytes. `init --check` passes, since the file matches the render, but the first
+template change after an nrw upgrade finds the file "edited" and leaves a
+`.nrw-new` instead of upgrading it.
+
+### 2026-09-25: an empty active table is a trap, so the experiment block stays commented until set
+
+The first design rendered `[experiment.source]` and `[experiment.feed]` as
+active tables with every key a commented placeholder. The review caught what
+that breaks: TOML allows each table once, and the docs, four test fixtures,
+and anyone following older advice *append* an `[experiment.source]` table.
+Against an active one, that stops every `nrw` command. So a table stays
+commented out until one of its settings is set, and `load_config` names the fix
+when a file declares a table twice. The docs now say to edit the existing
+table.
+
+### 2026-09-25: the poller that came back to life, and the source that outlived it
+
+Found reviewing the reload design, both in code already committed:
+
+- **`LiveInventory.stop()` did not stay stopped.** `touch()` restarted the
+  thread whenever it was not alive, so any request still holding a replaced
+  inventory brought it back. It would then poll the *old* folder for up to ten
+  minutes. `close()` is permanent.
+- **`source` and `live` were cached separately.** Each read the workspace
+  outside the lock and cached under it, so a reload between the two could pair
+  the new source with the old poller. They are now one frozen `_Wiring`, rebuilt
+  whenever `nrw.toml` changes and taken whole by each request.
+
+### 2026-09-25: a folder check reads five headers, not all of them
+
+`LocalDirectorySource.inventory()` reads the head of every file, up to 64 KiB
+each, to learn titles, angles and the IPTS. Over NFS on a real beamtime folder
+that is tens of megabytes. The poller does it once and caches it by file
+version; a button must not. `probe()` lists once and reads the newest five
+runs' headers, which is enough to show what a folder holds and to notice one
+that belongs to another experiment. The check runs on a daemon thread with at
+most two in flight: a pool's workers are joined when the interpreter exits, so
+one stuck on a dead mount would make stopping `nrw serve` hang too.
+
+### 2026-09-25: every writer of the scaffold lock holds one lock
+
+`.nrw/scaffold.lock.json` is read, changed and written by `nrw init`,
+`nrw sample new`, experiment apply and adopt, `nrw experiment release`, and now
+a settings save. Two of those run on `nrw serve`'s request threads while a
+terminal may run the others. Two writers that each read the same lock write
+back only their own entries. `scaffold.writing_scaffold` serializes them: a
+process lock plus an advisory lock in `.nrw/cache/`. It is re-entrant within a
+thread, because a second `flock` from the same thread would wait for itself.
+Dry runs take nothing, since `nrw init --check` must write nothing, not even a
+lock file.
+
+### 2026-09-25: a save landing between `nrw init`'s plan and its write was put back
+
+`nrw init` renders its plan from the files as they are, then writes it. A
+Settings save in between recorded `nrw.toml` as nrw's own, since it was the
+render with the new value. Init's plan, rendered before the save, then read as
+an UPGRADE and wrote the old values back, and nothing reported it. Now `nrw
+init` holds `scaffold.writing_scaffold` from planning to writing. Every writer
+of `nrw.toml` goes through `project/nrwtoml.write_as_nrw`, which holds the same
+lock from reading the file to recording what it wrote.
+
+Recording is the other half. A save marks the written bytes as nrw's only if
+the file was nrw's before (UNCHANGED or UPGRADE). Marking a hand-edited file as
+nrw's would make the next `nrw init` read it as untouched and upgrade it over
+the person's edits.
+
+### 2026-09-25: `True == 1`, so a proof by `==` proves too little
+
+`tomlfile.verify` proves an edit by parsing both versions and comparing them.
+In Python `True == 1` and `600 == 600.0`, so with `==` a setting that turned
+from a number into a flag, or from one number type into another, passed the
+proof. `verify` compares types as well. The only difference it accepts is the
+one nrw makes itself: a whole float is written as an integer.
+
+### 2026-09-25: a thread pool made `nrw serve` hang on exit
+
+This corrects "the one-time link works once, and reads have a deadline" above.
+The reads' two-worker pool had the flaw the folder check was built to avoid.
+`concurrent.futures` joins its workers when the interpreter exits, so one read
+stuck on a dead mount made stopping `nrw serve` hang: the deadline freed the
+request, not the process. Every bounded call now goes through
+`nr_workbench.bounded.Bounded`, which gives each call:
+
+- a daemon thread;
+- a deadline;
+- a fixed number of slots, and a call that finds them all taken is refused at
+  once rather than queued behind the mount.
+
+Reads get four slots, apply two of its own, and checks two. Each configuration
+of `nrw.toml` gets its
+own read slots, so reads stuck on the old folder's dead mount do not block the
+new folder too. `SOURCE_TIMEOUT` (15 s) lives in `experiment/sources`, shared by
+the page, the folder check and `nrw experiment settings --check`. The CLI no
+longer imports the web layer for it.
+
+### 2026-09-25: an edit can keep a file's size and modification time
+
+`nrw serve` stats `nrw.toml` on each request, and rebuilds what reads the data
+when the stat changes. Size and mtime are not enough. An edit made in place that
+keeps the length (one folder name for another the same length) and restores
+the mtime (`cp -p`, `rsync -t`, `touch -r`, a restore from backup) moves only
+the change time. A replace moves the inode. So the stamp is inode, size, mtime
+and ctime. A coarse file clock can still hide an edit made within one tick of
+the previous write (a few milliseconds on Linux). That is why a save also tells
+the server directly (`ExperimentData.reload`) instead of relying on the stamp.
+
+### 2026-09-25: `pre-commit run --files $files` checks nothing in zsh
+
+zsh does not split an unquoted variable into words. So `files=$(git diff
+--name-only); pre-commit run --files $files` passes the whole list as one file
+name, which matches nothing, and every hook reports as skipped. That looked
+like a clean run for ten commits, until `--all-files` found fifteen unformatted
+files. Use `pre-commit run --all-files`, which is what CI runs, or `${=files}`
+in zsh. Run it twice: the first run may fix files, and only the second shows
+they are clean. The venv's ruff can be newer than the pinned hook and format
+differently; the hook's version is the one that counts.
+
+### 2026-09-25: a fourth defect only a browser found
+
+The browser test of the Settings page (`tests/test_settings_page_browser.py`)
+failed one run in three, and the fault was the page's. After a conflict it said
+"The settings were reloaded" and only then reloaded them. For a moment the
+message was false, and the form still held the refused change. It now reloads
+first, and says so only if the reload worked. The API tests could not see it:
+the server's answers were right, and only their order on the page was wrong.
+
+### 2026-09-26: the poller kept an old listing, and every read checked its versions
+
+A run's signature, which decides whether it changed, is built from its files'
+names, sizes and mtimes. Each file's version, which a read checks before it
+trusts the bytes, also carries the inode and the change time. When a poll found
+the signature unchanged, it kept the previous poll's record of the run, and with
+it the old versions. Anything that gives a file a new inode or change time but
+keeps its size and mtime then made the run unreadable: a quick look failed on
+every file, and apply refused to copy it, until something else about the run
+changed. That covers `chmod`, a hard link, and `rsync -t` or `cp -p` replacing
+the file. A poll now keeps its own listing and reuses only the old generation,
+so the page is not sent a change that shows nothing new.
+
+It was found by a test that failed to fail. To prove that a plan names its data
+source, the web test hard-linked the same files into a second folder, so that
+only the source would differ. The plan ids still differed without the source,
+because the review's plan held versions from before the links were made.
+
+### 2026-09-26: a DevTools port answers every account on the machine
+
+The first browser test started Chrome with `--remote-debugging-port`. That
+opens the DevTools protocol on loopback with no authentication, and on a shared
+analysis node another account could drive the test's browser while it ran:
+open `file://` pages, and read whatever the developer can. The test now uses
+`--remote-debugging-pipe`, so Chrome speaks the protocol on its descriptors 3
+and 4 and opens no port at all. That needs no `websockets` dependency, and had
+three traps:
+
+- `subprocess` cannot put a descriptor on a chosen number.
+- `preexec_fn` could, but it is unsafe with the test server's threads running.
+- Wrapping Chrome in `sh -c 'exec ... 3<&N'` needs N below 10: POSIX promises
+  only descriptors 0 to 9 in a redirection, and dash, Ubuntu's `/bin/sh`, keeps
+  to that.
+
+`os.posix_spawn` with `POSIX_SPAWN_DUP2` does it exactly. The pipe's ends are
+raised above 4 first, so placing one on 3 cannot overwrite the other. Each
+test's one-time link has a random token too: the in-process server is on the
+same shared loopback.
+
+### 2026-09-26: `TimeoutError` is not `TimedOut`, and other lessons from Bounded
+
+- **The API maps only nrw's own `TimedOut` to 504.** `Bounded` passes on
+  whatever the call raised. Apply's fresh poll waits for a poll already under
+  way, and on a dead mount the background poller holds that lock. The wait
+  raised a plain `TimeoutError`, which reached the page as a 500 "unexpected
+  error", with a traceback in the log. It now raises `TimedOut`. It also gets
+  half of the deadline, so a stuck poller is what the answer names.
+- **Viewers must not share a writer's slots.** Anyone who can see the pages
+  can ask for quick looks, and those shared four slots with apply. Four hung
+  reads made apply fail at once. Apply now has slots of its own, and only a
+  link holder can start an apply, one at a time. A quick look that finds its
+  own slots full answers 409 once, rather than a 200 carrying the same
+  sentence for every segment.
+- **Give the slot back before waking the caller.** Otherwise a caller whose
+  call has returned can call again at once, find the slot still taken, and be
+  told "busy" by a source that answered.
+
+### 2026-09-28: no angle is assumed
+
+`nrw.toml` carried `standard_thetas = [0.45, 1.2, 3.5]` and `tnr_theta = 0.6`,
+and its comment said `nrw reconcile` read them, to flag a segment at an
+unexpected angle. It did not. Both readers wrote
+`getattr(config, "standard_thetas", [])`, but `ProjectConfig` keeps them inside
+`conventions`, so they always got the empty default, and the check never ran.
+**`getattr` with a default, on a typed object, turns a wrong attribute name
+into a silently empty value** -- nothing fails, and the comment beside it goes
+on saying it works.
+
+The live assumption was in the model spec. `State.thetas` defaulted to
+`[0.45, 1.2, 3.5]` and `Series.theta` to 0.6, so a hand-written spec that left
+them out was fitted at those angles, whatever was measured. With
+`segments: auto`, the list's length also chose how many segments were read.
+And `nrw model new` filled any angle a header did not record with the usual
+setting for that position. theta sets the wavelength axis
+(`wl = 4*pi*sin(theta)/q`), and `theta_offset` and `sample_broadening` depend
+on it; a wrong one is absorbed into roughness.
+
+Now:
+
+- The spec's angles come from the files. `segments: auto` is every segment on
+  disk, at the angle its header records; a series is at the angle of its
+  run's summed dataset in `data/steady`.
+- An angle a spec states is checked against the file's record, within the
+  0.02 deg resolve already uses to group angles. Where they agree, the file's
+  more precise value is used.
+- A file that records none is refused until the spec gives its angle.
+  `nrw model new` and `nrw aure import` leave it `null`, name the file in a
+  comment, and write no angles at all when every file records its own.
+- `nrw.toml`, the unusual-angle check and the unused geometry constants are
+  gone. The shipped skills and the project template's assistant instructions
+  no longer present the usual settings as a standard.
+
+Still open, and the same kind of thing: `nrw model new` assumes the dQ column
+is FWHM when a file does not say (`_dq_is_fwhm_from_headers`, with a warning).
+And the project template's `.github/copilot-instructions.md` says "`dQ` is FWHM,
+not sigma", which is false for `_autoreduction.dat`, whose 4th column is sigma.
+
+### 2026-09-28: what the review of "no angle is assumed" found
+
+Reading every angle from its file closed the obvious hole. The design, security
+and test reviews found eight quieter ones, each of which fitted a wrong angle,
+or the wrong data, without a word:
+
+- **The summed dataset was looked for two levels up** from a series' slices.
+  That is right for `data/tnr/<run>/`, and wrong for slices straight in
+  `data/tnr/`, which `nrw sample new` suggests. The check then found nothing,
+  so it checked nothing. It now looks beside the nearest `tnr` folder.
+- **A `reduction_json` series fell back to any sidecar** when none named its
+  run, and took the slices from that sidecar's run but the angle from its own.
+  The two must be one run; a mismatch is refused.
+- **`segments: auto` read past `sample.yaml`.** The register is where a person
+  fits a subset of a run's segments. `nrw model new` writes `auto` only when it
+  reads exactly the registered segments, and lists them otherwise.
+- **An unknown dQ label hid a good angle.** `read_header` raised on the label
+  before it returned the angle, so the file looked like it recorded none. They
+  are separate facts: `recorded_angle` is the one reader of an angle, for
+  resolving and scaffolding alike, and it skips the dQ check.
+- **A pipe named like a reduced file hung every header read**, now reached from
+  more commands. Header reads refuse anything that is not a regular file.
+- **A line break in a directory name broke out of a YAML comment** that the
+  scaffold writes, and the rest of the name became top-level keys of the spec,
+  such as `post_build`, whose Python the generated script runs. `\n`, `\r`,
+  U+0085, U+2028 and U+2029 all end a PyYAML comment. `problems.one_line`
+  escapes names at the two places they are written out.
+- **A stated angle was checked against the grouping tolerance**, 0.02 deg, so
+  0.435 passed for a file recording 0.45. The check now has its own tolerance,
+  0.005 deg, the precision of a value typed to two decimals.
+- **Segments 1 and 2 of a run planned with 3** passed the gap check and
+  resolved. When the headers agree on more segments than are on disk, the run
+  is refused, as the Experiment page already treats it as incomplete.
+
+The test review found why the lifecycle tests could not have caught any of
+this: their synthetic data recorded 0.45, 1.2 and 3.5, the very values that
+used to be assumed. A test angle must be one nobody would assume; the fixtures
+use 1.251.
+
+### 2026-09-28: a folder typed into a comment
+
+A project's `nrw serve` kept watching nrw's default location. Its `nrw.toml`
+had the folder typed over the placeholder -- `# location = "/Volumes/…/test"`
+-- under a `# [experiment.source]` still commented out. The template said "a
+setting left commented out follows nrw's default, shown beside it", and editing
+the value shown beside it, without removing the `#`, is the natural mistake.
+Nothing said so: no problem on any page, and `nrw serve` did not print the
+folder it would watch.
+
+**The project's own rule -- a setting that changes nothing is never silently
+accepted -- only covered what the parser saw.** A comment is invisible to the
+parser, so the check has to read the text. Every placeholder nrw writes shows
+the default, so a commented setting with any other value was typed by a
+person. `tomlfile.settings_in_comments` finds these, and the pages,
+`nrw experiment status` and `settings`, and `nrw serve` at start-up all report
+them, with the line and how to switch it on. `nrw serve` now also prints the
+data folder, marked when it is nrw's default. The template says to remove the
+`#` from both the setting's line and its table's.
+
+### 2026-09-28: a shared catalog was built, reviewed, and withdrawn
+
+The catalog was moved beside the data, so that the projects of everyone on an
+experiment, and other programs, would share one set of parquet files. The
+attempt is on branch `shared-catalog-attempt` (8f18ba5..2d581f4), and was
+withdrawn before it was merged.
+
+**Why.** It turned plain files on a network mount into a database. A
+single-writer store had to learn:
+
+- detecting writes by other programs, and accepting or restoring them;
+- compare-and-swap saves;
+- a history of its own, because git no longer kept one;
+- group permissions for several accounts, and lock timeouts for NFS;
+- deadlines for a mount that stops answering;
+- moving existing projects over.
+
+That came to about 8,500 lines. The design, security and test reviews then
+found the bugs in exactly those seams:
+
+- rows written by another program reached `sample.md`, and so the unattended
+  agent's task, with none of the checks the page makes;
+- a share from the terminal left `nrw serve` writing a stray catalog in the
+  project;
+- a save queued behind a share was lost to it;
+- the tests could not tell which catalog a write had landed in;
+- the agent guard did not know the new commands.
+
+Each could be fixed, but all of them are the cost of the same choice.
+
+**Decision.** The catalog stays in the project's `experiment/`, shared the way
+the project is: through git. Sharing it between projects is a metadata
+service's job. That service is planned as `[experiment.catalog] kind =
+"api"`, listed as coming like Tiled and the web monitor. What a service store
+must do is in `docs/experiment-sources.md`. It is also what these reviews
+found: check records from elsewhere before rendering them, refuse stale edits
+by revision, answer within a deadline, and never fall back to local files.
+
+**Kept from the attempt**, because each fixes something in the project-local
+design too:
+
+- the sample editor keeps what was typed when the page reloads;
+- adopting a hand-written `sample.md` keeps the runs assigned on the page;
+- `nrw sample new` renders with the project's own context.
+
+### 2026-09-29: a run's notes are written into sample.md, under Measurement conditions
+
+Until now a run's note lived only in the catalog. Two reasons kept it out of
+`sample.md`:
+
+- `nrw sample scan` counts any six-digit number in the prose as a documented
+  run;
+- notes were checked with looser rules, since nothing rendered them.
+
+People were writing per-run remarks into the sample's *Measurement
+conditions* anyway, and there nobody can tell later which run a remark is
+about. So each included run's notes are now written after the sample's own
+text, one entry per run: `- Run 218386: realigned after mounting`. Later lines
+of a note are indented under it.
+
+**Why there, and not in the table:**
+
+- The table's cells are parsed by four readers: ISAAC export, `nrw data
+  reconcile`, adopt, and the second-table guard. A note column would be a
+  fifth thing each of them has to skip.
+- `nrw model new --from-notes` and the assistant already read *Measurement
+  conditions* for what becomes a nuisance parameter.
+
+The scan concern turned out to be a notice, not a failure: a run number in a
+note that is not on disk is reported, as one in the sample's own prose always
+was. An excluded run's notes are still not written, so a run slid to *bad* does
+not show up as missing data.
+
+**Consequences:**
+
+- **Notes are now held to the `sample.md` prose rules when saved.** A note
+  saved before this change may break them. Rendering refuses such a note with a
+  `SampleRenderError` naming the run, so Apply leaves that sample alone and says
+  why. It is not rewritten silently.
+- **Pulling a catalog-written file changes a run's notes only where the file
+  has an entry for the run.** A missing entry keeps the notes, because a file
+  rendered before this change never listed any. Clearing on absence would have
+  wiped them. An empty entry (`- Run N:`) clears them.
+- **A type never set shows as `steady`**, in the table and on the page
+  (`RunEntry.measurement_type`), and adopt compares it that way. Otherwise a
+  rendered `steady` would read as a change.
+- **The bulk bar's type starts at *unchanged*.** Starting at `steady` would
+  reset a run already recorded as `tNR` whenever runs are reassigned.
+
+### 2026-09-29: fitting from the Experiment page
+
+The page fits a spec by running `nrw model generate` and then `nrw fit run` as
+child processes (`python -m nr_workbench`, the server's own interpreter). The
+fit is never run inside the server. Four findings shaped this.
+
+**bumps' DREAM takes Ctrl-C as "done".** `bumps.dream.core.Dream.sample`
+catches `KeyboardInterrupt` and returns the chain so far, and `nrw fit run`
+then records that as a finished fit. So Cancel sends SIGTERM, never SIGINT. A
+test pins which signal the step receives.
+
+**A step runs in a session of its own** (`start_new_session=True`). That way
+Cancel's `killpg` reaches the processes the step starts, such as bumps'
+parallel workers. It also means Ctrl-C on `nrw serve` never reaches the fit,
+so `run_serve` stops the running job explicitly on the way out. If the server
+is killed, the next one marks the job `detached` and never signals a pid left
+over from the last server's life.
+
+**A cancelled fit is left as an interrupted run.** SIGTERM ends `nrw fit run`
+without its `except` clauses running. The provisional manifest therefore stays
+`running`, and `nrw check` reports it, as it does for any fit that was killed.
+Recording "cancelled" instead would need a SIGTERM handler in the fit command.
+That is possible, but it is a change to the provenance record and was not made
+here.
+
+**`.nrw/` is not ignored by git as a whole.** The fit index lives there and is
+committed. Job logs go in `.nrw/jobs/`, which writes a `.gitignore` of `*`
+into itself. The project's own `.gitignore` learns the rule only when
+`nrw init` runs again, and a DREAM log should never be committed in between.
+
+### 2026-09-29: what the reviews of fitting from the page found
+
+The design, security and test reviews of the page's models and fits found
+these. Each is fixed.
+
+**`nrw model generate` restamped an unchanged script.** Every run rewrote the
+script with a new `generated:` time. That changed its hash, and with it the
+identity `nrw fit run` uses to refuse an identical run. The page generates
+before every fit, so no page fit was ever refused as identical, and `--force`
+meant nothing. The same happened to anyone who ran `generate` before each fit
+in a terminal. Now a script that would come out the same but for its time is
+left as it is ("up to date with its spec").
+
+**A job found its fit by guessing.** It took the newest fit of the same model
+started after the job did. A fit of that model run in a terminal while the page
+job ran, which is normal here, was taken for the job's. Now the job reads the
+id from its own `nrw fit run` output (`RUNNING_LINE` in `commands/fit.py`) and
+checks that the index has it. A cancelled fit is not in the index, so it links
+nothing.
+
+**`python -m` puts the working directory first on `sys.path`.** The page ran
+its commands with the project as working directory, so a `click.py` or
+`json.py` beside an analysis would have been imported instead of the real
+module, in every step and in the fit script. Children now run with `-P`, as
+the `nrw` script effectively does.
+
+**A job record written on start-up.** A restarted server marked a job it found
+`running` as `detached` and wrote that back. That broke a read-only server,
+and on a second server it rewrote the first server's live job. Now `detached`
+is said in memory only.
+
+**A job whose thread failed never ended.** A full disk while writing its
+record left it `running`, and every later fit was refused until restart. Now
+the thread always ends the job.
+
+**Job files are opened never through a symbolic link.** Reads of the page are
+open to every account on the node, so a link planted in a shared project's
+`.nrw/jobs/` would have served whatever it pointed at.
+
+### 2026-09-29: spec text is never code in a generated script
+
+The generator wrote a spec's `description` between the `"""` of the script's
+docstring as it was, and its `name` into the `# model:` comment as it was. A
+description holding three quotes closed the docstring, so what followed was a
+statement, run by every fit of the spec. A name with a line break ended the
+comment, with the same effect. The schema allowed both.
+
+`nrw model new --from-notes` takes the description from a language model,
+which reads sample.md. So a prompt injection in a sample's notes could have
+become code that runs when someone clicks **Fit**. The page's Fit made that one
+click, and the promise that the page only runs "what the spec says" rested on
+it.
+
+Now a description line holding `"""`, a backslash or an unprintable
+character is escaped whole. So is a name that is not printable, which is
+written as its `repr`. Plain text is written exactly as before, so no existing
+script changes, and neither does the identity of its fits. A test parses the
+generated module and checks that the docstring is the description and that
+imports come next.
+
+Two smaller rules came out of the same review. `conditions.from_table` now
+ends a table where its rows end, as `reconcile` does. Before, a row-shaped line
+in a run's notes, further down, supplied the condition of a run the table did
+not list. And `nrw model new --name` applies the plain-name rule that
+`nrw aure` and the page apply.
+
+### 2026-09-29: AuRE names layers in prose, and a spec takes identifiers
+
+The first quick fit on real data got through `aure new`, `aure run` and
+`aure import`, then failed at `nrw model generate` with thirteen validation
+errors. AuRE had named the layers `silicon oxide`, `DPPC bilayer headgroup
+region` and `water-based solvent (unspecified contrast)`. `aure import` wrote
+them into the spec as they were, but a spec's layer name must match
+`^[A-Za-z_][\w-]*$`, because it is also a parameter path and a variable in the
+generated script. The import tests used AuRE models whose layers were called
+`Ti`, `Cu` and `Si`, so this was never exercised.
+
+`spec_layer_name` in `aure_import.py` now makes each name an ASCII identifier:
+
+- accents are dropped;
+- every run of other characters becomes one underscore;
+- a name that would start with a digit is prefixed with its position's name,
+  and one left empty is that name;
+- a Python keyword, `SLD` or `probe` is suffixed.
+
+Repeats are then made unique, as they were before. The import prints what it
+renamed, and the spec keeps AuRE's names as comments, so it can still be read
+against AuRE's report. The test model is the one AuRE reported for that
+bilayer.
+
+### 2026-09-30: fit settings live in nrw.toml, and the default fitter is DREAM
+
+A fit's settings now come from the first of these that sets them:
+
+1. `nrw fit run`'s options, or the Experiment page's Fit form;
+2. the project's `nrw.toml`: `[fit]` for the fitter, `seed` and `parallel`,
+   and one table per fitter for its own settings (`[fit.dream]`, `[fit.de]`,
+   `[fit.amoeba]`);
+3. bumps' default.
+
+When nothing names a fitter it is DREAM. `fitting/settings.py` is the one
+place this is decided. The README's "Fitting options" section is the user's
+account of it, including how `nrw.toml` and `~/.aure` divide the work.
+
+**A spec's `fit:` block was never read.** `FitSettings` said it was the
+default "every later `nrw fit run` inherits", but nothing consumed it. Every
+spec `nrw model new` or `nrw aure import` wrote carried
+`fit: {method: amoeba, steps: 1000}`: a setting in plain view that did
+nothing. It was not wired in now either, because wiring it in would have made
+every existing spec say "amoeba" and override the project's new DREAM default.
+New specs no longer get the block, and `nrw model validate` warns about one it
+finds. A per-model override could be added later as something a person writes
+on purpose, not as a scaffold default.
+
+**A fitter's table applies only to that fitter.** bumps ignores settings a
+fitter does not take, but the fit record keeps them. DREAM's `samples` in an
+amoeba fit would therefore make two identical amoeba fits read as different
+runs. A setting a fitter does not take is refused, in `nrw.toml` and on the
+command line alike.
+
+**AuRE's fits are not configured here.** `--budget quick` pins them in the
+setup. Otherwise AuRE reads `FIT_METHOD`, `FIT_STEPS` and `FIT_BURN` from the
+environment nrw passes on: the shell, then the project's `.env`, `~/.nrw`,
+`~/.aure`. nrw loads all keys from those files, not only its own. nrw pins
+AuRE's physics knobs for every run, over the shell's too.
+
+### 2026-09-30: a quick fit could not be run again, and AuRE never read about the measurement
+
+Asked to run a quick fit again after adding information about the
+measurements, the page offered nothing. Two things stood in the way.
+
+**The name was taken.** A quick fit refused any model name that already had a
+spec or an AuRE folder, so the second quick fit of a model was impossible. The
+page also kept showing the finished job, as though the fit it had done were
+the answer. Now:
+
+- A spec `nrw aure import` writes carries a `self sha256` line, the same check
+  as a generated script, plus the AuRE output it came from. Edited, even in a
+  comment, it no longer verifies (`is_unedited_proposal`).
+- A model whose spec is an unedited proposal can be quick-fitted again. Each
+  run of AuRE gets a new folder (`aure/<name>-2/`, ...), so none is ever
+  overwritten.
+- `nrw aure import --replace-unedited` replaces the spec only if it still
+  verifies. The check happens as the file is written, not when the job
+  started, so an edit made while AuRE ran is kept. An edited spec is refused
+  when the job is asked for, too.
+- The Fit panel no longer shows a job that ended before the page opened; past
+  fits are in Fits. A fit refused as identical names the fit it matched
+  (`IDENTICAL_LINE` in `commands/fit.py`, the job's `same_as`) and offers
+  **Run again anyway**.
+
+**AuRE never saw the measurement.** `nrw aure new` sent AuRE the sample's
+*Description* and *Details*, and *Fits to perform* as a hypothesis. It never
+sent *Measurement conditions*, the run's condition, or its notes, so
+information added about the measurements could not reach the proposal, however
+many times it was re-run. The state's `extra_description`, which AuRE appends
+to the description when it prompts the model, now carries all three for the
+run being fitted. *(Wrong: AuRE never reads it. They go into
+`sample_description` now; see "AuRE never reads a state's
+`extra_description`" below.)* They are read with the catalog's own parser, which also keeps
+a hand-written note on a run no table lists.
+
+**Edits reach AuRE through `sample.md`.** The page's edits reach the file when
+they are applied. `sample_md_pending` says when the catalog has edits the file
+does not have yet, in `nrw aure new` and in the Models panel.
+
+### 2026-09-30: a model written on the page was always in air
+
+Fitted from the Experiment page, a sample was always in air, although its notes
+said it was measured in a liquid. There were two causes.
+
+**The page never asked for the notes.** Its **New model** ran `nrw model new`
+without `--from-notes`, so every spec it wrote had the placeholder stack: air
+on a film on Si. Nothing on the page said so, and **Fit…** fitted it.
+
+- New model now runs `nrw model new --from-notes`, as a job: a language
+  model's answer does not fit in a request. The synchronous runner it used
+  (`run_nrw`, with a 120 s limit) had no other caller, and is gone. *(Since
+  re-added, for the Language model **Check**, with a process group of its own;
+  see the review entry below.)*
+- A spec whose materials and stack are still the placeholder's is marked
+  *placeholder stack*, and Fit… on it says so first. `is_placeholder` compares
+  the stack itself, not the header comment that announces it, because a person
+  replacing the layers may well leave the comment where it is.
+
+**The request left each run to be matched up.** `--from-notes` sent
+`sample.md` whole. A model reading it had to connect a Measurements row
+(`218386 | steady | in D2O`) to the skeleton's state `run218386` by itself.
+
+- `describe_measurements` now sets out one line per state and series, with its
+  run, condition and notes, plus one line for what every run shares.
+- The system prompt says to take the ambient from those lines and never assume
+  air. A contrast that differs between states is the ambient's `rho`,
+  `per: state`, one entry `in:` each state.
+- `measurements_of` (in `experiment/adopt.py`) is the one reader of the three,
+  for this request and for AuRE's `extra_description` (now its
+  `sample_description`, as above).
+
+### 2026-09-30: the page chooses the language model in `.env`, and the server loads none
+
+The Settings page's *Language model* section writes `LLM_PROVIDER=claude_code`
+and `LLM_MODEL` into the project's `.env`, so New model and AuRE's quick fit can
+use Claude through the Claude Code CLI without `~/.aure`. Three findings shaped
+it.
+
+**A value loaded into the server would pin every job.** `load_dotenv(override=
+False)` puts a file's values into `os.environ`. A child process inherits
+`os.environ` as its environment, and the environment wins over every file. So
+had `nrw serve` ever called `load_env()`, each job would run with the provider
+the server read at that moment, whatever `.env` said afterwards. The server
+does not call it today; the page only needs `is_available()`, which finds AuRE
+without importing it. Two things keep it that way:
+
+- `where_set` works out each setting from the files, without loading them.
+- `load_env` records what it loaded (`loaded_from_files()`), and
+  `child_environment()` leaves those out, so a child reads the files itself.
+
+**`LLM_MODEL` must be written, even empty.** A machine that has run AuRE with
+another provider has `LLM_MODEL=gpt-4o` in `~/.aure`. With only
+`LLM_PROVIDER=claude_code` in `.env`, AuRE would run `claude --model gpt-4o`.
+python-dotenv sets `KEY=` to `""`, so an empty `LLM_MODEL=` in `.env` stops
+`~/.aure`'s from being taken. AuRE's own default for `claude_code` is the empty
+model, which is the CLI's default.
+
+**`.env` is the person's file.** It holds keys and other tools' settings, so
+`project/envfile.py` follows these rules:
+
+- It touches only the `NAME=value` lines of the variables asked for.
+- It removes a later duplicate, because the later line would win.
+- It keeps line endings and the file's mode. A new `.env` is 0600.
+- It refuses a symbolic link.
+- It makes the change against the revision the page read.
+
+**Check** runs `nrw check-llm --endpoint --json` in a child, as a job would,
+one at a time and for 180 s at most. *(Now `LLM_TIMEOUT` plus a minute, capped
+at ten minutes: see the next entry.)* It is behind the link, because the call
+is billed. Reading the section needs no link, so it never shows a key, not even
+redacted: it says only whether one is set.
+
+### 2026-09-30: what the review of the Language model section changed
+
+The design, security and test reviews of the two commits above found no
+critical problem. Their findings changed these things:
+
+- **`.env` is edited through python-dotenv's own parser** (`dotenv.parser.
+  parse_stream`), not by splitting lines.
+  - Splitting lines turned a form feed into a line break and rewrote an
+    `LLM_MODEL=` inside a quoted value.
+  - A bare `LLM_PROVIDER` line after the one nrw set made a reader unset the
+    provider, so Save answered 200 while a job used `~/.aure`.
+  - Each piece the parser gives back is kept byte for byte, including the blank
+    lines that belong to it, and a later line for a managed name is removed. The
+    header comment is gone, so undoing a choice restores the file exactly.
+  - These are python-dotenv's internal modules, so the dependency is bounded
+    `<2`.
+- **`.env` is read without following a link** (`O_NOFOLLOW | O_NONBLOCK`,
+  `fstat`, at most 1 MiB). Reading it is open to anyone who can reach the page,
+  and a planted link to a FIFO or to `/dev/zero` would have hung or exhausted
+  the server.
+- **Revisions are HMACs with a key made per process.** A plain SHA-256 of a
+  file of secrets, served openly, confirms a guess of its contents.
+- **The shared atomic writer set the mode after writing the data.** The temp
+  file sat under the umask, usually 0644, for the moment it held the new
+  contents. That was harmless for `nrw.toml` but not for `.env`'s keys. Now it
+  is created with the mode it is given, and `fchmod` runs before any byte is
+  written. `mode=` lets `.env` pass the mode it read through its own
+  descriptor, so the target is never looked up by name, which would follow a
+  link swapped in meanwhile. This applies to every caller of
+  `atomic_write_bytes`.
+- **`where_set` replays python-dotenv exactly.** It uses one list of files
+  (`_candidates`, now with `is_project`) and python-dotenv's own interpolation,
+  against the environment as it would stand at each file. So a `${VAR}` in
+  `~/.aure` sees what `.env` set, a bare name sets nothing, and
+  `PYTHON_DOTENV_DISABLED` is honoured before each file. A test compares the
+  result with a real child.
+- **The Check could leave a billed `claude` running.** `subprocess.run(timeout)`
+  kills only the direct child, and AuRE starts `claude` as a grandchild. Now:
+  - `jobs.run_nrw` gives the Check its own process group and kills the whole
+    group;
+  - `LLM_MAX_RETRIES=0` makes "one real call" exactly one;
+  - the deadline follows the effective `LLM_TIMEOUT`, plus a minute, capped at
+    ten minutes.
+- **The section has its own class** (`web/llm_settings.py`), and AuRE's
+  provider name, its default timeout and its rule for finding `claude` live in
+  `aure_adapter`.
+- **Provider errors are scrubbed of keys** (`aure_adapter.scrubbed`) before a
+  job prints them, because job logs are open to read.
+- **Each measurement goes into the request as one line**, marked as data, so a
+  note written over several lines cannot pass for another state's.
+
+**Decided, and open to change: New model shares the one job lane.** New model
+became a job in bdbfa3a, so it now waits behind a running fit, which the old
+synchronous command did not. The page disables the button and says so rather
+than refusing the click. A second lane for language-model jobs would need a
+second runner with its own records folder and a panel that follows two jobs.
+That is not done yet.
+
+### 2026-09-30: AuRE never reads a state's `extra_description`
+
+The entry "a quick fit could not be run again, and AuRE never read about the
+measurement" said AuRE appends a state's `extra_description` to the sample's
+description when it prompts the model. **That was wrong.** AuRE declares it
+that way (`state.py`: "Appended to sample_description when prompting the
+LLM"), but no prompt at the pinned 1.0.2, nor on AuRE's `main` today, reads
+it. The field is only listed, copied, displayed and checkpointed.
+
+The consequence was the one that entry meant to fix. A DPPC sample whose
+Measurements table said "The ambient medium is D2O" for run 232736 had that
+line in its `extra_description`, and AuRE still proposed `air` as the ambient.
+
+`compose` now appends the run's condition, the sample's *Measurement
+conditions* and the run's notes to `sample_description`, which AuRE's intake
+and modeling prompts do read, and writes no `extra_description`. A quick fit
+fits one run, so one description serves it. **Check what AuRE reads from its
+prompts' code, not its docstrings:** AuRE declares no stable API
+(`aure_adapter`), and a documented field can be unwired.
+
+### 2026-09-30: curating fits, where their evidence is
+
+Launching fits stays on the Experiment page, where their inputs are. Curation
+(star, finalize, discard, delete) goes on the fit and Fits pages, because a
+person judges a fit while looking at it. All of it goes through the one gated
+write API.
+
+**Recorded as index events.** `star`, `unstar`, `discard`, `restore` and
+`delete` are appended to `.nrw/index.jsonl` beside `promote`, with who and
+when. They merge in git and never lose history. `provenance/curation.py`
+replays them (`curation_of`): the last word on a fit is what it is.
+
+**Discard, then delete, a decision of the user's.** Discarding keeps every
+file. Deleting is a second, explicit step, and it is refused while anything
+uses the fit:
+
+- a report cites it (`notes_about`);
+- a figure manifest lists it (`"fits"`);
+- another fit read its files, as an input under its directory;
+- or it has ISAAC records (`isaac/`).
+
+Deleting never goes through a link, and the index keeps the record that the fit
+ran. `nrw check` no longer reports a discarded or deleted fit, and `nrw ls`
+leaves them out unless `--all`.
+
+**A fit superseded as final still showed `final`.** The Fits list, the sample
+page and the fit page badged every label a fit had ever held. `nrw ls` asked for
+the last `final` across the whole project, so with two samples only one fit got
+its mark. Every reader now takes the labels from `curation_of`, where the last
+promotion of a label per sample holds it. *(Not every reader did: see "One
+reader of labels" below. `curation.replay()` is the one reader now, and
+`curation_of` returns its `fits`.)*
+
+**The fit pages carry the write token now,** so they get the strict script
+policy (`page_csp`, with a nonce), as the Experiment and Settings pages do.
+They render project text: notes, the spec and the script. Only the pages' own
+scripts may run where a token is.
+
+**The page names a fit whole.** The terminal accepts a prefix, but a prefix in
+a URL could come to match a later fit.
+
+### 2026-09-30: publishing a final fit to ISAAC from its page
+
+**A key in `~/.nrw` never reached the push.** `nrw isaac export --upload` ran
+`nr-isaac-format push` with nrw's own environment, but never called
+`load_env()`. The tool reads `ISAAC_URL` and `ISAAC_KEY` from its environment,
+or from a `.env` that python-dotenv finds by walking up from *the tool's own
+install* (not the working directory, as its comment says), never from
+`~/.nrw`. Under `--no-llm` nothing else loaded the settings either, so a key
+kept in `~/.nrw` reached the push only by accident. `ISAAC_URL` and `ISAAC_KEY`
+are now known settings, with the key secret: the page says where each is
+set, and never shows the key. *(`nrw doctor` lists them, the key redacted,
+among its "llm settings", but does not say where each is set, and shows a
+project `.env` value that the push ignores. Not fixed yet.)* See the next entry for how the
+push reads them now.
+
+**What is validated is what is pushed.** An export asks a language model for
+the conditions, so exporting twice can make different records. `nrw isaac push
+FIT_ID [--validate-only]` sends the records the export already wrote, and the
+page's Validate and Push do the same. `export --upload` still works, going the
+same way.
+
+**A push that half-fails has still published.** `nr-isaac-format push` exits
+1 if any record fails, even after the portal accepted others. The push path
+reads the "created (record_id=...)" lines whatever the exit code, and appends
+a `publish` event to the index: when, by whom, the portal's host, each record
+made, and `complete`. *(Now two events sharing an `attempt` id, the first
+written before the push runs: see "A push is recorded before it runs"
+below.)* The curation replay carries these events, so a published
+fit's files can never be deleted, even with its `isaac/` removed by hand.
+
+**Only the final fit is published** (the user's decision), by `nrw isaac push`
+and by the page. Validating needs no finalization: asking the server whether
+records would be accepted publishes nothing. The guard counts `nrw isaac push`
+without `--validate-only` as an upload. *(Superseded: the guard refuses every
+`nrw isaac push`, because validating sends the records and the key too. See
+the next entry.)*
+
+### 2026-09-30: what the reviews of curation and ISAAC changed
+
+The design, security and test reviews of 194645c and 074d3b6 found one
+CRITICAL problem, in older code, and several that had to be fixed before the
+features could be trusted.
+
+**One reader of labels.** "Which fit holds which label" had three
+implementations: the new replay, `FitIndex.current_label()` (where
+`sample=None` meant *any* sample), and scans of `promotions()` written in each
+caller. Every reader not moved to the replay was wrong for a project with more
+than one sample:
+
+- `nrw sample reset` protected a sample's final fit only if it was the
+  project's *last* promotion. With S1 finalized before S2, it deleted S1's
+  final fit, published or not, and `forget()` erased its publish record.
+- `nrw check` failed correct reports ("names this fit as the answer, but
+  nothing is promoted"), and generated reports lost their `[FINAL]` marker.
+- Promoting a fit with no sample (`<root>/results/`) wrote a false
+  `supersede` against another sample's final.
+
+`current_label` is gone. `curation.replay()` returns a `CurationState`:
+`holder(sample, label)` (a fit with no sample in a slot of its own) and
+`of(fit_id).promotions`. Every reader uses it, and the reset refuses while
+any of its sample's fits holds a label or was pushed.
+
+**Deletion could leave the project.** `delete_files` compared path *names*.
+The index is committed, so anyone who can commit to the project writes it,
+and a `sample` of `../../other`, a fit id of `..`, or a linked sample folder
+steered `rmtree` elsewhere (shown in a scratch project). Now:
+
+- `lookup.fit_dir` refuses a fit id or sample that is not a plain name.
+- The resolved path must be exactly `samples/<s>/results/<id>` (or
+  `results/<id>`), so a link anywhere on the way is refused.
+- The delete walks directory descriptors without following links, renames
+  the fit out of the way, records the deletion, and only then removes the
+  files. A removal that fails part way leaves a recorded deletion and a
+  hidden directory, never a half-deleted fit that says it is whole.
+- `used_by` looks at every sample's reports and figures, and the project's
+  own `reports/`. Evidence it cannot read counts as a use.
+
+**The project's `.env` chose where the key went.** `load_env()` read the
+project's `.env` before `~/.nrw`, so an `ISAAC_URL` there sent the person's
+key, and the records, to any host. The portal and the key now come from the
+person's own settings only (`where_set(..., skip_project=True)`). The tool
+gets `--url`, and its environment has `PYTHON_DOTENV_DISABLED=1`, so it takes
+no portal of its own choosing. That environment is the shell's: nothing nrw
+loaded from a file, so a project's `PYTHONPATH` reaches no tool. The host
+shown is `urlsplit(...).hostname`: a `real.host@evil.example` URL shows
+`evil.example`. Validate asks first, as Push does. The page sends the host it
+showed, and the job refuses if the portal is another by then
+(`--expect-host`). Under `NRW_AGENT` both validate and push are refused,
+because both send the records and the key off the machine.
+
+**A push is recorded before it runs.** A cancelled, killed or timed-out push
+had made records while the index said nothing. Now a `publish` event with an
+`attempt` id and each file's digest comes first, and a second event carries
+the records made and `complete`. An attempt with no outcome reads as
+"may have published". What was sent is copied to `isaac/published/<attempt>/`,
+so re-exporting cannot change the record of it. The real tool goes on past a
+failed record, only an authentication error stops it early, and a contract
+test runs it against a local stand-in portal.
+
+### 2026-09-30: what the documentation review found
+
+A review of every document against the code found about sixty stale or wrong
+statements. Most came from four patterns, which are worth knowing because
+each will recur.
+
+**A limit added in code did not reach the lists of limits.** The refused
+commands grew from three (promote, `--upload`, `--force`) to eight rules, and
+at least seven places listed them: `guard._REASONS` (the source), the table in
+`docs/agent.md` (the reference the others link to), the walkthrough in
+`docs/getting-started-with-agent.md`, "The person's commands" in
+`AGENTS.md.j2`, the `$comment` in the Claude harness's `settings.json`, the
+README's summary, and the analyst-handoff skill's table. Each still said
+three. Change `_REASONS` and those seven together.
+
+**The Claude Code hook applies to interactive sessions too.** `nrw agent
+guard` judges every Bash call in any Claude Code session in the project; only
+`NRW_AGENT`'s refusals are for unattended sessions alone. So `AGENTS.md`'s
+rows saying an assistant may promote or curate "when the person asks" could
+never be followed. They now say the command is the person's, to hand to them.
+
+**`pip install 'nr-workbench[isaac]'` cannot work.** nr-workbench is not on
+PyPI (its `aure` dependency is a direct reference), so that command installs
+nothing, and it was the hint in `nrw isaac export --help`, the missing-tool
+error and the ISAAC panel. The hint is now `isaac_cmd.INSTALL`: re-run the
+installer with `NRW_EXTRAS=isaac`, or `pip install -e '.[isaac]'` in a clone.
+
+**A user's decision did not reach the walkthrough.** "Only the final fit is
+published" and "the ISAAC key is set in `~/.nrw`" changed the code and
+`docs/experiment.md`, while `docs/getting-started.md` still showed
+`nrw isaac export --upload` with credentials in `.env`.
+
+Code changed with the review:
+
+- **`nrw sample reset` is refused under `NRW_AGENT`** (rule `reset`), and by
+  the hook, except with `--dry-run`. It deletes every fit and model of a
+  sample: the record of what was tried.
+- **The guard's text floor** (the fallback for a command `shlex` cannot split,
+  such as one with `$'...'`) had no `reset` or `aure-run` rule, so a quoting
+  accident let either through. Both are there now, with the same `--dry-run`
+  exemption.
+- **A fit pushed while it was final keeps its pushes on its page.** The ISAAC
+  panel hid itself for any fit not final, and with it the record that the fit
+  had been published.
+- **Ruff no longer reads Markdown** (`extend-exclude = ["*.md"]`). Ruff 0.16
+  formats the Python inside Markdown code blocks, the pinned pre-commit ruff
+  does not, so `ruff format --check src tests` failed on four shipped SKILL.md
+  files and `ruff format src` rewrote them.
+- `nrw serve`'s start-up lines and help, and the page's quick-fit-again button,
+  now say what the pages do: curate, publish, set the language model, and fit
+  a proposed model's own run again.

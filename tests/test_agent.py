@@ -72,6 +72,21 @@ from nr_workbench.agent import guard, session
         # shlex cannot parse this; bash runs it. Failing open here would mean
         # a quoting accident is a hole.
         ("nrw promote abc --reason $'the oxide\\'s real'", "promote"),
+        # Organizing the experiment is a person's claim about it.
+        ("nrw experiment assign 218386 --sample S6", "experiment"),
+        ("nrw experiment apply --write", "experiment"),
+        ("nrw experiment apply S6 --write --confirm 218390", "experiment"),
+        ("nrw experiment adopt S6 --write --rewrite", "experiment"),
+        ("nrw experiment release S6", "experiment"),
+        ("nrw experiment settings --location /data/x --write", "experiment"),
+        ("nrw experiment settings --write --ipts IPTS-1", "experiment"),
+        ("bash -c 'nrw experiment settings --poll 5 --write'", "experiment"),
+        ("A=1 nrw experiment assign 218386 --sample S6", "experiment"),
+        ("cd x && nrw experiment apply --write", "experiment"),
+        ("bash -c 'nrw experiment apply --write'", "experiment"),
+        ("python -m nr_workbench.cli experiment assign 1 --sample S", "experiment"),
+        ("nrw experiment assign 1 --note $'it\\'s' --sample S", "experiment"),
+        ("nrw aure run samples/S1/aure/x/setup.yaml $'it\\'s'", "aure-run"),
     ],
 )
 def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
@@ -93,7 +108,7 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         "nrw isaac export abc123",  # export without --upload is fine
         "nrw ls --sample expt11",
         "nrw note abc123 --text 'rejected: oxide unconstrained'",
-        "nrw check --contradictions",
+        "nrw check",
         "git commit -m 'wip'",
         "python -c 'print(1)'",
         "ls -la results/",
@@ -105,6 +120,18 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         # person, so `_observe_missing_skills` tells the agent to run it.
         "nrw skills add metal-oxide-interfaces",
         "nrw skills sync",
+        # Looking at the experiment, and previewing what apply would do.
+        "nrw experiment status --json",
+        "nrw experiment apply",
+        "nrw experiment apply S6 --confirm 218390",
+        "nrw experiment adopt S6",
+        # Looking at the settings, and previewing a change, changes nothing.
+        "nrw experiment settings",
+        "nrw experiment settings --check --json",
+        "nrw experiment settings --location /data/x",
+        # Validating an AuRE setup calls no endpoint, parsed or not.
+        "nrw aure run samples/S1/aure/x/setup.yaml --dry-run",
+        "nrw aure run samples/S1/aure/x/setup.yaml --dry-run $'it\\'s'",
     ],
 )
 def test_the_working_commands_are_allowed(command: str) -> None:
