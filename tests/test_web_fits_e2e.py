@@ -67,20 +67,19 @@ def test_a_page_fit_is_recorded_as_nrw_fit_run_records_it_refused_again_and_forc
     # The identical fit again is refused, and links nothing.
     assert (refused["job"]["status"], refused["job"]["fit_id"]) == ("failed", None)
     assert "An identical run already exists" in refused["log"]
+    # Linked, so the page can say so and offer to run it again anyway.
+    assert refused["job"]["same_as"] == job["fit_id"]
     # Forced, it is recorded as a replicate, and the job links that one.
     assert forced["status"] == "ok"
     newest = index.fits(sample="S1")[0]
     assert forced["fit_id"] == newest["fit_id"] != job["fit_id"]
 
 
-def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
-    app, writer, project: Path, monkeypatch
-) -> None:
+def aure_run_stands_in(monkeypatch) -> None:
+    """Every step is the real command but AuRE's run, which needs a language
+    model: that one writes what a finished run leaves."""
     from .test_aure_cmd import FITTED
 
-    described(project)
-    # Every step is the real command but AuRE's run, which needs a language
-    # model: that one writes what a finished run leaves.
     finished = json.dumps(
         {
             "success": True,
@@ -101,6 +100,13 @@ def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
         return serial(*args)
 
     monkeypatch.setattr(jobs_module, "nrw_command", command)
+
+
+def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    described(project)
+    aure_run_stands_in(monkeypatch)
 
     started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
     payload = job_ended(writer)
@@ -141,3 +147,40 @@ def test_a_quick_fit_without_an_endpoint_stops_at_aure_run_and_says_how_to_set_o
     assert "nrw check-llm" in log
     assert not (project / "samples" / "S1" / "models" / "auto.yaml").exists()
     assert FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1") == []
+
+
+def test_a_quick_fit_runs_again_after_the_notes_change_and_aure_hears_them(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    """What the page could not do: a model AuRE proposed, quick-fitted again once
+    something was written about the measurement -- which reaches AuRE's setup."""
+    import yaml
+
+    described(project)
+    aure_run_stands_in(monkeypatch)
+    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
+    first = job_ended(writer)["job"]
+    with (project / "samples" / "S1" / "sample.md").open("a", encoding="utf-8") as f:
+        f.write("\n## Measurement conditions\n\n- Run 100001: in D2O, realigned\n")
+
+    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
+    again = job_ended(writer)
+
+    job = again["job"]
+    assert (first["status"], job["status"], job["step"]) == ("ok", "ok", 5), again[
+        "log"
+    ]
+    assert job["label"] == "quick fit of auto with AuRE again"
+    setup = yaml.safe_load(
+        (project / "samples" / "S1" / "aure" / "auto-2" / "setup.yaml").read_text()
+    )
+    assert (
+        "Notes on run 100001: in D2O, realigned"
+        in (setup["states"][0]["extra_description"])
+    )
+    # The first run of AuRE is kept; the spec is AuRE's second proposal.
+    assert (project / "samples" / "S1" / "aure" / "auto" / "output").is_dir()
+    spec = (project / "samples" / "S1" / "models" / "auto.yaml").read_text()
+    assert "aure/auto-2/output" in spec
+    fits = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
+    assert [f["fit_id"] for f in fits] == [job["fit_id"], first["fit_id"]]

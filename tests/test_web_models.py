@@ -139,7 +139,12 @@ def test_the_models_are_listed_without_the_link(app, project: Path) -> None:
     listed = app.test_client().get("/api/experiment/samples/S1/models").json
 
     assert listed["models"] == [
-        {"name": "a", "spec": "samples/S1/models/a.yaml", "script": True}
+        {
+            "name": "a",
+            "spec": "samples/S1/models/a.yaml",
+            "script": True,
+            "proposed": False,
+        }
     ]
     assert (listed["exists"], listed["has_data"]) == (True, True)
 
@@ -450,22 +455,70 @@ def test_a_quick_fit_needs_aure_installed_and_says_so(
     assert app.config["NRW_MODELS"].jobs.current() is None
 
 
-@pytest.mark.parametrize("taken", ["models/auto.yaml", "aure/auto"])
-def test_a_quick_fit_never_writes_over_a_name_taken(
-    app, writer, project: Path, taken: str
+def test_a_quick_fit_never_replaces_a_spec_someone_wrote(
+    app, writer, project: Path
 ) -> None:
-    path = project / "samples" / "S1" / taken
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if taken.endswith(".yaml"):
-        path.write_text("# mine\n")
-    else:
-        path.mkdir()
+    spec = spec_of(project, "auto")
+    spec.write_text("# mine\n")
 
     response = quick(writer, app, "S1", {"name": "auto"})
 
     assert response.status_code == 409
-    assert "already exists" in response.json["error"]
+    assert "edited since AuRE proposed it" in response.json["error"]
+    assert spec.read_text() == "# mine\n"
     assert app.config["NRW_MODELS"].jobs.current() is None
+
+
+def test_an_earlier_run_of_aure_is_kept_and_a_new_one_gets_its_own_folder(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        jobs_module, "nrw_command", lambda *args: [sys.executable, "-c", "pass"]
+    )
+    for kept in ("auto", "auto-2"):
+        (project / "samples" / "S1" / "aure" / kept).mkdir(parents=True)
+
+    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
+
+    log = job_ended(writer)["log"]
+    assert "$ nrw aure new --name=auto-3 --run=100001 -- S1\n" in log
+    assert "aure run samples/S1/aure/auto-3/setup.yaml" in log
+    # The spec is new, so there is nothing to replace.
+    assert "--replace-unedited" not in log
+
+
+def test_a_model_aure_proposed_is_quick_fitted_again_replacing_only_the_unedited(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        jobs_module, "nrw_command", lambda *args: [sys.executable, "-c", "pass"]
+    )
+    proposed = spec_of(project, "auto")
+    proposed.write_text(unedited_proposal(), encoding="utf-8")
+    (project / "samples" / "S1" / "aure" / "auto").mkdir(parents=True)
+
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+    started(quick(writer, app, "S1", {"name": "auto", "run": 100001}))
+
+    assert [m["proposed"] for m in listed["models"] if m["name"] == "auto"] == [True]
+    payload = job_ended(writer)
+    assert payload["job"]["label"] == "quick fit of auto with AuRE again"
+    assert (
+        "$ nrw aure import samples/S1/aure/auto-2/output --sample=S1 --name=auto "
+        "--replace-unedited\n"
+    ) in payload["log"]
+
+
+def unedited_proposal() -> str:
+    """A spec as `nrw aure import` writes it: its header, and its self-hash."""
+    from nr_workbench.aure_import import PROPOSED_MARKER
+    from nr_workbench.codegen.generator import stamp_self_hash
+
+    return stamp_self_hash(
+        f"# The stack below {PROPOSED_MARKER} 0.1 @ abc,\n"
+        f"#   self sha256: {'0' * 64}  (nrw:self)\n"
+        "schema: nrw-model/1\n"
+    )
 
 
 @pytest.mark.parametrize("run", ["100001", True, 0, -5, 1.5])

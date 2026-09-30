@@ -486,3 +486,25 @@ def test_a_row_in_a_note_is_no_row_of_the_measurement_table() -> None:
 
     assert from_table(text, "218386") == "25 C"
     assert from_table(text, "218999") is None
+
+
+def test_sample_md_pending_says_when_the_page_has_edits_not_yet_applied(
+    project: Path,
+) -> None:
+    from nr_workbench.experiment.render import project_context, sample_md_pending
+    from nr_workbench.experiment.store import ParquetCatalogStore
+
+    store = ParquetCatalogStore.for_project(project)
+    store.update(runs=[RunChange(RunKey(218386), 0, {"sample_id": "Sample6"})], now=NOW)
+    apply_scaffold(project, plan_sample(project, project_context(project), "Sample6"))
+    applied = sample_md_pending(project, "Sample6")
+
+    entry = store.load().runs[RunKey(218386)]
+    store.update(
+        runs=[RunChange(entry.key, entry.rev, {"note": "realigned after mounting"})],
+        now=NOW,
+    )
+
+    assert applied is False
+    assert sample_md_pending(project, "Sample6") is True
+    assert sample_md_pending(project, "NotInTheCatalog") is False

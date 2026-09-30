@@ -510,6 +510,12 @@ def aure_run_command(**kwargs: object) -> None:
 @click.option("--name", required=True, help="Model name; also the filename.")
 @click.option("--run", type=int, default=None, help="Which steady run it fitted.")
 @click.option("--force", is_flag=True, help="Overwrite an existing spec.")
+@click.option(
+    "--replace-unedited",
+    is_flag=True,
+    help="Replace an existing spec only if it is a proposal of AuRE's that nobody "
+    "has edited since -- as a new quick fit of the model does.",
+)
 def aure_import_command(**kwargs: object) -> None:
     """Turn the fitted model in OUTPUT_DIR into a model spec.
 

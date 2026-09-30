@@ -74,7 +74,7 @@ def generate(
         _main_guard(),
     ]
     source = "\n\n".join(b for b in blocks if b).rstrip("\n") + "\n"
-    return _stamp_self_hash(source)
+    return stamp_self_hash(source)
 
 
 # --------------------------------------------------------------------------
@@ -575,8 +575,12 @@ def _ident(name: str) -> str:
     return cleaned if not cleaned[0].isdigit() else f"_{cleaned}"
 
 
-def _stamp_self_hash(source: str) -> str:
+def stamp_self_hash(source: str) -> str:
     """Replace the placeholder self-hash with the real digest.
+
+    Used for any file nrw writes and must later tell apart from one edited by
+    hand -- a generated script, and a spec AuRE proposed -- by a line
+    ``self sha256: <64 zeros>  (nrw:self)`` in it.
 
     Hashed with the placeholder in place, so the value is reproducible: the
     digest covers the file as it would be *before* stamping, and `nrw check`

@@ -98,6 +98,9 @@ class ModelsData:
                 "name": spec.stem,
                 "spec": spec.relative_to(self.root).as_posix(),
                 "script": spec.with_suffix(".py").is_file(),
+                # A proposal of AuRE's nobody edited: a new quick fit may
+                # replace it, so the page offers one.
+                "proposed": _is_unedited_proposal(spec),
             }
             for spec in sorted((directory / MODELS_DIR).glob("*.yaml"))
         ]
@@ -113,6 +116,8 @@ class ModelsData:
             # Whether it is installed, found without importing it: AuRE brings
             # the whole language-model stack, seconds of it, into the server.
             "aure": is_available(),
+            # AuRE reads sample.md, which the page's edits reach on Apply.
+            "sample_md_pending": _sample_md_pending(self.root, sample_id),
             # What the Fit form starts from: the project's own nrw.toml.
             "fit": {
                 "method": defaults.method,
@@ -251,6 +256,12 @@ class ModelsData:
         generate its script, and fit that with amoeba from AuRE's values -- and
         that fit is the one in Fits.
 
+        A model can always be quick-fitted again -- after the notes changed,
+        say. Each run of AuRE gets a folder of its own, and a spec that is an
+        unedited proposal of AuRE's is replaced by the new one. A spec someone
+        edited never is: that is checked again as the spec is written, so an
+        edit made while AuRE ran is kept too.
+
         Args:
             sample_id: The sample.
             name: The model to write, ``models/<name>.yaml``; AuRE's run is kept
@@ -263,7 +274,8 @@ class ModelsData:
         Raises:
             WritesDisabledError: The server was started read-only.
             RequestError: The name or the run is not usable.
-            ModelRefused: The name is taken, or AuRE is not installed.
+            ModelRefused: The model's spec was edited since AuRE proposed it, or
+                AuRE is not installed.
             JobBusy: A job is running already.
         """
         from nr_workbench.aure_adapter import is_available
@@ -276,24 +288,26 @@ class ModelsData:
         ):
             raise RequestError(f"run must be a run number, not {run!r}.")
         spec = directory / MODELS_DIR / f"{name}.yaml"
-        workdir = setup_dir(self.root, sample_id, name)
-        for taken in (spec, workdir):
-            if taken.exists():
-                raise ModelRefused(
-                    f"{self._shown(taken)} already exists. Choose another name."
-                )
+        again = spec.exists()
+        if again and not _is_unedited_proposal(spec):
+            raise ModelRefused(
+                f"{self._shown(spec)} has been edited since AuRE proposed it, or was "
+                "not proposed by AuRE, so a quick fit would replace your version. "
+                "Quick-fit it under another name, or fit it as it is with Fit…."
+            )
         if not is_available():
             raise ModelRefused(
                 "AuRE is not installed where nrw serve runs, so there is nothing "
                 "to run a quick fit with. `nrw doctor` lists what is installed."
             )
+        workdir = self._free_run_dir(sample_id, name)
         chosen = [f"--run={run}"] if run is not None else []
         job = self.jobs.start(
-            label=f"quick fit of {name} with AuRE",
+            label=f"quick fit of {name} with AuRE" + (" again" if again else ""),
             sample=sample_id,
             model=name,
             steps=[
-                ["aure", "new", f"--name={name}", *chosen, "--", sample_id],
+                ["aure", "new", f"--name={workdir.name}", *chosen, "--", sample_id],
                 # Needs a language-model endpoint; without one it says how to
                 # set one, and the job stops here.
                 ["aure", "run", self._shown(workdir / SETUP_FILE), "--budget=quick"],
@@ -305,6 +319,7 @@ class ModelsData:
                     self._shown(workdir / OUTPUT_DIR),
                     f"--sample={sample_id}",
                     f"--name={name}",
+                    *(["--replace-unedited"] if again else []),
                 ],
                 *_fit_steps(
                     self._shown(spec),
@@ -351,29 +366,50 @@ class ModelsData:
         require_writable(self.writable, self.why_read_only)
         return {"job": self.jobs.cancel(job_id).as_dict()}
 
-    def _find_recorded_fit(self, job: Job) -> str | None:
-        """The fit a job's own ``nrw fit run`` recorded, from what it printed.
+    def _find_recorded_fit(self, job: Job) -> dict[str, str | None]:
+        """What a job's own ``nrw fit run`` recorded, from what it printed.
 
         Read from the job's output, not guessed from the index: the terminal
         fits the same models while a page job runs, and the newest fit of a
-        model since the job started need not be the job's. ``None`` when the
-        fit step never ran, or recorded nothing -- a cancelled fit is left as an
-        interrupted run, which is not in the index.
+        model since the job started need not be the job's.
+
+        Returns:
+            ``fit_id``: the fit it recorded -- none when the fit step never ran,
+            or was cancelled, which leaves an interrupted run the index does not
+            have. ``same_as``: the fit it was refused as identical to, which the
+            page links, offering to run again anyway.
         """
-        from nr_workbench.commands.fit import RUNNING_RE
+        from nr_workbench.commands.fit import IDENTICAL_RE, RUNNING_RE
         from nr_workbench.provenance.index import FitIndex
 
+        found: dict[str, str | None] = {"fit_id": None, "same_as": None}
         if not job.steps or job.steps[-1][:2] != ["fit", "run"]:
-            return None
+            return found
         if job.step != len(job.steps):
-            return None
+            return found
         started = f"$ nrw {' '.join(job.steps[-1])}\n"
         _, _, fitted = self.jobs.output(job.id).rpartition(started)
-        found = list(RUNNING_RE.finditer(fitted))
-        if not found:
-            return None
-        fit_id = PurePosixPath(found[-1].group("directory")).name
-        return fit_id if FitIndex(self.layout.index_file).find(fit_id) else None
+        index = FitIndex(self.layout.index_file)
+        running = list(RUNNING_RE.finditer(fitted))
+        if running:
+            fit_id = PurePosixPath(running[-1].group("directory")).name
+            found["fit_id"] = fit_id if index.find(fit_id) else None
+        identical = IDENTICAL_RE.search(fitted)
+        if identical and index.find(identical.group("fit_id")):
+            found["same_as"] = identical.group("fit_id")
+        return found
+
+    def _free_run_dir(self, sample_id: str, name: str) -> Path:
+        """A folder for a new run of AuRE for *name*: ``aure/<name>/``, else
+        ``<name>-2``, ``<name>-3`` -- an earlier run, its checkpoints and its
+        record of what the language model was asked, is kept."""
+        first = setup_dir(self.root, sample_id, name)
+        if not first.exists():
+            return first
+        n = 2
+        while (candidate := first.with_name(f"{name}-{n}")).exists():
+            n += 1
+        return candidate
 
     def _fit_defaults(self) -> tuple[FitDefaults, str | None]:
         """What nrw.toml says about fitting; and why not, when it cannot say."""
@@ -460,3 +496,18 @@ def _fit_note(value: Any) -> str:
             "the fit's NOTES.md, where one would start a section or hide the rest."
         )
     return text
+
+
+def _is_unedited_proposal(spec: Path) -> bool:
+    from nr_workbench.aure_import import is_unedited_proposal
+
+    try:
+        return is_unedited_proposal(spec.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _sample_md_pending(root: Path, sample_id: str) -> bool:
+    from nr_workbench.experiment.render import sample_md_pending
+
+    return sample_md_pending(root, sample_id)

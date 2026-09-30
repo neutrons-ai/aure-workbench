@@ -420,6 +420,43 @@ def test_import_refuses_an_unfinished_run(sample: Path) -> None:
     assert "resume" in result.output
 
 
+def test_import_stamps_the_spec_as_a_proposal_until_it_is_edited(
+    sample: Path,
+) -> None:
+    from nr_workbench.aure_import import is_unedited_proposal
+
+    output = _finished_run(sample)
+    _run("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
+    spec = sample / "samples" / "Sample1" / "models" / "first.yaml"
+    text = spec.read_text(encoding="utf-8")
+
+    assert is_unedited_proposal(text)
+    assert "#   from:        'samples/Sample1/aure/Sample1-218386/output'" in text
+    assert not is_unedited_proposal(text + "# my note\n")
+
+
+def test_replace_unedited_replaces_only_a_proposal_nobody_edited(
+    sample: Path,
+) -> None:
+    output = _finished_run(sample)
+    args = ("aure", "import", str(output), "--sample", "Sample1", "--name", "first")
+    _run(*args)
+    spec = sample / "samples" / "Sample1" / "models" / "first.yaml"
+
+    replaced = _run(*args, "--replace-unedited")
+    spec.write_text(spec.read_text(encoding="utf-8") + "# my note\n", encoding="utf-8")
+    kept = _run(*args, "--replace-unedited")
+    after_refusal = spec.read_text(encoding="utf-8")
+    forced = _run(*args, "--force")
+
+    assert replaced.exit_code == 0, replaced.output
+    assert kept.exit_code != 0
+    assert "edited since AuRE proposed it" in kept.output
+    assert after_refusal.endswith("# my note\n")
+    assert forced.exit_code == 0, forced.output
+    assert "# my note" not in spec.read_text(encoding="utf-8")
+
+
 def test_import_does_not_overwrite_without_force(sample: Path) -> None:
     output = _finished_run(sample)
     _run("aure", "import", str(output), "--sample", "Sample1", "--name", "first")

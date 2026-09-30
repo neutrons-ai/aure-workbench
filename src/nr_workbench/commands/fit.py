@@ -60,6 +60,11 @@ class ResolvedTarget:
 RUNNING_LINE = "Running {method} fit -> {directory}"
 RUNNING_RE = re.compile(r"^Running \S+ fit -> (?P<directory>\S.*?)\s*$", re.MULTILINE)
 
+#: How a fit refused as identical to one already recorded names that one, so
+#: the page can link it and offer to run again anyway.
+IDENTICAL_LINE = "An identical run already exists: {fit_id}"
+IDENTICAL_RE = re.compile(r"An identical run already exists: (?P<fit_id>\S+)")
+
 
 def resolve_target(
     layout: ProjectLayout, script: Path, sample: str | None
@@ -328,7 +333,7 @@ def run_fit_command(
     if duplicates and not force and not dry_run:
         previous = duplicates[0]
         raise click.ClickException(
-            f"An identical run already exists: {previous['fit_id']} "
+            IDENTICAL_LINE.format(fit_id=previous["fit_id"]) + " "
             f"(status {previous.get('status')}, chisq {previous.get('chisq')}).\n"
             "Nothing changed: script, inputs, settings and environment all match.\n"
             "  --force   run anyway, recorded as a replicate\n"

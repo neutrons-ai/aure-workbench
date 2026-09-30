@@ -220,6 +220,38 @@ def plan_sample(
     ]
 
 
+def sample_md_pending(root: Path, sample_id: str) -> bool:
+    """Whether the catalog would write this sample's ``sample.md`` differently.
+
+    Edits saved on the Experiment page reach the file only when applied, and
+    what reads the file -- AuRE, the assistant -- reads it as it is. False for a
+    sample the catalog does not manage, and when the catalog cannot be read.
+
+    Args:
+        root: Project root.
+        sample_id: The sample.
+
+    Returns:
+        Whether the file is missing, or differs from the catalog's rendering.
+    """
+    try:
+        catalog = load_catalog(root)
+        if not catalog.manages(sample_id):
+            return False
+        relpath = sample_md_relpath(sample_id)
+        planned = next(
+            p
+            for p in plan_sample(
+                root, project_context(root), sample_id, catalog=catalog
+            )
+            if p.relpath == relpath
+        )
+    except SampleRenderError:
+        return False
+    path = Path(root) / relpath
+    return not path.is_file() or path.read_bytes() != planned.content
+
+
 def project_context(root: Path) -> RenderContext:
     """The render context ``nrw sample new`` would use for this project.
 

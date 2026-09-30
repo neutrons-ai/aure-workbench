@@ -211,7 +211,11 @@ def _settings(table: dict[str, Any], method: str) -> dict[str, int]:
 
 def _checked(key: str, value: Any, where: str) -> int:
     low, high = FIT_LIMITS[key]
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise FitSettingsError(
             f"{where} {key} must be a whole number from {low} to {high}, not {value!r}."
         )

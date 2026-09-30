@@ -129,6 +129,16 @@ def run_aure_new(
     except SetupError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    from nr_workbench.experiment.render import sample_md_pending
+
+    if sample_md_pending(layout.root, sample):
+        click.secho(
+            f"  !  samples/{sample}/sample.md is not what the experiment catalog "
+            "would write now:\n     edits saved on the Experiment page reach it "
+            "when you Apply. AuRE reads it as it is.",
+            fg="yellow",
+        )
+
     run_name = composed.document["name"]
     target = setup_dir(layout.root, sample, run_name) / SETUP_FILE
     if target.exists() and not force:
@@ -486,6 +496,7 @@ def run_aure_import(
     name: str,
     run: int | None = None,
     force: bool = False,
+    replace_unedited: bool = False,
 ) -> None:
     """Turn a finished AuRE run into an nrw model spec.
 
@@ -495,13 +506,17 @@ def run_aure_import(
         name: Model name; also the filename.
         run: Which steady run the states describe; inferred when there is one.
         force: Overwrite an existing spec.
+        replace_unedited: Overwrite an existing spec only if it is a proposal
+            of AuRE's nobody has edited since -- as a new quick fit does.
 
     Raises:
-        click.ClickException: If the run holds no model, or the target exists.
+        click.ClickException: If the run holds no model, or the target exists
+            and may not be replaced.
     """
     from nr_workbench.aure_import import (
         ImportError_,
         fitted_model,
+        is_unedited_proposal,
         layer_names,
         read_final_state,
         reported_chisq,
@@ -555,10 +570,21 @@ def run_aure_import(
 
     target = layout.sample(sample) / "models" / f"{name}.yaml"
     if target.exists() and not force:
-        raise click.ClickException(
-            f"{target.relative_to(layout.root)} already exists. Use --force to "
-            "overwrite."
-        )
+        # Checked as the file is written, not when a job was started minutes
+        # before: an edit made while AuRE ran is never replaced.
+        existing = target.read_text(encoding="utf-8")
+        if not (replace_unedited and is_unedited_proposal(existing)):
+            detail = (
+                " and has been edited since AuRE proposed it, or was not proposed "
+                "by AuRE; --replace-unedited replaces only a proposal nobody has "
+                "edited"
+                if replace_unedited
+                else ""
+            )
+            raise click.ClickException(
+                f"{target.relative_to(layout.root)} already exists{detail}. Use "
+                "another --name, or --force to overwrite it anyway."
+            )
 
     document = to_spec(
         model=model,
@@ -572,11 +598,15 @@ def run_aure_import(
     # keeps AuRE's, so the stack can still be read against AuRE's report.
     renamed = [(aure, spec) for aure, spec in layer_names(model) if aure != spec]
     target.parent.mkdir(parents=True, exist_ok=True)
+    from nr_workbench.codegen.generator import stamp_self_hash
+
     target.write_text(
-        _provenance_header(layout, target, Path(output_dir))
-        + _renamed_comment(renamed)
-        + blank_angles_comment(blank)
-        + _emit_spec(document),
+        stamp_self_hash(
+            _provenance_header(layout, target, Path(output_dir))
+            + _renamed_comment(renamed)
+            + blank_angles_comment(blank)
+            + _emit_spec(document)
+        ),
         encoding="utf-8",
     )
     click.echo(f"Wrote {target.relative_to(layout.root)}")
@@ -627,6 +657,7 @@ def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) ->
     a measurement without going looking.
     """
     from nr_workbench.aure_adapter import resolved_commit
+    from nr_workbench.aure_import import PROPOSED_MARKER
     from nr_workbench.commands.model import _schema_relative
 
     try:
@@ -648,15 +679,23 @@ def _provenance_header(layout: ProjectLayout, target: Path, output_dir: Path) ->
         f"{RUN_ENV_FILE}\n# beside the output directory, so what it ran with "
         "cannot be reconstructed.\n"
     )
+    try:
+        source = output_dir.resolve().relative_to(layout.root.resolve()).as_posix()
+    except ValueError:
+        source = output_dir.as_posix()
     return (
         f"# yaml-language-server: $schema={_schema_relative(layout, target)}\n"
         "#\n"
-        f"# The stack below was PROPOSED by AuRE {release} @ {commit[:12]},\n"
+        f"# The stack below {PROPOSED_MARKER} {release} @ {commit[:12]},\n"
         "# from sample.md and the data. It is a starting point, not a\n"
         "# measurement -- check every layer and range before fitting.\n"
         "# States, angles and data_dir were read from the files' own headers\n"
         "# and were not proposed.\n"
         f"{knob_line}"
+        f"#   from:        {source!r}\n"
+        # Edited, this no longer holds -- and a new quick fit of the model then
+        # leaves the file alone rather than replacing it.
+        f"#   self sha256: {'0' * 64}  (nrw:self)\n"
         "#\n"
         "#   nrw model validate <this file>\n"
         "#   nrw model generate <this file>\n"

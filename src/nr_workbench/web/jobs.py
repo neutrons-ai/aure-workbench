@@ -174,6 +174,7 @@ class Job:
         started_at: When it started, UTC.
         finished_at: When it ended, UTC.
         fit_id: The fit it recorded, once known.
+        same_as: The fit it was refused as identical to, when it was.
     """
 
     id: str
@@ -187,6 +188,7 @@ class Job:
     started_at: str = ""
     finished_at: str = ""
     fit_id: str | None = None
+    same_as: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """The job as the page reads it."""
@@ -200,14 +202,15 @@ class JobRunner:
         root: Project root: the jobs' working directory.
         on_finished: Called with a job as it ends, from the job's thread and
             before its status changes, so a page that sees it end sees this
-            too; returns the id of the fit it recorded, or ``None``.
+            too; returns what it found -- ``fit_id``, the fit the job
+            recorded, and ``same_as``, the one it was refused as identical to.
     """
 
     def __init__(
         self,
         root: Path,
         *,
-        on_finished: Callable[[Job], str | None] | None = None,
+        on_finished: Callable[[Job], dict[str, str | None]] | None = None,
     ) -> None:
         self.root = Path(root)
         self.directory = ProjectLayout(root=self.root).state_dir / "jobs"
@@ -354,12 +357,13 @@ class JobRunner:
     # -- the job's own thread -------------------------------------------------
 
     def _run(self, job: Job) -> None:
-        ended, fit_id = "failed", None
+        ended: str = "failed"
+        found: dict[str, str | None] = {}
         try:
             ended = self._steps(job)
             if self.on_finished is not None:
                 try:
-                    fit_id = self.on_finished(job)
+                    found = self.on_finished(job)
                 except Exception:
                     _log.exception("Finding the fit job %s recorded failed", job.id)
         except Exception:
@@ -369,7 +373,9 @@ class JobRunner:
         finally:
             with self._lock:
                 self._process = None
-                job.status, job.fit_id, job.finished_at = ended, fit_id, _now()
+                job.status, job.finished_at = ended, _now()
+                job.fit_id = found.get("fit_id")
+                job.same_as = found.get("same_as")
                 with suppress(OSError):
                     self._save(job)
 

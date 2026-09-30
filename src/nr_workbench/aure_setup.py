@@ -128,6 +128,42 @@ def read_hypothesis(notes: str) -> str:
     return read_section(notes, HYPOTHESIS_SECTION).strip()
 
 
+def measurement_context(notes: str, run: int) -> str:
+    """What ``sample.md`` says about one measurement, for AuRE to read.
+
+    Its condition in the Measurements table, the sample's own *Measurement
+    conditions*, and the notes on that run -- read with the catalog's parser,
+    which keeps a run's notes apart from the sample's text. AuRE appends this
+    to the sample's description when it asks the language model for a stack,
+    so a contrast or a condition written there reaches the proposal.
+
+    Args:
+        notes: The full text of ``sample.md``.
+        run: The run AuRE is fitting.
+
+    Returns:
+        One line per thing said, or ``""`` when it says nothing about it.
+    """
+    from nr_workbench.experiment.adopt import parse_sample_md
+
+    try:
+        parsed = parse_sample_md(notes)
+    except Exception:  # noqa: BLE001 - AuRE still gets the description
+        return ""
+    lines: list[str] = []
+    condition = next((row.condition for row in parsed.rows if row.run == run), "")
+    if condition:
+        lines.append(f"The condition of run {run}: {condition}.")
+    shared = parsed.fields.get("measurement_conditions", "")
+    if shared:
+        lines.append(f"Measurement conditions: {shared}")
+    # Hand-written notes need not have a table that lists the run.
+    note = parsed.notes.get(run) or parsed.unlisted_notes.get(run, "")
+    if note:
+        lines.append(f"Notes on run {run}: {note}")
+    return "\n".join(lines)
+
+
 def reads_as_back_reflection(notes: str) -> bool:
     """Whether the notes say the beam arrives through the substrate.
 
@@ -277,6 +313,9 @@ def compose(
     }
     if back_reflection:
         state["back_reflection"] = True
+    context = measurement_context(notes, chosen)
+    if context:
+        state["extra_description"] = context
 
     document: dict[str, Any] = {
         "name": run_name,
@@ -304,6 +343,11 @@ def compose(
     ]
     if hypothesis:
         from_notes.append("hypothesis: ## Fits to perform")
+    if context:
+        from_notes.append(
+            f"extra_description: run {chosen}'s condition and notes, and "
+            f"## Measurement conditions ({len(context)} chars)"
+        )
     from_notes.append(
         f"back_reflection: {back_reflection} "
         + (

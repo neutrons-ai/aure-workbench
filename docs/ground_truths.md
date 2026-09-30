@@ -3585,3 +3585,41 @@ setup. Otherwise AuRE reads `FIT_METHOD`, `FIT_STEPS` and `FIT_BURN` from the
 environment nrw passes on: the shell, then the project's `.env`, `~/.nrw`,
 `~/.aure`. nrw loads all keys from those files, not only its own. nrw pins
 AuRE's physics knobs for every run, over the shell's too.
+
+### 2026-09-30: a quick fit could not be run again, and AuRE never read about the measurement
+
+Asked to run a quick fit again after adding information about the
+measurements, the page offered nothing. Two things stood in the way.
+
+**The name was taken.** A quick fit refused any model name that already had a
+spec or an AuRE folder, so the second quick fit of a model was impossible. The
+page also kept showing the finished job, as though the fit it had done were
+the answer. Now:
+
+- A spec `nrw aure import` writes carries a `self sha256` line, the same check
+  as a generated script, plus the AuRE output it came from. Edited, even in a
+  comment, it no longer verifies (`is_unedited_proposal`).
+- A model whose spec is an unedited proposal can be quick-fitted again. Each
+  run of AuRE gets a new folder (`aure/<name>-2/`, ...), so none is ever
+  overwritten.
+- `nrw aure import --replace-unedited` replaces the spec only if it still
+  verifies. The check happens as the file is written, not when the job
+  started, so an edit made while AuRE ran is kept. An edited spec is refused
+  when the job is asked for, too.
+- The Fit panel no longer shows a job that ended before the page opened; past
+  fits are in Fits. A fit refused as identical names the fit it matched
+  (`IDENTICAL_LINE` in `commands/fit.py`, the job's `same_as`) and offers
+  **Run again anyway**.
+
+**AuRE never saw the measurement.** `nrw aure new` sent AuRE the sample's
+*Description* and *Details*, and *Fits to perform* as a hypothesis. It never
+sent *Measurement conditions*, the run's condition, or its notes, so
+information added about the measurements could not reach the proposal, however
+many times it was re-run. The state's `extra_description`, which AuRE appends
+to the description when it prompts the model, now carries all three for the
+run being fitted. They are read with the catalog's own parser, which also keeps
+a hand-written note on a run no table lists.
+
+**Edits reach AuRE through `sample.md`.** The page's edits reach the file when
+they are applied. `sample_md_pending` says when the catalog has edits the file
+does not have yet, in `nrw aure new` and in the Models panel.

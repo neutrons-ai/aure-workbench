@@ -219,6 +219,28 @@ def reported_chisq(final_state: dict[str, Any]) -> float | None:
         return None
 
 
+#: What the header of a spec `nrw aure import` wrote says, first thing.
+PROPOSED_MARKER = "was PROPOSED by AuRE"
+
+
+def is_unedited_proposal(text: str) -> bool:
+    """Whether a spec is one AuRE proposed, as the import wrote it.
+
+    Such a spec is derived data -- the AuRE run it came from can write it again
+    -- so a new quick fit of the model may replace it. One edited by hand, even
+    in a comment, may not: its self-hash no longer matches.
+
+    Args:
+        text: The spec's contents.
+
+    Returns:
+        Whether it carries the import's header and its self-hash still holds.
+    """
+    from nr_workbench.codegen.generator import verify_self_hash
+
+    return PROPOSED_MARKER in text[:4000] and verify_self_hash(text)
+
+
 def ordered_stack(model: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the layers in refl1d order, incident medium last.
 

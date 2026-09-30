@@ -68,17 +68,40 @@
       fit.addEventListener("click", function () {
         openFit(model.name);
       });
+      // A proposal of AuRE's nobody edited can be asked for again -- after the
+      // notes changed, say; the new one replaces it.
+      let again = null;
+      if (model.proposed) {
+        again = el("button", {
+          type: "button",
+          className: "btn btn-sm btn-outline-secondary py-0 expt-model-again",
+          text: "Quick fit again",
+          "aria-label": "quick fit " + model.name + " again with AuRE",
+          disabled: !canFit || !payload.aure,
+          title: payload.aure ? "" : "AuRE is not installed where nrw serve runs.",
+        });
+        again.addEventListener("click", function () {
+          quickFit(model.name, again);
+        });
+      }
       list.append(el("div", { className: "d-flex gap-2 align-items-baseline mb-1 expt-model" }, [
         el("span", { className: "mono", text: model.name }),
         el("span", { className: "text-secondary", text: model.spec }),
         model.script
           ? el("span", { className: "badge text-bg-light", text: "script generated" })
           : null,
-        fit,
+        el("span", { className: "ms-auto d-flex gap-2" }, [again, fit]),
       ]));
     });
     const why = blocked(payload);
     if (why) list.append(el("p", { className: "text-secondary mb-0 mt-1", text: why }));
+    if (payload.sample_md_pending) {
+      list.append(el("p", {
+        className: "text-warning-emphasis mb-0 mt-1 expt-md-pending",
+        text: "sample.md does not have the edits saved above yet: AuRE reads " +
+          "sample.md, so Apply before a quick fit.",
+      }));
+    }
     $("expt-model-name").disabled = Boolean(why);
     $("expt-model-create").disabled = Boolean(why);
     // AuRE fits one measurement: which, when there is a choice.
@@ -144,29 +167,36 @@
     }
   });
 
-  $("expt-model-quick").addEventListener("click", async function () {
+  /* A quick fit of *name* with AuRE: a new model, or a new proposal for one
+   * AuRE proposed before. */
+  async function quickFit(name, button) {
     const id = shown;
-    const name = $("expt-model-name").value.trim();
     if (!id) return;
+    const body = { name: name };
+    const runs = $("expt-model-run");
+    if (!runs.classList.contains("d-none") && runs.value) body.run = Number(runs.value);
+    button.disabled = true;
+    try {
+      const started = await api("POST", modelsPath(id) + "/quick-fit", body);
+      $("expt-model-status").textContent =
+        "AuRE is proposing a stack for " + name + "; the Fit panel follows it.";
+      follow(started.job);
+      return true;
+    } catch (error) {
+      $("expt-model-status").textContent = error.message;
+      return false;
+    } finally {
+      load(id);  // the buttons as the sample now stands
+    }
+  }
+
+  $("expt-model-quick").addEventListener("click", async function () {
+    const name = $("expt-model-name").value.trim();
     if (!name) {
       $("expt-model-status").textContent = "Give the model a name.";
       return;
     }
-    const body = { name: name };
-    const runs = $("expt-model-run");
-    if (!runs.classList.contains("d-none") && runs.value) body.run = Number(runs.value);
-    $("expt-model-quick").disabled = true;
-    try {
-      const started = await api("POST", modelsPath(id) + "/quick-fit", body);
-      $("expt-model-name").value = "";
-      $("expt-model-status").textContent =
-        "AuRE is proposing a stack for " + name + "; the Fit panel follows it.";
-      follow(started.job);
-    } catch (error) {
-      $("expt-model-status").textContent = error.message;
-    } finally {
-      load(id);  // the buttons as the sample now stands
-    }
+    if (await quickFit(name, $("expt-model-quick"))) $("expt-model-name").value = "";
   });
 
   // -- starting a fit --------------------------------------------------------
@@ -280,18 +310,62 @@
       ? "step " + current.step + " of " + current.steps.length
       : current.status;
     $("expt-job-cancel").classList.toggle("d-none", !job.running || !TOKEN);
+    $("expt-job-close").classList.toggle("d-none", job.running);
     if (job.running || job.ended === current.status) return;
     job.ended = current.status;
     const result = $("expt-job-result");
-    result.replaceChildren(ENDINGS[current.status] || current.status);
-    if (current.fit_id) {
-      result.append(" Recorded as ", el("a", {
-        href: "/f/" + encodeURIComponent(current.fit_id),
-        className: "mono",
-        text: current.fit_id,
-      }), ".");
+    if (current.same_as) {
+      // Refused, not failed: nothing has changed since that fit.
+      result.replaceChildren(
+        "Nothing has changed since fit ", fitLink(current.same_as),
+        ": the same spec, data, settings and environment, so the result would " +
+        "be the one you have. "
+      );
+      const force = forcedRequest(current);
+      if (force && TOKEN) {
+        const button = el("button", {
+          type: "button",
+          className: "btn btn-sm btn-outline-primary py-0",
+          text: "Run again anyway",
+        });
+        button.addEventListener("click", async function () {
+          button.disabled = true;
+          try {
+            follow((await api("POST", force.path, force.body)).job);
+          } catch (error) {
+            result.append(" " + error.message);
+          }
+        });
+        result.append(button);
+      }
+    } else {
+      result.replaceChildren(ENDINGS[current.status] || current.status);
+      if (current.fit_id) result.append(" Recorded as ", fitLink(current.fit_id), ".");
     }
+    result.append(" ", el("a", { href: "/fits", text: "All fits" }), ".");
     if (shown === current.sample) load(shown);  // its script is generated now
+  }
+
+  function fitLink(fitId) {
+    return el("a", { href: "/f/" + encodeURIComponent(fitId), className: "mono", text: fitId });
+  }
+
+  /* The request that fits the job's model again as its last step did, with
+   * `force`: rebuilt from the step itself, so it works after a reload too. */
+  function forcedRequest(current) {
+    const last = current.steps[current.steps.length - 1] || [];
+    if (last[0] !== "fit" || last[1] !== "run") return null;
+    const body = { force: true };
+    last.slice(2).forEach(function (arg) {
+      const match = /^--(method|steps|samples|burn|note)=(.*)$/.exec(arg);
+      if (!match) return;
+      const value = match[1] === "method" || match[1] === "note" ? match[2] : Number(match[2]);
+      body[match[1]] = value;
+    });
+    return {
+      path: modelsPath(current.sample) + "/" + encodeURIComponent(current.model) + "/fit",
+      body: body,
+    };
   }
 
   function append(text) {
@@ -343,8 +417,16 @@
     }
   });
 
-  // A job started before this page was opened -- or before nrw serve was.
+  $("expt-job-close").addEventListener("click", function () {
+    $("expt-job-panel").classList.add("d-none");
+  });
+
+  // A job started before this page was opened -- or before nrw serve was. One
+  // that has ended is not shown again: the fits it made are in Fits.
   api("GET", "/api/experiment/jobs/current").then(function (payload) {
-    if (payload.job) follow(payload.job);
+    const current = payload.job;
+    if (current && (current.status === "running" || current.status === "detached")) {
+      follow(current);
+    }
   }).catch(function () {});
 })();

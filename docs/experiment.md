@@ -257,10 +257,17 @@ that opened the link `nrw serve` printed can write one.
 ### A quick fit with AuRE
 
 **Quick fit with AuRE** writes a new model whose stack is proposed rather than
-a placeholder. AuRE reads the sample's *Description* and *Details* (and *Fits
-to perform*, as a hypothesis) in `sample.md`. It proposes layers, and fits one
-run on its quick budget. Choose the run when the sample has more than one:
-AuRE's first fit is one measurement.
+a placeholder. AuRE fits one run on its quick budget; choose the run when the
+sample has more than one. From `sample.md` it reads:
+
+- the sample's *Description* and *Details*;
+- *Fits to perform*, as a hypothesis;
+- for the run it fits, its condition in the Measurements table, the sample's
+  *Measurement conditions*, and the notes on that run.
+
+AuRE reads `sample.md` as it is on disk. Edits saved on this page reach the
+file only when you **Apply**, and the Models panel says so when there are some
+it does not have yet.
 
 AuRE's own run is reconnaissance: the fit that counts is the one `nrw fit run`
 records. So the page goes on to import the spec AuRE proposed, generate its
@@ -277,8 +284,18 @@ nrw fit run samples/<id>/models/<name>.py --method=amoeba
 
 AuRE needs a language-model endpoint. Without one, the job stops at `aure run`
 and says how to set one; `nrw check-llm` checks what is configured. AuRE's
-working files stay in `samples/<id>/aure/<name>/`. A name already used for a
-model or an AuRE run is refused.
+working files stay in `samples/<id>/aure/<name>/`.
+
+**Quick fit again** beside a model AuRE proposed asks AuRE again, for example
+after you have added to `sample.md`:
+
+- The new proposal replaces the spec, and is fitted like the first. Both fits
+  stay in **Fits**.
+- Each run of AuRE keeps a folder of its own (`aure/<name>/`, then
+  `aure/<name>-2/`, ...), so earlier runs are never overwritten.
+- A spec you have edited since AuRE proposed it is never replaced, even when
+  the edit is made while AuRE is running. Fit it as it is with **Fit…**, or
+  quick-fit under another name.
 
 AuRE names layers in prose, such as `silicon oxide`. A spec's layer names are
 identifiers, because they are also parameter paths (`silicon_oxide.rho`) and
@@ -315,14 +332,18 @@ time. A script someone edited by hand is refused, not run, so a fit started
 from the page always runs what its spec says.
 
 The **Fit** panel follows the job: its output as it runs, then a link to the
-fit it recorded. One job runs at a time for the project, whichever sample it is
-for. Its output is kept in `.nrw/jobs/`, which git ignores, for the newest 20
-jobs. Like the rest of the page, it can be read by anyone who can open the
-page, link or not.
+fit it recorded, until you close it. It shows the job running now, not the ones
+before it: past fits are on the **Fits** page. One job runs at a time for the
+project, whichever sample it is for. Its output is kept in `.nrw/jobs/`, which
+git ignores, for the newest 20 jobs. Like the rest of the page, it can be read
+by anyone who can open the page, link or not.
 
 Fitting again when nothing has changed -- the spec, the data, the settings --
 is refused, as `nrw fit run` refuses it: the result would be the one you have.
-Tick **run again even if nothing changed** to record a replicate.
+The Fit panel says so, links that fit, and offers **Run again anyway**, which
+records a replicate. **run again even if nothing changed** in the form does the
+same from the start. Notes in `sample.md` are not among what a fit reads: to
+fit what you wrote there, put it in the spec, or ask AuRE again.
 
 **Cancel** stops the fit and every process it started. What the fit had written
 so far stays where it is, and `nrw check` lists it as an interrupted run, as it

@@ -270,10 +270,10 @@ def test_the_fit_is_found_before_the_job_is_seen_to_end(
 ) -> None:
     looking, release = threading.Event(), threading.Event()
 
-    def find(job) -> str:
+    def find(job) -> dict:
         looking.set()
         release.wait(20)
-        return "20260929-120000Z-abcdef01"
+        return {"fit_id": "20260929-120000Z-abcdef01", "same_as": None}
 
     runner = JobRunner(tmp_path, on_finished=find)
     try:
@@ -291,7 +291,7 @@ def test_the_fit_is_found_before_the_job_is_seen_to_end(
 
 
 def test_a_failure_to_find_the_fit_still_ends_the_job(tmp_path: Path, programs) -> None:
-    def find(job) -> str:
+    def find(job) -> dict:
         raise ValueError("the index is not readable")
 
     runner = JobRunner(tmp_path, on_finished=find)

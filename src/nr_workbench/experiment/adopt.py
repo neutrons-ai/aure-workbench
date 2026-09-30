@@ -97,6 +97,9 @@ class ParsedSample:
             does not make.
         notes: The notes on each measurement, by run, read from the entries
             under *Measurement conditions* for runs the table lists.
+        unlisted_notes: Entries for runs the table does not list. The catalog
+            cannot hold them, so they are leftovers too; kept whole here for
+            a reader that wants them anyway -- AuRE's setup, fitting that run.
     """
 
     title: str
@@ -106,6 +109,7 @@ class ParsedSample:
     listed: tuple[int, ...] = ()
     blocking: tuple[str, ...] = ()
     notes: dict[int, str] = field(default_factory=dict)
+    unlisted_notes: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -315,12 +319,14 @@ def parse_sample_md(text: str) -> ParsedSample:
     except CatalogValidationError as exc:
         leftovers.append(f"the title: {exc}")
         title = ""
+    unlisted: dict[int, str] = {}
     for run in sorted(set(notes) - set(listed)):
         # The catalog keeps notes on the runs of this sample; a note for a run
         # the table does not list has nowhere to go, and is said, not dropped.
+        unlisted[run] = notes.pop(run)
         leftovers.append(
             f"a note on run {run}, which the table does not list: "
-            f"{_snippet(notes.pop(run))}"
+            f"{_snippet(unlisted[run])}"
         )
     kept: dict[int, str] = {}
     for run, note in notes.items():
@@ -336,6 +342,7 @@ def parse_sample_md(text: str) -> ParsedSample:
         listed=tuple(listed),
         blocking=tuple(blocking),
         notes=kept,
+        unlisted_notes=unlisted,
     )
 
 
