@@ -323,6 +323,15 @@ def test_a_fit_started_on_the_page_is_followed_to_its_record(
     )
 
     page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+    # It starts at the project's default -- nrw.toml says nothing, so DREAM.
+    assert page.js("document.getElementById('expt-fit-method').value") == "dream"
+    assert "(the project's default)" in page.js(
+        "document.getElementById('expt-fit-method').selectedOptions[0].textContent"
+    )
+    page.js(
+        "{ const m = document.getElementById('expt-fit-method'); m.value = 'amoeba';"
+        " m.dispatchEvent(new Event('change')); }"
+    )
     page.type("expt-fit-steps", "3")
     page.click("expt-fit-run")
 

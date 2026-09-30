@@ -125,9 +125,9 @@
           <div class="fw-semibold mb-1" id="expt-fit-title">Fit</div>
           <div class="d-flex flex-wrap gap-2 align-items-center">
             <select id="expt-fit-method" class="form-select form-select-sm expt-fit-method" aria-label="fitter">
-              <option value="amoeba">amoeba: explores downhill from the start, fast</option>
-              <option value="de">de: explores the whole range</option>
               <option value="dream">dream: samples, for uncertainties</option>
+              <option value="de">de: explores the whole range</option>
+              <option value="amoeba">amoeba: explores downhill from the start, fast</option>
             </select>
             <input id="expt-fit-steps" type="number" min="1" class="form-control form-control-sm expt-fit-number"
                    placeholder="steps" aria-label="steps">
@@ -147,9 +147,12 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-fit-close">Close</button>
           </div>
           <div class="form-text">
-            Leave a box empty for the fitter's default. The spec's script is
-            generated again first; a script edited by hand is refused.
+            The fitter starts at the project's default, and an empty box takes
+            the project's value -- both from nrw.toml [fit] -- else bumps' own.
+            The spec's script is generated again first; a script edited by hand
+            is refused.
           </div>
+          <p id="expt-fit-problem" class="text-danger small mb-0 mt-1 d-none"></p>
         </form>
       </div>
     </div>

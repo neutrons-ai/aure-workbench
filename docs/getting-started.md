@@ -513,9 +513,11 @@ constraints:
     to: ocv2
     paths: [Cu.thickness, CuOx.thickness, Ti.thickness,
             Cu.roughness, CuOx.roughness, THF.roughness]
-
-fit: {method: amoeba, steps: 2000}
 ```
+
+The spec says nothing about how it is fitted: that is `nrw fit run`'s
+options, or the project's `nrw.toml` [fit] (see the README, "Fitting
+options").
 
 Four things in there are doing most of the work.
 

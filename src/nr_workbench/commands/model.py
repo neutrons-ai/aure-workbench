@@ -935,7 +935,6 @@ def _scaffold_document(
                 "in": [s["name"] for s in series],
             }
         )
-    document["fit"] = {"method": "amoeba", "steps": 1000}
     return document
 
 

@@ -635,24 +635,26 @@ class Constraint(_Base):
 
 
 class FitSettings(_Base):
-    """Default fit settings recorded with the model.
+    """A spec's ``fit:`` block. **Not read**: kept so a spec that has one validates.
+
+    It was meant as each model's default fit settings, but nothing ever read
+    it, while ``nrw model new`` and ``nrw aure import`` wrote ``method: amoeba``
+    into every spec -- a setting in plain view that did nothing. A fit's
+    settings come from ``nrw fit run``'s options, the Experiment page's Fit
+    form, and the project's ``nrw.toml`` [fit] (see
+    :mod:`nr_workbench.fitting.settings`). ``nrw model validate`` says so of a
+    spec that still has the block.
 
     Attributes:
-        method: Which fitter, ``amoeba``, ``de`` or ``dream``. See
-            :mod:`nr_workbench.fitters` for why those are the only three.
+        method: A fitter, ``amoeba``, ``de`` or ``dream``, if one is named.
         steps: Maximum optimizer steps.
         samples: DREAM sample count.
         burn: DREAM burn-in.
-        pop: Population size, as a multiplier on the number of free
-            parameters. Used by ``de`` and ``dream``; ignored by ``amoeba``,
-            which has no population. It belongs in the spec rather than only
-            on the command line because it changes what the search covers, so
-            two runs of the same spec at different populations are two
-            different searches and the record should say which was which.
+        pop: Population size.
         seed: Random seed.
     """
 
-    method: str = "amoeba"
+    method: str | None = None
     steps: int | None = None
     samples: int | None = None
     burn: int | None = None
@@ -661,16 +663,12 @@ class FitSettings(_Base):
 
     @field_validator("method")
     @classmethod
-    def _known_fitter(cls, value: str) -> str:
-        """Reject a fitter the tool will not run.
-
-        Checked here as well as at the CLI because a spec's `fit:` block is the
-        default every later `nrw fit run` inherits, so an off-menu choice
-        written once would keep being made silently.
-        """
+    def _known_fitter(cls, value: str | None) -> str | None:
+        """Reject a fitter the tool will not run, even in a block not read:
+        someone reading the spec would take it for the fitter."""
         from nr_workbench.fitters import FITTERS, refuse
 
-        if value not in FITTERS:
+        if value is not None and value not in FITTERS:
             raise ValueError(refuse(value))
         return value
 
@@ -694,7 +692,7 @@ class ModelSpec(_Base):
         constraints: Functional forms across a series.
         trim: Ranges of the data to keep. Later entries win field by field,
             so a global cut can be narrowed for one measurement.
-        fit: Default fit settings.
+        fit: Not read; see :class:`FitSettings`.
         post_build: Verbatim Python appended to the generated script. An escape
             hatch, hash-tracked and flagged -- every use is a schema bug report.
     """

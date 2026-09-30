@@ -200,7 +200,7 @@ the fit absorbs the error into roughness rather than reporting it.
 
 | Task | Command |
 |---|---|
-| Run a fit (spec-generated or hand-written) | `nrw fit run <script.py>` |
+| Run a fit (spec-generated or hand-written) | `nrw fit run <script.py>` -- DREAM unless `--method` or nrw.toml `[fit]` says otherwise |
 | List fits | `nrw ls` |
 | Trace a figure, `.par`, or data file to its fit | `nrw whence <path>` |
 | Compare two fits | `nrw diff <fit_a> <fit_b>` |

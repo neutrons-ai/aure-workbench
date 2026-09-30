@@ -94,4 +94,6 @@ constraints:
       - CuOx.rho
       - Ti.rho
 
-fit: {method: dream, samples: 5000, burn: 2000}
+# How this model is fitted is not part of it: `nrw fit run` takes the fitter
+# from its options, else from the project's nrw.toml [fit] -- DREAM, unless
+# that says otherwise. (A `fit:` block here would not be read.)

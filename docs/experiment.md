@@ -287,16 +287,20 @@ what it renamed, and keeps AuRE's own names as comments at the top of the spec.
 
 ### Fitting a model
 
-**Fit…** beside a spec starts a fit of it. Choose the fitter:
+**Fit…** beside a spec starts a fit of it. The fitter starts at the project's
+default, marked as such: the `method` in `nrw.toml`'s `[fit]`, else **dream**.
+The choices are:
 
-- **amoeba** explores downhill from the starting values, fast. Use it while you
-  are still changing the model.
-- **de** explores the whole range of every parameter. Use it when amoeba stalls
-  on the starting point rather than on the model.
 - **dream** samples. It is the only one that gives uncertainties, and it takes
   **samples** and **burn** as well as **steps**.
+- **de** explores the whole range of every parameter. Use it when amoeba stalls
+  on the starting point rather than on the model.
+- **amoeba** explores downhill from the starting values, fast. Use it while you
+  are still changing the model.
 
-Leave a box empty for the fitter's default. The note, if you give one, heads
+A box left empty takes the project's value from `nrw.toml` (shown in the box
+when it has one), else bumps' default. The README's "Fitting options" section
+has the `[fit]` tables. The note, if you give one, heads
 the fit's `NOTES.md` as why it was run, so it is one line, and does not start
 with `#`. The page runs the same two commands you would, one after the other:
 

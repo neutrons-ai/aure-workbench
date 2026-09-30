@@ -85,12 +85,24 @@ def validate_spec(spec: ModelSpec, root: Path) -> ValidationReport:
     _check_angle_nuisance(spec, report)
     _check_geometry(spec, table, root, report)
     _note_escape_hatches(spec, report)
+    _note_unread_fit_block(spec, report)
 
     report.info.append(
         f"{table.n_experiments} experiment(s), {table.n_free} free parameter(s), "
         f"{len(table.expressions)} constrained value(s)"
     )
     return report
+
+
+def _note_unread_fit_block(spec: ModelSpec, report: ValidationReport) -> None:
+    """A ``fit:`` block reads as the fitter this model uses; it is not."""
+    if "fit" in spec.model_fields_set:
+        report.warnings.append(
+            "the spec's `fit:` block is not read: `nrw fit run` takes the fitter "
+            "and its settings from its options, or else from nrw.toml [fit] "
+            "(DREAM by default). Delete the block, or move what it says to "
+            "nrw.toml."
+        )
 
 
 def _check_materials(spec: ModelSpec, report: ValidationReport) -> None:

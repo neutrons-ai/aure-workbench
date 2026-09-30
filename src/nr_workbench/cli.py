@@ -30,7 +30,7 @@ def _fitter(ctx: click.Context, param: click.Parameter, value: str) -> str:
     looking at the model --- so the refusal carries it.
     """
     del ctx, param
-    if value not in FITTERS:
+    if value is not None and value not in FITTERS:
         raise click.BadParameter(refuse(value))
     return value
 
@@ -538,27 +538,49 @@ def fit_group() -> None:
     "--method",
     metavar="[amoeba|de|dream]",
     callback=_fitter,
-    default="amoeba",
-    show_default=True,
+    default=None,
     help=(
         "amoeba while you are still changing the model, de when amoeba is "
         "stalling on the starting point rather than the model, dream to quote "
-        "a number."
+        "a number. [default: nrw.toml [fit] method, else dream]"
     ),
 )
-@click.option("--steps", type=int, default=None, help="Maximum optimizer steps.")
-@click.option("--samples", type=int, default=None, help="DREAM sample count.")
-@click.option("--burn", type=int, default=None, help="DREAM burn-in.")
-@click.option("--pop", type=int, default=None, help="Population size.")
 @click.option(
-    "--seed", type=int, default=None, help="Random seed, for a reproducible run."
+    "--steps",
+    type=int,
+    default=None,
+    help="Maximum optimizer steps. [default: nrw.toml [fit.<method>], else bumps']",
+)
+@click.option(
+    "--samples",
+    type=int,
+    default=None,
+    help="DREAM sample count. [default: nrw.toml [fit.dream], else 10000]",
+)
+@click.option(
+    "--burn",
+    type=int,
+    default=None,
+    help="DREAM burn-in. [default: nrw.toml [fit.dream], else 100]",
+)
+@click.option(
+    "--pop",
+    type=int,
+    default=None,
+    help="Population size, for de and dream. [default: nrw.toml, else 10]",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    help="Random seed, for a reproducible run. [default: nrw.toml [fit], else none]",
 )
 @click.option(
     "--parallel",
     type=int,
-    default=0,
-    show_default=True,
-    help="CPUs to use; 0 means all of them, 1 forces serial.",
+    default=None,
+    help="CPUs to use; 0 means all of them, 1 forces serial. "
+    "[default: nrw.toml [fit], else 0]",
 )
 @click.option(
     "--plots",

@@ -24,6 +24,8 @@
 
   let shown = null;  // the sample whose models are shown
   let fitting = null;  // the model the fit form is for
+  // The project's nrw.toml [fit], as the last listing gave it.
+  let fitDefaults = { method: "dream", settings: {}, problem: null };
   // offset null: not read yet, so the first read is the log's last part.
   const job = { id: null, offset: null, running: false, timer: null, ended: null };
 
@@ -46,6 +48,7 @@
   }
 
   function render(payload) {
+    if (payload.fit) fitDefaults = payload.fit;
     $("expt-models").classList.remove("d-none");
     $("expt-models-title").textContent = "Models of " + payload.sample;
     const list = $("expt-models-list");
@@ -171,17 +174,39 @@
   function openFit(name) {
     fitting = name;
     $("expt-fit-title").textContent = "Fit " + name;
+    // The project's default fitter, said so beside its name.
+    const select = $("expt-fit-method");
+    Array.from(select.options).forEach(function (option) {
+      if (!option.dataset.label) option.dataset.label = option.textContent;
+      option.textContent = option.dataset.label +
+        (option.value === fitDefaults.method ? " (the project's default)" : "");
+    });
+    select.value = fitDefaults.method;
+    const problem = $("expt-fit-problem");
+    problem.textContent = fitDefaults.problem ? "nrw.toml: " + fitDefaults.problem : "";
+    problem.classList.toggle("d-none", !fitDefaults.problem);
+    showMethodSettings();
     $("expt-fit-form").classList.remove("d-none");
-    $("expt-fit-method").focus();
+    select.focus();
   }
 
-  function showDreamSettings() {
-    const dream = $("expt-fit-method").value === "dream";
+  /* The boxes the chosen fitter takes, each empty box showing what nrw.toml
+   * would give it. */
+  function showMethodSettings() {
+    const method = $("expt-fit-method").value;
+    const dream = method === "dream";
     $("expt-fit-samples").classList.toggle("d-none", !dream);
     $("expt-fit-burn").classList.toggle("d-none", !dream);
+    const configured = (fitDefaults.settings || {})[method] || {};
+    [["expt-fit-steps", "steps"], ["expt-fit-samples", "samples"], ["expt-fit-burn", "burn"]]
+      .forEach(function ([id, key]) {
+        $(id).placeholder = key in configured
+          ? key + " (nrw.toml: " + configured[key] + ")"
+          : key;
+      });
   }
 
-  $("expt-fit-method").addEventListener("change", showDreamSettings);
+  $("expt-fit-method").addEventListener("change", showMethodSettings);
   $("expt-fit-close").addEventListener("click", function () {
     $("expt-fit-form").classList.add("d-none");
     fitting = null;

@@ -23,6 +23,13 @@ from typing import Any
 from nr_workbench.aure_setup import OUTPUT_DIR, SETUP_FILE, setup_dir
 from nr_workbench.experiment.model import CatalogValidationError, validate_sample_id
 from nr_workbench.fitters import FITTERS, refuse
+from nr_workbench.fitting.settings import (
+    FIT_LIMITS,
+    METHOD_SETTINGS,
+    FitDefaults,
+    FitSettingsError,
+    read_fit_defaults,
+)
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.samples import validate_model_name
 from nr_workbench.web.experiment import RequestError, require_writable
@@ -36,16 +43,8 @@ MODEL_NEW_TIMEOUT = 120.0
 #: and ``nrw aure import`` write them.
 MODELS_DIR = "models"
 
-#: What the page may ask a fitter for. Generous, so they never decide an
-#: analysis; finite, so a typo is not a week of CPU on a shared node.
-FIT_LIMITS = {
-    "steps": (1, 1_000_000),
-    "samples": (1, 100_000_000),
-    "burn": (0, 1_000_000),
-}
-
-#: Settings only DREAM takes: the others optimize, and draw no samples.
-DREAM_ONLY = ("samples", "burn")
+#: The fitter settings the Fit form offers; the rest come from nrw.toml.
+FORM_SETTINGS = ("steps", "samples", "burn")
 
 #: A fit's note, one line: it is stored in the record, and heads its notes.
 MAX_FIT_NOTE = 500
@@ -103,6 +102,7 @@ class ModelsData:
             for spec in sorted((directory / MODELS_DIR).glob("*.yaml"))
         ]
         found = self._measured(sample_id)
+        defaults, problem = self._fit_defaults()
         return {
             "sample": sample_id,
             "exists": directory.is_dir(),
@@ -113,6 +113,12 @@ class ModelsData:
             # Whether it is installed, found without importing it: AuRE brings
             # the whole language-model stack, seconds of it, into the server.
             "aure": is_available(),
+            # What the Fit form starts from: the project's own nrw.toml.
+            "fit": {
+                "method": defaults.method,
+                "settings": {m: defaults.settings_for(m) for m in FITTERS},
+                "problem": problem,
+            },
         }
 
     def create(self, sample_id: str, name: Any) -> dict[str, Any]:
@@ -171,9 +177,11 @@ class ModelsData:
         Args:
             sample_id: The sample.
             name: The model, ``models/<name>.yaml``.
-            request: ``method`` (amoeba, de or dream), and optionally
-                ``steps``, DREAM's ``samples`` and ``burn``, a one-line
-                ``note``, and ``force`` to run again what already ran.
+            request: ``method`` (amoeba, de or dream; the project's default
+                from nrw.toml when absent), and optionally ``steps``, DREAM's
+                ``samples`` and ``burn``, a one-line ``note``, and ``force``
+                to run again what already ran. A setting not given is left to
+                ``nrw fit run``, which takes it from nrw.toml, else bumps.
 
         Returns:
             ``{"job": ...}``, the job started.
@@ -181,6 +189,7 @@ class ModelsData:
         Raises:
             WritesDisabledError: The server was started read-only.
             RequestError: A setting is not usable.
+            ModelRefused: The project's nrw.toml [fit] cannot be read.
             ModelNotFound: There is no such spec.
             JobBusy: A job is running already.
         """
@@ -190,21 +199,27 @@ class ModelsData:
         spec = directory / MODELS_DIR / f"{name}.yaml"
         if not spec.is_file():
             raise ModelNotFound(f"{self._shown(spec)} does not exist.")
-        method = request.get("method", "amoeba")
+        defaults, problem = self._fit_defaults()
+        if problem:
+            # Said now, not by the job a moment later: `nrw fit run` reads it too.
+            raise ModelRefused(f"nrw.toml cannot be used to fit: {problem}")
+        method = request.get("method") or defaults.method
         if not isinstance(method, str):
             raise RequestError(f"method must be text, not {method!r}.")
         if method not in FITTERS:
             raise RequestError(refuse(method))
         # `--option=value`, one argument each: a value is never read as an option.
         options: list[str] = []
-        for key, (low, high) in FIT_LIMITS.items():
+        for key in FORM_SETTINGS:
             value = request.get(key)
             if value is None or value == "":
                 continue
-            if key in DREAM_ONLY and method != "dream":
+            if key not in METHOD_SETTINGS[method]:
                 raise RequestError(
-                    f"{key} is a DREAM setting, and {method} draws no samples."
+                    f"{key} is not a {method} setting: {method} takes "
+                    f"{', '.join(METHOD_SETTINGS[method])}."
                 )
+            low, high = FIT_LIMITS[key]
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
@@ -359,6 +374,15 @@ class ModelsData:
             return None
         fit_id = PurePosixPath(found[-1].group("directory")).name
         return fit_id if FitIndex(self.layout.index_file).find(fit_id) else None
+
+    def _fit_defaults(self) -> tuple[FitDefaults, str | None]:
+        """What nrw.toml says about fitting; and why not, when it cannot say."""
+        from nr_workbench.project.config import ProjectConfigError, load_config
+
+        try:
+            return read_fit_defaults(load_config(self.root).raw), None
+        except (ProjectConfigError, FitSettingsError) as exc:
+            return FitDefaults(), str(exc)
 
     def _measured(self, sample_id: str) -> Any:
         """The sample's measurements as the commands see them: the register, or

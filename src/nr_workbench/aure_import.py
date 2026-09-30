@@ -529,5 +529,4 @@ def to_spec(
     }
     document["states"] = states
     document["parameters"] = _free_parameters(names, model)
-    document["fit"] = {"method": "amoeba", "steps": 1000}
     return document

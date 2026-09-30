@@ -192,6 +192,33 @@ def test_model_new_refuses_a_name_that_is_a_path(
     assert sorted(p for p in (project / "samples").rglob("*") if p.is_file()) == before
 
 
+def test_a_new_spec_says_nothing_about_how_it_is_fitted(
+    project: Path, monkeypatch
+) -> None:
+    """Its `fit:` block was never read, yet said `method: amoeba` in every spec:
+    how a model is fitted is nrw.toml's, or the command line's."""
+    import yaml
+
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+
+    assert "fit" not in yaml.safe_load(spec.read_text(encoding="utf-8"))
+
+
+def test_validate_says_a_specs_fit_block_is_not_read(
+    project: Path, monkeypatch
+) -> None:
+    run(project, monkeypatch, "model", "new", "S1", "--name", "m")
+    spec = project / "samples" / "S1" / "models" / "m.yaml"
+    with spec.open("a", encoding="utf-8") as handle:
+        handle.write("fit: {method: amoeba, steps: 1000}\n")
+
+    result = run(project, monkeypatch, "model", "validate", str(spec))
+
+    assert result.exit_code == 0, result.output
+    assert "`fit:` block is not read" in result.output
+
+
 def test_model_generate_leaves_a_script_that_would_not_change_as_it_is(
     project: Path, monkeypatch
 ) -> None:

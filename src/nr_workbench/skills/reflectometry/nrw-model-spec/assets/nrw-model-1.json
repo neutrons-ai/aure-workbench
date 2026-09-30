@@ -147,12 +147,19 @@
     },
     "FitSettings": {
       "additionalProperties": false,
-      "description": "Default fit settings recorded with the model.\n\nAttributes:\n    method: Which fitter, ``amoeba``, ``de`` or ``dream``. See\n        :mod:`nr_workbench.fitters` for why those are the only three.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    pop: Population size, as a multiplier on the number of free\n        parameters. Used by ``de`` and ``dream``; ignored by ``amoeba``,\n        which has no population. It belongs in the spec rather than only\n        on the command line because it changes what the search covers, so\n        two runs of the same spec at different populations are two\n        different searches and the record should say which was which.\n    seed: Random seed.",
+      "description": "A spec's ``fit:`` block. **Not read**: kept so a spec that has one validates.\n\nIt was meant as each model's default fit settings, but nothing ever read\nit, while ``nrw model new`` and ``nrw aure import`` wrote ``method: amoeba``\ninto every spec -- a setting in plain view that did nothing. A fit's\nsettings come from ``nrw fit run``'s options, the Experiment page's Fit\nform, and the project's ``nrw.toml`` [fit] (see\n:mod:`nr_workbench.fitting.settings`). ``nrw model validate`` says so of a\nspec that still has the block.\n\nAttributes:\n    method: A fitter, ``amoeba``, ``de`` or ``dream``, if one is named.\n    steps: Maximum optimizer steps.\n    samples: DREAM sample count.\n    burn: DREAM burn-in.\n    pop: Population size.\n    seed: Random seed.",
       "properties": {
         "method": {
-          "default": "amoeba",
-          "title": "Method",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
         },
         "steps": {
           "anyOf": [

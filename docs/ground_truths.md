@@ -3549,3 +3549,39 @@ Repeats are then made unique, as they were before. The import prints what it
 renamed, and the spec keeps AuRE's names as comments, so it can still be read
 against AuRE's report. The test model is the one AuRE reported for that
 bilayer.
+
+### 2026-09-30: fit settings live in nrw.toml, and the default fitter is DREAM
+
+A fit's settings now come from the first of these that sets them:
+
+1. `nrw fit run`'s options, or the Experiment page's Fit form;
+2. the project's `nrw.toml`: `[fit]` for the fitter, `seed` and `parallel`,
+   and one table per fitter for its own settings (`[fit.dream]`, `[fit.de]`,
+   `[fit.amoeba]`);
+3. bumps' default.
+
+When nothing names a fitter it is DREAM. `fitting/settings.py` is the one
+place this is decided. The README's "Fitting options" section is the user's
+account of it, including how `nrw.toml` and `~/.aure` divide the work.
+
+**A spec's `fit:` block was never read.** `FitSettings` said it was the
+default "every later `nrw fit run` inherits", but nothing consumed it. Every
+spec `nrw model new` or `nrw aure import` wrote carried
+`fit: {method: amoeba, steps: 1000}`: a setting in plain view that did
+nothing. It was not wired in now either, because wiring it in would have made
+every existing spec say "amoeba" and override the project's new DREAM default.
+New specs no longer get the block, and `nrw model validate` warns about one it
+finds. A per-model override could be added later as something a person writes
+on purpose, not as a scaffold default.
+
+**A fitter's table applies only to that fitter.** bumps ignores settings a
+fitter does not take, but the fit record keeps them. DREAM's `samples` in an
+amoeba fit would therefore make two identical amoeba fits read as different
+runs. A setting a fitter does not take is refused, in `nrw.toml` and on the
+command line alike.
+
+**AuRE's fits are not configured here.** `--budget quick` pins them in the
+setup. Otherwise AuRE reads `FIT_METHOD`, `FIT_STEPS` and `FIT_BURN` from the
+environment nrw passes on: the shell, then the project's `.env`, `~/.nrw`,
+`~/.aure`. nrw loads all keys from those files, not only its own. nrw pins
+AuRE's physics knobs for every run, over the shell's too.

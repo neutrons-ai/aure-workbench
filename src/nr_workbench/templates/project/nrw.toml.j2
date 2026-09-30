@@ -37,6 +37,40 @@ domain = {{ audience.domain|toml }}
 role = {{ audience.role|toml }}
 notes = {{ audience.notes|toml }}
 
+# How a model is fitted when the command line does not say. `nrw fit run`
+# and the Fit button on the Experiment page read these; an option given there
+# -- `nrw fit run model.py --method amoeba` -- wins over what is set here, and
+# a setting set nowhere is bumps' own default, shown beside it. Every fit's
+# record keeps what it ran with, wherever that came from.
+#
+#   method = "dream"   samples the posterior: the one fitter that gives
+#                      uncertainties. nrw's default.
+#            "de"      searches the whole range of every parameter.
+#            "amoeba"  walks downhill from the starting values; fast, while a
+#                      model is still changing.
+#
+# A fitter's own settings go in its own table, and apply only to fits with
+# that fitter. To set one, remove the `# ` from its line and from its table's
+# [...] line. This is not where AuRE's settings live: see the README, "Fitting
+# options".
+#
+# [fit]
+# method = "dream"
+# seed = 12345       # a fixed seed makes a fit repeatable; none by default
+# parallel = 0       # CPUs to use: 0 means all of them, 1 serial
+#
+# [fit.dream]
+# samples = 10000
+# burn = 100
+# pop = 10
+#
+# [fit.de]
+# steps = 1000
+# pop = 10
+#
+# [fit.amoeba]
+# steps = 1000
+
 # Filename and instrument conventions for REF_L / BL-4B.
 #
 # READ THIS BEFORE EDITING: the glob and dq keys below are DESCRIPTIVE. Nothing

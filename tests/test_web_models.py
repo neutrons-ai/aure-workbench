@@ -486,3 +486,58 @@ def test_the_runs_aure_can_fit_are_the_ones_the_commands_see(
 
     assert listed["runs"] == [100001, 100005]
     assert (empty["runs"], empty["has_data"]) == ([], False)
+
+
+# --------------------------------------------------------------------------
+# The project's own fit settings
+# --------------------------------------------------------------------------
+
+
+def fit_settings(project: Path, text: str) -> None:
+    with (project / "nrw.toml").open("a", encoding="utf-8") as handle:
+        handle.write("\n" + text)
+
+
+def test_the_fit_form_starts_from_the_projects_nrw_toml(app, project: Path) -> None:
+    fit_settings(project, '[fit]\nmethod = "de"\n[fit.dream]\nsamples = 20000\n')
+
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+
+    assert listed["fit"]["method"] == "de"
+    assert listed["fit"]["settings"]["dream"] == {"samples": 20000}
+    assert listed["fit"]["problem"] is None
+
+
+def test_the_fit_form_starts_at_dream_when_nrw_toml_says_nothing(app) -> None:
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+
+    assert listed["fit"]["method"] == "dream"
+
+
+def test_a_fit_asked_for_without_a_fitter_uses_the_projects(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        jobs_module, "nrw_command", lambda *args: [sys.executable, "-c", "pass"]
+    )
+    fit_settings(project, '[fit]\nmethod = "de"\n')
+    spec_of(project)
+
+    started(fit(writer, app, "S1", "oxide", {}))
+
+    assert "--method=de" in job_ended(writer)["log"]
+
+
+def test_no_fit_starts_while_nrw_toml_fit_cannot_be_read(
+    app, writer, project: Path
+) -> None:
+    fit_settings(project, '[fit]\nmethod = "lm"\n')
+    spec_of(project)
+
+    listed = app.test_client().get("/api/experiment/samples/S1/models").json
+    response = fit(writer, app, "S1", "oxide", {"method": "amoeba"})
+
+    assert "not available" in listed["fit"]["problem"]
+    assert response.status_code == 409
+    assert "nrw.toml" in response.json["error"]
+    assert app.config["NRW_MODELS"].jobs.current() is None
