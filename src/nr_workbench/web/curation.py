@@ -108,8 +108,9 @@ class CurationData:
 
         index = FitIndex(self.layout.index_file)
         entry = index.find(fit_id) or {}
-        state = curation.curation_of(index.entries()).get(fit_id, curation.NONE)
-        holder = index.current_label(curation.FINAL, sample=entry.get("sample"))
+        replayed = curation.replay(index.entries())
+        state = replayed.of(fit_id)
+        holder = replayed.holder(entry.get("sample"), curation.FINAL)
         refusal = None
         if state.discarded and not state.deleted:
             try:

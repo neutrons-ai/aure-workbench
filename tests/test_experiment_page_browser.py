@@ -370,6 +370,15 @@ def test_a_fit_started_on_the_page_is_followed_to_its_record(
     assert "$ nrw fit run samples/S1/models/oxide.py" in page.text("expt-job-log")
     assert page.text("expt-job-state") == "ok"
 
+    # The fit's own page, under the policy that keeps its write token: a real
+    # fit's WebGL plot draws there (it needs 'unsafe-eval'), with no error.
+    page.goto(f"{site.url}{href}")
+    page.wait_for(
+        "document.querySelector('#plot-fit canvas') !== null",
+        what="the fit's plot",
+        timeout=30,
+    )
+
 
 def test_a_fit_is_cancelled_from_the_page(
     page: Page, site: Site, project: Path, monkeypatch

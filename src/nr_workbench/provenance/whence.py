@@ -422,12 +422,8 @@ def _fit_producing_identical_bytes(
 
 
 def _promotion_for(fit_id: str, index: FitIndex) -> dict[str, Any] | None:
-    """Return the promotion currently pointing at ``fit_id``, if any."""
-    for entry in reversed(index.promotions()):
-        if entry.get("fit_id") == fit_id:
-            label = entry.get("label")
-            current = index.current_label(str(label), sample=entry.get("sample"))
-            if current and current.get("fit_id") == fit_id:
-                return entry
-            return None
-    return None
+    """Return a promotion ``fit_id`` holds now, ``final`` first, if any."""
+    from nr_workbench.provenance.curation import FINAL, replay
+
+    held = replay(index.entries()).of(fit_id).promotions
+    return held.get(FINAL) or next(iter(held.values()), None)

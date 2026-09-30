@@ -430,11 +430,12 @@ def collect_problems(
     Returns:
         ``(fits_checked, problems)``.
     """
-    from nr_workbench.provenance.curation import curation_of
+    from nr_workbench.provenance.curation import replay
 
     problems: list[dict[str, str]] = []
     checked = 0
-    curated = curation_of(index.entries())
+    curated_state = replay(index.entries())
+    curated = curated_state.fits
 
     for entry in index.fits():
         fit_id = str(entry.get("fit_id", ""))
@@ -494,11 +495,7 @@ def collect_problems(
                 }
             )
 
-    for promotion in index.promotions():
-        label = str(promotion.get("label"))
-        current = index.current_label(label, sample=promotion.get("sample"))
-        if current is None or current.get("fit_id") != promotion.get("fit_id"):
-            continue
+    for (_, label), promotion in curated_state.holders.items():
         if index.find(str(promotion.get("fit_id"))) is None:
             problems.append(
                 {
@@ -951,11 +948,11 @@ def check_reported_finality(
         One problem per claimed-but-unpromoted fit.
     """
     from nr_workbench.notes import FIT_ID_PATTERN
+    from nr_workbench.provenance.curation import replay
 
+    # Every sample's labelled fits, not the project's last one promoted.
     promoted = {
-        str(entry.get("fit_id"))
-        for label in {str(e.get("label")) for e in index.promotions()}
-        if (entry := index.current_label(label)) is not None
+        fit_id for fit_id, state in replay(index.entries()).fits.items() if state.labels
     }
 
     problems: list[dict[str, str]] = []

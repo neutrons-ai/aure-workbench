@@ -319,15 +319,30 @@ def test_index_resolves_a_fit_id_prefix(tmp_path: Path) -> None:
     assert len(index.resolve("20260805-1403")) == 1
 
 
-def test_current_label_returns_the_latest_promotion(tmp_path: Path) -> None:
+def test_a_label_is_held_by_the_latest_promotion_of_its_own_sample(
+    tmp_path: Path,
+) -> None:
+    from nr_workbench.provenance.curation import replay
+
     index = FitIndex(tmp_path / "index.jsonl")
-    index.append({"fit_id": "first", "label": "final"}, event=EVENT_PROMOTE)
-    index.append({"fit_id": "second", "label": "final"}, event=EVENT_PROMOTE)
+    index.append(
+        {"fit_id": "first", "sample": "S1", "label": "final"}, event=EVENT_PROMOTE
+    )
+    index.append(
+        {"fit_id": "other", "sample": "S2", "label": "final"}, event=EVENT_PROMOTE
+    )
+    index.append(
+        {"fit_id": "second", "sample": "S1", "label": "final"}, event=EVENT_PROMOTE
+    )
+    index.append({"fit_id": "loose", "label": "final"}, event=EVENT_PROMOTE)
 
-    current = index.current_label("final")
+    state = replay(index.entries())
 
-    assert current is not None
-    assert current["fit_id"] == "second"
+    assert state.holder("S1")["fit_id"] == "second"
+    assert state.holder("S2")["fit_id"] == "other"
+    # A fit with no sample holds its own slot, and takes no sample's.
+    assert state.holder(None)["fit_id"] == "loose"
+    assert state.of("first").labels == ()
 
 
 def test_superseded_promotions_stay_in_the_index(tmp_path: Path) -> None:

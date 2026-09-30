@@ -53,8 +53,9 @@ def run_curate(
             raise click.ClickException(f"No such action: {action!r}.")
     except curation.CurationRefused as exc:
         raise click.ClickException(str(exc)) from exc
+    # The whole id: a prefix typed names the fit, and the reply says which.
     click.echo(
-        f"{said} {fit_id}." if changed else f"Nothing to do: {fit_id} is so already."
+        f"{said} {changed}." if changed else f"Nothing to do: {fit_id} is so already."
     )
 
 
@@ -67,13 +68,21 @@ def _delete(layout: ProjectLayout, fit_id: str, *, yes: bool) -> None:
     if not yes:
         files = [p for p in directory.rglob("*") if p.is_file()]
         size = sum(p.stat().st_size for p in files) / 1e6
+        notes = (
+            " -- its NOTES.md, what was written about it, included"
+            if (directory / "NOTES.md").is_file()
+            else ""
+        )
         click.echo(
-            f"  This deletes {directory.relative_to(layout.root)}/: {len(files)} "
-            f"file(s), {size:.1f} MB.\n  The record that the fit ran stays in "
-            "the index."
+            f"  This deletes {directory.relative_to(layout.root).as_posix()}/: "
+            f"{len(files)} file(s), {size:.1f} MB{notes}.\n  The record that the "
+            "fit ran stays in the index."
         )
         if not click.confirm("  Delete them?", default=False):
             click.echo("  Nothing deleted.")
             return
-    removed = curation.delete_files(layout, fit_id)
+    try:
+        removed = curation.delete_files(layout, fit_id)
+    except curation.CurationRefused as exc:
+        raise click.ClickException(str(exc)) from exc
     click.echo(f"Deleted {removed.as_posix()}/.")

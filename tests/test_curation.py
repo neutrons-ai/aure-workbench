@@ -51,12 +51,19 @@ def recorded(
     project: Path,
     fit_id: str,
     *,
-    sample: str = "S1",
+    sample: str | None = "S1",
     status: str = "ok",
     inputs: tuple[str, ...] = (),
 ) -> Path:
-    """A fit as `nrw fit run` leaves one: its entry, its directory, its inputs."""
-    directory = project / "samples" / sample / "results" / fit_id
+    """A fit as `nrw fit run` leaves one: its entry, its directory, its inputs.
+
+    With no sample, where a script run from outside samples/ records it.
+    """
+    directory = (
+        project / "samples" / sample / "results" / fit_id
+        if sample
+        else project / "results" / fit_id
+    )
     directory.mkdir(parents=True)
     # What the pages read of a real one: its chi-squared, and how many free.
     (directory / "manifest.json").write_text(
@@ -111,7 +118,7 @@ def test_each_fit_is_what_was_last_said_about_it(project: Path) -> None:
     assert said[A] == curation.Curation()  # unstarred, restored
     assert said[B].starred is True
     # Saying it again adds nothing to the history.
-    assert curation.star(layout, B) is False
+    assert curation.star(layout, B) == ""
     assert len(events(project, "star")) == 2
     assert all(e["who"] and e["at"] for e in events(project, "star"))
 
@@ -168,7 +175,7 @@ def test_a_discarded_fit_keeps_every_file_and_its_reason(project: Path) -> None:
     said = curation.curation_of(index_of(project).entries())[A]
     assert said.discarded["reason"] == "wrong model"
     assert (directory / "manifest.json").is_file()
-    assert curation.restore(curation_layout, A) is True
+    assert curation.restore(curation_layout, A) == A  # the whole id, as changed
 
 
 @pytest.mark.parametrize(
@@ -323,7 +330,8 @@ def test_the_fit_commands_curate_and_nrw_ls_leaves_the_discarded_out(
     assert starred.exit_code == 0 and "Starred" in starred.output
     assert early.exit_code != 0 and "first" in early.output
     assert discarded.exit_code == 0, discarded.output
-    assert f"{A}" in listed.output and "★" in listed.output
+    row = next(line for line in listed.output.splitlines() if A in line)
+    assert row.rstrip().endswith("★")  # on its own row, not only in the legend
     assert B not in listed.output and "nrw ls --all" in listed.output
     assert f"{B}" in everything.output and "(discarded)" in everything.output
     assert deleted.exit_code == 0, deleted.output
@@ -358,6 +366,7 @@ def test_nrw_ls_marks_each_samples_final_fit(project: Path, monkeypatch) -> None
         if line.strip().startswith("2026")
     ]
 
+    assert len(rows) == 2
     assert all(line.rstrip().endswith("*") for line in rows), rows
 
 
@@ -526,3 +535,311 @@ def test_the_fits_list_keeps_the_discarded_behind_a_toggle(
     assert page.count("data-discarded") == 1
     sample = writer.get("/s/S1").get_data(as_text=True)
     assert A in sample and B not in sample
+
+
+# --------------------------------------------------------------------------
+# What the reviews found
+# --------------------------------------------------------------------------
+
+
+def cited_by_another_samples_report(project: Path) -> None:
+    reports = project / "samples" / "S2" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "compare-technical.md").write_text(f"# S2\n\nAgainst S1's {A}.\n")
+
+
+def read_by_another_samples_figure(project: Path) -> None:
+    reports = project / "samples" / "S2" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "p.py.figures.json").write_text(json.dumps({"fits": [A]}))
+
+
+def read_by_a_project_figure(project: Path) -> None:
+    reports = project / "reports"
+    reports.mkdir()
+    (reports / "p.py.figures.json").write_text(json.dumps({"fits": [A]}))
+
+
+def cited_by_a_summary_only(project: Path) -> None:
+    # The technical tier does not cite it; the plain summary does.
+    reports = project / "samples" / "S1" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "summary-technical.md").write_text("# S1\n\nNothing final yet.\n")
+    (reports / "summary-plain.md").write_text(f"# S1\n\nThe film is 80 A ({A}).\n")
+
+
+def unreadable_figure(project: Path) -> None:
+    reports = project / "samples" / "S1" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "p.py.figures.json").write_text("{not json")
+
+
+@pytest.mark.parametrize(
+    ("use", "said"),
+    [
+        (cited_by_another_samples_report, "compare-technical.md"),
+        (read_by_another_samples_figure, "samples/S2/reports/p.py.figures.json"),
+        (read_by_a_project_figure, "the figures of reports/p.py.figures.json"),
+        (cited_by_a_summary_only, "summary-plain.md"),
+        # A guard on a deletion does not fail open.
+        (unreadable_figure, "which cannot be read"),
+    ],
+)
+def test_files_used_anywhere_in_the_project_are_never_deleted(
+    project: Path, use, said: str
+) -> None:
+    (project / "samples" / "S2").mkdir(exist_ok=True)
+    directory = recorded(project, A)
+    use(project)
+    layout = layout_of(project)
+    curation.discard(layout, A, reason="superseded")
+
+    with pytest.raises(curation.CurationRefused, match="Its files stay") as refused:
+        curation.delete_files(layout, A)
+
+    assert said in str(refused.value)
+    assert (directory / "manifest.json").is_file()
+
+
+def test_a_fit_with_no_sample_is_final_in_a_slot_of_its_own(
+    app, writer, project: Path
+) -> None:
+    recorded(project, A)
+    recorded(project, C, sample=None)  # a script run from outside samples/
+    layout = layout_of(project)
+    curation.promote(layout, A, reason="S1's answer")
+
+    promotion = curation.promote(layout, C, reason="the loose one's")
+
+    assert promotion["supersedes"] is None
+    assert events(project, "supersede") == []
+    said = curation.curation_of(index_of(project).entries())
+    assert (said[A].labels, said[C].labels) == (("final",), ("final",))
+    assert writer.get(f"/f/{C}").status_code == 200
+
+
+def test_another_samples_final_fit_is_not_this_samples(
+    app, writer, project: Path
+) -> None:
+    recorded(project, A)
+    recorded(project, B, sample="S2")
+    curation.promote(layout_of(project), B, reason="S2's answer")
+
+    state = app.config["NRW_CURATION"].state(A)
+
+    assert state["final"] is None  # S1 has none: B is S2's
+
+
+def test_a_restored_fit_is_listed_starred_and_finalized_again(
+    app, writer, project: Path, monkeypatch
+) -> None:
+    recorded(project, A)
+    post(writer, app, A, "discard", {"reason": "hasty"})
+
+    restored = post(writer, app, A, "restore")
+    starred = post(writer, app, A, "star", {"starred": True})
+    unstarred = nrw(project, monkeypatch, "fit", "unstar", A)
+    finalized = post(writer, app, A, "finalize", {"reason": "it held up"})
+    discarded = post(writer, app, A, "discard", {"reason": "again"})
+
+    assert (
+        restored.status_code == 200 and restored.json["curation"]["discarded"] is None
+    )
+    assert starred.json["curation"]["starred"] is True
+    assert "Unstarred" in unstarred.output
+    assert finalized.status_code == 200, finalized.json
+    assert discarded.status_code == 409  # the answer, now
+
+
+def test_restoring_from_the_terminal_says_which_fit(project: Path, monkeypatch) -> None:
+    recorded(project, A)
+    nrw(project, monkeypatch, "fit", "discard", A[-8:], "--reason", "hasty")
+
+    restored = nrw(project, monkeypatch, "fit", "restore", A[-8:])
+
+    assert restored.exit_code == 0, restored.output
+    assert f"Restored {A}." in restored.output  # the whole id, for a prefix typed
+
+
+def test_only_a_successful_fit_is_finalized(app, writer, project: Path) -> None:
+    recorded(project, A, status="failed")
+
+    with pytest.raises(curation.CurationRefused, match="Only a successful fit"):
+        curation.promote(layout_of(project), A, reason="looks right")
+    refused = post(writer, app, A, "finalize", {"reason": "looks right"})
+
+    assert refused.status_code == 409
+    # It can still be set aside, and its files freed.
+    assert post(writer, app, A, "discard", {"reason": "crashed"}).status_code == 200
+    assert post(writer, app, A, "delete", {"confirm": A}).status_code == 200
+
+
+def test_a_label_other_than_final_does_not_keep_a_fit_from_being_discarded(
+    project: Path,
+) -> None:
+    recorded(project, A)
+    layout = layout_of(project)
+    curation.promote(layout, A, label="best", reason="the best so far")
+
+    assert curation.discard(layout, A, reason="a better one came") == A
+
+
+def test_nrw_check_says_nothing_of_a_discarded_fit_whose_inputs_changed(
+    project: Path,
+) -> None:
+    from nr_workbench.commands.provenance_cmd import collect_problems
+
+    data = project / "samples" / "S1" / "data" / "steady" / "REFL_1_combined.txt"
+    data.parent.mkdir(parents=True, exist_ok=True)
+    data.write_text("0.01 1.0 0.1\n")
+    recorded(project, A, inputs=(data.relative_to(project).as_posix(),))
+    data.write_text("0.01 2.0 0.1\n")
+    curation.discard(layout_of(project), A, reason="set aside")
+
+    _, problems = collect_problems(layout_of(project), index_of(project))
+
+    assert [p for p in problems if p["fit_id"] == A] == []
+
+
+def test_a_fit_is_curated_by_its_whole_id_beside_a_same_second_replicate(
+    project: Path,
+) -> None:
+    recorded(project, A)
+    recorded(project, A + "-2")  # `create_unique` names a replicate so
+
+    assert curation.star(layout_of(project), A) == A
+    assert curation.curation_of(index_of(project).entries())[A].starred
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symbolic links need privileges")
+@pytest.mark.parametrize("linked", ["results", "sample"])
+def test_a_link_anywhere_on_the_way_to_a_fit_is_never_deleted_through(
+    project: Path, tmp_path: Path, linked: str
+) -> None:
+    import shutil
+
+    elsewhere = tmp_path / "scratch-disk"
+    elsewhere.mkdir()
+    sample = project / "samples" / "S1"
+    if linked == "results":
+        (elsewhere / A).mkdir()
+        (elsewhere / A / "manifest.json").write_text("{}")
+        shutil.rmtree(sample / "results", ignore_errors=True)
+        (sample / "results").symlink_to(elsewhere)
+    else:
+        (elsewhere / "results" / A).mkdir(parents=True)
+        (elsewhere / "results" / A / "manifest.json").write_text("{}")
+        shutil.rmtree(sample)
+        sample.symlink_to(elsewhere)
+    index_of(project).append({"fit_id": A, "sample": "S1", "status": "ok"})
+    layout = layout_of(project)
+    curation.discard(layout, A, reason="planted")
+
+    with pytest.raises(curation.CurationRefused, match="not a fit directory"):
+        curation.delete_files(layout, A)
+
+    assert any(elsewhere.rglob("manifest.json"))
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"fit_id": A, "sample": "../../elsewhere"},
+        {"fit_id": "..", "sample": "S1"},
+        {"fit_id": "../../elsewhere/results/x", "sample": "S1"},
+    ],
+)
+def test_an_index_entry_naming_a_directory_elsewhere_names_nothing(
+    project: Path, tmp_path: Path, entry: dict
+) -> None:
+    # The index is committed: anyone who can commit to the project writes it.
+    from nr_workbench.provenance.lookup import fit_dir
+
+    target = tmp_path / "elsewhere" / "results" / A
+    target.mkdir(parents=True)
+    (target / "manifest.json").write_text("{}")
+
+    assert fit_dir(layout_of(project), entry) is None
+    assert (target / "manifest.json").is_file()
+
+
+def test_a_reset_keeps_every_samples_final_and_published_fits(
+    project: Path, monkeypatch
+) -> None:
+    # S1's final was promoted before S2's: the reset once asked only for the
+    # project's last promotion, and deleted S1's answer.
+    recorded(project, A)
+    recorded(project, B, sample="S2")
+    layout = layout_of(project)
+    curation.promote(layout, A, reason="S1's answer")
+    curation.promote(layout, B, reason="S2's answer")
+
+    refused = nrw(project, monkeypatch, "sample", "reset", "S1", "--yes")
+
+    assert refused.exit_code != 0
+    assert A in refused.output and "promoted as final" in refused.output
+    assert (project / "samples" / "S1" / "results" / A).is_dir()
+
+
+def test_a_removal_that_fails_part_way_is_recorded_and_says_whats_left(
+    project: Path, monkeypatch
+) -> None:
+    recorded(project, A)
+    layout = layout_of(project)
+    curation.discard(layout, A, reason="diverged")
+
+    def busy(*args, **kwargs):
+        raise OSError(16, "Device or resource busy")
+
+    busy.avoids_symlink_attacks = True  # as the real one says, where it can
+    monkeypatch.setattr(curation.shutil, "rmtree", busy)
+
+    with pytest.raises(curation.CurationRefused, match="remove it by hand") as refused:
+        curation.delete_files(layout, A)
+
+    (deleted,) = events(project, "delete")
+    assert deleted["partial"] is True
+    left = project / "samples" / "S1" / "results"
+    assert [p.name for p in left.iterdir() if p.name.startswith(".deleting-")]
+    assert ".deleting-" in str(refused.value)
+
+
+def test_every_samples_final_fit_is_final_to_the_check_and_the_report(
+    project: Path,
+) -> None:
+    from nr_workbench.commands.provenance_cmd import check_reported_finality
+    from nr_workbench.commands.report import sequence_markdown
+
+    (project / "samples" / "S2").mkdir(exist_ok=True)
+    (project / "samples" / "S2" / "sample.md").write_text("# S2\n")
+    recorded(project, A)
+    recorded(project, B, sample="S2")
+    layout = layout_of(project)
+    curation.promote(layout, A, reason="S1's answer")  # before S2's
+    curation.promote(layout, B, reason="S2's answer")
+    reports = project / "samples" / "S1" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "summary-technical.md").write_text(f"# S1\n\nThe final fit is {A}.\n")
+
+    problems = check_reported_finality(layout, index_of(project))
+    table, _ = sequence_markdown(layout, "S1")
+
+    assert problems == []
+    assert "**[FINAL]**" in table
+
+
+def test_no_library_call_curates_unattended(project: Path, monkeypatch) -> None:
+    # Below the commands, as well as in them: not a way around the refusal.
+    recorded(project, A)
+    monkeypatch.setenv("NRW_AGENT", "1")
+    layout = layout_of(project)
+
+    for call in (
+        lambda: curation.star(layout, A),
+        lambda: curation.discard(layout, A, reason="x"),
+        lambda: curation.promote(layout, A, reason="x"),
+    ):
+        with pytest.raises(curation.CurationRefused, match="NRW_AGENT is set"):
+            call()
+
+    assert [e for e in index_of(project).entries() if e.get("event") != "fit"] == []

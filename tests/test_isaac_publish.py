@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import time
 from collections.abc import Iterator
@@ -75,22 +76,26 @@ def exported(project: Path, fit_id: str, count: int = 2) -> Path:
     return records
 
 
-def portal(monkeypatch, *, fail_after: int | None = None) -> None:
+def portal(monkeypatch, *, failing: int | None = None) -> None:
     """Stand in for `nr-isaac-format push`: each record made, as it says so,
-    with the key's last four as its id -- so a test sees the key arrived."""
+    with the key's last four and the URL's host as its id -- so a test sees
+    what reached the tool. A failing record is said, and the rest go on, as
+    the real tool does; it then exits 1."""
     code = (
-        "import os, sys, pathlib\n"
+        "import os, sys, pathlib, urllib.parse\n"
         "files = sorted(pathlib.Path(sys.argv[2]).glob('*.json'))\n"
         "if '--validate-only' in sys.argv:\n"
         "    [print(f'  ✓ {f.name}: valid') for f in files]; sys.exit(0)\n"
         "key = os.environ.get('ISAAC_KEY', 'none')[-4:]\n"
-        f"stop = {fail_after!r}\n"
+        "host = urllib.parse.urlsplit(sys.argv[sys.argv.index('--url') + 1]).hostname\n"
+        f"failing = {failing!r}\n"
         "for n, f in enumerate(files):\n"
-        "    if stop is not None and n >= stop:\n"
-        "        print(f'  ✗ {f.name}: network error', file=sys.stderr); sys.exit(1)\n"
+        "    if n == failing:\n"
+        "        print(f'  ✗ {f.name}: network error', file=sys.stderr); continue\n"
         # Coloured as a tool that forces colour would: the name itself, where
         # a code would otherwise become part of the recorded file name.
-        "    print(f'  ✓ \\x1b[1m{f.name}\\x1b[0m: created (record_id={key}-{n})')\n"
+        "    print(f'  ✓ \\x1b[1m{f.name}\\x1b[0m: created (record_id={key}-{n}@{host})')\n"
+        "sys.exit(1 if failing is not None else 0)\n"
     )
     monkeypatch.setattr(
         isaac_cmd, "_find", lambda names, install: [sys.executable, "-c", code]
@@ -104,6 +109,14 @@ def nrw(project: Path, monkeypatch, *args: str):
 
 def finalize(project: Path, fit_id: str = A) -> None:
     curation.promote(ProjectLayout(root=project), fit_id, reason="the answer")
+
+
+def pushes(project: Path, fit_id: str = A) -> tuple[dict, ...]:
+    """Each push of a fit, as the replay reads the index."""
+    from nr_workbench.provenance.index import FitIndex
+
+    index = FitIndex(project / ".nrw" / "index.jsonl")
+    return curation.replay(index.entries()).of(fit_id).published
 
 
 # --------------------------------------------------------------------------
@@ -137,17 +150,28 @@ def test_a_push_sends_what_was_exported_and_records_what_the_portal_made(
     result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
 
     assert result.exit_code == 0, result.output
-    (push,) = events(project, "publish")
-    # The key reached the tool from ~/.nrw -- nrw's own settings, not a
-    # .env beside the tool -- and the records the portal made are kept.
+    (push,) = pushes(project)
+    # The key and the portal reached the tool from ~/.nrw -- the person's own
+    # settings -- and the records the portal made are kept.
     assert push["records"] == [
-        {"file": "isaac_record_state0.json", "record_id": "q2w8-0"},
-        {"file": "isaac_record_state1.json", "record_id": "q2w8-1"},
+        {"file": "isaac_record_state0.json", "record_id": "q2w8-0@isaac.example.org"},
+        {"file": "isaac_record_state1.json", "record_id": "q2w8-1@isaac.example.org"},
     ]
-    assert (push["portal"], push["complete"]) == ("isaac.example.org", True)
+    assert push["portal"] == "https://isaac.example.org/portal/api"
+    assert push["complete"] is True
     assert push["who"] and push["at"]
     assert PLANTED not in json.dumps(push)
     assert "\x1b[" not in result.output  # the tool's colours, not echoed raw
+    # Recorded before it ran, with what it sent; and what it sent is kept.
+    assert [f["file"] for f in push["files"]] == [
+        "isaac_record_state0.json",
+        "isaac_record_state1.json",
+    ]
+    kept = project / "samples" / "S1" / "results" / A / "isaac" / "published"
+    assert sorted(p.name for p in (kept / push["attempt"]).iterdir()) == [
+        "isaac_record_state0.json",
+        "isaac_record_state1.json",
+    ]
 
 
 def test_a_push_that_fails_half_way_still_records_what_was_made(
@@ -155,14 +179,125 @@ def test_a_push_that_fails_half_way_still_records_what_was_made(
 ) -> None:
     exported(project, A, count=3)
     finalize(project)
-    portal(monkeypatch, fail_after=1)
+    portal(monkeypatch, failing=1)
 
     result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
 
     assert result.exit_code != 0
-    assert "1 record(s) were made before it failed" in result.output
-    (push,) = events(project, "publish")
-    assert (len(push["records"]), push["complete"]) == (1, False)
+    assert "2 of 3 record(s) were made" in result.output
+    (push,) = pushes(project)
+    # The real tool goes on past a failed record: the third was made too.
+    assert [r["file"] for r in push["records"]] == [
+        "isaac_record_state0.json",
+        "isaac_record_state2.json",
+    ]
+    assert push["complete"] is False
+
+
+def test_a_push_that_never_reported_back_is_recorded_as_one_that_may_have(
+    project: Path, settings: Path
+) -> None:
+    # Recorded before it ran; killed before it said what it made.
+    from nr_workbench.provenance.index import FitIndex
+
+    records = exported(project, A)
+    finalize(project)
+    index = FitIndex(project / ".nrw" / "index.jsonl")
+    entry = index.find(A)
+    curation.record_publish_attempt(
+        index,
+        entry,
+        portal="https://isaac.example.org",
+        files=sorted(records.iterdir()),
+    )
+
+    (push,) = pushes(project)
+
+    assert "complete" not in push  # unconfirmed: the portal may hold records
+    assert "the records pushed from it to the ISAAC Portal" in curation.used_by(
+        ProjectLayout(root=project), index, entry, records.parent.parent
+    )
+
+
+def test_the_tool_reads_no_portal_of_its_own_choosing(
+    project: Path, settings: Path, monkeypatch
+) -> None:
+    exported(project, A)
+    finalize(project)
+    seen: list[dict] = []
+    real_run = isaac_cmd._run
+
+    def run(cmd, step, **options):
+        seen.append(options["env"])
+        return real_run(cmd, step, **options)
+
+    monkeypatch.setattr(isaac_cmd, "_run", run)
+    portal(monkeypatch)
+
+    nrw(project, monkeypatch, "isaac", "push", A, "--yes")
+
+    # python-dotenv switched off in the tool: it would otherwise load a .env it
+    # finds near its own install, and take a portal from it.
+    assert seen[0]["PYTHON_DOTENV_DISABLED"] == "1"
+    assert seen[0]["ISAAC_URL"] == "https://isaac.example.org/portal/api"
+
+
+def test_a_portal_the_projects_env_names_is_never_the_one_used(
+    project: Path, settings: Path, monkeypatch
+) -> None:
+    # Anyone who can write the project writes its .env: it would choose where
+    # the person's key, and the records, go.
+    (project / ".env").write_text("ISAAC_URL=https://attacker.example/api\n")
+    exported(project, A)
+    finalize(project)
+    portal(monkeypatch)
+
+    result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
+
+    assert result.exit_code == 0, result.output
+    (push,) = pushes(project)
+    assert push["records"][0]["record_id"].endswith("@isaac.example.org")
+    assert "attacker" not in result.output
+
+
+def test_no_portal_or_key_of_ones_own_sends_nothing(project: Path, monkeypatch) -> None:
+    exported(project, A)
+    finalize(project)
+
+    def never(names, install):
+        raise AssertionError("the tool was run")
+
+    monkeypatch.setattr(isaac_cmd, "_find", never)
+
+    result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
+
+    assert result.exit_code != 0
+    assert "Set ISAAC_URL and ISAAC_KEY in your own settings" in result.output
+    assert pushes(project) == ()
+
+
+def test_a_push_to_a_host_other_than_the_one_confirmed_sends_nothing(
+    project: Path, settings: Path, monkeypatch
+) -> None:
+    exported(project, A)
+    finalize(project)
+    portal(monkeypatch)
+
+    result = nrw(
+        project, monkeypatch, "isaac", "push", A, "--yes", "--expect-host=other.org"
+    )
+
+    assert result.exit_code != 0
+    assert "not other.org as confirmed" in result.output
+    assert pushes(project) == ()
+
+
+def test_the_host_shown_is_where_the_url_goes() -> None:
+    # The part before an @ is a user name, whatever it looks like.
+    tricky = "https://isaac.slac.stanford.edu@evil.example:8443/api?token=x"
+
+    assert isaac_cmd.portal_host(tricky) == "evil.example:8443"
+    assert isaac_cmd.shown_portal(tricky) == "https://evil.example:8443/api"
 
 
 def test_pushing_again_says_it_adds_records_and_asks(
@@ -178,7 +313,7 @@ def test_pushing_again_says_it_adds_records_and_asks(
 
     assert "published before" in declined.output
     assert "Not uploaded" in declined.output
-    assert len(events(project, "publish")) == 1
+    assert len(pushes(project)) == 1
 
 
 def test_nothing_exported_is_nothing_to_push(
@@ -205,7 +340,8 @@ def test_an_agent_publishes_nothing(project: Path, settings: Path, monkeypatch) 
     assert refused.exit_code != 0
     assert events(project, "publish") == []
     assert judge(f"nrw isaac push {A} --yes").rule == "upload"
-    assert judge(f"nrw isaac push {A} --validate-only").allowed
+    # Validating sends the records, and the key, off the machine too.
+    assert judge(f"nrw isaac push {A} --validate-only").rule == "upload"
 
 
 def test_a_published_fits_files_are_never_deleted(
@@ -217,10 +353,7 @@ def test_a_published_fits_files_are_never_deleted(
     nrw(project, monkeypatch, "isaac", "push", A, "--yes")
     # Its export removed by hand, another fit final, it set aside: the portal
     # still holds what it was given.
-    for path in records.iterdir():
-        path.unlink()
-    records.rmdir()
-    records.parent.rmdir()
+    shutil.rmtree(records.parent)  # its isaac/, the published copy included
     layout = ProjectLayout(root=project)
     finalize(project, B)
     curation.discard(layout, A, reason="superseded")
@@ -286,18 +419,23 @@ def test_each_step_is_a_job_and_only_for_the_final_fit(
     while jobs.current().status == "running" and time.monotonic() < deadline:
         time.sleep(0.05)
     exported(project, A)
-    unconfirmed = step(writer, app, A, "push")
-    pushed = step(writer, app, A, "push", {"confirm": A})
+    unconfirmed = step(writer, app, A, "push", {"host": "isaac.example.org"})
+    elsewhere = step(writer, app, A, "push", {"confirm": A, "host": "other.org"})
+    pushed = step(writer, app, A, "push", {"confirm": A, "host": "isaac.example.org"})
 
     assert (
         not_final.status_code == 409 and "Finalize it first" in not_final.json["error"]
     )
     assert early.status_code == 409 and "export them first" in early.json["error"]
     assert export.status_code == 202, export.json
-    assert export.json["job"]["steps"] == [["isaac", "export", A]]
+    assert export.json["job"]["steps"] == [["isaac", "export", "--", A]]
     assert unconfirmed.status_code == 400
+    assert elsewhere.status_code == 400
     assert pushed.status_code == 202, pushed.json
-    assert pushed.json["job"]["steps"] == [["isaac", "push", A, "--yes"]]
+    # The host the person was shown goes with the job: the push refuses another.
+    assert pushed.json["job"]["steps"] == [
+        ["isaac", "push", "--yes", "--expect-host=isaac.example.org", "--", A]
+    ]
 
 
 def test_publishing_from_the_page_needs_the_link_and_a_writable_server(
@@ -324,4 +462,63 @@ def test_nrw_doctor_says_the_key_is_set_and_never_what_it_is(
     reported = next(c for c in json.loads(result.output) if c["name"] == "llm settings")
     assert "ISAAC_KEY=set" in reported["detail"]
     assert "ISAAC_URL=https://isaac.example.org/portal/api" in reported["detail"]
+    assert PLANTED not in result.output
+
+
+def test_the_real_tool_pushing_to_a_portal_that_refuses_one_record(
+    project: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """The contract, with the real `nr-isaac-format`: what nrw reads of it is
+    what it prints, where it goes is what nrw says, and the key reaches it."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    if not isaac_cmd.tool_installed("nr-isaac-format"):
+        pytest.skip("nr-isaac-format is not installed (pip install '.[isaac]')")
+    seen: list[tuple[str, str | None]] = []
+
+    class Portal(BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            seen.append((self.path, self.headers.get("Authorization")))
+            made = sum(1 for path, _ in seen if path.endswith("/records"))
+            if self.path.endswith("/validate"):
+                code, body = 200, {"valid": True}
+            elif made == 2:
+                code, body = 500, {"detail": "the second is refused"}
+            else:
+                code, body = 201, {"success": True, "record_id": f"R{made}"}
+            data = json.dumps(body).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Portal)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}/portal/api"
+    settings = tmp_path / "nrw-settings"
+    settings.write_text(f"ISAAC_URL={url}\nISAAC_KEY={PLANTED}\n")
+    monkeypatch.setattr(env_module, "USER_ENV_PATH", settings)
+    exported(project, A, count=3)
+    finalize(project)
+    try:
+        validated = nrw(project, monkeypatch, "isaac", "push", A, "--validate-only")
+        result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
+    finally:
+        server.shutdown()
+
+    assert validated.exit_code == 0, validated.output
+    assert result.exit_code != 0
+    (push,) = pushes(project)  # validating recorded nothing
+    assert push["records"] == [
+        {"file": "isaac_record_state0.json", "record_id": "R1"},
+        {"file": "isaac_record_state2.json", "record_id": "R3"},
+    ]
+    assert (push["complete"], push["portal"]) == (False, url)
+    assert {auth for _, auth in seen} == {f"Bearer {PLANTED}"}
     assert PLANTED not in result.output

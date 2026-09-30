@@ -138,8 +138,9 @@
 
     async function remove() {
       const sure = window.confirm(
-        "Delete the files of " + said.fit_id + "?\n\nIts result directory goes; " +
-        "the record that it ran stays in the index. This cannot be undone."
+        "Delete the files of " + said.fit_id + "?\n\nIts result directory goes, " +
+        "its NOTES.md -- what was written about it -- included. The record that " +
+        "it ran stays in the index. This cannot be undone."
       );
       if (!sure) return;
       await act("delete", { confirm: said.fit_id }, function (answer) {

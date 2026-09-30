@@ -430,12 +430,12 @@ pages make, only a browser that opened the link `nrw serve` printed can curate.
   the Fits list keeps it behind **Show the discarded**. Every file is kept, and
   **Restore** brings it back. The final fit cannot be discarded: finalize
   another first.
-- **Delete files…** frees the disk. It is offered only for a fit already
-  discarded, and only after you confirm. A fit that anything uses keeps its
-  files, and the page says what uses it: a report that cites it or drew a
-  figure from it, another fit that read its files, or ISAAC records made from
-  it. The record that the fit ran stays in the index, and the Fits page shows
-  it as deleted.
+- **Delete files…** frees the disk, the fit's `NOTES.md` included. It is
+  offered only for a fit already discarded, and only after you confirm. A fit
+  that anything uses keeps its files, and the page says what uses it: a
+  report in any sample that cites it or drew a figure from it, another fit
+  that read its files, or ISAAC records made or pushed from it. The record
+  that the fit ran stays in the index, and the Fits page shows it as deleted.
 
 Each of these is recorded in the fit index (`.nrw/index.jsonl`) with who and
 when, as promotions always have been, so it travels with the project in git.
@@ -461,26 +461,33 @@ finalized. The panel has three steps, each run as a job:
 
 1. **Export** writes the records into the fit's `isaac/`, as `nrw isaac export`
    does, and checks each against the schema.
-2. **Validate with the server** sends those records to the portal, which
-   checks them and keeps nothing.
+2. **Validate with the server** sends those records, with your key, to the
+   portal, which checks them and keeps nothing. It asks first, naming the
+   portal.
 3. **Push…** publishes exactly those records, after you confirm. It does not
    export again, so what the server checked is what it gets. The portal keeps
-   what it is given, so each push is recorded with the fit: when, by whom,
-   where, and the id of every record the portal made. A push that fails half
-   way is recorded too, with the records it did make. Pushing again adds new
-   records and replaces none, and the page says so first.
+   what it is given, so the push is recorded with the fit before it starts,
+   with the files it sends, and after it ends, with the id of every record the
+   portal made. A push that fails part way, or is stopped, is recorded as one
+   that may have made records. A copy of what was sent is kept in
+   `isaac/published/`, so a later export cannot change the record of it.
+   Pushing again adds new records and replaces none, and the page says so
+   first. The push refuses if the portal changed since you confirmed.
 
 The panel needs `data-assembler` and `nr-isaac-format`
 (`pip install 'nr-workbench[isaac]'`), and the portal and its key. Put them in
-`~/.nrw`, your own file, not the project's:
+`~/.nrw`, your own file:
 
 ```
 ISAAC_URL=https://isaac.slac.stanford.edu/portal/api
 ISAAC_KEY=...
 ```
 
-The panel says where each is set and which portal it is. It never shows the
-key. From the terminal:
+They are read from your own settings only, `~/.nrw` or the shell, and never
+from the project's `.env`. Anyone who can write the project writes that file,
+and a portal named there would decide where your key and the records go. The
+panel says where each is set, the portal's host, and when the project's
+`.env` names one that is ignored. It never shows the key. From the terminal:
 
 ```bash
 nrw isaac export <fit_id>
@@ -489,6 +496,8 @@ nrw isaac push <fit_id>          # the final fit only; asks first
 ```
 
 A fit whose records were pushed keeps its files, even once it is discarded.
+Neither validating nor pushing is done by an unattended agent: both send the
+records, and the key, off the machine.
 
 ## A sample that already exists
 

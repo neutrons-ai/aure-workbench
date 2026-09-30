@@ -31,6 +31,7 @@ from .test_settings_page_browser import (  # noqa: F401 - fixtures
     Page,
     Site,
     browser,
+    empty_home,
     page,
 )
 
@@ -63,6 +64,8 @@ def site(project: Path) -> Iterator[Site]:
         yield Site(url=url, link=f"{url}/auth/{token}")
     finally:
         server.shutdown()
+        # A test that failed mid-job leaves nothing running to slow the next.
+        app.config["NRW_MODELS"].jobs.stop()
         app.config["NRW_EXPERIMENT"].reload()
 
 
@@ -116,6 +119,20 @@ def test_a_fit_is_discarded_restored_and_its_files_go_only_when_confirmed(
         "document.getElementById('curate-restore') !== null", what="the discard"
     )
     assert "the Ti layer diverged" in text(page, "curate-discarded")
+
+    page.click("curate-restore")
+    page.wait_for(
+        "document.getElementById('curate-discard') !== null", what="the restore"
+    )
+    assert page.js(
+        "document.getElementById('curate-discarded').classList.contains('d-none')"
+    )
+    page.click("curate-discard")
+    page.type("curate-reason", "the Ti layer diverged, again")
+    page.click("curate-go")
+    page.wait_for(
+        "document.getElementById('curate-delete') !== null", what="discarded again"
+    )
 
     page.js("window.confirm = () => false")
     before = text(page, "curate-status")
@@ -172,7 +189,11 @@ def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
     import sys
 
     from nr_workbench import env as env_module
+    from nr_workbench.web import isaac as isaac_module
     from nr_workbench.web import jobs as jobs_module
+
+    # The tools are an optional install: the panel is what is tested here.
+    monkeypatch.setattr(isaac_module, "_installed", lambda name: True)
 
     settings = tmp_path / "nrw-settings"
     settings.write_text(
@@ -191,6 +212,11 @@ def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
     (records / "isaac_record_state0.json").write_text("{}")
     open_as_writer(page, site, f"/f/{A}")
     page.wait_for("document.getElementById('curate-finalize') !== null", what="the bar")
+    # Its own answer first: hidden because it said so, not because it was slow.
+    page.wait_for(
+        "performance.getEntriesByType('resource').some(e => e.name.endsWith('/isaac'))",
+        what="the panel's answer",
+    )
     assert page.js("document.getElementById('isaac').classList.contains('d-none')")
 
     page.click("curate-finalize")
@@ -208,7 +234,7 @@ def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
         "document.getElementById('isaac-status').textContent.endsWith('done.')",
         what="the export's job",
     )
-    assert f"isaac export {A}" in text(page, "isaac-log")
+    assert f"isaac export -- {A}" in text(page, "isaac-log")
 
     page.js("window.confirm = () => false")
     page.wait_for(
@@ -225,4 +251,6 @@ def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
         "document.getElementById('isaac-log').textContent.includes('isaac push')",
         what="the push's job",
     )
-    assert f"isaac push {A} --yes" in text(page, "isaac-log")
+    assert f"isaac push --yes --expect-host=isaac.example.org -- {A}" in text(
+        page, "isaac-log"
+    )

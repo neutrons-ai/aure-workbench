@@ -211,9 +211,7 @@ def _judge_text(piece: str) -> Verdict:
         piece[experiment.end() :],
     ):
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
-    if re.search(r"(?<![\w-])isaac\s+push(?![\w-])", piece) and not re.search(
-        r"--validate-only(?![\w-])", piece
-    ):
+    if re.search(r"(?<![\w-])isaac\s+push(?![\w-])", piece):
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
     for pattern, rule in (
         (r"(?<![\w-])promote(?![\w-])", "promote"),
@@ -266,11 +264,9 @@ def _judge_one(tokens: list[str]) -> Verdict:
         if word == "fit" and words[place + 1] in _CURATION:
             return Verdict(allowed=False, rule="curate", reason=_REASONS["curate"])
 
-    # `isaac push` publishes unless it only asks the server to validate.
-    if "isaac" in subcommands and (
-        "--upload" in flags
-        or ("push" in subcommands and "--validate-only" not in flags)
-    ):
+    # `isaac push` sends the records, and the key, off the machine: to publish
+    # or only to validate, it is not done unattended.
+    if "isaac" in subcommands and ("--upload" in flags or "push" in subcommands):
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
 
     if "--force" in flags:
@@ -384,6 +380,15 @@ def agent_is_driving() -> bool:
     import os
 
     return bool(os.environ.get(AGENT_ENV))
+
+
+def reason_for(action: str) -> str:
+    """Why *action* is refused unattended, and what to do instead.
+
+    Raises:
+        KeyError: An action with no recorded reason -- a programming error.
+    """
+    return _REASONS[action]
 
 
 def refuse_if_agent(action: str) -> None:

@@ -265,7 +265,7 @@ class LlmSettingsData:
 
     def _described(self, settings: dict[str, Any]) -> dict[str, Any]:
         """A provider and model, and where each is set, for the page."""
-        from nr_workbench.env import SECRET_VARS, shown_source
+        from nr_workbench.env import LLM_KEYS, shown_source
 
         described: dict[str, Any] = {}
         for key, name in (("provider", "LLM_PROVIDER"), ("model", "LLM_MODEL")):
@@ -276,6 +276,6 @@ class LlmSettingsData:
             )
         # Set, and not empty: AuRE takes an empty key as none.
         described["key"] = any(
-            settings[name].value for name in SECRET_VARS if name in settings
+            settings[name].value for name in LLM_KEYS if name in settings
         )
         return described

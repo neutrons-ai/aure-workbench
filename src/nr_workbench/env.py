@@ -55,15 +55,10 @@ KNOWN_VARS = (
 )
 
 #: Variables whose value must never be printed.
-SECRET_VARS = frozenset(
-    {
-        "LLM_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-        "ALCF_ACCESS_TOKEN",
-        "ISAAC_KEY",
-    }
-)
+#: The language model's keys: one of these set is "a key is set" for it.
+LLM_KEYS = ("LLM_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "ALCF_ACCESS_TOKEN")
+
+SECRET_VARS = frozenset({*LLM_KEYS, "ISAAC_KEY"})
 
 #: Set once loading has run, so repeated calls are free.
 _loaded = False

@@ -7,9 +7,11 @@ wrote, unchanged, so what the server validated is what is published. The rules
 are the commands' own -- only the final fit of a sample is published, and each
 push is recorded in the fit index -- and the page asks only for the final fit.
 
-The key never passes through here. ``nrw isaac push`` reads ``ISAAC_URL`` and
-``ISAAC_KEY`` as every setting is read -- in ``~/.nrw``, say -- and this says
-only where each is set, and the portal's host.
+The key never passes through here. The portal and the key are the person's
+own -- the shell or ``~/.nrw``, never the project's ``.env``, which anyone who
+can write the project writes -- and this says only where each is set, and the
+host the portal is. A step that sends records names the host the person
+confirmed, and the push refuses if the portal is another by then.
 
 Nothing here imports Flask; :mod:`nr_workbench.web.experiment_api` maps the
 errors to status codes.
@@ -20,7 +22,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.web.experiment import RequestError, require_writable
@@ -69,8 +70,13 @@ class IsaacData:
         Raises:
             NoSuchFit: No fit is recorded under that id.
         """
-        from nr_workbench.env import shown_source, where_set
-        from nr_workbench.provenance.curation import FINAL, NONE, NoSuchFit, curation_of
+        from nr_workbench.commands.isaac_cmd import portal_host, portal_settings
+        from nr_workbench.env import shown_source
+        from nr_workbench.provenance.curation import (
+            NoSuchFit,
+            publish_refusal,
+            replay,
+        )
         from nr_workbench.provenance.index import FitIndex
         from nr_workbench.provenance.lookup import fit_dir
 
@@ -78,29 +84,30 @@ class IsaacData:
         entry = index.find(fit_id)
         if entry is None:
             raise NoSuchFit(f"No fit {fit_id!r} is recorded here.")
-        state = curation_of(index.entries()).get(fit_id, NONE)
+        state = replay(index.entries()).of(fit_id)
         directory = fit_dir(self.layout, entry)
         records = (
             sorted((directory / "isaac" / "records").glob("*.json"))
             if directory is not None
             else []
         )
-        settings = where_set(self.root)
-        url, key = settings.get("ISAAC_URL"), settings.get("ISAAC_KEY")
+        url, key, ignored = portal_settings(self.root)
         return {
             "fit_id": fit_id,
             "sample": entry.get("sample"),
-            "final": FINAL in state.labels,
+            "final": publish_refusal(entry, state) is None,
             "tools": {name: _installed(name) for name in TOOLS},
             "install": INSTALL,
             "portal": {
-                "host": (urlparse(url.value).netloc or None) if url else None,
+                "host": portal_host(url.value) or None if url else None,
                 "from": shown_source(url.source, self.root) if url else None,
             },
             "key": {
-                "set": bool(key and key.value),
+                "set": key is not None,
                 "from": shown_source(key.source, self.root) if key else None,
             },
+            # Set in the project's .env, and not used: said, so it is no mystery.
+            "ignored": ignored,
             "records": [path.name for path in records],
             "exported_at": _when(max(p.stat().st_mtime for p in records))
             if records
@@ -109,13 +116,17 @@ class IsaacData:
             "writable": self.writable,
         }
 
-    def start(self, fit_id: str, step: str, confirm: Any = None) -> dict[str, Any]:
+    def start(
+        self, fit_id: str, step: str, confirm: Any = None, host: Any = None
+    ) -> dict[str, Any]:
         """Start one step as a job: ``export``, ``validate`` or ``push``.
 
         Args:
             fit_id: The fit, whole: a prefix is the terminal's shorthand.
             step: Which.
             confirm: For ``push``, the fit's id, as the person agreed to it.
+            host: For ``validate`` and ``push``, the portal's host as the person
+                was shown it: the push refuses if the portal is another by then.
 
         Returns:
             ``{"job": ...}``, the job started.
@@ -130,26 +141,44 @@ class IsaacData:
         from nr_workbench.provenance.curation import CurationRefused
 
         require_writable(self.writable, self.why_read_only)
-        steps = {
-            "export": ["isaac", "export", fit_id],
-            "validate": ["isaac", "push", fit_id, "--validate-only"],
-            # --yes: the page asked, and names the fit it was agreed for.
-            "push": ["isaac", "push", fit_id, "--yes"],
-        }
-        if step not in steps:
-            raise RequestError(f"step must be one of {', '.join(steps)}, not {step!r}")
+        if step not in ("export", "validate", "push"):
+            raise RequestError(f"step must be export, validate or push, not {step!r}")
         status = self.status(fit_id)
         if not status["final"]:
             raise CurationRefused(
-                f"{fit_id} is not the final fit of {status['sample']}, and only a "
+                f"{fit_id} is not the final fit of its sample, and only a "
                 "finalized fit is published. Finalize it first."
             )
-        if step != "export" and not status["records"]:
-            raise CurationRefused(
-                f"{fit_id} has no ISAAC records to send yet: export them first."
-            )
+        if step != "export":
+            if not status["records"]:
+                raise CurationRefused(
+                    f"{fit_id} has no ISAAC records to send yet: export them first."
+                )
+            if not status["portal"]["host"] or not status["key"]["set"]:
+                raise CurationRefused(
+                    "Set ISAAC_URL and ISAAC_KEY in ~/.nrw to send records to the "
+                    "portal."
+                )
+            if host != status["portal"]["host"]:
+                raise RequestError(
+                    "host must be the portal's host, as the page showed it"
+                )
         if step == "push" and confirm != fit_id:
             raise RequestError("confirm must be the id of the fit being published")
+        # `--` before the id: never read as an option, whatever it is.
+        steps = {
+            "export": ["isaac", "export", "--", fit_id],
+            "validate": [
+                "isaac",
+                "push",
+                "--validate-only",
+                f"--expect-host={host}",
+                "--",
+                fit_id,
+            ],
+            # --yes: the page asked, naming the fit and the host.
+            "push": ["isaac", "push", "--yes", f"--expect-host={host}", "--", fit_id],
+        }
         labels = {
             "export": "ISAAC export",
             "validate": "ISAAC validation",

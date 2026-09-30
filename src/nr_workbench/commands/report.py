@@ -175,11 +175,15 @@ def sequence_markdown(
     if not rows:
         return ("_No fits recorded for this sample yet._\n", 0)
 
-    promoted: dict[str, str] = {}
-    for promotion_label in {str(e.get("label")) for e in index.promotions()}:
-        entry = index.current_label(promotion_label)
-        if entry is not None:
-            promoted[str(entry.get("fit_id"))] = promotion_label
+    from nr_workbench.provenance.curation import replay
+
+    # Each fit's labels as they stand -- this sample's own, every one.
+    replayed = replay(index.entries())
+    promoted = {
+        str(row.get("fit_id")): " ".join(labels)
+        for row in rows
+        if (labels := replayed.of(row.get("fit_id")).labels)
+    }
 
     lines = [
         "| # | fit | model | method | χ² | note |",

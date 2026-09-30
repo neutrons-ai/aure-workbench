@@ -967,17 +967,27 @@ def isaac_export_command(**kwargs: object) -> None:
     help="Ask the API whether the records would be accepted, without keeping them.",
 )
 @click.option("--yes", is_flag=True, help="Skip the confirmation.")
-def isaac_push_command(fit_id: str, validate_only: bool, yes: bool) -> None:
+@click.option(
+    "--expect-host",
+    default=None,
+    metavar="HOST",
+    help="Refuse unless the portal is HOST: what was confirmed, when the page asked.",
+)
+def isaac_push_command(
+    fit_id: str, validate_only: bool, yes: bool, expect_host: str | None
+) -> None:
     """Send FIT_ID's exported records to the ISAAC Portal.
 
     The records `nrw isaac export` wrote, unchanged: what the server validated
     is what is published. Only the final fit of a sample is published, and
-    each push is recorded in the fit index. ISAAC_URL and ISAAC_KEY are read
-    like every setting -- in ~/.nrw, say.
+    each push is recorded in the fit index. ISAAC_URL and ISAAC_KEY are the
+    person's own -- the shell or ~/.nrw -- never the project's .env.
     """
     from nr_workbench.commands.isaac_cmd import run_push
 
-    run_push(fit_id=fit_id, validate_only=validate_only, yes=yes)
+    run_push(
+        fit_id=fit_id, validate_only=validate_only, yes=yes, expect_host=expect_host
+    )
 
 
 @main.group("agent")

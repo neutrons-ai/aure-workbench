@@ -42,6 +42,11 @@
       ? line("Key: ISAAC_KEY is set, in " + shown.key.from + ".")
       : line("ISAAC_KEY is not set: add it to ~/.nrw. It is never shown here.",
         "text-warning-emphasis"));
+    if (shown.ignored.length) {
+      items.push(line("The project's .env sets " + shown.ignored.join(" and ") +
+        ": ignored. The portal and the key are yours, and come from your own " +
+        "settings only.", "text-warning-emphasis"));
+    }
     items.push(shown.records.length
       ? line(shown.records.length + " record(s) exported, " + shown.exported_at + ".")
       : line("Not exported yet."));
@@ -85,8 +90,8 @@
         : !shown.key.set || !shown.portal.host ? "set ISAAC_URL and ISAAC_KEY in ~/.nrw" : "";
     $("isaac-buttons").replaceChildren(
       button("Export", "isaac-export", function () { start("export"); }, running || !tools),
-      button("Validate with the server", "isaac-validate",
-        function () { start("validate"); }, running || !sendable, why),
+      button("Validate with the server", "isaac-validate", validate,
+        running || !sendable, why),
       button("Push…", "isaac-push", push, running || !sendable, why)
     );
   }
@@ -100,6 +105,16 @@
     }
   }
 
+  /* Validating sends the records, and the key, to the portal: asked first. */
+  function validate() {
+    const sure = window.confirm(
+      "Send " + shown.records.length + " record(s) of " + said.fit_id + " to " +
+      shown.portal.host + " to validate?\n\nThe portal checks them and keeps " +
+      "nothing. Your key goes with them."
+    );
+    if (sure) start("validate", { host: shown.portal.host });
+  }
+
   function push() {
     const again = shown.published.length
       ? "\n\nIt was pushed before, on " + shown.published[shown.published.length - 1].at +
@@ -110,7 +125,7 @@
       shown.portal.host + "?\n\nThis shares the data and the fitted model outside " +
       "this project, and the portal keeps them." + again
     );
-    if (sure) start("push", { confirm: said.fit_id });
+    if (sure) start("push", { confirm: said.fit_id, host: shown.portal.host });
   }
 
   async function start(step, body) {

@@ -957,6 +957,11 @@ class ProjectData:
 
     def _fit_dir(self, fit_id: str, sample: Any) -> Path:
         """Locate a fit directory, searching all samples if needed."""
+        from nr_workbench.provenance.lookup import plain_name
+
+        # The index is committed: a name in it is refused unless it is one.
+        if not plain_name(fit_id) or (sample and not plain_name(sample)):
+            raise FileNotFoundError(f"{fit_id!r} does not name a fit directory here.")
         if sample:
             candidate = self.layout.sample(str(sample)) / "results" / fit_id
             if candidate.is_dir():
@@ -965,6 +970,10 @@ class ProjectData:
             candidate = self.layout.sample(sample_id) / "results" / fit_id
             if candidate.is_dir():
                 return candidate
+        # A script run from outside samples/ records its fit at the root.
+        candidate = self.root / "results" / fit_id
+        if candidate.is_dir():
+            return candidate
         raise FileNotFoundError(
             f"Fit {fit_id} is recorded in the index but its result directory "
             "is gone. The index is append-only, so the record of the run "

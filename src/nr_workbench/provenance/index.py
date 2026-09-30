@@ -197,6 +197,11 @@ class FitIndex:
             Matching entries, newest first.
         """
         rows = self.fits()
+        # A whole id is itself, whatever else it prefixes: a same-second
+        # replicate is `<id>-2`, and would otherwise make `<id>` ambiguous.
+        exact = [e for e in rows if str(e.get("fit_id", "")) == prefix]
+        if exact:
+            return exact
         matches = [e for e in rows if str(e.get("fit_id", "")).startswith(prefix)]
         if matches:
             return matches
@@ -222,26 +227,3 @@ class FitIndex:
             Promotion entries in the order they happened.
         """
         return [e for e in self.entries() if e.get("event") == EVENT_PROMOTE]
-
-    def current_label(
-        self, label: str, *, sample: str | None = None
-    ) -> dict[str, Any] | None:
-        """Return the promotion currently holding ``label``.
-
-        The last promotion of a label wins, but every earlier one stays in the
-        index -- the history of what was once considered final is provenance in
-        its own right.
-
-        Args:
-            label: The label, e.g. ``"final"``.
-            sample: Restrict to one sample.
-
-        Returns:
-            The most recent matching promotion, or ``None``.
-        """
-        matches = [
-            e
-            for e in self.promotions()
-            if e.get("label") == label and (sample is None or e.get("sample") == sample)
-        ]
-        return matches[-1] if matches else None

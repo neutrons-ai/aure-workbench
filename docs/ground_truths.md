@@ -3815,12 +3815,13 @@ a URL could come to match a later fit.
 **A key in `~/.nrw` never reached the push.** `nrw isaac export --upload` ran
 `nr-isaac-format push` with nrw's own environment, but never called
 `load_env()`. The tool reads `ISAAC_URL` and `ISAAC_KEY` from its environment,
-or from a `.env` in its working directory, never from `~/.nrw`. Under
-`--no-llm` nothing else loaded the settings either, so a key kept in `~/.nrw`
-reached the push only by accident. The push path (`_upload`) now calls
-`load_env()` first, and `ISAAC_URL` and `ISAAC_KEY` are known settings, with
-the key secret. `nrw doctor` and the page say where each is set, and never
-show the key.
+or from a `.env` that python-dotenv finds by walking up from *the tool's own
+install* (not the working directory, as its comment says), never from
+`~/.nrw`. Under `--no-llm` nothing else loaded the settings either, so a key
+kept in `~/.nrw` reached the push only by accident. `ISAAC_URL` and `ISAAC_KEY`
+are now known settings, with the key secret: `nrw doctor` and the page say
+where each is set, and never show the key. See the next entry for how the
+push reads them now.
 
 **What is validated is what is pushed.** An export asks a language model for
 the conditions, so exporting twice can make different records. `nrw isaac push
@@ -3839,3 +3840,65 @@ fit's files can never be deleted, even with its `isaac/` removed by hand.
 and by the page. Validating needs no finalization: asking the server whether
 records would be accepted publishes nothing. The guard counts `nrw isaac push`
 without `--validate-only` as an upload.
+
+### 2026-09-30: what the reviews of curation and ISAAC changed
+
+The design, security and test reviews of 194645c and 074d3b6 found one
+CRITICAL problem, in older code, and several that had to be fixed before the
+features could be trusted.
+
+**One reader of labels.** "Which fit holds which label" had three
+implementations: the new replay, `FitIndex.current_label()` (where
+`sample=None` meant *any* sample), and scans of `promotions()` written in each
+caller. Every reader not moved to the replay was wrong for a project with more
+than one sample:
+
+- `nrw sample reset` protected a sample's final fit only if it was the
+  project's *last* promotion. With S1 finalized before S2, it deleted S1's
+  final fit, published or not, and `forget()` erased its publish record.
+- `nrw check` failed correct reports ("names this fit as the answer, but
+  nothing is promoted"), and generated reports lost their `[FINAL]` marker.
+- Promoting a fit with no sample (`<root>/results/`) wrote a false
+  `supersede` against another sample's final.
+
+`current_label` is gone. `curation.replay()` returns a `CurationState`:
+`holder(sample, label)` (a fit with no sample in a slot of its own) and
+`of(fit_id).promotions`. Every reader uses it, and the reset refuses while
+any of its sample's fits holds a label or was pushed.
+
+**Deletion could leave the project.** `delete_files` compared path *names*.
+The index is committed, so anyone who can commit to the project writes it,
+and a `sample` of `../../other`, a fit id of `..`, or a linked sample folder
+steered `rmtree` elsewhere (shown in a scratch project). Now:
+
+- `lookup.fit_dir` refuses a fit id or sample that is not a plain name.
+- The resolved path must be exactly `samples/<s>/results/<id>` (or
+  `results/<id>`), so a link anywhere on the way is refused.
+- The delete walks directory descriptors without following links, renames
+  the fit out of the way, records the deletion, and only then removes the
+  files. A removal that fails part way leaves a recorded deletion and a
+  hidden directory, never a half-deleted fit that says it is whole.
+- `used_by` looks at every sample's reports and figures, and the project's
+  own `reports/`. Evidence it cannot read counts as a use.
+
+**The project's `.env` chose where the key went.** `load_env()` read the
+project's `.env` before `~/.nrw`, so an `ISAAC_URL` there sent the person's
+key, and the records, to any host. The portal and the key now come from the
+person's own settings only (`where_set(..., skip_project=True)`). The tool
+gets `--url`, and its environment has `PYTHON_DOTENV_DISABLED=1`, so it takes
+no portal of its own choosing. That environment is the shell's: nothing nrw
+loaded from a file, so a project's `PYTHONPATH` reaches no tool. The host
+shown is `urlsplit(...).hostname`: a `real.host@evil.example` URL shows
+`evil.example`. Validate asks first, as Push does. The page sends the host it
+showed, and the job refuses if the portal is another by then
+(`--expect-host`). Under `NRW_AGENT` both validate and push are refused,
+because both send the records and the key off the machine.
+
+**A push is recorded before it runs.** A cancelled, killed or timed-out push
+had made records while the index said nothing. Now a `publish` event with an
+`attempt` id and each file's digest comes first, and a second event carries
+the records made and `complete`. An attempt with no outcome reads as
+"may have published". What was sent is copied to `isaac/published/<attempt>/`,
+so re-exporting cannot change the record of it. The real tool goes on past a
+failed record, only an authentication error stops it early, and a contract
+test runs it against a local stand-in portal.

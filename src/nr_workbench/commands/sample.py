@@ -266,20 +266,28 @@ def run_sample_reset(
     index = FitIndex(layout.index_file)
     entries = index.fits(sample=sample_id)
 
-    # A promoted fit is a citable result; resetting past one silently unpublishes
-    # it. Refusing is the whole reason `nrw promote` is a separate decision.
-    promoted = {
-        str(entry.get("fit_id"))
-        for label in {str(e.get("label")) for e in index.promotions()}
-        if (entry := index.current_label(label)) is not None
-        and entry.get("sample") == sample_id
-    }
-    if promoted:
+    # A promoted fit is a citable result, and a published one is held by a
+    # portal: resetting past either deletes a result something already cites,
+    # and forgets the record of where it went. The replay says which, for this
+    # sample -- not "the project's last promotion", which misses every sample
+    # but the one promoted most recently.
+    from nr_workbench.provenance.curation import replay
+
+    replayed = replay(index.entries())
+    held: list[str] = []
+    for entry in entries:
+        state = replayed.of(entry.get("fit_id"))
+        reasons = ["promoted as " + "/".join(state.labels)] if state.labels else []
+        if state.published:
+            reasons.append("was pushed to ISAAC")
+        if reasons:
+            held.append(f"{entry.get('fit_id')} ({', '.join(reasons)})")
+    if held:
         raise click.ClickException(
-            f"{sample_id} holds a promoted fit ({', '.join(sorted(promoted))}). "
-            "Resetting would delete a result something may already cite.\n"
-            "Promotion is a separate decision on purpose; undo it deliberately "
-            "before resetting."
+            f"{sample_id} has fits that are results: {', '.join(held)}. "
+            "Resetting would delete them, and forget the record of them.\n"
+            "Promotion and publishing are separate decisions on purpose; a reset "
+            "is not the way to undo them."
         )
 
     results = sorted(p for p in (directory / "results").glob("*") if p.is_dir())

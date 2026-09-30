@@ -354,7 +354,10 @@ def isaac_status(fit_id: str) -> Any:
 @experiment_api.post("/fits/<fit_id>/isaac/<step>")
 def isaac_step(fit_id: str, step: str) -> Any:
     """Export, validate or push a final fit's records, as a job."""
-    return jsonify(isaac_data().start(fit_id, step, _body().get("confirm"))), 202
+    body = _body()
+    return jsonify(
+        isaac_data().start(fit_id, step, body.get("confirm"), body.get("host"))
+    ), 202
 
 
 # ---------------------------------------------------------------------------
