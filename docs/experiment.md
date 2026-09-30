@@ -315,9 +315,12 @@ The choices are:
 - **amoeba** explores downhill from the starting values, fast. Use it while you
   are still changing the model.
 
-A box left empty takes the project's value from `nrw.toml` (shown in the box
-when it has one), else bumps' default. The README's "Fitting options" section
-has the `[fit]` tables. The note, if you give one, heads
+Each box starts at the value the fit would use: the project's, from
+`nrw.toml`, else bumps' default. A line under the boxes says which is which.
+DREAM's steps follow from its samples, so that box says "from samples". Only
+what you change is sent: the rest `nrw fit run` takes from the same place, so a
+fit started here is recorded just as one typed in a terminal. The README's
+"Fitting options" section has the `[fit]` tables. The note, if you give one, heads
 the fit's `NOTES.md` as why it was run, so it is one line, and does not start
 with `#`. The page runs the same two commands you would, one after the other:
 

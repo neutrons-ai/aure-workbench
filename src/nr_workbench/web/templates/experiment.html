@@ -129,13 +129,20 @@
               <option value="de">de: explores the whole range</option>
               <option value="amoeba">amoeba: explores downhill from the start, fast</option>
             </select>
-            <input id="expt-fit-steps" type="number" min="1" class="form-control form-control-sm expt-fit-number"
-                   placeholder="steps" aria-label="steps">
-            <input id="expt-fit-samples" type="number" min="1" class="form-control form-control-sm expt-fit-number d-none"
-                   placeholder="samples" aria-label="DREAM samples">
-            <input id="expt-fit-burn" type="number" min="0" class="form-control form-control-sm expt-fit-number d-none"
-                   placeholder="burn" aria-label="DREAM burn-in">
+            <div class="input-group input-group-sm expt-fit-setting d-none">
+              <span class="input-group-text">samples</span>
+              <input id="expt-fit-samples" type="number" min="1" class="form-control" aria-label="DREAM samples">
+            </div>
+            <div class="input-group input-group-sm expt-fit-setting d-none">
+              <span class="input-group-text">burn</span>
+              <input id="expt-fit-burn" type="number" min="0" class="form-control" aria-label="DREAM burn-in">
+            </div>
+            <div class="input-group input-group-sm expt-fit-setting">
+              <span class="input-group-text">steps</span>
+              <input id="expt-fit-steps" type="number" min="1" class="form-control" aria-label="steps">
+            </div>
           </div>
+          <div class="form-text" id="expt-fit-defaults"></div>
           <input id="expt-fit-note" class="form-control form-control-sm mt-2" maxlength="500"
                  placeholder="why this fit (optional; kept in its record)" aria-label="why this fit">
           <div class="form-check mt-1">
@@ -147,10 +154,10 @@
             <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-fit-close">Close</button>
           </div>
           <div class="form-text">
-            The fitter starts at the project's default, and an empty box takes
-            the project's value -- both from nrw.toml [fit] -- else bumps' own.
-            The spec's script is generated again first; a script edited by hand
-            is refused.
+            The fitter and each box start at what the fit would use: the
+            project's, from nrw.toml [fit], else bumps' own. Only what you
+            change is sent with the fit. The spec's script is generated again
+            first; a script edited by hand is refused.
           </div>
           <p id="expt-fit-problem" class="text-danger small mb-0 mt-1 d-none"></p>
         </form>

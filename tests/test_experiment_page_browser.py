@@ -326,7 +326,7 @@ def test_a_fit_started_on_the_page_is_followed_to_its_record(
     page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
     # It starts at the project's default -- nrw.toml says nothing, so DREAM.
     assert page.js("document.getElementById('expt-fit-method').value") == "dream"
-    assert "(the project's default)" in page.js(
+    assert "(default)" in page.js(
         "document.getElementById('expt-fit-method').selectedOptions[0].textContent"
     )
     page.js(
@@ -638,3 +638,92 @@ def test_a_finished_job_is_not_shown_again_and_close_puts_one_away(
     assert page.js(
         "document.getElementById('expt-job-panel').classList.contains('d-none')"
     )
+
+
+def open_the_fit_form(page: Page, site: Site, project: Path) -> None:
+    spec = project / "samples" / "S1" / "models" / "oxide.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("{}\n")
+    (project / "samples" / "S1" / "data" / "steady").mkdir(parents=True)
+    open_s1(page, site)
+    page.wait_for(
+        "document.querySelector('#expt-models-list .expt-model-fit') !== null",
+        what="the spec listed",
+    )
+    page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+
+
+def box(page: Page, element_id: str) -> dict:
+    return page.js(
+        f"(() => {{ const b = document.getElementById('{element_id}');"
+        " return {value: b.value, placeholder: b.placeholder,"
+        " shown: !b.closest('.expt-fit-setting').classList.contains('d-none'),"
+        " label: b.previousElementSibling.textContent}; })()"
+    )
+
+
+def choose(page: Page, method: str) -> None:
+    page.js(
+        f"{{ const m = document.getElementById('expt-fit-method'); m.value = '{method}';"
+        " m.dispatchEvent(new Event('change')); }"
+    )
+
+
+def test_the_fit_forms_boxes_start_at_what_the_fit_would_use(
+    page: Page, site: Site, project: Path
+) -> None:
+    with (project / "nrw.toml").open("a", encoding="utf-8") as handle:
+        handle.write("\n[fit.dream]\nburn = 500\n")
+
+    open_the_fit_form(page, site, project)
+
+    # DREAM, nrw's default: samples bumps' own, burn the project's.
+    assert box(page, "expt-fit-samples") == {
+        "value": "10000",
+        "placeholder": "",
+        "shown": True,
+        "label": "samples",
+    }
+    assert box(page, "expt-fit-burn")["value"] == "500"
+    # DREAM's steps follow from its samples: no one number to show.
+    assert box(page, "expt-fit-steps")["value"] == ""
+    assert box(page, "expt-fit-steps")["placeholder"] == "from samples"
+    said = page.text("expt-fit-defaults")
+    assert "samples 10000, bumps' default" in said
+    assert "burn 500 from nrw.toml" in said
+
+    choose(page, "amoeba")
+
+    assert box(page, "expt-fit-steps")["value"] == "1000"
+    assert box(page, "expt-fit-samples")["shown"] is False
+
+
+def test_the_fit_form_sends_only_what_was_changed(
+    page: Page, site: Site, project: Path, monkeypatch
+) -> None:
+    from nr_workbench.web import jobs as jobs_module
+
+    monkeypatch.setattr(
+        jobs_module, "nrw_command", lambda *args: [sys.executable, "-c", "pass"]
+    )
+    open_the_fit_form(page, site, project)
+    choose(page, "amoeba")
+    page.click("expt-fit-run")
+    page.wait_for(
+        "document.getElementById('expt-job-state').textContent === 'ok'",
+        what="the unchanged fit",
+    )
+    unchanged = page.text("expt-job-log")
+
+    page.js("document.querySelector('#expt-models-list .expt-model-fit').click()")
+    choose(page, "amoeba")
+    page.type("expt-fit-steps", "7")
+    page.click("expt-fit-run")
+    page.wait_for(
+        "document.getElementById('expt-job-log').textContent.includes('--steps=7')",
+        what="the changed fit",
+    )
+
+    # Left as shown, the value is `nrw fit run`'s to take -- from the same place.
+    assert "--method=amoeba --verbose\n" in unchanged
+    assert "--steps" not in unchanged

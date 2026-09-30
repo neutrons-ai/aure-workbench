@@ -24,6 +24,7 @@ from nr_workbench.aure_setup import OUTPUT_DIR, SETUP_FILE, setup_dir
 from nr_workbench.experiment.model import CatalogValidationError, validate_sample_id
 from nr_workbench.fitters import FITTERS, refuse
 from nr_workbench.fitting.settings import (
+    BUMPS_DEFAULTS,
     FIT_LIMITS,
     METHOD_SETTINGS,
     FitDefaults,
@@ -122,6 +123,13 @@ class ModelsData:
             "fit": {
                 "method": defaults.method,
                 "settings": {m: defaults.settings_for(m) for m in FITTERS},
+                # The rest of what each box starts at, and which boxes a
+                # fitter takes: the same tables `nrw fit run` resolves with.
+                "bumps": BUMPS_DEFAULTS,
+                "takes": {
+                    m: [key for key in METHOD_SETTINGS[m] if key in FORM_SETTINGS]
+                    for m in FITTERS
+                },
                 "problem": problem,
             },
         }

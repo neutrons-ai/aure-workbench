@@ -562,9 +562,18 @@ def test_the_fit_form_starts_from_the_projects_nrw_toml(app, project: Path) -> N
 
 
 def test_the_fit_form_starts_at_dream_when_nrw_toml_says_nothing(app) -> None:
+    from nr_workbench.fitting.settings import BUMPS_DEFAULTS
+
     listed = app.test_client().get("/api/experiment/samples/S1/models").json
 
     assert listed["fit"]["method"] == "dream"
+    # What each box starts at when nrw.toml says nothing, and which it shows.
+    assert listed["fit"]["bumps"] == BUMPS_DEFAULTS
+    assert listed["fit"]["takes"] == {
+        "amoeba": ["steps"],
+        "de": ["steps"],
+        "dream": ["samples", "burn", "steps"],
+    }
 
 
 def test_a_fit_asked_for_without_a_fitter_uses_the_projects(

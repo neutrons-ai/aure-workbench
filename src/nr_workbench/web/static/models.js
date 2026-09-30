@@ -209,7 +209,7 @@
     Array.from(select.options).forEach(function (option) {
       if (!option.dataset.label) option.dataset.label = option.textContent;
       option.textContent = option.dataset.label +
-        (option.value === fitDefaults.method ? " (the project's default)" : "");
+        (option.value === fitDefaults.method ? " (default)" : "");
     });
     select.value = fitDefaults.method;
     const problem = $("expt-fit-problem");
@@ -220,20 +220,38 @@
     select.focus();
   }
 
-  /* The boxes the chosen fitter takes, each empty box showing what nrw.toml
-   * would give it. */
+  const FORM_SETTINGS = [["expt-fit-samples", "samples"], ["expt-fit-burn", "burn"],
+    ["expt-fit-steps", "steps"]];
+  // What each box started at, for sending only what was changed.
+  let startedAt = {};
+
+  /* The boxes the chosen fitter takes, each filled with what the fit would use
+   * -- nrw.toml's value, else bumps' default -- and a line saying which. */
   function showMethodSettings() {
     const method = $("expt-fit-method").value;
-    const dream = method === "dream";
-    $("expt-fit-samples").classList.toggle("d-none", !dream);
-    $("expt-fit-burn").classList.toggle("d-none", !dream);
+    const takes = (fitDefaults.takes || {})[method] || [];
     const configured = (fitDefaults.settings || {})[method] || {};
-    [["expt-fit-steps", "steps"], ["expt-fit-samples", "samples"], ["expt-fit-burn", "burn"]]
-      .forEach(function ([id, key]) {
-        $(id).placeholder = key in configured
-          ? key + " (nrw.toml: " + configured[key] + ")"
-          : key;
-      });
+    const bumps = (fitDefaults.bumps || {})[method] || {};
+    const said = [];
+    startedAt = {};
+    FORM_SETTINGS.forEach(function ([id, key]) {
+      const box = $(id);
+      const taken = takes.includes(key);
+      box.closest(".expt-fit-setting").classList.toggle("d-none", !taken);
+      let value = "";
+      if (taken && key in configured) {
+        value = String(configured[key]);
+        said.push(key + " " + value + " from nrw.toml");
+      } else if (taken && bumps[key]) {
+        value = String(bumps[key]);
+        said.push(key + " " + value + ", bumps' default");
+      }
+      box.value = value;
+      // DREAM's steps default to what its samples need: no one number.
+      box.placeholder = taken && !value ? "from samples" : "";
+      startedAt[key] = value;
+    });
+    $("expt-fit-defaults").textContent = said.length ? said.join("; ") + "." : "";
   }
 
   $("expt-fit-method").addEventListener("change", showMethodSettings);
@@ -242,21 +260,20 @@
     fitting = null;
   });
 
-  /* A number box's value, or undefined when it is left empty. */
-  function whole(id) {
-    const text = $(id).value.trim();
-    return text === "" ? undefined : Number(text);
-  }
-
   $("expt-fit-form").addEventListener("submit", async function (event) {
     event.preventDefault();
     if (!shown || !fitting) return;
     const method = $("expt-fit-method").value;
-    const body = { method: method, steps: whole("expt-fit-steps") };
-    if (method === "dream") {
-      body.samples = whole("expt-fit-samples");
-      body.burn = whole("expt-fit-burn");
-    }
+    const body = { method: method };
+    // What was not changed is left to `nrw fit run`, which takes it from the
+    // same place: so a fit from here records what one from the terminal would.
+    FORM_SETTINGS.forEach(function ([id, key]) {
+      const box = $(id);
+      const text = box.value.trim();
+      if (box.closest(".expt-fit-setting").classList.contains("d-none")) return;
+      if (text === "" || text === startedAt[key]) return;
+      body[key] = Number(text);
+    });
     const note = $("expt-fit-note").value.trim();
     if (note) body.note = note;
     if ($("expt-fit-force").checked) body.force = true;
