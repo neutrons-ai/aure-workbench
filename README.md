@@ -225,7 +225,7 @@ nrw's.
 |---|---|---|---|
 | `nrw.toml` | the project | the IPTS, the data folder, the watcher, the assistants, and how nrw fits (`[fit]`) | yes |
 | `.env` in the project | you, on this machine | the language-model endpoint and its key; the Settings page's *Language model* writes it | no (gitignored) |
-| `~/.nrw` | you | the same, for all your projects | — |
+| `~/.nrw` | you | the same, for all your projects; and the ISAAC Portal and its key (`ISAAC_URL`, `ISAAC_KEY`) | — |
 | `~/.aure` | you, and AuRE | the endpoint too, and AuRE's own fit defaults (`FIT_METHOD`, `FIT_STEPS`, `FIT_BURN`) | — |
 
 For the language-model endpoint, nrw takes each variable from the first of:
@@ -271,7 +271,9 @@ changed underneath it is reported as `STALE` everywhere it appears.
 Fits are curated on the fit pages of `nrw serve`, or with `nrw fit star`,
 `discard`, `restore` and `delete`. A discarded fit keeps its files until you
 delete them, which is refused while anything uses them, and the record that it
-ran is never lost. See
+ran is never lost. A sample's final fit is published to the ISAAC Portal from
+its page, or with `nrw isaac export` and `nrw isaac push`, and each push is
+recorded with the fit. See
 [docs/experiment.md](docs/experiment.md#curating-fits).
 
 `nrw pack` closes the last gap. A result directory records the *hashes* of its

@@ -18,16 +18,26 @@ Uploading is opt-in and never implied by exporting. A record pushed to a shared
 portal is not straightforwardly retractable, so it is a separate flag with a
 separate confirmation, and ``--validate-only`` exists to ask the API whether a
 record would be accepted without persisting it.
+
+``nrw isaac push`` sends the records an export already wrote, so what the
+server validated is exactly what is published: exporting again would ask a
+language model for the conditions again. Only a fit that is final for its
+sample is published, and each push is recorded in the fit index -- when, by
+whom, where, and the records the portal made, a partial push's included --
+because a portal keeps what it was given.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import click
 
@@ -35,6 +45,7 @@ from nr_workbench.isaac import Staged, reset, stage
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import FitIndex
 from nr_workbench.provenance.lookup import FitNotFoundError, resolve_fit
+from nr_workbench.provenance.record import format_timestamp, utc_now
 
 #: How long each subprocess may take. Assembly reads every data file; the
 #: convert step validates against a schema. Neither should approach this.
@@ -137,7 +148,7 @@ def run_export(
         )
 
     if upload:
-        _upload(records, validate_only=validate_only, yes=yes)
+        _upload(layout, index, entry, records, validate_only=validate_only, yes=yes)
     else:
         click.echo()
         click.echo("  Not uploaded. Add --upload to push these to the ISAAC Portal.")
@@ -257,15 +268,30 @@ def _find(names: tuple[str, ...], install: str) -> list[str]:
     )
 
 
-def _run(cmd: list[str], step: str) -> subprocess.CompletedProcess[str]:
-    """Run one pipeline step, turning failure into a readable error."""
+def tool_installed(name: str) -> bool:
+    """Whether the export would find *name*: one of the tools it drives."""
+    try:
+        _find((name,), "nr-workbench[isaac]")
+    except ToolMissingError:
+        return False
+    return True
+
+
+def _run(
+    cmd: list[str], step: str, *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run one pipeline step, turning failure into a readable error.
+
+    With ``check=False`` a failure is returned for the caller to read: a push
+    that fails half-way has still made records.
+    """
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=TIMEOUT, check=False
         )
     except subprocess.TimeoutExpired as exc:
         raise click.ClickException(f"{step} timed out after {TIMEOUT}s") from exc
-    if result.returncode != 0:
+    if result.returncode != 0 and check:
         detail = (result.stderr.strip() or result.stdout.strip())[:2000]
         raise click.ClickException(f"{step} failed:\n{detail}")
     return result
@@ -318,25 +344,100 @@ def _validate(records: Path) -> None:
         _run([*cmd, "validate", str(path)], f"validating {path.name}")
 
 
-def _upload(records: Path, *, validate_only: bool, yes: bool) -> None:
+def run_push(*, fit_id: str, validate_only: bool = False, yes: bool = False) -> None:
+    """Send the records an export wrote to the ISAAC Portal.
+
+    Args:
+        fit_id: The fit, or a unique prefix.
+        validate_only: Ask the API whether they would be accepted, without
+            keeping them.
+        yes: Skip the confirmation.
+
+    Raises:
+        click.ClickException: No project, fit or records; the fit is not final
+            (to publish); a tool is missing; or the push failed.
+    """
+    try:
+        layout = ProjectLayout.discover()
+    except ProjectNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    index = FitIndex(layout.index_file)
+    try:
+        entry, fit_dir = resolve_fit(layout, index, fit_id)
+    except FitNotFoundError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _upload(
+        layout,
+        index,
+        entry,
+        fit_dir / "isaac" / "records",
+        validate_only=validate_only,
+        yes=yes,
+    )
+
+
+#: What `nr-isaac-format push` prints for each record the portal made.
+_CREATED_RE = re.compile(r"(\S+): created \(record_id=([^)\s]*)\)")
+
+#: Terminal colour codes, which a tool may print even into a pipe.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _upload(
+    layout: ProjectLayout,
+    index: FitIndex,
+    entry: dict[str, Any],
+    records: Path,
+    *,
+    validate_only: bool,
+    yes: bool,
+) -> None:
     """Push to the ISAAC Portal, after saying what is about to leave."""
     from nr_workbench.agent.guard import refuse_if_agent
+    from nr_workbench.env import load_env
+    from nr_workbench.provenance.curation import EVENT_PUBLISH, current_user
 
-    refuse_if_agent("upload")
-
+    fit_id = str(entry["fit_id"])
     written = sorted(records.glob("*.json"))
     if not written:
-        raise click.ClickException("No records to upload.")
+        raise click.ClickException(
+            f"No records to upload in {_relative(records, layout)}. "
+            f"`nrw isaac export {fit_id}` writes them."
+        )
+    state = _curation(index, fit_id)
+    if not validate_only:
+        refuse_if_agent("upload")
+        if "final" not in state.labels:
+            raise click.ClickException(
+                f"{fit_id} is not the final fit of {entry.get('sample')}, and only a "
+                "finalized fit is published. Finalize it first -- nrw promote "
+                f"{fit_id} --reason '...' -- or ask the server whether its records "
+                "would be accepted with --validate-only."
+            )
+    # ISAAC_URL and ISAAC_KEY as every setting is read -- the shell, then the
+    # project's .env, ~/.nrw, ~/.aure -- and passed to the tool in the
+    # environment: it reads no ~/.nrw of its own.
+    load_env()
+    portal = urlparse(os.environ.get("ISAAC_URL", "")).netloc or "ISAAC_URL, not set"
 
     click.echo()
     if validate_only:
-        click.echo(f"  Asking the ISAAC API to validate {len(written)} record(s).")
+        click.echo(
+            f"  Asking the ISAAC API ({portal}) to validate {len(written)} "
+            "record(s). They are sent to it, and not kept."
+        )
     else:
         click.secho(
-            f"  About to publish {len(written)} record(s) to the ISAAC Portal.",
+            f"  About to publish {len(written)} record(s) to the ISAAC Portal "
+            f"({portal}).",
             bold=True,
         )
         click.echo("  This shares the data and the fitted model outside this project.")
+        if state.published:
+            click.echo(
+                f"  It was published before, on {state.published[-1].get('at')}: "
+                "this adds new records, and replaces none."
+            )
         if not yes and not click.confirm("  Continue?", default=False):
             click.echo("  Not uploaded.")
             return
@@ -345,8 +446,45 @@ def _upload(records: Path, *, validate_only: bool, yes: bool) -> None:
     args = [*cmd, "push", str(records)]
     if validate_only:
         args.append("--validate-only")
-    result = _run(args, "nr-isaac-format push")
-    click.echo(result.stdout.strip() or "  done")
+    result = _run(args, "nr-isaac-format push", check=False)
+    said = _ANSI_RE.sub("", result.stdout)
+    created = [
+        {"file": name, "record_id": record}
+        for name, record in _CREATED_RE.findall(said)
+    ]
+    if created and not validate_only:
+        # Recorded whatever the exit code: a portal keeps what it accepted
+        # before a later record failed.
+        index.append(
+            {
+                "fit_id": fit_id,
+                "sample": entry.get("sample"),
+                "portal": portal,
+                "records": created,
+                "complete": result.returncode == 0,
+                "who": current_user(),
+                "at": format_timestamp(utc_now()),
+            },
+            event=EVENT_PUBLISH,
+        )
+    click.echo(said.strip() or "  done")
+    if result.returncode != 0:
+        detail = _ANSI_RE.sub("", result.stderr.strip() or said.strip())[:2000]
+        raise click.ClickException(
+            f"nr-isaac-format push failed:\n{detail}"
+            + (
+                f"\n{len(created)} record(s) were made before it failed; they are "
+                "recorded in the fit index."
+                if created and not validate_only
+                else ""
+            )
+        )
+
+
+def _curation(index: FitIndex, fit_id: str) -> Any:
+    from nr_workbench.provenance.curation import NONE, curation_of
+
+    return curation_of(index.entries()).get(fit_id, NONE)
 
 
 def _relative(path: Path, layout: ProjectLayout) -> str:
@@ -377,4 +515,4 @@ def read_records(records: Path) -> list[dict[str, Any]]:
     return found
 
 
-__all__ = ["read_records", "run_export"]
+__all__ = ["read_records", "run_export", "run_push", "tool_installed"]

@@ -959,6 +959,27 @@ def isaac_export_command(**kwargs: object) -> None:
     run_export(**kwargs)  # type: ignore[arg-type]
 
 
+@isaac_group.command("push")
+@click.argument("fit_id")
+@click.option(
+    "--validate-only",
+    is_flag=True,
+    help="Ask the API whether the records would be accepted, without keeping them.",
+)
+@click.option("--yes", is_flag=True, help="Skip the confirmation.")
+def isaac_push_command(fit_id: str, validate_only: bool, yes: bool) -> None:
+    """Send FIT_ID's exported records to the ISAAC Portal.
+
+    The records `nrw isaac export` wrote, unchanged: what the server validated
+    is what is published. Only the final fit of a sample is published, and
+    each push is recorded in the fit index. ISAAC_URL and ISAAC_KEY are read
+    like every setting -- in ~/.nrw, say.
+    """
+    from nr_workbench.commands.isaac_cmd import run_push
+
+    run_push(fit_id=fit_id, validate_only=validate_only, yes=yes)
+
+
 @main.group("agent")
 def agent_group() -> None:
     """Run and constrain an unattended analysis harness."""

@@ -3809,3 +3809,33 @@ scripts may run where a token is.
 
 **The page names a fit whole.** The terminal accepts a prefix, but a prefix in
 a URL could come to match a later fit.
+
+### 2026-09-30: publishing a final fit to ISAAC from its page
+
+**A key in `~/.nrw` never reached the push.** `nrw isaac export --upload` ran
+`nr-isaac-format push` with nrw's own environment, but never called
+`load_env()`. The tool reads `ISAAC_URL` and `ISAAC_KEY` from its environment,
+or from a `.env` in its working directory, never from `~/.nrw`. Under
+`--no-llm` nothing else loaded the settings either, so a key kept in `~/.nrw`
+reached the push only by accident. The push path (`_upload`) now calls
+`load_env()` first, and `ISAAC_URL` and `ISAAC_KEY` are known settings, with
+the key secret. `nrw doctor` and the page say where each is set, and never
+show the key.
+
+**What is validated is what is pushed.** An export asks a language model for
+the conditions, so exporting twice can make different records. `nrw isaac push
+FIT_ID [--validate-only]` sends the records the export already wrote, and the
+page's Validate and Push do the same. `export --upload` still works, going the
+same way.
+
+**A push that half-fails has still published.** `nr-isaac-format push` exits
+1 if any record fails, even after the portal accepted others. The push path
+reads the "created (record_id=...)" lines whatever the exit code, and appends
+a `publish` event to the index: when, by whom, the portal's host, each record
+made, and `complete`. The curation replay carries these events, so a published
+fit's files can never be deleted, even with its `isaac/` removed by hand.
+
+**Only the final fit is published** (the user's decision), by `nrw isaac push`
+and by the page. Validating needs no finalization: asking the server whether
+records would be accepted publishes nothing. The guard counts `nrw isaac push`
+without `--validate-only` as an upload.

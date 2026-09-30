@@ -38,6 +38,7 @@ from nr_workbench.web.api import api
 from nr_workbench.web.curation import CurationData
 from nr_workbench.web.experiment import ExperimentData
 from nr_workbench.web.experiment_api import experiment_api
+from nr_workbench.web.isaac import IsaacData
 from nr_workbench.web.llm_settings import LlmSettingsData
 from nr_workbench.web.models import ModelsData
 from nr_workbench.web.project import ProjectData
@@ -110,6 +111,13 @@ def create_app(
         root,
         writable=app.config["NRW_WRITABLE"],
         why_read_only=app.config["NRW_READ_ONLY_REASON"],
+    )
+    app.config["NRW_ISAAC"] = IsaacData(
+        root,
+        writable=app.config["NRW_WRITABLE"],
+        why_read_only=app.config["NRW_READ_ONLY_REASON"],
+        # The page's one lane: an export is not run beside a fit.
+        jobs=app.config["NRW_MODELS"].jobs,
     )
     app.config["NRW_CURATION"] = CurationData(
         root,

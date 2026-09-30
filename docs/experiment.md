@@ -453,6 +453,43 @@ nrw ls --all                 # the discarded fits too
 An unattended agent can do none of them: which fits are good, set aside or
 deleted is a person's judgement.
 
+### Publishing to ISAAC
+
+The final fit of a sample can be published to the ISAAC Portal as AI-Ready
+Records. Only the final fit: its page shows an **ISAAC** panel once it is
+finalized. The panel has three steps, each run as a job:
+
+1. **Export** writes the records into the fit's `isaac/`, as `nrw isaac export`
+   does, and checks each against the schema.
+2. **Validate with the server** sends those records to the portal, which
+   checks them and keeps nothing.
+3. **Push…** publishes exactly those records, after you confirm. It does not
+   export again, so what the server checked is what it gets. The portal keeps
+   what it is given, so each push is recorded with the fit: when, by whom,
+   where, and the id of every record the portal made. A push that fails half
+   way is recorded too, with the records it did make. Pushing again adds new
+   records and replaces none, and the page says so first.
+
+The panel needs `data-assembler` and `nr-isaac-format`
+(`pip install 'nr-workbench[isaac]'`), and the portal and its key. Put them in
+`~/.nrw`, your own file, not the project's:
+
+```
+ISAAC_URL=https://isaac.slac.stanford.edu/portal/api
+ISAAC_KEY=...
+```
+
+The panel says where each is set and which portal it is. It never shows the
+key. From the terminal:
+
+```bash
+nrw isaac export <fit_id>
+nrw isaac push <fit_id> --validate-only
+nrw isaac push <fit_id>          # the final fit only; asks first
+```
+
+A fit whose records were pushed keeps its files, even once it is discarded.
+
 ## A sample that already exists
 
 A sample written by hand before the page existed can be taken into the catalog:

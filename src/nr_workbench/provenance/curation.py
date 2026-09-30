@@ -40,6 +40,8 @@ EVENT_UNSTAR = "unstar"
 EVENT_DISCARD = "discard"
 EVENT_RESTORE = "restore"
 EVENT_DELETE = "delete"
+#: Records of the fit pushed to the ISAAC Portal: a portal keeps them.
+EVENT_PUBLISH = "publish"
 
 #: The label a fit is finalized with: the answer, for its sample.
 FINAL = "final"
@@ -72,12 +74,15 @@ class Curation:
         discarded: Why, by whom and when it was set aside; ``None`` if not.
         deleted: By whom and when its files were deleted; ``None`` if not.
         labels: The labels it holds now -- ``final``, say.
+        published: Each push of its records to the ISAAC Portal, oldest
+            first: when, by whom, where, and the records the portal made.
     """
 
     starred: bool = False
     discarded: dict[str, Any] | None = None
     deleted: dict[str, Any] | None = None
     labels: tuple[str, ...] = ()
+    published: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         """The JSON form."""
@@ -86,6 +91,7 @@ class Curation:
             "discarded": self.discarded,
             "deleted": self.deleted,
             "labels": list(self.labels),
+            "published": list(self.published),
         }
 
 
@@ -105,6 +111,7 @@ def curation_of(entries: list[dict[str, Any]]) -> dict[str, Curation]:
     starred: dict[str, bool] = {}
     discarded: dict[str, dict[str, Any]] = {}
     deleted: dict[str, dict[str, Any]] = {}
+    published: dict[str, list[dict[str, Any]]] = {}
     # The last promotion of a label, per sample, holds it.
     holders: dict[tuple[str, str], str] = {}
     for entry in entries:
@@ -121,6 +128,13 @@ def curation_of(entries: list[dict[str, Any]]) -> dict[str, Curation]:
             deleted[fit_id] = {k: entry.get(k) for k in ("who", "at")}
         elif event == EVENT_PROMOTE:
             holders[(str(entry.get("sample")), str(entry.get("label")))] = fit_id
+        elif event == EVENT_PUBLISH:
+            published.setdefault(fit_id, []).append(
+                {
+                    k: entry.get(k)
+                    for k in ("at", "who", "portal", "records", "complete")
+                }
+            )
     labels: dict[str, list[str]] = {}
     for (_, label), fit_id in holders.items():
         labels.setdefault(fit_id, []).append(label)
@@ -130,8 +144,9 @@ def curation_of(entries: list[dict[str, Any]]) -> dict[str, Curation]:
             discarded=discarded.get(fit_id),
             deleted=deleted.get(fit_id),
             labels=tuple(sorted(labels.get(fit_id, []))),
+            published=tuple(published.get(fit_id, [])),
         )
-        for fit_id in {*starred, *discarded, *deleted, *labels}
+        for fit_id in {*starred, *discarded, *deleted, *labels, *published}
     }
 
 
@@ -319,6 +334,8 @@ def used_by(
                 )
     if (directory / "isaac").is_dir():
         users.append("the ISAAC records made from it (isaac/)")
+    if curation_of(index.entries()).get(fit_id, NONE).published:
+        users.append("the records pushed from it to the ISAAC Portal")
     own = directory.relative_to(layout.root).as_posix() + "/"
     for other in index.fits():
         other_id = str(other.get("fit_id") or "")

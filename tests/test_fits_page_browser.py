@@ -164,3 +164,65 @@ def test_a_page_opened_without_the_link_offers_nothing(
 
     assert page.js("document.getElementById('curate-buttons').children.length") == 0
     assert page.js("window.NRW_WRITE_TOKEN") == ""
+
+
+def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
+    page: Page, site: Site, project: Path, tmp_path: Path, monkeypatch
+) -> None:
+    import sys
+
+    from nr_workbench import env as env_module
+    from nr_workbench.web import jobs as jobs_module
+
+    settings = tmp_path / "nrw-settings"
+    settings.write_text(
+        "ISAAC_URL=https://isaac.example.org/api\nISAAC_KEY=k-1234567\n"
+    )
+    monkeypatch.setattr(env_module, "USER_ENV_PATH", settings)
+    # Each step says what it was asked, and succeeds: what is tested is the
+    # page -- the panel, the confirmation, the job followed -- not ISAAC.
+    monkeypatch.setattr(
+        jobs_module,
+        "nrw_command",
+        lambda *args: [sys.executable, "-c", f"print({' '.join(args)!r})"],
+    )
+    records = project / "samples" / "S1" / "results" / A / "isaac" / "records"
+    records.mkdir(parents=True)
+    (records / "isaac_record_state0.json").write_text("{}")
+    open_as_writer(page, site, f"/f/{A}")
+    page.wait_for("document.getElementById('curate-finalize') !== null", what="the bar")
+    assert page.js("document.getElementById('isaac').classList.contains('d-none')")
+
+    page.click("curate-finalize")
+    page.type("curate-reason", "the answer")
+    page.click("curate-go")
+    page.wait_for(
+        "!document.getElementById('isaac').classList.contains('d-none')",
+        what="the panel, once the fit is final",
+    )
+    assert "isaac.example.org" in text(page, "isaac-setup")
+    assert "k-1234567" not in text(page, "isaac")  # never the key
+
+    page.click("isaac-export")
+    page.wait_for(
+        "document.getElementById('isaac-status').textContent.endsWith('done.')",
+        what="the export's job",
+    )
+    assert f"isaac export {A}" in text(page, "isaac-log")
+
+    page.js("window.confirm = () => false")
+    page.wait_for(
+        "!document.getElementById('isaac-push').disabled", what="push offered"
+    )
+    before = text(page, "isaac-status")
+    page.click("isaac-push")
+    # Declined, nothing was sent: a step says "…" before it is answered.
+    assert text(page, "isaac-status") == before
+
+    page.js("window.confirm = () => true")
+    page.click("isaac-push")
+    page.wait_for(
+        "document.getElementById('isaac-log').textContent.includes('isaac push')",
+        what="the push's job",
+    )
+    assert f"isaac push {A} --yes" in text(page, "isaac-log")

@@ -48,11 +48,21 @@ KNOWN_VARS = (
     # on PATH. Reported because an endpoint that resolves to the wrong binary
     # looks exactly like one that is not configured.
     "AURE_CLAUDE_BIN",
+    # The ISAAC Portal `nrw isaac push` publishes to, and the key it does so
+    # with -- read by nr-isaac-format, which nrw passes its environment.
+    "ISAAC_URL",
+    "ISAAC_KEY",
 )
 
 #: Variables whose value must never be printed.
 SECRET_VARS = frozenset(
-    {"LLM_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "ALCF_ACCESS_TOKEN"}
+    {
+        "LLM_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "ALCF_ACCESS_TOKEN",
+        "ISAAC_KEY",
+    }
 )
 
 #: Set once loading has run, so repeated calls are free.

@@ -63,6 +63,29 @@
   <p id="curate-status" class="small mb-0" aria-live="polite"></p>
 </div>
 
+{# Publishing to ISAAC: shown for the final fit of its sample, the only one
+   published. isaac.js draws it from the server's answer. #}
+<div id="isaac" class="panel mb-3 d-none">
+  <div class="panel-head">
+    <span>ISAAC</span>
+    <span class="hint">publish this final fit as AI-Ready Records</span>
+  </div>
+  <div class="p-3 small">
+    <ul id="isaac-setup" class="mb-2 ps-3"></ul>
+    <div id="isaac-buttons" class="d-flex flex-wrap gap-2"></div>
+    <div class="form-text">
+      <strong>Export</strong> writes the records into this fit's
+      <code>isaac/</code>. <strong>Validate with the server</strong> sends them
+      to the portal to check, which keeps nothing. <strong>Push…</strong>
+      publishes exactly those records: the portal keeps them, and the push is
+      recorded with this fit.
+    </div>
+    <p id="isaac-published" class="mb-0 mt-2"></p>
+    <p id="isaac-status" class="mb-0 mt-2" aria-live="polite"></p>
+    <pre id="isaac-log" class="expt-output small mt-2 mb-0 d-none"></pre>
+  </div>
+</div>
+
 {% if fit.problems %}
 <div class="alert alert-warning py-2 problem">
   <ul class="mb-0">
@@ -298,6 +321,7 @@
 </script>
 <script src="{{ url_for('static', filename='nrwpage.js') }}"></script>
 <script src="{{ url_for('static', filename='curation.js') }}"></script>
+<script src="{{ url_for('static', filename='isaac.js') }}"></script>
 <script nonce="{{ csp_nonce }}">
 (function () {
   NRW.fitPanel("plot-fit", "plot-residual", {{ fit.curves|nrwjson|safe }});

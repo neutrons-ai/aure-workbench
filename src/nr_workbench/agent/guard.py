@@ -211,6 +211,10 @@ def _judge_text(piece: str) -> Verdict:
         piece[experiment.end() :],
     ):
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
+    if re.search(r"(?<![\w-])isaac\s+push(?![\w-])", piece) and not re.search(
+        r"--validate-only(?![\w-])", piece
+    ):
+        return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
     for pattern, rule in (
         (r"(?<![\w-])promote(?![\w-])", "promote"),
         (r"(?<![\w-])fit\s+(?:" + "|".join(_CURATION) + r")(?![\w-])", "curate"),
@@ -262,7 +266,11 @@ def _judge_one(tokens: list[str]) -> Verdict:
         if word == "fit" and words[place + 1] in _CURATION:
             return Verdict(allowed=False, rule="curate", reason=_REASONS["curate"])
 
-    if "isaac" in subcommands and "--upload" in flags:
+    # `isaac push` publishes unless it only asks the server to validate.
+    if "isaac" in subcommands and (
+        "--upload" in flags
+        or ("push" in subcommands and "--validate-only" not in flags)
+    ):
         return Verdict(allowed=False, rule="upload", reason=_REASONS["upload"])
 
     if "--force" in flags:

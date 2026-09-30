@@ -28,6 +28,7 @@ from nr_workbench.web.experiment import (
     RunNotListedError,
     WritesDisabledError,
 )
+from nr_workbench.web.isaac import IsaacData
 from nr_workbench.web.jobs import CommandRefused, JobBusy, JobNotFound
 from nr_workbench.web.llm_settings import MISSING, LlmSettingsData
 from nr_workbench.web.models import ModelNotFound, ModelsData
@@ -59,6 +60,11 @@ def llm_data() -> LlmSettingsData:
 def curation_data() -> CurationData:
     """The request's :class:`CurationData`, held on the app config."""
     return current_app.config["NRW_CURATION"]  # type: ignore[no-any-return]
+
+
+def isaac_data() -> IsaacData:
+    """The request's :class:`IsaacData`, held on the app config."""
+    return current_app.config["NRW_ISAAC"]  # type: ignore[no-any-return]
 
 
 @experiment_api.before_request
@@ -337,6 +343,18 @@ def finalize_fit(fit_id: str) -> Any:
     return jsonify(
         curation_data().finalize(fit_id, body.get("reason"), body.get("force", False))
     )
+
+
+@experiment_api.get("/fits/<fit_id>/isaac")
+def isaac_status(fit_id: str) -> Any:
+    """Where a fit stands with ISAAC: the tools, the portal, its records."""
+    return jsonify(isaac_data().status(fit_id))
+
+
+@experiment_api.post("/fits/<fit_id>/isaac/<step>")
+def isaac_step(fit_id: str, step: str) -> Any:
+    """Export, validate or push a final fit's records, as a job."""
+    return jsonify(isaac_data().start(fit_id, step, _body().get("confirm"))), 202
 
 
 # ---------------------------------------------------------------------------

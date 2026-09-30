@@ -116,6 +116,8 @@
         said = await api("POST", fitPath(said.fit_id, action), body);
         render();
         status(done(said));
+        // The ISAAC panel follows: a fit finalized now may be published.
+        document.dispatchEvent(new CustomEvent("nrw:curated"));
         return true;
       } catch (error) {
         status(error.message, "error");
