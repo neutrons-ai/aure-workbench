@@ -3750,3 +3750,23 @@ synchronous command did not. The page disables the button and says so rather
 than refusing the click. A second lane for language-model jobs would need a
 second runner with its own records folder and a panel that follows two jobs.
 That is not done yet.
+
+### 2026-09-30: AuRE never reads a state's `extra_description`
+
+The entry "a quick fit could not be run again, and AuRE never read about the
+measurement" said AuRE appends a state's `extra_description` to the sample's
+description when it prompts the model. **That was wrong.** AuRE declares it
+that way (`state.py`: "Appended to sample_description when prompting the
+LLM"), but no prompt at the pinned 1.0.2, nor on AuRE's `main` today, reads
+it. The field is only listed, copied, displayed and checkpointed.
+
+The consequence was the one that entry meant to fix. A DPPC sample whose
+Measurements table said "The ambient medium is D2O" for run 232736 had that
+line in its `extra_description`, and AuRE still proposed `air` as the ambient.
+
+`compose` now appends the run's condition, the sample's *Measurement
+conditions* and the run's notes to `sample_description`, which AuRE's intake
+and modeling prompts do read, and writes no `extra_description`. A quick fit
+fits one run, so one description serves it. **Check what AuRE reads from its
+prompts' code, not its docstrings:** AuRE declares no stable API
+(`aure_adapter`), and a documented field can be unwired.

@@ -133,9 +133,9 @@ def measurement_context(notes: str, run: int) -> str:
 
     Its condition in the Measurements table, the sample's own *Measurement
     conditions*, and the notes on that run -- read with the catalog's parser,
-    which keeps a run's notes apart from the sample's text. AuRE appends this
-    to the sample's description when it asks the language model for a stack,
-    so a contrast or a condition written there reaches the proposal.
+    which keeps a run's notes apart from the sample's text. :func:`compose`
+    adds it to the sample's description, which every AuRE prompt reads, so a
+    contrast or a condition written there reaches the proposal.
 
     Args:
         notes: The full text of ``sample.md``.
@@ -312,9 +312,13 @@ def compose(
     }
     if back_reflection:
         state["back_reflection"] = True
+    # In the description, which AuRE's intake and modeling prompts read. AuRE
+    # declares a state's `extra_description` as appended to it, but no prompt
+    # of AuRE 1.0.2 reads one: a contrast written only there -- "the ambient
+    # medium is D2O" -- never reached the model, and the fit was in air.
     context = measurement_context(notes, chosen)
     if context:
-        state["extra_description"] = context
+        description = f"{description}\n\n{context}"
 
     document: dict[str, Any] = {
         "name": run_name,
@@ -338,15 +342,16 @@ def compose(
         ),
     ]
     from_notes = [
-        f"sample_description: ## Description + ## Details ({len(description)} chars)"
+        "sample_description: ## Description + ## Details"
+        + (
+            f", and run {chosen}'s condition and notes and ## Measurement conditions"
+            if context
+            else ""
+        )
+        + f" ({len(description)} chars)"
     ]
     if hypothesis:
         from_notes.append("hypothesis: ## Fits to perform")
-    if context:
-        from_notes.append(
-            f"extra_description: run {chosen}'s condition and notes, and "
-            f"## Measurement conditions ({len(context)} chars)"
-        )
     from_notes.append(
         f"back_reflection: {back_reflection} "
         + (

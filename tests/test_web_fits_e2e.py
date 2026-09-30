@@ -175,10 +175,8 @@ def test_a_quick_fit_runs_again_after_the_notes_change_and_aure_hears_them(
     setup = yaml.safe_load(
         (project / "samples" / "S1" / "aure" / "auto-2" / "setup.yaml").read_text()
     )
-    assert (
-        "Notes on run 100001: in D2O, realigned"
-        in (setup["states"][0]["extra_description"])
-    )
+    # In the description, which AuRE's prompts read (see aure_setup.compose).
+    assert "Notes on run 100001: in D2O, realigned" in setup["sample_description"]
     # The first run of AuRE is kept; the spec is AuRE's second proposal.
     assert (project / "samples" / "S1" / "aure" / "auto" / "output").is_dir()
     spec = (project / "samples" / "S1" / "models" / "auto.yaml").read_text()

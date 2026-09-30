@@ -284,8 +284,9 @@ def test_compose_writes_no_absolute_paths(project: Path) -> None:
 def test_compose_tells_aure_what_was_written_about_the_measurement(
     project: Path,
 ) -> None:
-    """A contrast or a condition written for the run reaches the language model
-    -- AuRE appends a state's extra_description to the sample's description."""
+    """A contrast or a condition written for the run reaches the language model:
+    in the sample's description, which every AuRE prompt reads. Not in a state's
+    extra_description, which AuRE declares but no prompt of its reads."""
     _sample_with_data(project, notes=MEASURED)
     scan = scan_sample(project, "Sample1")
 
@@ -293,13 +294,15 @@ def test_compose_tells_aure_what_was_written_about_the_measurement(
         sample="Sample1", scan=scan, notes=MEASURED, root=project, run=218386
     )
 
-    said = composed.document["states"][0]["extra_description"].splitlines()
-    assert said == [
+    description = composed.document["sample_description"]
+    assert description.startswith("50 nm copper on 5 nm titanium")
+    assert description.splitlines()[-3:] == [
         "The condition of run 218386: D2O, 25 C.",
         "Measurement conditions: The cell was filled the day before.",
         "Notes on run 218386: realigned after mounting",
     ]
-    assert any(line.startswith("extra_description:") for line in composed.from_notes)
+    assert "extra_description" not in composed.document["states"][0]
+    assert "run 218386's condition" in composed.from_notes[0]
 
 
 def test_a_note_on_the_run_reaches_aure_though_no_table_lists_it(project: Path) -> None:
@@ -313,8 +316,8 @@ def test_a_note_on_the_run_reaches_aure_though_no_table_lists_it(project: Path) 
         sample="Sample1", scan=scan, notes=notes, root=project, run=218386
     )
 
-    assert composed.document["states"][0]["extra_description"] == (
-        "Notes on run 218386: in D2O"
+    assert composed.document["sample_description"].endswith(
+        "\n\nNotes on run 218386: in D2O"
     )
 
 
@@ -338,6 +341,7 @@ def test_compose_adds_nothing_when_nothing_was_written_about_it(project: Path) -
     )
 
     assert "extra_description" not in composed.document["states"][0]
+    assert composed.document["sample_description"] == describe_sample(DESCRIBED)
 
 
 @pytest.mark.parametrize("notes", [DESCRIBED, MEASURED], ids=["described", "measured"])
