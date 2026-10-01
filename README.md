@@ -215,8 +215,9 @@ sources:
   beside the setup. A value for one of them in `~/.aure` is not used by a run
   that nrw starts.
 - **The fit you keep**: after a quick fit on the page, the spec AuRE proposed is
-  fitted with `nrw fit run --method amoeba`. That fit is the one that appears
-  under Fits.
+  fitted with `nrw fit run`, starting from AuRE's values, with the project's
+  fitter: `[fit]` in `nrw.toml`, else DREAM, so it carries uncertainties. That
+  fit is the one that appears under Fits.
 - **Again**: **Quick fit again** on a model AuRE proposed asks AuRE again, for
   example after you have added to `sample.md`. What AuRE reads there includes
   the run's condition and notes. A spec you have edited is never replaced.

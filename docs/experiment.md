@@ -344,15 +344,18 @@ it does not have yet.
 
 AuRE's own run is reconnaissance: the fit that counts is the one `nrw fit run`
 records. So the page goes on to import the spec AuRE proposed, generate its
-script, and fit it with amoeba from AuRE's values. That fit is the one in
-**Fits**. The whole job is the five commands you could type yourself:
+script, and fit it from AuRE's values with the project's fitter, as **Fit…**
+does: the `method` in `nrw.toml`'s `[fit]`, else **dream**, so the fit carries
+uncertainties. That fit is the one in **Fits**. A DREAM fit takes minutes
+rather than seconds; set `method = "amoeba"` under `[fit]` for a fast one. The
+whole job is the five commands you could type yourself:
 
 ```bash
 nrw aure new <sample> --name=<name> --run=<run>
 nrw aure run samples/<id>/aure/<name>/setup.yaml --budget=quick
 nrw aure import samples/<id>/aure/<name>/output --sample=<id> --name=<name>
 nrw model generate samples/<id>/models/<name>.yaml
-nrw fit run samples/<id>/models/<name>.py --method=amoeba
+nrw fit run samples/<id>/models/<name>.py
 ```
 
 AuRE needs a language-model endpoint. Without one, the job stops at `aure run`
