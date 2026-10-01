@@ -66,7 +66,7 @@ has no way to receive any — so everything is an environment variable.
 ```bash
 # a tagged release, with the NeXus extra
 curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
-  | NRW_VERSION=v0.2 NRW_EXTRAS=nexus sh
+  | NRW_VERSION=v0.2.1 NRW_EXTRAS=nexus sh
 
 # with the tools that export and push fits to the ISAAC Portal
 curl -fsSL https://raw.githubusercontent.com/neutrons-ai/aure-workbench/main/install.sh \
