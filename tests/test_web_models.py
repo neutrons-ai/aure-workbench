@@ -590,6 +590,11 @@ def test_a_model_aure_proposed_is_quick_fitted_again_replacing_only_the_unedited
         "$ nrw aure import samples/S1/aure/auto-2/output --sample=S1 --name=auto "
         "--replace-unedited\n"
     ) in payload["log"]
+    # The fit that counts takes the project's fitter, as every fit does: no
+    # --method, so `nrw fit run` reads nrw.toml's [fit], else dream.
+    (fitted,) = [line for line in payload["log"].splitlines() if " fit run " in line]
+    assert fitted.startswith("$ nrw fit run samples/S1/models/auto.py --verbose")
+    assert "--method" not in fitted
 
 
 def unedited_proposal(run: int | None = None) -> str:

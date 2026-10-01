@@ -123,7 +123,9 @@ def test_a_quick_fit_with_aure_is_recorded_as_a_fit_of_the_spec_it_proposed(
     assert (project / "samples" / "S1" / "models" / "auto.yaml").is_file()
     (recorded,) = FitIndex(project / ".nrw" / "index.jsonl").fits(sample="S1")
     assert recorded["fit_id"] == job["fit_id"]
-    assert (recorded["model"], recorded["method"]) == ("auto", "amoeba")
+    # The project's fitter: this nrw.toml sets no [fit], so DREAM -- the fit
+    # that counts carries uncertainties.
+    assert (recorded["model"], recorded["method"]) == ("auto", "dream")
 
 
 def test_a_quick_fit_without_an_endpoint_stops_at_aure_run_and_says_how_to_set_one(

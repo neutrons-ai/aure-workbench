@@ -273,8 +273,9 @@ class ModelsData:
         AuRE's own run is reconnaissance (see :mod:`nr_workbench.commands.
         aure_cmd`); the fit that counts is the one ``nrw fit run`` records. So
         the job goes on from AuRE's quick budget to import the spec it proposes,
-        generate its script, and fit that with amoeba from AuRE's values -- and
-        that fit is the one in Fits.
+        generate its script, and fit that from AuRE's values -- and that fit is
+        the one in Fits. Its fitter is the project's, as for every fit: the
+        ``method`` in ``nrw.toml``'s ``[fit]``, else DREAM.
 
         A model can always be quick-fitted again -- after the notes changed,
         say. Each run of AuRE gets a folder of its own, and a spec that is an
@@ -341,10 +342,11 @@ class ModelsData:
                     f"--name={name}",
                     *(["--replace-unedited"] if again else []),
                 ],
+                # No --method: `nrw fit run` takes nrw.toml's [fit], else dream.
                 *_fit_steps(
                     self._shown(spec),
-                    "amoeba",
-                    ["--note=From AuRE's quick fit, refined by amoeba."],
+                    None,
+                    ["--note=From AuRE's quick fit, refined from its values."],
                 ),
             ],
         )
@@ -464,12 +466,12 @@ class ModelsData:
         return path.relative_to(self.root).as_posix()
 
 
-def _fit_steps(spec: str, method: str, options: list[str]) -> list[list[str]]:
+def _fit_steps(spec: str, method: str | None, options: list[str]) -> list[list[str]]:
     """Generate a spec's script, then fit it: the tail of every fit job.
 
     Args:
         spec: The spec, relative to the project.
-        method: The fitter.
+        method: The fitter, or ``None`` for the project's default.
         options: More ``--option=value`` arguments for ``nrw fit run``.
 
     Returns:
@@ -479,7 +481,14 @@ def _fit_steps(spec: str, method: str, options: list[str]) -> list[list[str]]:
     return [
         ["model", "generate", spec],
         # --verbose: the fitter's progress is what the page shows.
-        ["fit", "run", script, f"--method={method}", "--verbose", *options],
+        [
+            "fit",
+            "run",
+            script,
+            *([f"--method={method}"] if method else []),
+            "--verbose",
+            *options,
+        ],
     ]
 
 

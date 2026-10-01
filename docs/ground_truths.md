@@ -3968,3 +3968,14 @@ Code changed with the review:
 - `nrw serve`'s start-up lines and help, and the page's quick-fit-again button,
   now say what the pages do: curate, publish, set the language model, and fit
   a proposed model's own run again.
+
+### 2026-10-01: the quick fit ignored `[fit]`
+
+`nrw.toml`'s `[fit]` (89c6af2: DREAM unless it says otherwise) reached
+**Fit…** and `nrw fit run`, but the quick fit's last step still passed
+`--method=amoeba`, written before `[fit]` existed. So every quick fit's
+recorded fit had no uncertainties, and its ISAAC records carried values
+without error bars. The step now passes no `--method`, and `nrw fit run`
+resolves the fitter as it does for any fit. A DREAM fit takes minutes rather
+than seconds; a project that wants quick fits fast sets `method = "amoeba"`
+under `[fit]`, which changes **Fit…**'s default too.
