@@ -1,8 +1,12 @@
 // Refuse the commands an unattended agent must not run.
 //
-// Written by `nrw init`. This is OpenCode's half of a limit that Claude Code
+// Written by `nrw init`. This is OpenCode 1's half of a limit that Claude Code
 // gets from a PreToolUse hook: `tool.execute.before` runs before the command
 // does, so the refusal does not depend on the model agreeing to it.
+//
+// OpenCode 2 refuses to load this file and reads nrw-guard-opencode2.js, the
+// same guard in the form it takes. Each version warns about the other's file
+// in its log; that warning is expected.
 //
 // **No refusal logic lives here.** Every decision is `nrw agent guard`, which
 // splits the raw command line on `;&|()` and newlines before tokenising and
@@ -42,7 +46,7 @@ function nrwCommand(directory) {
 export const NrwGuard = async ({ directory }) => {
   return {
     "tool.execute.before": async (input, output) => {
-      if (input.tool !== "bash") return
+      if (input.tool !== "bash" && input.tool !== "shell") return
 
       const command = output?.args?.command
       if (typeof command !== "string" || command.trim() === "") return

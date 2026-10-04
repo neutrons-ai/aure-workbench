@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -194,6 +197,140 @@ def test_opencode_guard_requires_both_the_plugin_and_the_deny_rules(
     (opencode_project / ".opencode" / "plugins" / "nrw-guard.js").unlink()
     with pytest.raises(GuardMissing, match="guard plugin"):
         opencode_guard(opencode_project)
+
+
+def test_opencode_guard_requires_the_opencode_2_plugin(opencode_project: Path) -> None:
+    """OpenCode 2 will not load nrw-guard.js, so without its own file nothing
+    stops the session under it -- and only a line in OpenCode's log says so."""
+    from nr_workbench.harness.driver import GuardMissing, opencode_guard
+
+    (opencode_project / ".opencode" / "plugins" / "nrw-guard-opencode2.js").unlink()
+    with pytest.raises(GuardMissing, match="OpenCode 2"):
+        opencode_guard(opencode_project)
+
+
+def test_opencode_project_has_a_guard_plugin_for_each_opencode_version(
+    opencode_project: Path,
+) -> None:
+    """OpenCode 1 calls every export of a plugin file as a function; OpenCode 2
+    loads only a default export that is a plain object with an id and a setup.
+    Measured on 2.0.22: given the OpenCode 1 file alone, it refused it at load
+    and nothing was refused before it ran."""
+    plugins = opencode_project / ".opencode" / "plugins"
+    first = (plugins / "nrw-guard.js").read_text(encoding="utf-8")
+    second = (plugins / "nrw-guard-opencode2.js").read_text(encoding="utf-8")
+
+    assert "export default" not in first
+    assert re.search(r"^export default \{$", second, re.MULTILINE)
+    assert 'id: "nrw-guard"' in second
+    assert 'ctx.tool.hook("execute.before"' in second
+    assert '"shell"' in second  # the tool OpenCode 2 runs a command with
+
+
+#: Loads a guard plugin the way its OpenCode version does, fires its hook for
+#: three commands, and prints what each one met.
+_DRIVE_PLUGIN = """
+import { pathToFileURL } from "node:url"
+const [plugin, form, directory] = process.argv.slice(2)
+const mod = await import(pathToFileURL(plugin).href)
+let before
+if (form === "1") {
+  // OpenCode 1 calls every export as a plugin function.
+  const all = await Promise.all(Object.values(mod).map((f) => f({ directory })))
+  before = (tool, command) =>
+    Promise.all(all.map((h) => h["tool.execute.before"]({ tool }, { args: { command } })))
+} else {
+  // OpenCode 2 checks for a plain object, then runs its setup.
+  if (typeof mod.default !== "object") throw new Error("default export is not an object")
+  const hooks = {}
+  await mod.default.setup({
+    location: { directory },
+    tool: { hook: async (name, fn) => { hooks[name] = fn } },
+  })
+  before = (tool, command) => hooks["execute.before"]({ tool, input: { command } })
+}
+const met = async (tool, command) => {
+  try { await before(tool, command); return "ran" } catch (error) { return error.message }
+}
+const shell = form === "1" ? "bash" : "shell"
+console.log(JSON.stringify({
+  allowed: await met(shell, "nrw check"),
+  refused: await met(shell, "nrw promote x"),
+  not_a_shell: await met("read", "nrw promote x"),
+}))
+"""
+
+_JS = shutil.which("node") or shutil.which("bun")
+
+
+@pytest.mark.skipif(
+    _JS is None or sys.platform == "win32",
+    reason="needs node or bun; the stand-in nrw is a POSIX script",
+)
+@pytest.mark.parametrize(
+    ("plugin", "form"), [("nrw-guard.js", "1"), ("nrw-guard-opencode2.js", "2")]
+)
+def test_opencode_guard_plugin_refuses_what_nrw_agent_guard_refuses(
+    opencode_project: Path, tmp_path: Path, plugin: str, form: str
+) -> None:
+    """Each plugin, loaded the way its OpenCode version loads it, asks
+    `nrw agent guard` and turns a refusal into the error that stops the call."""
+    shim = opencode_project / ".nrw" / "bin" / "nrw"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$4\" = 'nrw promote x' ]; then\n"
+        "  echo 'Refused by nr-workbench (promote): ask a person.' >&2; exit 2\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    module = tmp_path / "plugin.mjs"  # .mjs: ESM wherever it is loaded from
+    shutil.copy(opencode_project / ".opencode" / "plugins" / plugin, module)
+    driver = tmp_path / "drive.mjs"
+    driver.write_text(_DRIVE_PLUGIN, encoding="utf-8")
+
+    done = subprocess.run(
+        [_JS, str(driver), str(module), form, str(opencode_project)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {
+        "allowed": "ran",
+        "refused": "Refused by nr-workbench (promote): ask a person.",
+        "not_a_shell": "ran",
+    }
+
+
+def _launcher(tmp_path: Path, name: str, version: str | None) -> list[str]:
+    """A stand-in for `opencode` that answers `--version` with *version*."""
+    script = tmp_path / f"{name}.py"
+    body = "raise SystemExit(1)" if version is None else f"print({version!r})"
+    script.write_text(body + "\n", encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def test_opencode_2_runs_each_session_on_its_own_server(tmp_path: Path) -> None:
+    """Without --standalone, OpenCode 2 runs the session in its shared
+    background service: killed at its timeout, the `opencode run` nrw started
+    went away and the session's command ran on (measured on 2.0.22).
+    OpenCode 1 has no such flag; a launcher that will not say its version
+    gets it, because that failure is loud and the other one is not."""
+    from nr_workbench.harness.driver import opencode_argv
+
+    def argv(version: str | None) -> list[str]:
+        launcher = _launcher(tmp_path, f"v{version}", version)
+        return opencode_argv(Path("p.md"), turns=1, model=None, launcher=launcher).argv
+
+    assert argv("opencode v2.0.22")[:2] == ["run", "--standalone"]
+    assert "--standalone" not in argv("1.18.18")
+    assert argv(None)[:2] == ["run", "--standalone"]
 
 
 def test_opencode_guard_reads_its_jsonc_config(opencode_project: Path) -> None:

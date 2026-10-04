@@ -4019,3 +4019,46 @@ killed the thread feeding stdin, leaving the harness waiting for its prompt,
 and cp1252's `—` arrived as an invalid byte. Reading the harness's UTF-8
 output with the locale codec was already wrong before, and the same setting
 fixes it.
+\n
+### 2026-10-04: OpenCode 2 loaded no guard, and ran sessions nrw could not stop
+
+Two findings from OpenCode 2.0.22, run unattended the way `nrw agent run` runs
+it.
+
+**The guard plugin never loaded.** OpenCode 2 refused `nrw-guard.js` at load
+time, and only a WARN line in `~/.local/share/opencode/log/opencode.log` said
+so: "Plugin must export a default definition with an id and an effect or setup
+function". `nrw check --force` under `NRW_AGENT=1` ran, and only nrw's own
+inside refusal stopped it. OpenCode 2 also renamed the tool that runs a
+command, from `bash` to `shell`, and its input is still `{ command }`. Its
+published plugin docs still describe the OpenCode 1 form, so the form it loads
+was read from its own error messages and its bundled source instead:
+
+- a default export that is a plain object (a function with the same properties
+  is refused: "Expected object");
+- `setup(ctx)` receives `ctx.location.directory`;
+- the hook is registered with `ctx.tool.hook("execute.before", fn)`, and `fn`
+  receives `{ tool, input, sessionID, ... }`;
+- a hook that throws refuses the call before the command runs, and the model
+  is shown the message (the tool part ends in `error`).
+
+OpenCode 1.18.18 calls every export of a plugin file as a function and throws
+on any other. One file therefore cannot serve both versions, and `nrw init`
+writes `nrw-guard-opencode2.js` beside `nrw-guard.js`. Both contain no refusal
+logic, only the call to `nrw agent guard`. With both files in place, the same
+`nrw check --force` came back from OpenCode 2 refused before it ran.
+
+**The session outlived its timeout.** `opencode run` connects to a shared
+background service unless given `--standalone` (OpenCode 1 has neither). A
+session told to `sleep 20 && touch` a file was killed three seconds into the
+command, the way nrw kills a session at its timeout, by its process group. The
+file appeared anyway: the session belonged to the service. The service also
+keeps the plugins it loaded, whatever `nrw init` has written since. With
+`--standalone`, the private server (`opencode serve --stdio`, in its own
+process group) exited when the session's process group was killed. A command
+already running could still finish, the same limitation Claude Code's sessions
+have. `opencode_argv` now adds `--standalone` unless the launcher reports
+version 1, which it asks once per launcher.
+
+The tool's environment and working directory were the `opencode run`
+process's in both modes, so `NRW_AGENT=1` reached the commands either way.

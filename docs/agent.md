@@ -634,6 +634,26 @@ deny rules do **not** match was refused by the plugin under `--auto`, and with
 the plugin disabled via `--pure` the deny rules refused `nrw promote` on their
 own. `nrw agent run` refuses to start if either is missing.
 
+**OpenCode 2 needs its own plugin file, and its own server.** Measured on
+2.0.22:
+
+- **The plugin.** It refuses to load `nrw-guard.js`, and says so only in its own
+  log, so a project with that file alone has no plugin guard at all under
+  OpenCode 2. `.opencode/plugins/nrw-guard-opencode2.js` is the same guard in the
+  form OpenCode 2 loads: a default export with an `id` and a `setup`, hooking
+  the tool's `execute.before`. The tool that runs a command is now `shell`, not
+  `bash`. The two files cannot be merged into one, because OpenCode 1 calls
+  every export as a function. Each version therefore warns about the other's
+  file in its log, which is expected. `nrw agent run` refuses to start if
+  either file is missing, and `nrw init` writes both.
+- **The server.** By default, `opencode run` hands the session to a shared
+  background service, and the session belongs to the service. Killed at its
+  timeout, the `opencode run` nrw had started went away, and the session's
+  command still ran. With `--standalone`, each session gets a private server
+  that exits with it, so `nrw agent run` passes `--standalone` to any OpenCode
+  that does not report version 1. A command already running when a session is
+  stopped can still finish, as with Claude Code.
+
 **`--turns` does nothing here.** `opencode run` has no `--max-turns` equivalent,
 so an OpenCode session is bounded by the clock and nothing else. `nrw agent run
 --harness opencode` therefore *requires* `--timeout`, and says so rather than

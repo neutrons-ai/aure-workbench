@@ -1027,7 +1027,7 @@ def harness_invocation(
         )
 
     assert entry.build_argv is not None  # guaranteed by drives_sessions
-    built = entry.build_argv(prompt_file, turns=turns, model=model)
+    built = entry.build_argv(prompt_file, turns=turns, model=model, launcher=launcher)
     return Invocation(
         argv=[*launcher, *built.argv],
         prompt_on_stdin=built.prompt_on_stdin,
