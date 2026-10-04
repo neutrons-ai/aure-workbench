@@ -4,6 +4,8 @@
 file it did not write. So everything nrw itself puts into nrw.toml -- the IPTS,
 the audience, the experiment's settings -- has to be something `init` renders
 back byte for byte, or every later `init` reads the project as hand-edited.
+The `[fit]` and `[agent]` tables are a person's to write, but a value a tool
+sets in them through nrw's editor is nrw's text too, and `init` keeps it.
 """
 
 from __future__ import annotations
@@ -18,13 +20,16 @@ import pytest
 from click.testing import CliRunner
 
 from nr_workbench.cli import main
+from nr_workbench.fitting.settings import written_settings
 from nr_workbench.project.config import ProjectConfigError, load_config
+from nr_workbench.project.nrwtoml import write_as_nrw
 from nr_workbench.project.render import init_context, render_tree
 from nr_workbench.project.settings import (
     EXPERIMENT_KEYS,
     experiment_block,
     written_experiment,
 )
+from nr_workbench.project.tomlfile import Set
 
 
 def nrw(root: Path, monkeypatch, *args: str):
@@ -135,6 +140,61 @@ def test_init_twice_with_experiment_settings_reports_no_changes(
 
     assert result.exit_code == 0, result.output
     assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 15}
+
+
+def test_a_fit_or_agent_setting_takes_the_line_of_its_example(project: Path) -> None:
+    text = rendered_nrw_toml(
+        project, settings={"agent.limits.dream": {"samples": 50000}}
+    )
+
+    block = text[text.index("[agent.limits.dream]") :].split("\n\n")[0]
+    assert block.splitlines() == [
+        "[agent.limits.dream]",
+        "samples = 50000",
+        "# burn = 1000",
+        "# steps = 300",
+        "# pop = 10",
+    ]
+    assert "# [fit.dream]" in text  # the other examples stay examples
+
+
+def test_fit_and_agent_settings_read_back_as_written(project: Path) -> None:
+    settings = {
+        "fit": {"method": "de", "seed": 7},
+        "fit.de": {"steps": 3000},
+        "agent.limits.dream": {"samples": 50000, "pop": 8},
+    }
+
+    text = rendered_nrw_toml(project, settings=settings)
+
+    assert written_settings(tomllib.loads(text)) == settings
+
+
+def test_init_keeps_fit_and_agent_settings_set_through_nrws_editor(
+    project: Path, monkeypatch
+) -> None:
+    """Re-rendered without them, an unattended run's limits would quietly lapse."""
+    limits = {"samples": 100000, "burn": 1000, "steps": 300, "pop": 10}
+    write_as_nrw(
+        project,
+        {
+            "fit": {"method": Set("de")},
+            "fit.de": {"steps": Set(3000)},
+            "agent.limits.dream": {k: Set(v, default=v) for k, v in limits.items()},
+        },
+    )
+
+    # A new harness list makes `init` render the file again.
+    result = nrw(
+        project, monkeypatch, "init", "--harness", "claude", "--harness", "opencode"
+    )
+
+    assert result.exit_code == 0, result.output
+    raw = load_config(project).raw
+    assert raw["fit"] == {"method": "de", "de": {"steps": 3000}}
+    assert raw["agent"]["limits"]["dream"] == limits
+    check = nrw(project, monkeypatch, "init", "--check")
+    assert check.exit_code == 0, check.output
 
 
 def test_nrw_audience_then_init_check_is_clean(project: Path, monkeypatch) -> None:

@@ -8,6 +8,7 @@ directly over a scientist's edits.
 
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -23,7 +24,7 @@ from nr_workbench.project.audience import DEFAULTS as AUDIENCE_DEFAULTS
 from nr_workbench.project.config import CONTRACT_VERSION
 from nr_workbench.project.experiment_schema import experiment_block, written_experiment
 from nr_workbench.project.scaffold import PlannedFile
-from nr_workbench.project.tomlfile import Value, toml_value
+from nr_workbench.project.tomlfile import Set, Value, edit, toml_value
 
 #: The keys of ``[audience]`` nrw writes, in the order the template has them.
 AUDIENCE_KEYS = (*AUDIENCE_DEFAULTS, "notes")
@@ -133,6 +134,9 @@ class RenderContext:
             axis not given renders at its default.
         experiment: The experiment settings the project already has, by
             table; see :func:`nr_workbench.project.settings.experiment_block`.
+        settings: The ``[fit]`` and ``[agent]`` values the project already
+            has, by table; written over the template's examples, see
+            :func:`with_settings`.
     """
 
     project_name: str
@@ -147,6 +151,7 @@ class RenderContext:
     prose: SampleProse = field(default_factory=SampleProse)
     audience: Mapping[str, str] = field(default_factory=dict)
     experiment: Mapping[str, Mapping[str, Value]] = field(default_factory=dict)
+    settings: Mapping[str, Mapping[str, Value]] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         """Return the template variables, filling in derived defaults.
@@ -229,6 +234,7 @@ def init_context(
     Returns:
         The render context to scaffold with.
     """
+    from nr_workbench.fitting.settings import written_settings
     from nr_workbench.project.config import ProjectConfigError, load_config
 
     existing = None
@@ -254,6 +260,7 @@ def init_context(
     # as the file already has it, as a person's value always is here.
     audience: dict[str, str] = {}
     experiment: dict[str, dict[str, Value]] = {}
+    settings: dict[str, dict[str, Value]] = {}
     if existing is not None:
         block = existing.raw.get("audience")
         if isinstance(block, dict):
@@ -263,6 +270,7 @@ def init_context(
                 if key in AUDIENCE_KEYS and isinstance(value, str)
             }
         experiment = written_experiment(existing.raw)
+        settings = written_settings(existing.raw)
 
     return RenderContext(
         project_name=project_name or (existing.name if existing else root.name),
@@ -274,6 +282,7 @@ def init_context(
         harnesses=tuple(h.name for h in resolve(selected)),
         audience=audience,
         experiment=experiment,
+        settings=settings,
     )
 
 
@@ -320,6 +329,56 @@ def _environment() -> Environment:
 _TEMPLATES = _environment()
 
 
+def with_settings(text: str, settings: Mapping[str, Mapping[str, Value]]) -> str:
+    """A rendered ``nrw.toml`` with ``settings`` written over its examples.
+
+    The template holds ``[fit]`` and ``[agent.limits]`` as commented examples.
+    Each value set takes its example's line -- ``# samples = 100000`` becomes
+    ``samples = 50000`` -- and its table's ``# [...]`` line is switched on:
+    what a person following the template's advice writes, and what nrw's
+    editor writes over a placeholder, so a file set either way renders back
+    as it is. A key with no example goes after its table's last line.
+
+    Args:
+        text: The rendered file.
+        settings: Values by table, as
+            :func:`nr_workbench.fitting.settings.written_settings` reads them.
+
+    Returns:
+        The file with the settings in it; ``text`` itself when there are none.
+    """
+    if not settings:
+        return text
+    changes = {}
+    for table, values in settings.items():
+        examples = _examples(text, table)
+        changes[table] = {
+            key: Set(value, default=examples.get(key)) for key, value in values.items()
+        }
+    return edit(text, changes)
+
+
+def _examples(text: str, table: str) -> dict[str, Value]:
+    """The ``# key = value`` lines right under the template's ``# [table]``."""
+    lines = [line.strip() for line in text.splitlines()]
+    try:
+        start = lines.index(f"# [{table}]")
+    except ValueError:
+        return {}
+    found: dict[str, Value] = {}
+    for line in lines[start + 1 :]:
+        if not line.startswith("# ") or line.startswith("# ["):
+            break
+        try:
+            parsed = tomllib.loads(line[2:])
+        except tomllib.TOMLDecodeError:
+            break
+        for key, value in parsed.items():
+            if isinstance(value, str | int | float | bool):
+                found[key] = value
+    return found
+
+
 def render_tree(
     subdir: str,
     context: RenderContext,
@@ -360,6 +419,8 @@ def render_tree(
             try:
                 # The environment's settings are explained in `_environment`.
                 content = _TEMPLATES.from_string(raw).render(**variables)
+                if relative == "nrw.toml":
+                    content = with_settings(content, context.settings)
             except Exception as exc:
                 raise TemplateError(f"Failed to render {source}: {exc}") from exc
             data = content.encode("utf-8")

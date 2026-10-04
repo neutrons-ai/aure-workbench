@@ -749,6 +749,10 @@ settings. A setting with no limit is not limited, and a person's own fits
 never are. The check is inside `nrw`, so it holds whichever harness is
 driving.
 
+`nrw init` keeps the table, and `[fit]` with it. It never re-renders a file a
+person has edited, and it renders the values back into a file that a tool
+wrote through nrw's own editor, as nr-watcher does.
+
 ---
 
 ## When it goes wrong at 3am

@@ -290,6 +290,46 @@ def read_agent_limits(document: dict[str, Any]) -> AgentLimits:
     return AgentLimits(per_method=per_method)
 
 
+def written_settings(
+    document: dict[str, Any],
+) -> dict[str, dict[str, str | int | float | bool]]:
+    """The ``[fit]`` and ``[agent]`` values a parsed ``nrw.toml`` sets, by table.
+
+    What ``nrw init`` writes back when it renders the file again. The template
+    holds these tables as commented examples, so a value set in them through
+    nrw's editor (``write_as_nrw``) -- an unattended run's limits, as
+    nr-watcher writes them -- would otherwise be gone after the next
+    ``nrw init``. Tables are named as an edit names them
+    (``"agent.limits.dream"``), and only plain values are carried: nothing else
+    in these tables is a setting.
+
+    Args:
+        document: The parsed file.
+
+    Returns:
+        Each table's plain values; a table without any is left out.
+    """
+    found: dict[str, dict[str, str | int | float | bool]] = {}
+
+    def take(name: str, table: Any) -> None:
+        if not isinstance(table, dict):
+            return
+        plain = {
+            key: value
+            for key, value in table.items()
+            if isinstance(value, str | int | float | bool)
+        }
+        if plain:
+            found[name] = plain
+        for key, value in table.items():
+            if isinstance(value, dict):
+                take(f"{name}.{key}", value)
+
+    for name in ("fit", "agent"):
+        take(name, document.get(name))
+    return found
+
+
 def _settings(table: dict[str, Any], method: str) -> dict[str, int]:
     checked: dict[str, int] = {}
     for key, value in table.items():
