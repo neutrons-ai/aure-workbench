@@ -4009,3 +4009,13 @@ for the old `-p @<prompt-file>` form must now read stdin (docs/agent.md).
 buffer (64 KB) blocks its write until the harness reads it, and that write came
 before the session's timer was started, so a harness that never read its stdin
 held `nrw agent run` with a timeout that never fired.
+
+Both directions of the pipe are UTF-8 by name (`HARNESS_ENCODING`). Python
+opens a text pipe in the locale's encoding: cp1252 on Windows, and ASCII under
+a bare C locale with Python's UTF-8 handling off. The harnesses read and write
+UTF-8 whatever the locale. Left to the locale, moving to stdin would have lost
+the prompt file's explicit UTF-8. A character outside the codec (ρ, σ, →)
+killed the thread feeding stdin, leaving the harness waiting for its prompt,
+and cp1252's `—` arrived as an invalid byte. Reading the harness's UTF-8
+output with the locale codec was already wrong before, and the same setting
+fixes it.

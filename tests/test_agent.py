@@ -847,6 +847,68 @@ def test_stream_prompt_past_the_pipe_buffer_reaches_the_harness_whole(
     assert json.loads(transcript.read_text()) == {"chars": len(prompt), "tail": "END"}
 
 
+def test_stream_non_ascii_prompt_arrives_as_utf8_whatever_the_locale(
+    tmp_path: Path,
+) -> None:
+    """The harness reads UTF-8 whatever the locale; Python's text pipe does not.
+
+    Left to the locale -- cp1252 on Windows, ASCII under a bare C locale -- the
+    first character outside it killed the thread feeding stdin, and the harness
+    waited for a prompt that never came. A locale is fixed when the interpreter
+    starts, hence the child process; C with Python's UTF-8 handling off is the
+    non-UTF-8 locale every platform has.
+    """
+    prompt = "Å ρ σ χ² → ≈ — Δ"
+    argv = _harness(
+        tmp_path,
+        """\
+        import json, sys
+        text = sys.stdin.buffer.read().decode("utf-8")
+        line = json.dumps({"got": text}, ensure_ascii=False) + "\\n"
+        sys.stdout.buffer.write(line.encode("utf-8"))
+        """,
+    )
+    transcript = tmp_path / "transcript.jsonl"
+    child = textwrap.dedent(
+        f"""\
+        import json, os
+        from pathlib import Path
+        from nr_workbench.agent import session
+        print(json.dumps(session._stream(
+            {argv!r},
+            root=Path({str(tmp_path)!r}),
+            environment=dict(os.environ),
+            transcript=Path({str(transcript)!r}),
+            timeout=20,
+            on_progress=None,
+            stdin_text={json.dumps(prompt)},
+        )))
+        """
+    )
+    source = str(Path(session.__file__).resolve().parents[2])
+    environment = {
+        **os.environ,
+        "LC_ALL": "C",
+        "PYTHONCOERCECLOCALE": "0",
+        "PYTHONUTF8": "0",
+        "PYTHONPATH": os.pathsep.join(
+            p for p in (source, os.environ.get("PYTHONPATH")) if p
+        ),
+    }
+
+    done = subprocess.run(
+        [sys.executable, "-c", child],
+        env=environment,
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    assert json.loads(done.stdout) == [0, False]
+    assert json.loads(transcript.read_text(encoding="utf-8")) == {"got": prompt}
+
+
 def test_stream_harness_that_never_reads_its_prompt_still_times_out(
     tmp_path: Path,
 ) -> None:

@@ -32,6 +32,11 @@ CLAUDE_SETTINGS = ".claude/settings.json"
 OPENCODE_CONFIG = "opencode.json"
 OPENCODE_PLUGIN = ".opencode/plugins/nrw-guard.js"
 
+#: What a harness's pipes carry, both ways. Python opens a text pipe in the
+#: locale's encoding -- cp1252 on Windows, ASCII under a bare C locale -- while
+#: Claude Code and OpenCode read and write UTF-8 whatever the locale.
+HARNESS_ENCODING = "utf-8"
+
 #: OpenCode's config is JSONC --- its schema sets ``allowComments`` --- so it
 #: cannot be handed straight to ``json.loads``.
 _LINE_COMMENT = re.compile(r"^\s*//.*$")

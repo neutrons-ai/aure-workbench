@@ -36,7 +36,7 @@ from typing import Any
 
 from nr_workbench.agent.guard import AGENT_ENV
 from nr_workbench.harness import Harness
-from nr_workbench.harness.driver import Invocation
+from nr_workbench.harness.driver import HARNESS_ENCODING, Invocation
 
 #: The heading in ``sample.md`` that states what the scientist wants fitted.
 TASK_HEADING = "Fits to perform"
@@ -1254,6 +1254,10 @@ def _stream(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # Never the locale's codec: the prompt then dies on the first character
+        # outside it, and the harness waits for a prompt that never comes.
+        encoding=HARNESS_ENCODING,
+        errors="replace",
         bufsize=1,
         # Its own process group, so stopping it takes the fits it started
         # with it. Killing only the harness leaves refl1d running and writing

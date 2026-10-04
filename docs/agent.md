@@ -588,8 +588,8 @@ is tested against. The contract your command has to meet is:
           --permission-mode bypassPermissions [--model M]   < prompt
 ```
 
-…reading the prompt from stdin, and emitting Claude Code's newline-delimited
-JSON events on stdout. A wrapper script that translates those arguments is the
+…reading the prompt from stdin as UTF-8, and emitting Claude Code's
+newline-delimited JSON events on stdout, also UTF-8. A wrapper script that translates those arguments is the
 intended seam. One was verified end to end while the prompt was still named as
 `-p @<prompt-file>`; a wrapper written for that form must read stdin now,
 because Claude Code stops delivering a named file's text once it is large

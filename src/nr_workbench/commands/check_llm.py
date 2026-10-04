@@ -283,6 +283,7 @@ def probe_harness(
 
     from nr_workbench.agent.guard import AGENT_ENV, agent_is_driving
     from nr_workbench.agent.session import SessionError, harness_invocation
+    from nr_workbench.harness.driver import HARNESS_ENCODING
 
     if agent_is_driving():
         return Probe(
@@ -316,6 +317,8 @@ def probe_harness(
                 input=PROBE_PROMPT if invocation.prompt_on_stdin else None,
                 capture_output=True,
                 text=True,
+                encoding=HARNESS_ENCODING,
+                errors="replace",
                 timeout=timeout,
                 check=False,
             )
