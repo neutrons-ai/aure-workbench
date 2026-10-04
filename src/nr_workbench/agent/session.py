@@ -36,7 +36,7 @@ from typing import Any
 
 from nr_workbench.agent.guard import AGENT_ENV
 from nr_workbench.harness import Harness
-from nr_workbench.harness.driver import Invocation
+from nr_workbench.harness.driver import HARNESS_ENCODING, Invocation
 
 #: The heading in ``sample.md`` that states what the scientist wants fitted.
 TASK_HEADING = "Fits to perform"
@@ -1235,8 +1235,10 @@ def _stream(
 
     Args:
         stdin_text: Prompt to write to the process's stdin, for a harness that
-            takes it there. ``opencode run`` reads its message positionally,
-            and a composed session prompt is far past what belongs in argv.
+            takes it there: both do. ``opencode run`` reads its message
+            positionally, and a composed session prompt is far past what
+            belongs in argv; ``claude -p @<file>`` stops delivering the file's
+            text once it is large.
 
     Returns:
         The exit status, and whether it was stopped for running too long.
@@ -1252,6 +1254,10 @@ def _stream(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        # Never the locale's codec: the prompt then dies on the first character
+        # outside it, and the harness waits for a prompt that never comes.
+        encoding=HARNESS_ENCODING,
+        errors="replace",
         bufsize=1,
         # Its own process group, so stopping it takes the fits it started
         # with it. Killing only the harness leaves refl1d running and writing
@@ -1259,26 +1265,28 @@ def _stream(
         start_new_session=True,
     )
 
-    if stdin_text is not None and process.stdin is not None:
-        # Closed immediately: the harness reads the whole message before it
-        # starts, and an open stdin would leave it waiting for more.
-        try:
-            process.stdin.write(stdin_text)
-            process.stdin.close()
-        except (BrokenPipeError, OSError):
-            pass
-
     def stop() -> None:
         stopped.set()
         _kill_group(process.pid)
 
     # From here on the harness is alive, so *nothing* may raise without taking it
     # down. This was learned the hard way: a TypeError in the pidfile write --
-    # three lines below, after Popen had already succeeded -- killed the parent
+    # below, after Popen had already succeeded -- killed the parent
     # `nrw` and left the harness reparented to init, running unattended on the
     # sample with no pidfile, invisible to `nrw agent status`, still writing
     # results. The traceback made it look as though nothing had started.
     try:
+        if stdin_text is not None and process.stdin is not None:
+            # Written from a thread, and closed as soon as it is written: the
+            # harness reads the whole message before it starts, and an open
+            # stdin would leave it waiting for more. Not written here, because
+            # a prompt longer than the pipe buffer blocks until the harness
+            # reads it, and a harness that never does would hold this call
+            # before the timer below exists: a timeout that never fires.
+            threading.Thread(
+                target=_feed, args=(process.stdin, stdin_text), daemon=True
+            ).start()
+
         # Recorded as soon as the process exists, so `nrw agent stop` can reach
         # it for the whole of its life rather than only once it has settled.
         # Wrapped separately because a pidfile is a convenience and the session
@@ -1321,6 +1329,15 @@ def _stream(
 
             clear(root, sample)
         raise
+
+
+def _feed(pipe: Any, text: str) -> None:
+    """Write *text* to a child's stdin and close it; a child that left is fine."""
+    try:
+        pipe.write(text)
+        pipe.close()
+    except (BrokenPipeError, OSError):
+        pass
 
 
 def _pump(

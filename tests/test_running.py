@@ -25,6 +25,16 @@ def invoke(root: Path, monkeypatch: pytest.MonkeyPatch, *args: str):
     return CliRunner().invoke(main, list(args))
 
 
+class FakeStdin:
+    """Enough of a stdin pipe for `_stream`, which writes the prompt and closes it."""
+
+    def write(self, text: str) -> int:
+        return len(text)
+
+    def close(self) -> None:
+        pass
+
+
 def test_a_recorded_session_is_reported(project: Path, monkeypatch) -> None:
     run_mod.record(
         project, "S1", os.getpid(), "2026-08-11T20:00:00Z", project / "t.jsonl"
@@ -140,6 +150,7 @@ def test_the_pidfile_is_written_by_the_real_call_site(
 
     class FakeProcess:
         pid = os.getpid()
+        stdin = FakeStdin()
         stdout = FakeStdout()
 
         def wait(self) -> int:
@@ -189,6 +200,7 @@ def test_a_failure_after_spawning_does_not_leak_the_harness(
 
     class FakeProcess:
         pid = 4242
+        stdin = FakeStdin()
         stdout = FakeStdout()
 
         def wait(self) -> int:
@@ -233,6 +245,7 @@ def test_a_pidfile_that_cannot_be_written_does_not_kill_the_session(
 
     class FakeProcess:
         pid = os.getpid()
+        stdin = FakeStdin()
         stdout = FakeStdout()
 
         def wait(self) -> int:

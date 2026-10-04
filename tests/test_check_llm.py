@@ -246,9 +246,10 @@ def _fake_harness(directory: Path, *, stream: str, returncode: int = 0) -> Path:
             assert "--output-format" in argv, argv
             assert argv[argv.index("--output-format") + 1] == "stream-json", argv
 
-            prompt = argv[argv.index("-p") + 1]
-            assert prompt.startswith("@"), prompt
-            assert {check_llm.PROBE_TOKEN!r} in open(prompt[1:]).read()
+            # The prompt arrives on stdin. Never as `-p @<file>`: Claude Code
+            # stops delivering a named file's text once it is large.
+            assert not any(arg.startswith("@") for arg in argv), argv
+            assert {check_llm.PROBE_TOKEN!r} in sys.stdin.read()
 
             sys.stdout.write({stream!r})
             sys.exit({returncode})

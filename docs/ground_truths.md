@@ -3979,3 +3979,43 @@ without error bars. The step now passes no `--method`, and `nrw fit run`
 resolves the fitter as it does for any fit. A DREAM fit takes minutes rather
 than seconds; a project that wants quick fits fast sets `method = "amoeba"`
 under `[fit]`, which changes **Fit…**'s default too.
+
+### 2026-10-04: a large `-p @<file>` prompt never reaches Claude Code's model
+
+`nrw agent run` started Claude Code as `claude -p @<prompt-file> ...`, which
+asks Claude Code to attach the file. Past some size it does not: the model gets
+the bare reference in place of the file's text, and the session starts without
+its instructions. Measured with claude 2.1.232, one tool-less call each:
+
+| Prompt | As `-p @<file>` | On stdin |
+|---|---|---|
+| 20 KB | arrived | |
+| 120 KB | did not arrive: the model spent its turns looking for the file (`error_max_turns`) | arrived whole |
+
+It was first seen in nr-watcher's assessment call, which passed its prompt the
+same way. Prompts up to 64 KB arrived; a 74 KB one did not, and the model
+answered that the briefing file "was referenced but its contents were not
+delivered". The exact limit was not measured. The session prompts seen so far
+were 8 to 13 KB, but nothing caps them, so a longer one would fail the same way.
+
+The prompt now goes on stdin, as OpenCode's already did
+(`Invocation.prompt_on_stdin`). `claude -p` with no prompt argument reads
+stdin, and says so when it gets nothing: "Input must be provided either through
+stdin or as a prompt argument when using --print". The prompt file is still
+written, as the record of what the session was told. A harness wrapper written
+for the old `-p @<prompt-file>` form must now read stdin (docs/agent.md).
+
+`_stream` writes the prompt from a thread now. A prompt longer than the pipe
+buffer (64 KB) blocks its write until the harness reads it, and that write came
+before the session's timer was started, so a harness that never read its stdin
+held `nrw agent run` with a timeout that never fired.
+
+Both directions of the pipe are UTF-8 by name (`HARNESS_ENCODING`). Python
+opens a text pipe in the locale's encoding: cp1252 on Windows, and ASCII under
+a bare C locale with Python's UTF-8 handling off. The harnesses read and write
+UTF-8 whatever the locale. Left to the locale, moving to stdin would have lost
+the prompt file's explicit UTF-8. A character outside the codec (ρ, σ, →)
+killed the thread feeding stdin, leaving the harness waiting for its prompt,
+and cp1252's `—` arrived as an invalid byte. Reading the harness's UTF-8
+output with the locale codec was already wrong before, and the same setting
+fixes it.

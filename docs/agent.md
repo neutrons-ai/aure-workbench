@@ -584,13 +584,16 @@ export NRW_HARNESS="$HOME/bin/harness-wrapper"      # or a wrapper script
 is tested against. The contract your command has to meet is:
 
 ```
-<harness> -p @<prompt-file> --max-turns N --output-format stream-json --verbose
-          --permission-mode bypassPermissions [--model M]
+<harness> -p --max-turns N --output-format stream-json --verbose
+          --permission-mode bypassPermissions [--model M]   < prompt
 ```
 
-…reading the prompt from the named file, and emitting Claude Code's
-newline-delimited JSON events on stdout. A wrapper script that translates
-those arguments is the intended seam, and one was verified end to end.
+…reading the prompt from stdin as UTF-8, and emitting Claude Code's
+newline-delimited JSON events on stdout, also UTF-8. A wrapper script that translates those arguments is the
+intended seam. One was verified end to end while the prompt was still named as
+`-p @<prompt-file>`; a wrapper written for that form must read stdin now,
+because Claude Code stops delivering a named file's text once it is large
+(docs/ground_truths.md, 2026-10-04).
 
 If your harness emits a different event format, everything still works except
 the progress lines, which go quiet — `describe_event` returns nothing for a
@@ -638,10 +641,10 @@ letting `--turns` look like a limit it is not. This is a genuinely weaker
 guarantee than the Claude Code path and is worth knowing before leaving one
 running overnight.
 
-Two smaller differences. The prompt goes in on **stdin** — `opencode run` takes
-its message positionally and a composed session prompt is far past what belongs
-in argv. And `--model` wants `provider/model`, e.g.
-`anthropic/claude-sonnet-4-5`, not a bare model name.
+One smaller difference: `--model` wants `provider/model`, e.g.
+`anthropic/claude-sonnet-4-5`, not a bare model name. The prompt goes in on
+stdin, as it does for Claude Code: `opencode run` takes its message
+positionally, and a composed session prompt is far past what belongs in argv.
 
 One sharp edge: **`opencode --pure` skips external plugins**, and therefore
 skips the guard. Nothing here passes it, but a site wrapping `opencode` in its
