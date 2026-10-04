@@ -16,13 +16,17 @@ The two backends differ in a way that matters and is not cosmetic:
   the plugin, the deny list, and ``NRW_AGENT=1``.
 
 Both facts were measured against opencode 1.18.18, not read off a docs page;
-see docs/ground_truths.md.
+see docs/ground_truths.md. OpenCode 2 (measured on 2.0.22) changed how a guard
+plugin is written and where a session runs; see :func:`opencode_argv` and
+:data:`OPENCODE_PLUGIN_2`.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +35,11 @@ from typing import Any
 CLAUDE_SETTINGS = ".claude/settings.json"
 OPENCODE_CONFIG = "opencode.json"
 OPENCODE_PLUGIN = ".opencode/plugins/nrw-guard.js"
+#: The same guard for OpenCode 2, which refuses to load the file above: it takes
+#: only a default export that is a plain object, and OpenCode 1 calls every
+#: export as a function. Each version loads its own file and warns about the
+#: other one.
+OPENCODE_PLUGIN_2 = ".opencode/plugins/nrw-guard-opencode2.js"
 
 #: What a harness's pipes carry, both ways. Python opens a text pipe in the
 #: locale's encoding -- cp1252 on Windows, ASCII under a bare C locale -- while
@@ -91,7 +100,13 @@ def _read_jsonc(path: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def claude_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invocation:
+def claude_argv(
+    prompt_file: Path,
+    *,
+    turns: int,
+    model: str | None,
+    launcher: list[str] | None = None,
+) -> Invocation:
     """Build the Claude Code headless command line.
 
     The prompt goes on stdin, not as ``-p @<prompt-file>``. Named that way, a
@@ -106,11 +121,12 @@ def claude_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invocati
             written, as the record of what the session was told.
         turns: Cap on agent turns.
         model: Model name, or None for the harness default.
+        launcher: Unused, for signature parity with the other backends.
 
     Returns:
         The invocation.
     """
-    del prompt_file
+    del prompt_file, launcher
     argv = [
         "-p",
         "--max-turns",
@@ -196,7 +212,13 @@ def _claude_target(tool_input: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------
 
 
-def opencode_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invocation:
+def opencode_argv(
+    prompt_file: Path,
+    *,
+    turns: int,
+    model: str | None,
+    launcher: list[str] | None = None,
+) -> Invocation:
     """Build the OpenCode headless command line.
 
     The prompt goes on stdin rather than in ``argv``: ``opencode run`` takes
@@ -207,17 +229,30 @@ def opencode_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invoca
     is told so via :attr:`Invocation.turn_cap` rather than being left to
     believe the number did something.
 
+    OpenCode 2 runs ``opencode run`` against a shared background service unless
+    told ``--standalone``, and the session then belongs to the service: killed
+    at its timeout, the ``opencode run`` this package started went away and the
+    session's command ran on (measured on 2.0.22). The service also keeps the
+    plugins it loaded, whatever ``nrw init`` has written since. ``--standalone``
+    gives each session its own server, which exits with it. OpenCode 1 has no
+    service and no such flag, so it is left out only for a launcher that says
+    it is version 1; one whose version cannot be read gets it, because the
+    failure that buys is loud and the other is not.
+
     Args:
         prompt_file: Unused; the prompt is streamed to stdin.
         turns: Ignored, for signature parity with the other backends.
         model: Model in ``provider/model`` form, or None for the default.
+        launcher: The command that starts OpenCode, to ask its version.
 
     Returns:
         The invocation.
     """
     del prompt_file, turns
+    major = _opencode_major(tuple(launcher)) if launcher else None
     argv = [
         "run",
+        *([] if major is not None and major < 2 else ["--standalone"]),
         "--format",
         "json",
         # Auto-approves only what is not explicitly denied, so unlike Claude
@@ -229,6 +264,25 @@ def opencode_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invoca
     if model:
         argv += ["--model", model]
     return Invocation(argv=argv, prompt_on_stdin=True, turn_cap=False)
+
+
+@functools.lru_cache(maxsize=8)
+def _opencode_major(launcher: tuple[str, ...]) -> int | None:
+    """The major version an OpenCode launcher reports, or None if it does not."""
+    try:
+        done = subprocess.run(  # noqa: S603 - the resolved launcher, no shell
+            [*launcher, "--version"],
+            capture_output=True,
+            text=True,
+            encoding=HARNESS_ENCODING,
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"(\d+)\.\d+", f"{done.stdout} {done.stderr}")
+    return int(found.group(1)) if found else None
 
 
 def opencode_guard(root: Path) -> None:
@@ -251,6 +305,14 @@ def opencode_guard(root: Path) -> None:
             f"No guard plugin at {plugin}, so nothing would stop this session "
             "promoting a fit, publishing it, or forcing past a check.\n"
             "Run `nrw init` to restore it."
+        )
+    plugin = root / OPENCODE_PLUGIN_2
+    if not plugin.is_file():
+        raise GuardMissing(
+            f"No OpenCode 2 guard plugin at {plugin}. OpenCode 2 will not load "
+            f"{OPENCODE_PLUGIN}, so under it nothing would stop this session "
+            "promoting a fit, publishing it, or forcing past a check.\n"
+            "Run `nrw init` to add it."
         )
 
     config = _read_jsonc(root / OPENCODE_CONFIG)
