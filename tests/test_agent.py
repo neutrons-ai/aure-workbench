@@ -14,8 +14,11 @@ and every future improvement then reads as a test failure.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import textwrap
+import threading
 from pathlib import Path
 
 import pytest
@@ -788,6 +791,91 @@ def test_the_harness_runs_without_waiting_for_approval(tmp_path: Path) -> None:
 
     assert "--permission-mode" in argv
     assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+
+
+def test_claude_argv_prompt_goes_on_stdin_not_as_a_file_reference() -> None:
+    """Named as `-p @<file>`, a large prompt never reached the model.
+
+    Measured with claude 2.1.232: a 20 KB file arrived, a 120 KB one did not
+    (Claude Code sent the bare reference, and the model spent its turns looking
+    for the file), and the same 120 KB on stdin arrived whole. A session
+    started that way runs without its instructions.
+    """
+    from nr_workbench.harness.driver import claude_argv
+
+    invocation = claude_argv(Path("p.md"), turns=200, model="opus")
+
+    assert invocation.prompt_on_stdin is True
+    assert invocation.argv[0] == "-p"
+    assert not any(arg.startswith("@") for arg in invocation.argv)
+    assert "p.md" not in " ".join(invocation.argv)
+
+
+def _harness(directory: Path, body: str) -> list[str]:
+    """A harness that is a real process, so the pipe between us is real too."""
+    script = directory / "harness.py"
+    script.write_text(textwrap.dedent(body), encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def test_stream_prompt_past_the_pipe_buffer_reaches_the_harness_whole(
+    tmp_path: Path,
+) -> None:
+    """A session prompt is tens of kilobytes; the pipe holds 64 KB at most."""
+    prompt = "0123456789" * 30_000 + "END"
+    argv = _harness(
+        tmp_path,
+        """\
+        import json, sys
+        text = sys.stdin.read()
+        print(json.dumps({"chars": len(text), "tail": text[-3:]}))
+        """,
+    )
+    transcript = tmp_path / "transcript.jsonl"
+
+    returncode, timed_out = session._stream(
+        argv,
+        root=tmp_path,
+        environment=dict(os.environ),
+        transcript=transcript,
+        timeout=60,
+        on_progress=None,
+        stdin_text=prompt,
+    )
+
+    assert (returncode, timed_out) == (0, False)
+    assert json.loads(transcript.read_text()) == {"chars": len(prompt), "tail": "END"}
+
+
+def test_stream_harness_that_never_reads_its_prompt_still_times_out(
+    tmp_path: Path,
+) -> None:
+    """The prompt used to be written before the session's timer existed.
+
+    A prompt longer than the pipe buffer blocks that write until the harness
+    reads it, so a harness that never did held `nrw agent run` with a timeout
+    that never fired. Run in a thread so a regression fails here, not hangs.
+    """
+    argv = _harness(tmp_path, "import time\ntime.sleep(30)\n")
+    outcome: dict[str, tuple[int, bool]] = {}
+
+    def run() -> None:
+        outcome["value"] = session._stream(
+            argv,
+            root=tmp_path,
+            environment=dict(os.environ),
+            transcript=tmp_path / "transcript.jsonl",
+            timeout=1,
+            on_progress=None,
+            stdin_text="x" * 1_000_000,
+        )
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(20)
+
+    assert not worker.is_alive(), "the session's timeout never fired"
+    assert outcome["value"][1] is True
 
 
 def test_a_session_will_not_start_without_its_hook(tmp_path: Path) -> None:

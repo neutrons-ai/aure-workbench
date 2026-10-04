@@ -89,17 +89,25 @@ def _read_jsonc(path: Path) -> dict[str, Any]:
 def claude_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invocation:
     """Build the Claude Code headless command line.
 
+    The prompt goes on stdin, not as ``-p @<prompt-file>``. Named that way, a
+    large prompt never reaches the model: Claude Code sends the bare reference
+    in place of the file's text, and the session starts without its
+    instructions. Measured with claude 2.1.232: a 20 KB file arrived, a 120 KB
+    one did not, and the same 120 KB on stdin arrived whole. See
+    docs/ground_truths.md, 2026-10-04.
+
     Args:
-        prompt_file: File holding the composed prompt.
+        prompt_file: Unused; the prompt is streamed to stdin. The file is still
+            written, as the record of what the session was told.
         turns: Cap on agent turns.
         model: Model name, or None for the harness default.
 
     Returns:
         The invocation.
     """
+    del prompt_file
     argv = [
         "-p",
-        f"@{prompt_file}",
         "--max-turns",
         str(turns),
         "--output-format",
@@ -121,7 +129,7 @@ def claude_argv(prompt_file: Path, *, turns: int, model: str | None) -> Invocati
     ]
     if model:
         argv += ["--model", model]
-    return Invocation(argv=argv)
+    return Invocation(argv=argv, prompt_on_stdin=True)
 
 
 def claude_guard(root: Path) -> None:

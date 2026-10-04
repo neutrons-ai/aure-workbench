@@ -311,8 +311,8 @@ def probe_harness(
             completed = subprocess.run(  # noqa: S603 - argv built from resolve_harness
                 argv,
                 cwd=scratch,
-                # The prompt goes on stdin for a harness that takes it there
-                # (OpenCode); the others already name the file in argv.
+                # The prompt goes on stdin for a harness that takes it there;
+                # Claude Code and OpenCode both do.
                 input=PROBE_PROMPT if invocation.prompt_on_stdin else None,
                 capture_output=True,
                 text=True,
