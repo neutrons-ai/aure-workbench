@@ -72,6 +72,19 @@ notes = {{ audience.notes|toml }}
 # [fit.amoeba]
 # steps = 1000
 
+# What a session started by `nrw agent run` or `nrw agent watch` may ask of a
+# fit: one table per fitter, holding that fitter's own settings as maxima. A
+# fit such a session starts that asks for more -- on its command line, through
+# [fit] above, or by bumps' default -- is refused before it runs, and is told
+# these limits. Your own fits are never limited, and a setting with no limit
+# here is not limited. To keep unattended DREAM fits to a few minutes, say:
+#
+# [agent.limits.dream]
+# samples = 100000
+# burn = 1000
+# steps = 300
+# pop = 10
+
 # Filename and instrument conventions for REF_L / BL-4B.
 #
 # READ THIS BEFORE EDITING: the glob and dq keys below are DESCRIPTIVE. Nothing

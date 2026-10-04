@@ -192,7 +192,9 @@ With these settings:
   rather than ignored.
 
 Each fit prints which settings it took from `nrw.toml`. Its record keeps every
-setting it ran with, so it can be reproduced after `nrw.toml` changes.
+setting it ran with, so it can be reproduced after `nrw.toml` changes. A fit an
+unattended session starts can also be held to ceilings, `[agent.limits.<fitter>]`:
+see [docs/agent.md](docs/agent.md), "Compute, during a beamtime".
 `nrw init` writes these tables into a new project's `nrw.toml` commented out,
 holding bumps' own defaults (with `pop` for DREAM and DE), so uncommenting one
 changes nothing until you edit a value. For an older project, paste them in.

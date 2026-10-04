@@ -17,6 +17,11 @@ and two identical amoeba fits would read as different runs.
 Whatever a fit ran with is kept in its record, wherever each value came from,
 so a fit stays reproducible after ``nrw.toml`` changes.
 
+A fit started by an unattended session (``NRW_AGENT`` set) is also held to
+``[agent.limits.<method>]``: the most it may ask of each of its fitter's own
+settings, compared with what it would actually run with. See
+:class:`AgentLimits`.
+
 Nothing here imports bumps: this is read by ``nrw fit run --help`` and by the
 page, neither of which may pay for it.
 """
@@ -198,6 +203,131 @@ def resolve(
     if settings["parallel"] is None:
         settings["parallel"] = DEFAULT_PARALLEL
     return ResolvedFit(method=method, settings=settings, origins=origins)
+
+
+@dataclass(frozen=True)
+class AgentLimits:
+    """The most a fit started by an unattended session may ask of each fitter.
+
+    Read from ``[agent.limits.<method>]`` in ``nrw.toml``, one table per
+    fitter, holding that fitter's own settings as maxima. A setting with no
+    limit there is not limited, and a person's own fits never are.
+
+    Attributes:
+        per_method: Each fitter's limits, by fitter.
+    """
+
+    per_method: dict[str, dict[str, int]] = field(default_factory=dict)
+
+    def exceeded(self, fit: ResolvedFit) -> dict[str, tuple[int, int, str]]:
+        """Each setting of *fit* over its limit, as ``(asked, limit, origin)``.
+
+        A setting left unset asks for bumps' own default, so a limit below it
+        refuses a fit that names no setting at all; checking only what a
+        command line spells out would let exactly that fit through.
+
+        Args:
+            fit: The fit, settled by :func:`resolve`.
+
+        Returns:
+            The settings over their limit, in the order the limits list them.
+        """
+        over: dict[str, tuple[int, int, str]] = {}
+        for key, limit in self.per_method.get(fit.method, {}).items():
+            value = fit.settings.get(key)
+            origin = fit.origins.get(key, "bumps' default")
+            if value is None:
+                value = BUMPS_DEFAULTS[fit.method].get(key)
+            if value is not None and value > limit:
+                over[key] = (value, limit, origin)
+        return over
+
+
+def read_agent_limits(document: dict[str, Any]) -> AgentLimits:
+    """Read the ``[agent.limits]`` tables of a parsed ``nrw.toml``.
+
+    Args:
+        document: The parsed file (``ProjectConfig.raw``).
+
+    Returns:
+        The limits; none when it has no ``[agent.limits]``.
+
+    Raises:
+        FitSettingsError: A table, fitter, key or value is not one this reads:
+            a limit that limits nothing must not read as one that holds.
+    """
+    agent = document.get("agent")
+    if agent is None:
+        return AgentLimits()
+    if not isinstance(agent, dict):
+        raise FitSettingsError(f"[agent] must be a table, not {agent!r}.")
+    limits = agent.get("limits")
+    if limits is None:
+        return AgentLimits()
+    if not isinstance(limits, dict):
+        raise FitSettingsError(f"[agent.limits] must be a table, not {limits!r}.")
+    per_method: dict[str, dict[str, int]] = {}
+    for method, table in limits.items():
+        if method not in METHOD_SETTINGS:
+            raise FitSettingsError(
+                f"[agent.limits] has no fitter {method!r}: it takes one table "
+                f"per fitter, [agent.limits.{'], [agent.limits.'.join(METHOD_SETTINGS)}]."
+            )
+        if not isinstance(table, dict):
+            raise FitSettingsError(
+                f"[agent.limits.{method}] must be a table, not {table!r}."
+            )
+        checked: dict[str, int] = {}
+        for key, value in table.items():
+            if key not in METHOD_SETTINGS[method]:
+                own = ", ".join(METHOD_SETTINGS[method])
+                raise FitSettingsError(
+                    f"[agent.limits.{method}] limits {method}'s own settings "
+                    f"({own}), not {key!r}."
+                )
+            checked[key] = _checked(key, value, f"[agent.limits.{method}]")
+        per_method[method] = checked
+    return AgentLimits(per_method=per_method)
+
+
+def written_settings(
+    document: dict[str, Any],
+) -> dict[str, dict[str, str | int | float | bool]]:
+    """The ``[fit]`` and ``[agent]`` values a parsed ``nrw.toml`` sets, by table.
+
+    What ``nrw init`` writes back when it renders the file again. The template
+    holds these tables as commented examples, so a value set in them through
+    nrw's editor (``write_as_nrw``) -- an unattended run's limits, as
+    nr-watcher writes them -- would otherwise be gone after the next
+    ``nrw init``. Tables are named as an edit names them
+    (``"agent.limits.dream"``), and only plain values are carried: nothing else
+    in these tables is a setting.
+
+    Args:
+        document: The parsed file.
+
+    Returns:
+        Each table's plain values; a table without any is left out.
+    """
+    found: dict[str, dict[str, str | int | float | bool]] = {}
+
+    def take(name: str, table: Any) -> None:
+        if not isinstance(table, dict):
+            return
+        plain = {
+            key: value
+            for key, value in table.items()
+            if isinstance(value, str | int | float | bool)
+        }
+        if plain:
+            found[name] = plain
+        for key, value in table.items():
+            if isinstance(value, dict):
+                take(f"{name}.{key}", value)
+
+    for name in ("fit", "agent"):
+        take(name, document.get(name))
+    return found
 
 
 def _settings(table: dict[str, Any], method: str) -> dict[str, int]:

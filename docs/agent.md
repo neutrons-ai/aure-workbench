@@ -724,9 +724,34 @@ answerable from it. That matches how this is done by hand and by AuRE, and the
 reason amoeba leads is throughput: it keeps pace with arriving data, DREAM does
 not. One fit at a time.
 
-Nothing enforces this — it is guidance in the prompt, not a limit, because a
-harness that decides a long DREAM run is the right call at 2am is probably
-right.
+By default nothing enforces this. It is guidance in the prompt, not a limit,
+because a harness that decides a long DREAM run is the right call at 2am is
+probably right.
+
+A project that wants a ceiling anyway sets one in `nrw.toml`:
+
+```toml
+[agent.limits.dream]
+samples = 100000
+burn = 1000
+steps = 300
+pop = 10
+```
+
+Under `NRW_AGENT`, `nrw fit run` then refuses a fit that asks for more, before
+it starts, and names the limits and where each value came from, so the session
+can run it again within them. The comparison is with what the fit would
+actually run with, which is the command line, then `[fit]`, then bumps'
+defaults. A fit that names no setting at all is checked too, unlike the
+command line a hook sees. Each fitter has its own table
+(`[agent.limits.de]`, `[agent.limits.amoeba]`), holding that fitter's own
+settings. A setting with no limit is not limited, and a person's own fits
+never are. The check is inside `nrw`, so it holds whichever harness is
+driving.
+
+`nrw init` keeps the table, and `[fit]` with it. It never re-renders a file a
+person has edited, and it renders the values back into a file that a tool
+wrote through nrw's own editor, as nr-watcher does.
 
 ---
 

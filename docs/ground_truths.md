@@ -4062,3 +4062,27 @@ version 1, which it asks once per launcher.
 
 The tool's environment and working directory were the `opencode run`
 process's in both modes, so `NRW_AGENT=1` reached the commands either way.
+\n
+### 2026-10-04: an unattended fit's limits are checked in `nrw fit run`, not in a hook
+
+nr-watcher, which watches REF_L, runs `nrw agent run` for every new
+measurement of a beamtime. On its first day, sessions asked DREAM
+for up to 600,000 samples with 30,000 burn-in steps, and two such runs took 68
+and 42 minutes. It then added a Claude Code `PreToolUse` hook that refused
+over-budget `nrw fit run` commands. The hook refused a fit four times that
+day, and each time the session ran the fit again within the limits. That hook has
+two flaws, and `[agent.limits.<fitter>]` replaces it:
+
+- **It saw only the command line.** `nrw fit run model.py` names no setting
+  and asks for whatever `[fit.dream]` and bumps' defaults say. A hook can't
+  know that without re-implementing `fitting/settings.py`. `nrw fit run`
+  already knows: it compares the settled settings (`ResolvedFit`) and reports
+  each value's origin.
+- **It was a Claude Code hook.** OpenCode never reads one, and its plugin is
+  JavaScript (see the entry above). A check inside `nrw`, under `NRW_AGENT`,
+  holds for every harness. It is the same second mechanism `refuse_if_agent`
+  already gives the guard's refusals.
+
+The limits are off unless `nrw.toml` sets them, as the compute guidance in
+docs/agent.md has always argued. Limits are a site's or a scientist's decision
+about unattended work, not nrw's.
