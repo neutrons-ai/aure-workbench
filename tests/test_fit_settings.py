@@ -23,6 +23,7 @@ from nr_workbench.cli import main
 from nr_workbench.fitting.settings import (
     DEFAULT_METHOD,
     FitSettingsError,
+    read_agent_limits,
     read_fit_defaults,
     resolve,
 )
@@ -36,6 +37,10 @@ UNSET = dict.fromkeys(("steps", "samples", "burn", "pop", "seed", "parallel"))
 
 def defaults(text: str):
     return read_fit_defaults(tomllib.loads(text))
+
+
+def limits(text: str):
+    return read_agent_limits(tomllib.loads(text))
 
 
 # --------------------------------------------------------------------------
@@ -226,3 +231,128 @@ def test_nrw_fit_run_refuses_nrw_toml_it_cannot_use(
 
     assert result.exit_code != 0
     assert "nrw.toml: [fit.amoeba]: amoeba takes no 'samples'" in result.output
+
+
+# --------------------------------------------------------------------------
+# What an unattended session may ask of a fit
+# --------------------------------------------------------------------------
+
+
+def test_agent_limits_hold_a_fitters_own_settings_as_maxima() -> None:
+    got = limits("[agent.limits.dream]\nsamples = 100000\nburn = 1000\n")
+
+    assert got.per_method == {"dream": {"samples": 100000, "burn": 1000}}
+    assert limits("").per_method == {}
+    assert limits("[agent]\n").per_method == {}
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("agent = 3\n", "[agent] must be a table"),
+        ("[agent]\nlimits = 3\n", "[agent.limits] must be a table"),
+        ("[agent.limits.lm]\nsteps = 3\n", "[agent.limits] has no fitter 'lm'"),
+        ("[agent.limits.amoeba]\nsamples = 3\n", "limits amoeba's own settings"),
+        ("[agent.limits.dream]\nseed = 3\n", "limits dream's own settings"),
+        ("[agent.limits.dream]\nburn = -1\n", "burn must be a whole number"),
+    ],
+)
+def test_a_limit_that_would_limit_nothing_is_refused(text: str, message: str) -> None:
+    with pytest.raises(FitSettingsError, match=re.escape(message)):
+        limits(text)
+
+
+def test_a_limit_is_held_against_what_the_fit_would_run_with() -> None:
+    """Not against what the command line spells out: a fit that names no
+    setting asks for nrw.toml's [fit] and, past that, bumps' defaults."""
+    caps = limits("[agent.limits.dream]\nsamples = 5000\nburn = 1000\n")
+
+    asked = resolve(defaults("[fit.dream]\nburn = 2000\n"), method=None, given=UNSET)
+    within = resolve(defaults(""), method=None, given={**UNSET, "samples": 5000})
+    amoeba = resolve(defaults(""), method="amoeba", given=UNSET)
+
+    assert caps.exceeded(asked) == {
+        "samples": (10000, 5000, "bumps' default"),
+        "burn": (2000, 1000, "nrw.toml"),
+    }
+    assert caps.exceeded(within) == {}
+    assert caps.exceeded(amoeba) == {}  # dream's limits never reach another fitter
+
+
+def test_the_scaffolded_agent_limits_example_reads_as_it_says(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    assert CliRunner().invoke(main, ["init", str(root)]).exit_code == 0
+    text = (root / "nrw.toml").read_text(encoding="utf-8")
+    assert "agent" not in tomllib.loads(text)  # commented out: nothing is limited
+    block = text.split("# [agent.limits.dream]\n", 1)[1].split("\n\n", 1)[0]
+    uncommented = "[agent.limits.dream]\n" + "\n".join(
+        line[2:] for line in block.splitlines()
+    )
+
+    assert limits(uncommented).per_method == {
+        "dream": {"samples": 100000, "burn": 1000, "steps": 300, "pop": 10}
+    }
+
+
+def _limit_dream(project: Path) -> None:
+    with (project / "nrw.toml").open("a", encoding="utf-8") as handle:
+        handle.write("\n[agent.limits.dream]\nsamples = 5000\nburn = 1000\n")
+
+
+def test_an_unattended_fit_over_its_limit_is_refused_before_it_runs(
+    fitted_project: Path, monkeypatch
+) -> None:
+    _limit_dream(fitted_project)
+    monkeypatch.setenv("NRW_AGENT", "1")
+
+    result = run_cli(
+        fitted_project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/film.py",
+        "--burn",
+        "5000",
+        "--dry-run",
+    )
+
+    assert result.exit_code != 0
+    assert "[agent.limits.dream] caps such a fit at samples 5000, burn 1000" in (
+        result.output
+    )
+    assert "samples 10000 (bumps' default), burn 5000 (command line)" in result.output
+    assert "ESCALATIONS.md" in result.output
+
+
+def test_a_fit_within_its_limits_or_started_by_a_person_is_not_limited(
+    fitted_project: Path, monkeypatch
+) -> None:
+    _limit_dream(fitted_project)
+    monkeypatch.delenv("NRW_AGENT", raising=False)
+
+    by_a_person = run_cli(
+        fitted_project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/film.py",
+        "--burn",
+        "5000",
+        "--dry-run",
+    )
+    monkeypatch.setenv("NRW_AGENT", "1")
+    within = run_cli(
+        fitted_project,
+        monkeypatch,
+        "fit",
+        "run",
+        "samples/S1/models/film.py",
+        "--samples",
+        "5000",
+        "--burn",
+        "500",
+        "--dry-run",
+    )
+
+    assert by_a_person.exit_code == 0, by_a_person.output
+    assert within.exit_code == 0, within.output

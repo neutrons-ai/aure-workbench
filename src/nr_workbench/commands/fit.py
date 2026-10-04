@@ -295,6 +295,7 @@ def run_fit_command(
     except FitSettingsError as exc:
         raise click.ClickException(str(exc)) from exc
     method = fit.method
+    _refuse_over_agent_limits(layout.root, config.raw, fit)
     settings: dict[str, Any] = {"method": method, **fit.settings}
     if not as_json:
         _report_origins(fit)
@@ -637,6 +638,49 @@ def _next_steps(record: FitRecord) -> None:
     click.echo(f"  nrw whence {record.fit_id}      show the full provenance")
     if not agent_is_driving():
         click.echo(f"  nrw promote {record.fit_id} --as final --reason '...'")
+
+
+def _refuse_over_agent_limits(root: Path, document: dict[str, Any], fit: Any) -> None:
+    """Refuse an unattended fit that asks for more than ``[agent.limits]`` allows.
+
+    Checked here, on what the fit would actually run with, rather than in a
+    harness hook: a hook sees only the command line, and a fit that names no
+    setting asks for whatever ``nrw.toml`` [fit] and bumps' defaults say. Here
+    it is also the same check whichever harness, or none, is driving.
+
+    Args:
+        root: The project root, for messages.
+        document: The parsed ``nrw.toml``.
+        fit: The settled fit (:class:`~nr_workbench.fitting.settings.ResolvedFit`).
+
+    Raises:
+        click.ClickException: When ``NRW_AGENT`` is set and a setting is over
+            its limit, or ``[agent.limits]`` cannot be read.
+    """
+    from nr_workbench.agent.guard import AGENT_ENV, agent_is_driving
+    from nr_workbench.fitting.settings import FitSettingsError, read_agent_limits
+
+    if not agent_is_driving():
+        return
+    try:
+        limits = read_agent_limits(document)
+    except FitSettingsError as exc:
+        raise click.ClickException(f"{root / 'nrw.toml'}: {exc}") from exc
+    over = limits.exceeded(fit)
+    if not over:
+        return
+    caps = ", ".join(
+        f"{key} {limit}" for key, limit in limits.per_method[fit.method].items()
+    )
+    asked = ", ".join(
+        f"{key} {value} ({origin})" for key, (value, _limit, origin) in over.items()
+    )
+    raise click.ClickException(
+        f"{AGENT_ENV} is set, so this is running unattended, and nrw.toml "
+        f"[agent.limits.{fit.method}] caps such a fit at {caps}; this one asks "
+        f"for {asked}. Run it again within those limits. If the answer needs "
+        "more, say so in ESCALATIONS.md: the limits are the scientist's to change."
+    )
 
 
 def _write_trajectory(layout: ProjectLayout, fit_dir: Path, record: Any) -> None:
