@@ -51,8 +51,10 @@ Three things have to be in there, and none of them is in the data:
   absorb into a layer and still converge.
 - **Which side the beam enters.** A solid/liquid cell is measured *through the
   wafer*. Say so in those words, or "back reflection" — `nrw aure new` looks for
-  them. Getting this backwards produces a fit that converges and reports a
-  chi-squared in the hundreds with nothing naming the cause.
+  them, and reads them negated ("from the air side, not through the
+  substrate") as the ambient side. Getting this backwards produces a fit that
+  converges and reports a chi-squared in the hundreds with nothing naming the
+  cause.
 
 If you already suspect something — a native oxide, a swollen layer — write it
 under `## Fits to perform`. AuRE will rank it as a candidate and test it.
