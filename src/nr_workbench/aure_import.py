@@ -566,7 +566,9 @@ def _free_parameters(
                 bounds.get(f"{aure_names[position]} {fitted_as}") if unique else None
             )
             if lo is not None and hi is not None:
-                span = [float(lo), float(hi)]
+                span = _declared_span(lo, hi)
+                if span is None:
+                    continue
             elif recorded is not None:
                 span = list(recorded)
             else:
@@ -575,6 +577,19 @@ def _free_parameters(
                 {"path": f"{name}.{attribute}", "range": span, "per": "model"}
             )
     return parameters + _probe_parameters(model, fit)
+
+
+def _declared_span(lo: Any, hi: Any) -> list[float] | None:
+    """A range a model declares, as AuRE builds it; ``None`` when it fits nothing.
+
+    AuRE swaps an inverted pair, and fits a parameter whose bounds are equal
+    nowhere but at that value: it is held there, as the stack has it, not a
+    range a spec could fit in ("SiO2.rho: range (3.47, 3.47) is empty").
+    """
+    if lo is None or hi is None:
+        return None
+    span = sorted([float(lo), float(hi)])
+    return span if span[0] < span[1] else None
 
 
 def _fitted_intensities(fit: dict[str, dict[str, Any]]) -> tuple[list[str], bool]:
@@ -626,7 +641,7 @@ def _probe_parameters(
     fitted, per_file = _fitted_intensities(fit)
     if fitted:
         spans = [bounds[name] for name in fitted if name in bounds]
-        declared = (intensity.get("min"), intensity.get("max"))
+        declared = _declared_span(intensity.get("min"), intensity.get("max"))
         middle = sorted(values[name] for name in fitted)[len(fitted) // 2]
         entry: dict[str, Any] = {
             "path": "probe.intensity",
@@ -635,8 +650,8 @@ def _probe_parameters(
         }
         if spans:
             entry["range"] = [min(s[0] for s in spans), max(s[1] for s in spans)]
-        elif None not in declared:
-            entry["range"] = [float(declared[0]), float(declared[1])]
+        elif declared is not None:
+            entry["range"] = declared
         else:
             entry["pm"] = 0.1
         parameters.append(entry)
@@ -656,9 +671,8 @@ def _probe_parameters(
         block = model.get(attribute) if isinstance(model.get(attribute), dict) else {}
         span = bounds.get(fitted_name) if fitted_name else None
         # Enabled with no fit to say where it ended: the range AuRE declared.
-        declared = (block.get("min"), block.get("max"))
-        if span is None and block.get("enabled") and None not in declared:
-            span = [float(declared[0]), float(declared[1])]
+        if span is None and block.get("enabled"):
+            span = _declared_span(block.get("min"), block.get("max"))
         if span is None:
             continue
         entry = {"path": f"probe.{attribute}", "range": list(span), "per": "state"}

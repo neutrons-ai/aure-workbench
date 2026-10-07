@@ -823,3 +823,28 @@ def test_the_import_says_the_segments_start_from_one_value() -> None:
         for note in notes
     )
     assert untranslatable(FILM) == []
+
+
+def test_a_value_aure_held_is_held_not_freed() -> None:
+    """The reported failure: AuRE pinned SiO2's SLD with equal bounds (3.47 and
+    3.47), the spec declared it free in an empty range, and `nrw model
+    generate` refused the spec, so two of a beamtime's first looks failed. An
+    inverted pair is swapped, as AuRE's builder does."""
+    from nr_workbench.spec.models import ParameterSpec
+
+    pinned = {**FILM["layers"][0], "sld": 3.47, "sld_min": 3.47, "sld_max": 3.47}
+    inverted = {**FILM["layers"][1], "thickness_min": 3200.0, "thickness_max": 600.0}
+    model = {**FILM, "layers": [pinned, inverted]}
+    fit = {
+        "parameters": {**FILM_FIT["parameters"], "SiO2 rho": 3.47},
+        "bounds": {**FILM_FIT["bounds"], "SiO2 rho": [3.47, 3.47]},
+    }
+
+    spec = to_spec(model=model, sample="S", name="n", states=STATES, fit=fit)
+
+    ranges = {p["path"]: p.get("range") for p in spec["parameters"]}
+    assert "SiO2.rho" not in ranges  # held at the stack's 3.47
+    assert spec["materials"]["SiO2"]["rho"] == 3.47
+    assert ranges["Cu.thickness"] == [600.0, 3200.0]
+    for entry in spec["parameters"]:
+        ParameterSpec(**entry)  # each one a parameter a spec takes
