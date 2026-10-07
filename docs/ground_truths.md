@@ -4086,3 +4086,29 @@ two flaws, and `[agent.limits.<fitter>]` replaces it:
 The limits are off unless `nrw.toml` sets them, as the compute guidance in
 docs/agent.md has always argued. Limits are a site's or a scientist's decision
 about unattended work, not nrw's.
+
+### 2026-10-07: "not through the substrate" read as back reflection
+
+`reads_as_back_reflection` matched its phrases anywhere, so the notes of a
+film in air that ruled the substrate side out in so many words -- "The beam
+enters from the air side, not through the substrate." -- set
+`back_reflection: true` in AuRE's setup. nr-watcher's assessment writes that
+sentence for every sample in air, so on IPTS-38693 all ten samples of a
+beamtime of dry films came out in back reflection. AuRE happened to read the
+description itself and fitted from the air side, and the spec `nrw aure
+import` wrote said so; the setup's state still said otherwise, which AuRE
+honours when it builds a multi-state problem. The same reading drives the
+critical-edge correction of `nrw model new --from-notes`, which would have
+moved the medium above the film by the silicon's SLD.
+
+A phrase now counts against back reflection when a negation stands up to four
+words before it in the same clause ("not", "no", "never", "without", "rather
+than", any "n't", ...). The clause ends at punctuation, a dash, a paragraph or
+list item, or a word that starts a new claim ("and", "but", "whereas", ...),
+so "no oxide, and measured through the silicon substrate" still reads as back
+reflection, and one phrase stating it outweighs another ruling it out. A
+single line break does not end a clause: notes are wrapped mid-sentence, and
+"not\nthrough the substrate" is the same negation. Notes that only rule the
+substrate side out are told as such by `nrw aure new` ("the notes say the beam
+does not arrive through the substrate"), with no warning, since that is
+evidence rather than silence.

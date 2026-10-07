@@ -54,6 +54,27 @@ BACK_REFLECTION_PATTERNS = (
     r"from\s+the\s+substrate\s+side",
 )
 
+#: Words that turn one of those phrases into its opposite: "the beam enters
+#: from the air side, not through the substrate" describes a film in air. A
+#: notes writer rules a geometry out in the same words they would use to state
+#: it, so a phrase is read with what stands just before it.
+_NEGATION_RE = re.compile(
+    r"\b(?:not(?!\s+only\b)|no|never|neither|nor|without|cannot"
+    r"|rather\s+than|instead\s+of|as\s+opposed\s+to|other\s+than)\b"
+    r"|\b\w+n['’]t\b"
+)
+#: Where a negation's reach ends: the end of a sentence, clause, paragraph or
+#: list item, or a word that starts a new claim, as in "no oxide, and measured
+#: through the substrate" or "not in air but through the silicon". A single
+#: line break is not one: notes are wrapped mid-sentence.
+_CLAUSE_END_RE = re.compile(
+    r"[.;:!?,()\[\]—–]|\s-\s|\n\s*\n|\n\s*(?:[-*+]|\d+[.)])\s"
+    r"|\b(?:and|but|whereas|however|although|though|yet)\b"
+)
+#: Words a negation may stand before the phrase it rules out, as in "does not
+#: arrive at the sample through the substrate".
+_NEGATION_REACH = 4
+
 #: Sections of ``sample.md`` that describe the sample itself, in the order they
 #: are concatenated into ``sample_description``. ``Description`` is the one
 #: that must be filled in; ``Details`` adds composition and environment.
@@ -174,10 +195,47 @@ def reads_as_back_reflection(notes: str) -> bool:
         notes: Any prose from the sample.
 
     Returns:
-        True if any of :data:`BACK_REFLECTION_PATTERNS` matches.
+        True if any of :data:`BACK_REFLECTION_PATTERNS` matches where no
+        negation rules it out (see :func:`back_reflection_stated`).
+    """
+    return back_reflection_stated(notes) is True
+
+
+def back_reflection_stated(notes: str) -> bool | None:
+    """What the notes say about the beam arriving through the substrate.
+
+    A phrase of :data:`BACK_REFLECTION_PATTERNS` counts against back
+    reflection when a negation stands within a few words before it, in the
+    same clause: "from the air side, not through the substrate", "no back
+    reflection", "does not come in through the wafer". A negation elsewhere in
+    the clause says nothing about the geometry -- "no oxide, and measured
+    through the silicon substrate" -- and one phrase that states it is enough,
+    whatever another rules out.
+
+    Args:
+        notes: Any prose from the sample.
+
+    Returns:
+        ``True`` when the notes say the beam arrives through the substrate,
+        ``False`` when they only say it does not, ``None`` when they say
+        neither.
     """
     lowered = (notes or "").lower()
-    return any(re.search(pattern, lowered) for pattern in BACK_REFLECTION_PATTERNS)
+    denied = False
+    for pattern in BACK_REFLECTION_PATTERNS:
+        for match in re.finditer(pattern, lowered):
+            if not _negated(lowered[: match.start()]):
+                return True
+            denied = True
+    return False if denied else None
+
+
+def _negated(before: str) -> bool:
+    """Whether the text just before a phrase ends in a negation of it."""
+    ends = list(_CLAUSE_END_RE.finditer(before))
+    clause = before[ends[-1].end() :] if ends else before
+    reach = " ".join(clause.split()[-(_NEGATION_REACH + 1) :])
+    return _NEGATION_RE.search(reach) is not None
 
 
 def state_files(measurement: Any) -> tuple[list[str], str]:
@@ -297,7 +355,8 @@ def compose(
         )
 
     run_name = name or f"{sample}-{chosen}"
-    back_reflection = reads_as_back_reflection(notes)
+    stated = back_reflection_stated(notes)
+    back_reflection = stated is True
 
     # `scan` records every path relative to the project root, while AuRE
     # resolves `data_files` relative to `data_dir` -- itself resolved against
@@ -354,15 +413,17 @@ def compose(
         from_notes.append("hypothesis: ## Fits to perform")
     from_notes.append(
         f"back_reflection: {back_reflection} "
-        + (
-            "-- the notes say the beam arrives through the substrate"
-            if back_reflection
-            else "-- nothing in the notes says otherwise; check this"
-        )
+        + {
+            True: "-- the notes say the beam arrives through the substrate",
+            False: "-- the notes say the beam does not arrive through the substrate",
+            None: "-- nothing in the notes says otherwise; check this",
+        }[stated]
     )
 
     warnings: list[str] = []
-    if not back_reflection:
+    # Silence is not evidence of the ambient side; the notes ruling the
+    # substrate side out is.
+    if stated is None:
         warnings.append(
             "back_reflection was not set. A solid/liquid cell measured through "
             "the wafer needs it; without it refl1d takes the ambient as the "

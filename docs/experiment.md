@@ -332,8 +332,9 @@ co-refine several, write one with **New model**. From `sample.md` it reads:
 - the sample's *Description* and *Details*. A sample with nothing under
   *Description* is refused, because AuRE builds the whole model from it. Say
   which side the beam enters in words AuRE's setup looks for, such as "measured
-  through the silicon substrate" or "back reflection": without them, the setup
-  assumes the beam arrives from the ambient side;
+  through the silicon substrate" or "back reflection": without them, or with
+  them negated ("not through the substrate"), the setup takes the beam to
+  arrive from the ambient side;
 - *Fits to perform*, as a hypothesis;
 - for the run it fits, its condition in the Measurements table, the sample's
   *Measurement conditions*, and the notes on that run.
