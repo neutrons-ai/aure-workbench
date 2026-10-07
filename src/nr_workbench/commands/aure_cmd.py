@@ -520,6 +520,7 @@ def run_aure_import(
         layer_names,
         read_final_state,
         reported_chisq,
+        reported_fit,
         run_of,
         to_spec,
         untranslatable,
@@ -586,12 +587,16 @@ def run_aure_import(
                 "another --name, or --force to overwrite it anyway."
             )
 
+    # What the model has no field for -- each segment's intensity, the sample
+    # broadening, ranges AuRE filled in from its defaults -- is in the fit.
+    fit = reported_fit(state)
     document = to_spec(
         model=model,
         sample=sample,
         name=name,
         states=[block],
         chisq=reported_chisq(state),
+        fit=fit,
     )
 
     # AuRE names layers in prose; a spec's names are identifiers. The file
@@ -618,7 +623,7 @@ def run_aure_import(
 
     # Anything AuRE's fit had that this spec does not. Silence here would mean
     # an unconstrained spec quoting the chi-squared of a constrained fit.
-    dropped = untranslatable(model)
+    dropped = untranslatable(model, fit)
     if dropped:
         click.secho(
             "  !  AuRE's fit carried things this spec does not express:", fg="yellow"
