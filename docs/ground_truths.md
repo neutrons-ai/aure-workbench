@@ -4148,3 +4148,9 @@ so. A spec gives a parameter one starting value, so the segments start at the
 median of AuRE's intensities. Refitted that way, with nr-watcher's DREAM
 limits, cu100 reached 12.6, and the intensities came back to 1.009, 1.054 and
 1.397.
+
+Two other looks of that beamtime failed outright at `nrw model generate`:
+AuRE had pinned SiO2's SLD with equal bounds (`sld_min` = `sld_max` = 3.47),
+and the import declared it free in that empty range, which the spec refuses.
+A declared pair is now read as AuRE's builder reads it: an inverted one is
+swapped, and an equal one holds the value the stack has, with no parameter.
