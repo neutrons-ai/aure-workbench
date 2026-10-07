@@ -4112,3 +4112,39 @@ single line break does not end a clause: notes are wrapped mid-sentence, and
 substrate side out are told as such by `nrw aure new` ("the notes say the beam
 does not arrive through the substrate"), with no warning, since that is
 evidence rather than silence.
+
+### 2026-10-07: the fit of AuRE's model was not the problem AuRE fitted
+
+On IPTS-38693's cu100 (a 250 nm Cu film in air), AuRE kept a round at
+chi-squared 13.6, and the fit `nrw fit run` recorded from the spec `nrw aure
+import` wrote reached 137. The spec froze or dropped half of what AuRE had
+fitted: 7 free parameters where AuRE had 14. Recomputed with bumps, nrw's
+problem at AuRE's values was 147; adding AuRE's sample broadening (0.035) took
+it to 21.7, and AuRE's three segment intensities (1.013, 1.107, 1.371) to
+13.1, with per-segment chi-squared equal to AuRE's (4.75, 2.52, 30.7; the
+total differs only by its degrees of freedom).
+
+Two things lost them:
+
+- **`current_model` has no field for the probe.** AuRE's finalize writes the
+  selected round's layer values into it, but "4 fitted parameter(s) had no
+  ModelDefinition field": each file's intensity and the sample broadening (a
+  theta offset or background would be the same). Their values, and the bounds
+  of every free parameter, are in the round's own `fit_results` entry, as
+  `parameters` and `bounds` under AuRE's names (`Cu interface`, `intensity
+  <file>`, `sample_broadening`). `reported_fit` reads that round: the adopted
+  final MCMC polish, else the one `final_selection` chose.
+- **The import read ranges only from `current_model`.** AuRE wrote each
+  `roughness_max` and no `roughness_min` (its builder takes min(5 A, value)
+  then), and the substrate's interface has no layer entry at all, so every
+  interface was frozen; the one intensity was per state, at 1.0 +- 0.1, which
+  cannot reach a 3.4 degree segment at 1.37.
+
+The import now fills what `current_model` does not declare from the fit's
+recorded bounds, by the stack entry's own name (a name the stack repeats is
+skipped: it would not say which layer), frees the probe's parameters as AuRE
+fitted them, one intensity per segment when it fitted one per file, and says
+so. A spec gives a parameter one starting value, so the segments start at the
+median of AuRE's intensities. Refitted that way, with nr-watcher's DREAM
+limits, cu100 reached 12.6, and the intensities came back to 1.009, 1.054 and
+1.397.

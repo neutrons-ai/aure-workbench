@@ -395,6 +395,66 @@ def test_import_orders_the_stack_for_the_geometry(sample: Path) -> None:
     assert "back reflection" in validated.output
 
 
+def test_import_fits_what_aure_fitted(sample: Path) -> None:
+    """The reported failure: the fit recorded from AuRE's model had a
+    chi-squared of 137 where AuRE's own was 13.6, because the model has no
+    field for each segment's intensity or the sample broadening. AuRE's fit
+    result has them, and the problem nrw builds now fits them as AuRE did."""
+    import runpy
+    import warnings
+
+    pytest.importorskip("refl1d")
+    model = {
+        **FITTED,
+        "intensity": {"value": 1.0, "min": 0.6, "max": 1.4},
+        "sample_broadening": {"enabled": True, "min": 0.0, "max": 0.5},
+    }
+    steady = sample / "samples" / "Sample1" / "data" / "steady"
+    labels = sorted(path.stem for path in steady.glob("REFL_218386_*_partial.txt"))
+    scales = dict(zip(labels, (0.98, 1.05, 1.31), strict=True))
+    fit = {
+        "parameters": {
+            **{f"intensity {label}": value for label, value in scales.items()},
+            "sample_broadening": 0.031,
+            "Cu interface": 8.3,
+        },
+        "bounds": {
+            **{f"intensity {label}": [0.6, 1.4] for label in labels},
+            "sample_broadening": [0.0, 0.5],
+            "Cu interface": [5.0, 30.0],
+        },
+    }
+    output = _finished_run(sample, model=model)
+    payload = json.loads((output / "final_state.json").read_text(encoding="utf-8"))
+    payload["state"].update({"fit_results": [fit], "final_selection": {"index": 0}})
+    (output / "final_state.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    imported = _run(
+        "aure", "import", str(output), "--sample", "Sample1", "--name", "first"
+    )
+    assert imported.exit_code == 0, imported.output
+    assert "AuRE's were 0.98, 1.05, 1.31" in imported.output
+    generated = _run("model", "generate", "samples/Sample1/models/first.yaml")
+    assert generated.exit_code == 0, generated.output
+
+    script = sample / "samples" / "Sample1" / "models" / "first.py"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        problem = runpy.run_path(str(script), run_name="__nrw_generated__")["problem"]
+    probes = [experiment.probe for experiment in problem.models]
+    assert len(probes) == 3
+    # One intensity per segment, each free in AuRE's bounds...
+    assert len({id(probe.intensity) for probe in probes}) == 3
+    for probe in probes:
+        assert probe.intensity.value == pytest.approx(1.05)
+        assert tuple(probe.intensity.bounds) == (0.6, 1.4)
+    # ... and one broadening for the state, from AuRE's fitted value.
+    assert len({id(probe.sample_broadening) for probe in probes}) == 1
+    assert probes[0].sample_broadening.value == pytest.approx(0.031)
+    assert tuple(probes[0].sample_broadening.bounds) == (0.0, 0.5)
+    assert any("Cu roughness" in label for label in problem.labels())
+
+
 def test_import_refuses_a_failed_run(sample: Path) -> None:
     """Importing a failed run's last model would fake a result."""
     output = _finished_run(sample, error="intake failed", success=False)

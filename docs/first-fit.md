@@ -150,6 +150,13 @@ against the measured critical edge, independently of what you wrote in
 `sample.md`. If it contradicts what you believe about your own measurement,
 something is wrong and it is worth finding out which of the two before fitting.
 
+The spec frees what AuRE's fit freed, in the bounds it fitted them in: each
+layer's thickness, SLD and interface, the substrate's interface, an intensity
+for each angle segment, and the sample broadening, theta offset or background
+when AuRE fitted them, at the values it found. So the fit that follows starts
+where AuRE ended. The segments' intensities are the exception: a spec gives
+them one starting value, and the import says what AuRE's were.
+
 The written spec says at the top who proposed it:
 
 ```yaml
