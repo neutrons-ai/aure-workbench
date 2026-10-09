@@ -569,6 +569,19 @@ To stop the catalog writing a sample's `sample.md` altogether:
 nrw experiment release Sample6
 ```
 
+To remove a stale sample from the catalog once it has no runs assigned:
+
+```bash
+nrw experiment remove Sample6               # preview
+nrw experiment remove Sample6 --write       # remove the catalog entry
+nrw experiment remove Sample6 --delete-dir --write
+```
+
+`--delete-dir` only removes `samples/Sample6/` when it still holds nrw's own
+scaffold files and nothing else. A sample with copied data, models, results,
+reports, or hand edits is kept on disk and simply becomes unmanaged unless you
+delete it yourself after review.
+
 ## Where it is stored
 
 | File | What | Committed |

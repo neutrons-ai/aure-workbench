@@ -73,8 +73,8 @@ _REASONS = {
         "person's claims about the experiment -- like a promotion, they decide "
         "what every later fit is built from. Write in ESCALATIONS.md what you "
         "would assign, apply or change, and why, and stop. `nrw experiment "
-        "status`, and `apply`, `adopt` or `settings` without --write, are "
-        "allowed: they show what would happen and change nothing."
+        "status`, and `apply`, `adopt`, `remove` or `settings` without "
+        "--write, are allowed: they show what would happen and change nothing."
     ),
     "reset": (
         "`nrw sample reset` deletes every fit and model of a sample: the record "
@@ -269,7 +269,10 @@ def _judge_one(tokens: list[str]) -> Verdict:
 
     if "experiment" in subcommands and (
         {"assign", "release"} & set(subcommands)
-        or ({"apply", "adopt", "settings"} & set(subcommands) and "--write" in flags)
+        or (
+            {"apply", "adopt", "settings", "remove"} & set(subcommands)
+            and "--write" in flags
+        )
     ):
         return Verdict(allowed=False, rule="experiment", reason=_REASONS["experiment"])
 

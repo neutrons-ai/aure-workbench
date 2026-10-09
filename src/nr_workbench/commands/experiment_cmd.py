@@ -6,8 +6,8 @@ arrived, which sample each run belongs to, and what applying would write.
 the same convention as ``nrw import``: they write into directories people are
 working in.
 
-Assigning, applying, adopting and releasing are refused to an unattended
-agent (``NRW_AGENT``); ``status`` and the previews are not.
+Assigning, applying, adopting, removing and releasing are refused to an
+unattended agent (``NRW_AGENT``); ``status`` and the previews are not.
 """
 
 from __future__ import annotations
@@ -58,6 +58,11 @@ def _observed(workspace: Any) -> tuple[Any, dict, dict]:
 def _echo_problems(problems: Any) -> None:
     for problem in problems:
         click.secho(f"  ! {problem.message}", fg="yellow")
+
+
+def _sample_dir_relpath(sample_id: str) -> str:
+    """Where a sample directory lives, relative to the project root."""
+    return f"samples/{sample_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +484,250 @@ def _echo_adopt(plan: Any, *, show_diff: bool) -> None:
         click.echo("  the catalog would render this file exactly; no rewrite needed")
     if show_diff and plan.diff:
         click.echo(plan.diff)
+
+
+# ---------------------------------------------------------------------------
+# remove
+# ---------------------------------------------------------------------------
+
+
+def _catalog_sample_dir_state(project: Path, sample: str, catalog: Any) -> dict[str, Any]:
+    """How safely a sample directory can be deleted along with its catalog entry."""
+    from nr_workbench.experiment.render import (
+        SampleRenderError,
+        plan_sample,
+        project_context,
+    )
+    from nr_workbench.project.scaffold import Outcome, classify, load_lock
+
+    directory = project / _sample_dir_relpath(sample)
+    if not directory.is_dir():
+        return {"exists": False, "removable": True, "reason": "", "extra": [], "owned": []}
+
+    try:
+        planned = {
+            item.relpath: item
+            for item in plan_sample(project, project_context(project), sample, catalog=catalog)
+        }
+    except SampleRenderError as exc:
+        return {
+            "exists": True,
+            "removable": False,
+            "reason": str(exc),
+            "extra": [],
+            "owned": [],
+        }
+
+    lock = load_lock(ProjectLayout(root=project).scaffold_lock)
+    extra: list[str] = []
+    changed: list[str] = []
+    owned: list[str] = []
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        rel = path.relative_to(project).as_posix()
+        planned_file = planned.get(rel)
+        shown = path.relative_to(directory).as_posix()
+        if planned_file is None:
+            extra.append(shown)
+            continue
+        outcome = classify(planned_file, path, lock.get(rel))
+        if outcome in (Outcome.UNCHANGED, Outcome.UPGRADE):
+            owned.append(shown)
+            continue
+        changed.append(f"{shown} ({outcome.value})")
+
+    if extra:
+        return {
+            "exists": True,
+            "removable": False,
+            "reason": "it contains files beyond the scaffold",
+            "extra": extra,
+            "owned": owned,
+        }
+    if changed:
+        return {
+            "exists": True,
+            "removable": False,
+            "reason": "its scaffolded files were edited, replaced or released",
+            "extra": changed,
+            "owned": owned,
+        }
+    return {"exists": True, "removable": True, "reason": "", "extra": [], "owned": owned}
+
+
+def _forget_sample_dir(project: Path, sample: str) -> int:
+    """Drop any scaffold-lock entries for one sample directory."""
+    from nr_workbench.project.scaffold import LockProblemError, forget
+
+    directory = project / _sample_dir_relpath(sample)
+    if not directory.is_dir():
+        return 0
+    forgotten = 0
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        rel = path.relative_to(project).as_posix()
+        try:
+            forgotten += int(forget(project, rel))
+        except LockProblemError as exc:
+            raise click.ClickException(str(exc)) from exc
+    return forgotten
+
+
+def run_remove(
+    *,
+    sample: str,
+    delete_dir: bool = False,
+    write: bool = False,
+    yes: bool = False,
+    root: str | None = None,
+    as_json: bool = False,
+) -> None:
+    """Remove a stale sample from the experiment catalog.
+
+    With ``--delete-dir``, also delete ``samples/<id>/`` when it still holds
+    only nrw's own scaffold files. A directory with models, results, reports,
+    copied data or hand edits is kept and the sample simply becomes unmanaged.
+    """
+    import shutil
+
+    from nr_workbench.agent.guard import refuse_if_agent
+    from nr_workbench.experiment.model import (
+        CatalogValidationError,
+        RecordConflict,
+        SampleChange,
+    )
+    from nr_workbench.experiment.store import CatalogError
+
+    if write:
+        refuse_if_agent("experiment")
+
+    project = _root(root)
+    workspace = _workspace(root)
+    catalog = _catalog(workspace)
+
+    if sample not in catalog.sample_ids():
+        raise click.ClickException(
+            f"{sample} is not in the experiment catalog. "
+            "Remove samples/<id>/ by hand if you no longer want the directory."
+        )
+
+    assigned = [entry.key.run for entry in catalog.runs_for(sample)]
+    current = catalog.samples.get(sample)
+    directory = project / _sample_dir_relpath(sample)
+    dir_state = _catalog_sample_dir_state(project, sample, catalog)
+
+    if assigned:
+        message = (
+            f"sample {sample} still has runs assigned ({', '.join(map(str, assigned))}); "
+            "unassign them first with `nrw experiment assign ... --unassign`."
+        )
+        if as_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "sample": sample,
+                        "assigned_runs": assigned,
+                        "directory": {
+                            "exists": dir_state["exists"],
+                            "removable": dir_state["removable"],
+                        },
+                        "error": message,
+                    },
+                    indent=2,
+                )
+            )
+            return
+        raise click.ClickException(message)
+
+    if delete_dir and dir_state["exists"] and not dir_state["removable"]:
+        detail = "; ".join(dir_state["extra"][:5])
+        more = ""
+        if len(dir_state["extra"]) > 5:
+            more = f", and {len(dir_state['extra']) - 5} more"
+        raise click.ClickException(
+            f"samples/{sample}/ cannot be deleted safely because {dir_state['reason']}"
+            + (f": {detail}{more}" if detail else ".")
+            + " Run again without --delete-dir to remove the catalog entry only."
+        )
+
+    payload = {
+        "sample": sample,
+        "in_catalog": True,
+        "assigned_runs": assigned,
+        "directory": {
+            "exists": dir_state["exists"],
+            "path": _sample_dir_relpath(sample),
+            "delete_requested": delete_dir,
+            "removable": dir_state["removable"],
+            "reason": dir_state["reason"],
+            "files": dir_state["owned"],
+            "blocking": dir_state["extra"],
+        },
+        "write": write,
+    }
+    if as_json:
+        click.echo(json.dumps(payload, indent=2))
+        return
+
+    click.echo(sample)
+    click.echo("  catalog   will remove the sample context")
+    click.echo("  runs      none assigned")
+    if not dir_state["exists"]:
+        click.echo("  directory absent")
+    elif delete_dir:
+        click.echo(f"  directory will delete {_sample_dir_relpath(sample)}/")
+    else:
+        click.echo(
+            f"  directory will keep {_sample_dir_relpath(sample)}/ "
+            "(the sample becomes unmanaged on disk)"
+        )
+    if dir_state["exists"] and not dir_state["removable"]:
+        click.secho(f"  ! directory is not scaffold-only: {dir_state['reason']}", fg="yellow")
+        for item in dir_state["extra"][:5]:
+            click.secho(f"      {item}", fg="yellow")
+        if len(dir_state["extra"]) > 5:
+            click.secho(
+                f"      ... and {len(dir_state['extra']) - 5} more",
+                fg="yellow",
+            )
+    elif delete_dir and dir_state["owned"]:
+        click.secho(
+            f"  scaffold-only directory: {len(dir_state['owned'])} file(s) will go",
+            dim=True,
+        )
+
+    if not write:
+        click.echo("\n  Nothing was written. Run again with --write to remove it.")
+        return
+
+    if delete_dir and dir_state["exists"]:
+        question = (
+            f"Remove {sample} from the catalog and delete {_sample_dir_relpath(sample)}/?"
+        )
+    else:
+        question = f"Remove {sample} from the catalog?"
+    if not yes:
+        click.confirm(f"\n{question}", abort=True)
+
+    try:
+        workspace.store.update(
+            samples=[SampleChange(sample, current.rev if current else 0, delete=True)]
+        )
+    except (CatalogValidationError, CatalogError, RecordConflict) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if delete_dir and dir_state["exists"]:
+        forgotten = _forget_sample_dir(project, sample)
+        shutil.rmtree(directory)
+        entries = "entry" if forgotten == 1 else "entries"
+        click.echo(
+            f"  removed {sample} from the catalog, deleted {_sample_dir_relpath(sample)}/ "
+            f"and forgot {forgotten} scaffold {entries}."
+        )
+        return
+    click.echo(f"  removed {sample} from the catalog.")
+    if dir_state["exists"]:
+        click.echo(
+            f"  {_sample_dir_relpath(sample)}/ stays on disk as an unmanaged sample."
+        )
 
 
 # ---------------------------------------------------------------------------
