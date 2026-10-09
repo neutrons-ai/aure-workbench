@@ -94,6 +94,13 @@ Cu.thickness. I do not know whether the oxide is real; try it both ways and
 tell me which the data supports.
 ```
 
+Whoever starts a session can give it its task instead, with `nrw agent run
+<sample> --task-file <file>`; the session is told it takes the place of `##
+Fits to perform`. nr-watcher does this for the samples its plan names, since it
+plans the whole experiment and has a task for each of them whether or not their
+`sample.md` holds it yet. The task is still words a person or a planner wrote,
+never one the session chooses.
+
 Everything in `sample.md` matters here, not just this section — the
 measurement table is what the header checks are compared against, and the
 alignment notes are what decide whether `probe.theta_offset` is `per: model` or
