@@ -80,6 +80,7 @@ from nr_workbench.agent import guard, session
         ("nrw experiment apply --write", "experiment"),
         ("nrw experiment apply S6 --write --confirm 218390", "experiment"),
         ("nrw experiment adopt S6 --write --rewrite", "experiment"),
+        ("nrw experiment remove S6 --write", "experiment"),
         ("nrw experiment release S6", "experiment"),
         ("nrw experiment settings --location /data/x --write", "experiment"),
         ("nrw experiment settings --write --ipts IPTS-1", "experiment"),
@@ -128,6 +129,7 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         "nrw experiment apply",
         "nrw experiment apply S6 --confirm 218390",
         "nrw experiment adopt S6",
+        "nrw experiment remove S6",
         # Looking at the settings, and previewing a change, changes nothing.
         "nrw experiment settings",
         "nrw experiment settings --check --json",

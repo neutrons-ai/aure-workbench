@@ -1736,6 +1736,29 @@ def experiment_release_command(**kwargs: object) -> None:
     run_release(**kwargs)  # type: ignore[arg-type]
 
 
+@experiment_group.command("remove")
+@click.argument("sample")
+@click.option(
+    "--delete-dir",
+    is_flag=True,
+    help="Also delete samples/SAMPLE/ when it still holds only nrw's scaffold.",
+)
+@click.option("--write", is_flag=True, help="Carry the removal out; otherwise preview it.")
+@click.option(
+    "-y",
+    "--yes",
+    is_flag=True,
+    help="Skip the confirmation prompt when --write is given.",
+)
+@click.option("--root", type=click.Path(file_okay=False), help="Project root.")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
+def experiment_remove_command(**kwargs: object) -> None:
+    """Remove a stale sample from the experiment catalog."""
+    from nr_workbench.commands.experiment_cmd import run_remove
+
+    run_remove(**kwargs)  # type: ignore[arg-type]
+
+
 @main.command("import")
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
