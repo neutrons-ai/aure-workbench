@@ -609,20 +609,27 @@ def written_reports(root: Path, sample: str) -> list[Path]:
     return written
 
 
-def compose(root: Path, sample: str, *, again: bool = False) -> Session:
+def compose(
+    root: Path, sample: str, *, again: bool = False, task: str | None = None
+) -> Session:
     """Build the session prompt for one sample.
 
     Args:
         root: Project root.
         sample: Sample identifier.
         again: Proceed even when the sample already has a written report.
+        task: The session's task, given by whoever starts it (``nrw agent run
+            --task-file``), in place of ``## Fits to perform``. A watcher that
+            plans the whole experiment has a task for every sample it plans,
+            whether or not the sample's ``sample.md`` holds it yet.
 
     Returns:
         The composed session, not yet run.
 
     Raises:
-        SessionError: If the sample does not exist, declares no task, or has
-            already been reported on and ``again`` was not given.
+        SessionError: If the sample does not exist, declares no task and was
+            given none, or has already been reported on and ``again`` was not
+            given.
     """
     if not SAFE_SAMPLE.fullmatch(sample):
         raise SessionError(
@@ -636,7 +643,8 @@ def compose(root: Path, sample: str, *, again: bool = False) -> Session:
         raise SessionError(f"No sample notes at {notes_path}")
 
     notes = notes_path.read_text(encoding="utf-8")
-    task = declared_task(notes)
+    given = (task or "").strip()
+    task = given or declared_task(notes)
     if not task:
         raise SessionError(
             f"samples/{sample}/sample.md declares no task under "
@@ -683,7 +691,12 @@ def compose(root: Path, sample: str, *, again: bool = False) -> Session:
         task=task,
         observations=observations,
         prompt=_prompt(
-            sample, task, skills, observations, audience_mod.guidance(audience)
+            sample,
+            task,
+            skills,
+            observations,
+            audience_mod.guidance(audience),
+            given=bool(given),
         ),
     )
 
@@ -694,14 +707,29 @@ def _prompt(
     skills: list[str],
     observations: list[str],
     audience: list[str] | None = None,
+    *,
+    given: bool = False,
 ) -> str:
-    """Assemble the text handed to the harness."""
+    """Assemble the text handed to the harness.
+
+    Args:
+        given: The task was given to the session rather than read from
+            ``sample.md``, whose ``## Fits to perform`` may say something else.
+    """
     skill_lines = "\n".join(f"  - skills/reflectometry/{n}/SKILL.md" for n in skills)
     observed = "\n\n".join(observations) if observations else "(nothing to report)"
     reader = "\n".join(f"- {line}" for line in audience or []) or (
         "- (nobody has said; write for a competent practitioner)"
     )
 
+    source = (
+        "This was given to this session by whoever started it, and it is the "
+        "whole of your task. It takes the place of `## Fits to perform` in "
+        f"`samples/{sample}/sample.md`, which may say something else."
+        if given
+        else f"This is from `samples/{sample}/sample.md`, and it is the whole of "
+        "your task."
+    )
     return f"""\
 You are running unattended during a neutron beamtime, analysing sample \
 `{sample}` in this nr-workbench project. Nobody will answer a question until \
@@ -709,8 +737,7 @@ morning.
 
 ## What the scientist asked for
 
-This is from `samples/{sample}/sample.md`, and it is the whole of your task. \
-Do this and nothing else.
+{source} Do this and nothing else.
 
 {task}
 
@@ -1075,6 +1102,7 @@ def run(
     on_progress: Any = None,
     again: bool = False,
     harness: str | None = None,
+    task: str | None = None,
 ) -> Session:
     """Compose and run one unattended session.
 
@@ -1082,6 +1110,8 @@ def run(
         root: Project root.
         sample: Sample identifier.
         again: Proceed even when the sample already has a written report.
+        task: The session's task, in place of ``## Fits to perform``
+            (see :func:`compose`).
         turns: Cap on harness turns, where the harness enforces one.
         model: Model to run, or ``None`` for the harness default.
         timeout: Seconds before the session is killed, or ``None``.
@@ -1099,7 +1129,7 @@ def run(
     from nr_workbench.provenance.record import utc_now
 
     entry = harness_entry(harness)
-    session = compose(Path(root), sample, again=again)
+    session = compose(Path(root), sample, again=again, task=task)
     _require_guard(Path(root), harness=harness)
     _require_not_already_running(Path(root), sample)
 

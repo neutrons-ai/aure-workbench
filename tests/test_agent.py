@@ -1275,3 +1275,54 @@ def test_the_turn_cap_leaves_room_for_the_analysis() -> None:
     unattended run's bound is turns AND `--timeout`, and this is half of that.
     """
     assert session.DEFAULT_TURNS >= 150
+
+
+def test_a_task_given_to_the_session_takes_the_place_of_the_declared_one(
+    tmp_path: Path,
+) -> None:
+    """A watcher plans the whole experiment, and has a task for every sample
+    it plans whether or not that sample's sample.md holds it yet: a sample
+    with an empty `## Fits to perform`, or one whose record the scientist
+    made, would otherwise wait for ever."""
+    sample = tmp_path / "samples" / "S1"
+    sample.mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_UNFILLED, encoding="utf-8")
+
+    composed = session.compose(tmp_path, "S1", task="  Fit 218386 with one Cu layer.\n")
+
+    assert composed.task == "Fit 218386 with one Cu layer."
+    assert "Fit 218386 with one Cu layer." in composed.prompt
+    assert "takes the place of `## Fits to perform`" in composed.prompt
+    # Given, it wins over what sample.md declares.
+    (sample / "sample.md").write_text(NOTES_WITH_TASK, encoding="utf-8")
+    given = session.compose(tmp_path, "S1", task="Co-refine 218386 and 218393.")
+    assert given.task == "Co-refine 218386 and 218393."
+    assert "Fit the film thickness" not in given.prompt.split("## What the offline")[0]
+    # An empty one is none at all: the declared task, as before.
+    assert session.compose(tmp_path, "S1", task="  ").task.startswith("Fit the film")
+
+
+def test_agent_run_reads_its_task_from_a_file(tmp_path: Path, monkeypatch) -> None:
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    (tmp_path / "nrw.toml").write_text('[project]\nname = "p"\n', encoding="utf-8")
+    sample = tmp_path / "samples" / "S1"
+    sample.mkdir(parents=True)
+    (sample / "sample.md").write_text(NOTES_UNFILLED, encoding="utf-8")
+    task = tmp_path / "task.md"
+    task.write_text("Fit 218386 with one Cu layer.\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    shown = CliRunner().invoke(
+        main, ["agent", "run", "S1", "--dry-run", "--task-file", str(task)]
+    )
+    assert shown.exit_code == 0, shown.output
+    assert "Fit 218386 with one Cu layer." in shown.output
+
+    task.write_text("\n", encoding="utf-8")
+    empty = CliRunner().invoke(
+        main, ["agent", "run", "S1", "--dry-run", "--task-file", str(task)]
+    )
+    assert empty.exit_code != 0 and "is empty" in empty.output

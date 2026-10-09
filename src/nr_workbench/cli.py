@@ -1075,6 +1075,12 @@ def agent_stop_command(sample: str | None) -> None:
     default=None,
     help="Which harness to drive [default: claude].",
 )
+@click.option(
+    "--task-file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="The session's task, in place of `## Fits to perform`.",
+)
 def agent_run_command(
     sample: str,
     dry_run: bool,
@@ -1084,12 +1090,15 @@ def agent_run_command(
     quiet: bool,
     again: bool,
     harness: str | None,
+    task_file: str | None,
 ) -> None:
     """Run one unattended analysis session over SAMPLE.
 
-    The task comes from `## Fits to perform` in the sample's notes; with
-    nothing written there this refuses to start, because deciding what is
-    worth fitting is the one thing an unattended session must not do.
+    The task comes from `## Fits to perform` in the sample's notes, or from
+    --task-file when whoever starts the session has planned it (nr-watcher
+    does, for the whole experiment). With neither this refuses to start,
+    because deciding what is worth fitting is the one thing an unattended
+    session must not do.
 
     It also refuses when the sample already has a written report, since the task
     text does not change when the work is finished. Say what is left under
@@ -1104,9 +1113,17 @@ def agent_run_command(
     except ProjectNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    task = None
+    if task_file is not None:
+        from pathlib import Path
+
+        task = Path(task_file).read_text(encoding="utf-8").strip()
+        if not task:
+            raise click.ClickException(f"{task_file} is empty: there is no task in it.")
+
     try:
         if dry_run:
-            session = compose(root, sample, again=again)
+            session = compose(root, sample, again=again, task=task)
             click.echo(session.prompt)
             return
         session = run_session(
@@ -1118,6 +1135,7 @@ def agent_run_command(
             timeout=timeout,
             on_progress=None if quiet else click.echo,
             again=again,
+            task=task,
         )
     except SessionError as exc:
         raise click.ClickException(str(exc)) from exc
