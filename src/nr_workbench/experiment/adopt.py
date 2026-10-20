@@ -21,6 +21,7 @@ directory is gitignored, so the backup exists on this machine only.)
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -36,6 +37,8 @@ from nr_workbench.experiment.model import (
     RunKey,
     SampleChange,
     apply_changes,
+    checked_experiment,
+    clean_experiment_field,
     clean_line,
     clean_prose,
 )
@@ -57,7 +60,12 @@ from nr_workbench.project.scaffold import (
     render_diff,
     replace_owned,
 )
-from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_RE
+from nr_workbench.sample_md import (
+    EXPERIMENT_SECTIONS,
+    RUN_NOTE_INDENT,
+    RUN_NOTE_RE,
+    find_experiment,
+)
 
 #: The sections of the scaffolded sample.md, and the catalog field for each.
 _PROSE_SECTIONS = {
@@ -85,21 +93,29 @@ class ParsedSample:
     Attributes:
         title: The first heading.
         fields: Catalog field name to value, for the prose sections and
-            ``mounting``.
+            ``mounting``: the sample's own text only. A reader that wants a
+            section as the file gives it uses :meth:`with_experiment`.
         rows: The measurement table, one row per run, in file order.
         leftovers: Text with no place in the catalog, each with the reason.
         listed: Every run number the table names, including rows whose cells
             could not be used. A run in the table is not a run removed from
             it, whatever is wrong with its row.
-        blocking: Rows that name a run but cannot be carried into the catalog
-            as written. They stop adoption: recording such a run without its
-            condition -- or, worse, as excluded -- would be a claim the table
-            does not make.
+        blocking: What cannot be carried into the catalog as written: rows
+            that name a run unusably, or the experiment's context with its
+            markers damaged. They stop adoption: recording such a run without
+            its condition -- or, worse, as excluded -- would be a claim the
+            table does not make, and text whose markers are gone cannot be
+            told from the sample's own.
         notes: The notes on each measurement, by run, read from the entries
             under *Measurement conditions* for runs the table lists.
         unlisted_notes: Entries for runs the table does not list. The catalog
             cannot hold them, so they are leftovers too; kept whole here for
             a reader that wants them anyway -- AuRE's setup, fitting that run.
+        experiment: The experiment's own context the file carries, by field.
+            The catalog writes it into every sample.md it manages; it is never
+            the sample's, so it is kept apart from ``fields``.
+        experiment_edited: The fields whose copy of the experiment's context
+            was edited in this file, by its marker's digest.
     """
 
     title: str
@@ -110,6 +126,17 @@ class ParsedSample:
     blocking: tuple[str, ...] = ()
     notes: dict[int, str] = field(default_factory=dict)
     unlisted_notes: dict[int, str] = field(default_factory=dict)
+    experiment: dict[str, str] = field(default_factory=dict)
+    experiment_edited: tuple[str, ...] = ()
+
+    def with_experiment(self, name: str) -> str:
+        """A prose field as the file gives it to a reader.
+
+        The experiment's text, then the sample's own: what holds for every
+        sample is no less true of this one.
+        """
+        parts = (self.experiment.get(name, ""), self.fields.get(name, ""))
+        return "\n\n".join(part for part in parts if part)
 
 
 @dataclass(frozen=True)
@@ -265,8 +292,8 @@ class Measurements:
     """What ``sample.md`` says about its measurements, run by run.
 
     Attributes:
-        shared: The sample's own *Measurement conditions* -- what holds for
-            every run.
+        shared: What holds for every run: the experiment's measurement
+            conditions, then the sample's own *Measurement conditions*.
         conditions: Each run's condition, from the Measurements table.
         notes: Each run's notes, from its entry under *Measurement
             conditions* -- a run no table lists included, as hand-written notes
@@ -293,7 +320,7 @@ def measurements_of(text: str) -> Measurements:
     """
     parsed = parse_sample_md(text)
     return Measurements(
-        shared=parsed.fields.get("measurement_conditions", ""),
+        shared=parsed.with_experiment("measurement_conditions"),
         conditions={row.run: row.condition for row in parsed.rows if row.condition},
         notes={**parsed.unlisted_notes, **parsed.notes},
     )
@@ -326,6 +353,8 @@ def parse_sample_md(text: str) -> ParsedSample:
     listed: list[int] = []
     blocking: list[str] = []
     notes: dict[int, str] = {}
+    experiment: dict[str, str] = {}
+    edited: list[str] = []
     seen: set[str] = set()
     for heading, body in sections:
         if heading in seen:
@@ -335,6 +364,10 @@ def parse_sample_md(text: str) -> ParsedSample:
         guidance = comments.get(heading)
         if guidance and guidance in body:
             body = body.replace(guidance, "", 1)
+        if heading in EXPERIMENT_SECTIONS:
+            body = _take_experiment(
+                body, heading, experiment, edited, leftovers, blocking
+            )
         for comment in _COMMENT_RE.findall(body):
             leftovers.append(f"a comment in '## {heading}': {_snippet(comment)}")
         body = _COMMENT_RE.sub("", body)
@@ -382,7 +415,51 @@ def parse_sample_md(text: str) -> ParsedSample:
         blocking=tuple(blocking),
         notes=kept,
         unlisted_notes=unlisted,
+        experiment=experiment,
+        experiment_edited=tuple(edited),
     )
+
+
+def _take_experiment(
+    body: str,
+    heading: str,
+    found: dict[str, str],
+    edited: list[str],
+    leftovers: list[str],
+    blocking: list[str],
+) -> str:
+    """Take the experiment's own text out of a section, into *found*.
+
+    The catalog writes one block, marked at both ends, at the head of the
+    section. A marker without its pair, or a block twice, blocks adoption:
+    which text is the experiment's and which the sample's can no longer be
+    told, and taking it as the sample's own would write it into the sample's
+    record -- twice over once the next apply writes the block back. Text in
+    the block that breaks the experiment's rules is a leftover, and is not
+    passed on as the experiment's to anything that reads the file.
+    """
+    blocks, damaged = find_experiment(body)
+    if not blocks and not damaged:
+        return body
+    if damaged or len(blocks) > 1:
+        blocking.append(
+            f"the experiment's context under '## {heading}' has lost one of its "
+            "markers, or is there twice, so where it starts and ends cannot be "
+            "told. Delete it from sample.md, its text and markers, and review "
+            "again: the next apply writes it back whole."
+        )
+        return body
+    block = blocks[0]
+    name = EXPERIMENT_SECTIONS[heading]
+    try:
+        found[name] = clean_experiment_field(name, block.text)
+    except CatalogValidationError as exc:
+        leftovers.append(f"the experiment's context under '## {heading}': {exc}")
+    else:
+        if block.edited:
+            edited.append(name)
+    # And the blank line written after it, or text above it is left four lines off.
+    return body[: block.start] + body[block.end :].lstrip("\n")
 
 
 def _split_run_notes(body: str, notes: dict[int, str]) -> str:
@@ -553,7 +630,7 @@ def plan_adopt(
                 ),
             ),
         )
-    parsed = parse_sample_md(text)
+    parsed = _check_experiment_copy(parse_sample_md(text), catalog)
     problems: list[Problem] = [
         Problem(f"sample:{sample_id}", reason) for reason in parsed.blocking
     ]
@@ -681,6 +758,62 @@ def plan_adopt(
         problems=tuple(problems),
         plan_id=_plan_id(raw, run_changes, sample_change),
     )
+
+
+def _check_experiment_copy(parsed: ParsedSample, catalog: Catalog) -> ParsedSample:
+    """Compare the file's copy of the experiment's context with the catalog's.
+
+    That copy is the catalog's to write: a pull never takes it into the
+    sample, and a rewrite replaces it. Its marker's digest says whether
+    anyone touched it:
+
+    - **Untouched**, it is the catalog's text from the last apply. If the
+      experiment's context has changed since, it is only out of date, and a
+      rewrite brings it up to date. Nothing is lost.
+    - **Edited here**, and not the catalog's text now, a rewrite would lose
+      the edit: a leftover, which blocks the rewrite.
+
+    And a copy that has lost both markers reads as the sample's own text. If
+    a section opens with the catalog's text, that is what happened, and a
+    pull would make it this sample's own and the next apply write it twice:
+    that blocks the pull.
+    """
+    try:
+        expected = checked_experiment(catalog.experiment)
+    except CatalogValidationError:
+        # Not renderable: planning the rewrite says why. Compare as stored.
+        expected = catalog.experiment
+    leftovers = list(parsed.leftovers)
+    blocking = list(parsed.blocking)
+    for heading, name in EXPERIMENT_SECTIONS.items():
+        current = getattr(expected, name)
+        written = parsed.experiment.get(name)
+        if written is not None:
+            if name in parsed.experiment_edited and written != current:
+                leftovers.append(
+                    f"the experiment's context under '## {heading}' was edited "
+                    "in this file, and a rewrite would replace the edit. If it "
+                    "should hold for every sample, make it on the Experiment "
+                    "page; if not, delete the marked block from sample.md. Then "
+                    "review again."
+                )
+        elif current and _opens_with(parsed.fields.get(name, ""), current):
+            blocking.append(
+                f"'## {heading}' opens with the experiment's context, but "
+                "without its markers, so a pull would make it this sample's "
+                "own and the next apply would write it twice. Delete it from "
+                "the section, or put the markers back, and review again."
+            )
+    if leftovers == list(parsed.leftovers) and blocking == list(parsed.blocking):
+        return parsed
+    return dataclasses.replace(
+        parsed, leftovers=tuple(leftovers), blocking=tuple(blocking)
+    )
+
+
+def _opens_with(text: str, opening: str) -> bool:
+    """Whether *text* opens with *opening*, as a paragraph of its own."""
+    return text == opening or text.startswith(opening + "\n")
 
 
 def _plan_id(

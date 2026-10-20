@@ -20,6 +20,7 @@ from nr_workbench.experiment.adopt import (
 )
 from nr_workbench.experiment.model import (
     Catalog,
+    ExperimentChange,
     RunChange,
     RunKey,
     SampleChange,
@@ -37,6 +38,7 @@ from nr_workbench.project.scaffold import (
     load_lock,
     replace_owned,
 )
+from nr_workbench.sample_md import EXPERIMENT_CLOSE, EXPERIMENT_SECTIONS
 
 NOW = "2026-09-25T12:00:00Z"
 
@@ -644,3 +646,241 @@ def test_a_note_in_the_file_that_would_break_sample_md_is_set_aside(
     adopt(project, store, plan, context, rewrite=False)
     entry = store.load().runs[RunKey(218386)]
     assert (entry.condition, entry.note) == ("OCV", "")
+
+
+# --------------------------------------------------------------------------
+# The experiment's own context is the catalog's, never the sample's
+# --------------------------------------------------------------------------
+
+#: Several lines in every field, as people write them: bullets, paragraphs, a
+#: fenced block, and a table without a Run column.
+EXPERIMENT = {
+    "description": "Electrodeposited Cu films, measured in operando.\n\n"
+    "Each sample is one film in the same cell.",
+    "details": "- One cell for every sample.\n- 1 M LiBF4 in d8-THF.\n\n"
+    "| Part | Material |\n|---|---|\n| window | Si |",
+    "measurement_conditions": "Aligned once per sample, at 0.6 deg.\n\n"
+    "```\nslits 0.4 / 0.4 mm\n```",
+}
+
+#: The sample's own text in the same three sections.
+OWN = {
+    "description": "Cu on Pt.",
+    "details": "Cu 20 nm, Pt 5 nm.",
+    "measurement_conditions": "Background flat at high Q.",
+}
+
+
+def described(project: Path, context: RenderContext) -> ParquetCatalogStore:
+    """Sample6 in the project's catalog, the experiment described, applied."""
+    store = ParquetCatalogStore.for_project(project)
+    store.update(
+        runs=[
+            RunChange(RunKey(218386), 0, {"sample_id": "Sample6", "condition": "OCV"})
+        ],
+        samples=[SampleChange("Sample6", 0, {**OWN, "mounting": "once"})],
+        experiment=ExperimentChange(0, EXPERIMENT),
+        now=NOW,
+    )
+    apply_scaffold(project, plan_sample(project, context, "Sample6"))
+    return store
+
+
+def sample_md(project: Path) -> Path:
+    return project / "samples" / "Sample6" / "sample.md"
+
+
+def block_in(text: str, heading: str) -> tuple[int, int, int]:
+    """Where a section's block is: its start, the end of its open marker's
+    line, and where its close marker starts."""
+    start = text.index("<!-- nrw:experiment", text.index(f"## {heading}\n"))
+    return (start, text.index("\n", start) + 1, text.index(EXPERIMENT_CLOSE, start))
+
+
+def test_a_rendering_with_the_experiments_context_parses_to_the_sample_again() -> None:
+    catalog = apply_changes(
+        catalog_with(**OWN, mounting="once"),
+        experiment=ExperimentChange(0, EXPERIMENT),
+        now=NOW,
+    )
+
+    parsed = parse_sample_md(rendered(catalog))
+
+    assert {name: parsed.fields[name] for name in OWN} == OWN
+    assert parsed.fields["mounting"] == "once"
+    assert parsed.experiment == EXPERIMENT
+    assert parsed.experiment_edited == ()
+    assert parsed.notes[218386].startswith("Realigned after mounting.")
+    assert parsed.leftovers == () and parsed.blocking == ()
+    # A reader is given the experiment's text, then the sample's own.
+    assert (
+        parsed.with_experiment("details")
+        == f"{EXPERIMENT['details']}\n\n{OWN['details']}"
+    )
+
+
+def test_pulling_a_rendered_file_leaves_the_experiments_context_alone(
+    project: Path, context: RenderContext
+) -> None:
+    store = described(project, context)
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert plan.sample_change is None and plan.run_changes == ()
+    assert plan.parsed.leftovers == () and plan.problems == ()
+    assert plan.in_step
+
+
+@pytest.mark.parametrize("heading,name", list(EXPERIMENT_SECTIONS.items()))
+def test_an_edit_inside_the_experiments_block_is_said_and_never_pulled(
+    project: Path, context: RenderContext, heading: str, name: str
+) -> None:
+    """Pulled into one sample it would be wrong; dropped by a rewrite, lost."""
+    store = described(project, context)
+    path = sample_md(project)
+    first_line = EXPERIMENT[name].split("\n")[0]
+    path.write_text(path.read_text().replace(first_line, "Edited by hand.", 1))
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert plan.sample_change is None
+    edited = [item for item in plan.parsed.leftovers if "was edited" in item]
+    assert len(edited) == 1 and f"'## {heading}'" in edited[0]
+    with pytest.raises(AdoptRefused, match="lose"):
+        adopt(project, store, plan, context, rewrite=True)
+    assert "Edited by hand." in path.read_text()
+    assert getattr(store.load().experiment, name) == EXPERIMENT[name]
+
+
+def test_an_untouched_block_only_out_of_date_does_not_stop_the_pull(
+    project: Path, context: RenderContext
+) -> None:
+    """Its digest says nobody edited it, so the rewrite brings it up to date."""
+    store = described(project, context)
+    path = sample_md(project)
+    # The sample's own details edited by hand, while the experiment's context
+    # changes on the page: the file's copy of it is now out of date.
+    path.write_text(path.read_text().replace(OWN["details"], "Cu 25 nm, Pt 5 nm."))
+    store.update(
+        experiment=ExperimentChange(1, {"details": "Two cells, alternating."}),
+        now=NOW,
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+    assert plan.parsed.leftovers == () and plan.problems == ()
+    adopt(project, store, plan, context, rewrite=True)
+
+    assert store.load().context_for("Sample6").details == "Cu 25 nm, Pt 5 nm."
+    rewritten = path.read_text()
+    assert "Two cells, alternating." in rewritten
+    assert "One cell for every sample" not in rewritten
+
+
+@pytest.mark.parametrize("heading,name", list(EXPERIMENT_SECTIONS.items()))
+def test_text_written_above_the_block_is_kept_as_the_samples_own(
+    project: Path, context: RenderContext, heading: str, name: str
+) -> None:
+    """The catalog writes the block first; a line someone adds above it is theirs."""
+    store = described(project, context)
+    path = sample_md(project)
+    text = path.read_text()
+    start, _, _ = block_in(text, heading)
+    path.write_text(text[:start] + "Hand-added line.\n\n" + text[start:])
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert plan.problems == () and plan.parsed.leftovers == ()
+    pulled = plan.sample_change.changes[name]
+    assert pulled.startswith("Hand-added line.\n\n") and pulled.endswith(OWN[name])
+    assert EXPERIMENT[name] not in pulled
+
+
+@pytest.mark.parametrize("damage", ["open", "close", "close-for-a-comment", "twice"])
+def test_a_damaged_experiment_block_stops_the_pull(
+    project: Path, context: RenderContext, damage: str
+) -> None:
+    """Where the experiment's text ends can no longer be told: nothing is taken."""
+    store = described(project, context)
+    path = sample_md(project)
+    text = path.read_text()
+    start, open_end, close = block_in(text, "Details")
+    end = close + len(EXPERIMENT_CLOSE)
+    path.write_text(
+        {
+            "open": text[:start] + text[open_end:],
+            "close": text[:close] + text[end:],
+            # The open marker's next comment is someone's own, not its close.
+            "close-for-a-comment": text[:close] + "<!-- my note -->" + text[end:],
+            "twice": text[:end] + "\n\n" + text[start:end] + text[end:],
+        }[damage]
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert any("lost one of its markers" in p.message for p in plan.problems)
+    for rewrite in (False, True):
+        with pytest.raises(AdoptRefused):
+            adopt(project, store, plan, context, rewrite=rewrite)
+    assert store.load().context_for("Sample6").details == OWN["details"]
+
+
+@pytest.mark.parametrize("heading,name", list(EXPERIMENT_SECTIONS.items()))
+def test_the_experiments_text_without_its_markers_stops_the_pull(
+    project: Path, context: RenderContext, heading: str, name: str
+) -> None:
+    """Read as the sample's own, it would go into the sample's record, and twice."""
+    store = described(project, context)
+    path = sample_md(project)
+    text = path.read_text()
+    start, open_end, close = block_in(text, heading)
+    path.write_text(
+        text[:start] + text[open_end:close] + text[close + len(EXPERIMENT_CLOSE) + 1 :]
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    blocked = [p.message for p in plan.problems if "without its markers" in p.message]
+    assert len(blocked) == 1 and f"'## {heading}'" in blocked[0]
+    with pytest.raises(AdoptRefused):
+        adopt(project, store, plan, context, rewrite=False)
+    assert getattr(store.load().context_for("Sample6"), name) == OWN[name]
+
+
+def test_a_block_edited_to_the_catalogs_text_is_no_leftover(
+    project: Path, context: RenderContext
+) -> None:
+    """The same edit made in the file and on the page: nothing would be lost."""
+    store = described(project, context)
+    store.update(
+        experiment=ExperimentChange(1, {"description": "Films in one cell."}),
+        now=NOW,
+    )
+    path = sample_md(project)
+    path.write_text(
+        path.read_text().replace(EXPERIMENT["description"], "Films in one cell.", 1)
+    )
+
+    plan = plan_adopt(project, store.load(), "Sample6", context)
+
+    assert "description" in plan.parsed.experiment_edited  # its digest says so
+    assert plan.parsed.leftovers == () and plan.problems == ()
+
+
+def test_a_block_breaking_the_rules_is_a_leftover_and_no_reader_is_given_it() -> None:
+    """A run's note typed into the block: not every run's, and not the run's."""
+    from nr_workbench.experiment.adopt import measurements_of
+
+    catalog = apply_changes(
+        catalog_with(**OWN), experiment=ExperimentChange(0, EXPERIMENT), now=NOW
+    )
+    text = rendered(catalog).replace(
+        "Aligned once per sample, at 0.6 deg.", "- Run 218386: realigned", 1
+    )
+
+    parsed = parse_sample_md(text)
+
+    assert "measurement_conditions" not in parsed.experiment
+    assert any("reads as run 218386's notes" in item for item in parsed.leftovers)
+    measured = measurements_of(text)
+    assert "realigned" not in measured.shared
+    assert measured.notes[218386].startswith("Realigned after mounting.")

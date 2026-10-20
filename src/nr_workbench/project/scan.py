@@ -291,11 +291,15 @@ def _runs_mentioned(sample_md: Path) -> set[int]:
     """Extract run numbers from the prose, ignoring commented-out examples.
 
     The template ships a worked example inside an HTML comment; counting those
-    would report every new sample as documenting runs it does not have.
+    would report every new sample as documenting runs it does not have. The
+    experiment's own context is skipped for the same reason: the catalog
+    writes it into every sample.md, and a run it names is not every sample's.
     """
+    from nr_workbench.sample_md import without_experiment
+
     if not sample_md.is_file():
         return set()
-    text = sample_md.read_text(encoding="utf-8")
+    text = without_experiment(sample_md.read_text(encoding="utf-8"))
     text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
     return {int(m) for m in RUN_IN_PROSE_RE.findall(text)}
 

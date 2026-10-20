@@ -191,6 +191,35 @@
   </div>
 
   <aside class="rail">
+    <details class="panel expt-context" id="expt-context">
+      <summary class="panel-head">
+        <span>Experiment</span>
+        <span id="expt-context-summary" class="hint text-truncate"></span>
+      </summary>
+      <form id="expt-context-form" class="p-3 small" novalidate>
+        <!-- Disabled until the page has filled them, and only enabled for a
+             page that may write. -->
+        <label class="form-label mb-1" for="e-title">Title</label>
+        <input class="form-control form-control-sm mb-2" id="e-title" name="title" disabled>
+        <label class="form-label mb-1" for="e-description">Description</label>
+        <textarea class="form-control form-control-sm mb-2" id="e-description" name="description" rows="2"
+                  placeholder="What the experiment is, and what it is for." disabled></textarea>
+        <label class="form-label mb-1" for="e-details">Details</label>
+        <textarea class="form-control form-control-sm mb-2" id="e-details" name="details" rows="2"
+                  placeholder="What every sample shares: composition, environment, cell." disabled></textarea>
+        <label class="form-label mb-1" for="e-conditions">Measurement conditions</label>
+        <textarea class="form-control form-control-sm mb-2" id="e-conditions" name="measurement_conditions"
+                  rows="2" placeholder="What every measurement shares: alignment, instrument, normalization."
+                  disabled></textarea>
+        <div class="form-text mb-2">
+          Written into every sample's sample.md, ahead of the sample's own text
+          in the same section, when you apply. The title stays here.
+        </div>
+        <button type="submit" class="btn btn-sm btn-primary" id="expt-context-save" disabled>Save</button>
+        <p id="expt-context-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
+      </form>
+    </details>
+
     <div class="panel">
       <div class="panel-head">
         <span>Samples</span>

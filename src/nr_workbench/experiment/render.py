@@ -23,14 +23,15 @@ from nr_workbench.experiment.model import (
     Catalog,
     CatalogValidationError,
     RunEntry,
+    check_sample_text,
+    checked_experiment,
     clean_prose,
-    refuse_run_note_lines,
 )
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.project.render import MeasurementRow, RenderContext, SampleProse
 from nr_workbench.project.samples import plan_sample_files
 from nr_workbench.project.scaffold import PlannedFile, load_lock
-from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_PREFIX
+from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_PREFIX, experiment_block
 
 #: The lock's ``owner`` for a sample.md rendered from the catalog.
 CATALOG_OWNER = "experiment"
@@ -68,32 +69,56 @@ def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
     *Measurement conditions*, one entry per run (see :func:`run_notes`). Run
     titles are never written: a title beside the condition would blind ``nrw
     data reconcile``'s check that the two agree.
+
+    The experiment's own context comes first in each section it shares with
+    the sample's, marked (see :func:`~nr_workbench.sample_md.experiment_block`):
+    every reader of the section then reads it, unchanged, and adoption can
+    leave it out of the sample's fields.
+
+    Raises:
+        SampleRenderError: The stored text breaks a rule an edit is held to.
+            Saved before the rule, or another way than the page, it is refused,
+            not rewritten -- and the catalog stays editable, to fix it there.
     """
     context = catalog.context_for(sample_id)
     try:
-        # Saved before the rule, or by another program: refused, not rewritten.
-        refuse_run_note_lines(context.measurement_conditions)
+        check_sample_text(context)
     except CatalogValidationError as exc:
-        raise SampleRenderError(f"sample.md cannot be written: {exc}") from exc
+        raise SampleRenderError(
+            f"sample.md cannot be written: {str(exc).rstrip('.')}. "
+            "Edit the sample on the Experiment page."
+        ) from exc
+    try:
+        experiment = checked_experiment(catalog.experiment)
+    except CatalogValidationError as exc:
+        raise SampleRenderError(
+            f"sample.md cannot be written: {str(exc).rstrip('.')}. "
+            "Edit the experiment's context on the Experiment page."
+        ) from exc
     included = [entry for entry in catalog.runs_for(sample_id) if entry.include]
     rows = tuple(
         MeasurementRow(entry.key.run, entry.measurement_type, entry.condition)
         for entry in included
     )
-    parts = [
-        MOUNTING_SENTENCES.get(context.mounting, ""),
-        context.measurement_conditions,
-        run_notes(included),
-    ]
-    conditions = "\n\n".join(part for part in parts if part)
     return SampleProse(
         managed=True,
-        description=context.description,
-        details=context.details,
-        measurement_conditions=conditions,
+        description=_joined(
+            experiment_block(experiment.description), context.description
+        ),
+        details=_joined(experiment_block(experiment.details), context.details),
+        measurement_conditions=_joined(
+            experiment_block(experiment.measurement_conditions),
+            MOUNTING_SENTENCES.get(context.mounting, ""),
+            context.measurement_conditions,
+            run_notes(included),
+        ),
         fits_to_perform=context.fits_to_perform,
         measurements=rows,
     )
+
+
+def _joined(*parts: str) -> str:
+    return "\n\n".join(part for part in parts if part)
 
 
 def run_notes(entries: Iterable[RunEntry]) -> str:

@@ -161,8 +161,11 @@ class CatalogStore(Protocol):
     def describe(self) -> dict: ...
     def load(self) -> Catalog: ...
     def load_report(self) -> tuple[Catalog, tuple[Problem, ...]]: ...  # and what it recovered from
-    def update(self, *, runs=(), samples=(), now=None) -> Catalog: ...
+    def update(self, *, runs=(), samples=(), experiment=None, now=None) -> Catalog: ...
 ```
+
+The catalog holds three kinds of record: each run, each sample's context, and
+the experiment's own context, the one record shared by every sample.
 
 `update` takes **edits**, not a whole catalog. Each edit carries the revision of
 the record it was based on:
@@ -202,9 +205,11 @@ files on a network mount do not make a database. See the 2026-09-28 entry in
 `docs/ground_truths.md`, and the branch `shared-catalog-attempt`.
 
 The parquet store's schema follows data-assembler's lakehouse split: run rows
-carry a nullable `sample_id`, and samples are their own table. Columns a store
-does not know must survive a save. A newer schema version must be refused, not
-read partially.
+carry a nullable `sample_id`, and samples are their own table. The
+experiment's context is a third table of one row, written only once it has
+been set, so a project that never sets it keeps the two files it always had.
+Columns a store does not know must survive a save. A newer schema version must
+be refused, not read partially.
 
 ## tNR, later
 

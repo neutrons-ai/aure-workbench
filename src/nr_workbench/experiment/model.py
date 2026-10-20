@@ -72,8 +72,13 @@ _LINE_BREAKS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
 #: Bidirectional overrides: they make displayed text differ from stored text.
 _BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
-#: An ATX heading, as CommonMark reads one.
-_HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)", re.MULTILINE)
+#: An ATX heading, as CommonMark reads one -- and after the hashes, any space
+#: at all. The readers of sample.md that matter most match a heading with
+#: Python's Unicode ``\s`` (the agent's task, ``notes.read_section`` and so
+#: AuRE), so ``##`` and a no-break space starts a section for them, whatever
+#: CommonMark says. A Mac keyboard that types ``#`` with Option types that
+#: space with Option and the space bar.
+_HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:\s|$)", re.MULTILINE)
 
 #: The opening line of a fenced code block.
 _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
@@ -81,7 +86,7 @@ _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 #: The same two in a run's notes, which sample.md writes inside the run's entry,
 #: every line after the first indented: there either takes effect after any
 #: indentation, a tab included, that at the margin would make it code instead.
-_NOTE_HEADING_RE = re.compile(r"^[ \t]*#{1,6}(?:[ \t]|$)", re.MULTILINE)
+_NOTE_HEADING_RE = re.compile(r"^[ \t]*#{1,6}(?:\s|$)", re.MULTILINE)
 _NOTE_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})", re.MULTILINE)
 
 
@@ -462,6 +467,45 @@ class SampleContext:
         )
 
 
+@dataclass(frozen=True)
+class ExperimentContext:
+    """What the experimenter said about the whole experiment, not one sample.
+
+    What every sample shares -- the cell, the electrolyte, how the instrument
+    was set up -- would otherwise be written into each ``sample.md`` by hand.
+    Each prose field is written at the head of the section of every managed
+    ``sample.md`` it is named after, marked as the experiment's.
+
+    Attributes:
+        title: The experiment's name. Shown on the page; not written into
+            ``sample.md``, whose first heading is the sample's.
+        description: What the experiment is, and what it is for.
+        details: What every sample shares: composition, environment, cell.
+        measurement_conditions: What every measurement shares: alignment,
+            instrument, normalization.
+        rev: Revision of this record; ``0`` until it is first set.
+        updated_at: When the record last changed, ISO-8601 UTC.
+        extra: Columns written by a newer nrw, preserved on save.
+    """
+
+    title: str = ""
+    description: str = ""
+    details: str = ""
+    measurement_conditions: str = ""
+    rev: int = 0
+    updated_at: str = ""
+    extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def content(self) -> tuple[Any, ...]:
+        """Everything a person decided, for telling an edit from a no-op."""
+        return (
+            self.title,
+            self.description,
+            self.details,
+            self.measurement_conditions,
+        )
+
+
 #: Run fields a person may change, and how each is checked.
 RUN_FIELDS = ("sample_id", "measurement", "condition", "include", "note")
 
@@ -480,6 +524,9 @@ SAMPLE_FIELDS = (
 
 #: Which sample fields are prose rendered into sample.md.
 _PROSE_FIELDS = ("description", "details", "measurement_conditions", "fits_to_perform")
+
+#: Fields of the experiment's own context a person may change.
+EXPERIMENT_FIELDS = ("title", "description", "details", "measurement_conditions")
 
 
 def _clean_run_field(name: str, value: Any) -> Any:
@@ -524,7 +571,63 @@ def _clean_sample_field(name: str, value: Any) -> Any:
     raise CatalogValidationError(f"a sample has no field {name!r}")
 
 
-def refuse_run_note_lines(text: str) -> None:
+def clean_experiment_field(name: str, value: Any) -> Any:
+    """Validate one field of the experiment's own context.
+
+    The sample's rules: this text is written into the same sections of every
+    managed sample.md, ahead of each sample's own.
+
+    Returns:
+        The value as an edit stores it.
+
+    Raises:
+        CatalogValidationError: Naming the field, and the rule.
+    """
+    if name == "title":
+        return clean_line("the experiment's title", value)
+    if name in EXPERIMENT_FIELDS:
+        label = f"the experiment's {name.replace('_', ' ')}"
+        text = clean_prose(label, value)
+        if name == "measurement_conditions":
+            refuse_run_note_lines(text, label=label)
+        return text
+    raise CatalogValidationError(f"the experiment has no field {name!r}")
+
+
+def checked_experiment(experiment: ExperimentContext) -> ExperimentContext:
+    """The stored record held to the rules an edit meets, as an edit stores it.
+
+    Its text is written into every managed sample.md, so a record not saved
+    through :func:`apply_changes` -- by another program, or a file edited by
+    hand -- is checked again before anything is written from it.
+
+    Raises:
+        CatalogValidationError: Naming the field, and the rule.
+    """
+    return replace(
+        experiment,
+        **{
+            name: clean_experiment_field(name, getattr(experiment, name))
+            for name in EXPERIMENT_FIELDS
+        },
+    )
+
+
+def check_sample_text(context: SampleContext) -> None:
+    """Hold a stored sample's context to the rules an edit meets.
+
+    Checked before sample.md is written from it, for the same reason as
+    :func:`checked_experiment`: what was saved some other way was never
+    checked, and a heading in it would start a section of its own.
+
+    Raises:
+        CatalogValidationError: Naming the field, and the rule.
+    """
+    for name in SAMPLE_FIELDS:
+        _clean_sample_field(name, getattr(context, name))
+
+
+def refuse_run_note_lines(text: str, *, label: str = "measurement conditions") -> None:
     """Refuse the sample's own *Measurement conditions* a line like a run's notes.
 
     sample.md writes each run's notes after the sample's text, each opening
@@ -533,6 +636,7 @@ def refuse_run_note_lines(text: str) -> None:
 
     Args:
         text: The sample's measurement conditions.
+        label: What the text is, for the message.
 
     Raises:
         CatalogValidationError: Naming the run, and where the line belongs.
@@ -544,7 +648,7 @@ def refuse_run_note_lines(text: str) -> None:
         if match:
             run = match.group(1)
             raise CatalogValidationError(
-                f"measurement conditions has a line that reads as run {run}'s "
+                f"{label} has a line that reads as run {run}'s "
                 f"notes ({line.strip()[:60]!r}). Put it in run {run}'s notes, "
                 "under Measurements, where it is kept with the run -- or word it "
                 f"another way, such as 'Run {run} was ...'."
@@ -605,22 +709,37 @@ class SampleChange:
 
 
 @dataclass(frozen=True)
+class ExperimentChange:
+    """An edit to the experiment's own context.
+
+    Attributes:
+        base_rev: The revision the editor saw; ``0`` before it was ever set.
+        changes: Field name to new value, a subset of :data:`EXPERIMENT_FIELDS`.
+    """
+
+    base_rev: int
+    changes: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Catalog:
     """Everything the experimenter has decided, as one immutable value.
 
     A sample may be named by runs without having a context record, and a
     context record may exist before any run is assigned to it. Neither is an
-    inconsistency, which is what lets the two tables be written one after the
+    inconsistency, which is what lets the tables be written one after the
     other without an interrupted save ever producing a catalog that means
     something wrong.
 
     Attributes:
         runs: Run records by key.
         samples: Sample context records by id.
+        experiment: The experiment's own context, shared by every sample.
     """
 
     runs: Mapping[RunKey, RunEntry] = field(default_factory=dict)
     samples: Mapping[str, SampleContext] = field(default_factory=dict)
+    experiment: ExperimentContext = field(default_factory=ExperimentContext)
 
     def sample_ids(self) -> list[str]:
         """Every sample the catalog knows, from either table, sorted."""
@@ -648,6 +767,7 @@ def apply_changes(
     *,
     runs: Iterable[RunChange] = (),
     samples: Iterable[SampleChange] = (),
+    experiment: ExperimentChange | None = None,
     now: str,
 ) -> Catalog:
     """Apply a person's edits, refusing any made against a stale record.
@@ -659,6 +779,7 @@ def apply_changes(
         catalog: The current catalog, freshly loaded.
         runs: Edits to run records.
         samples: Edits to sample records.
+        experiment: An edit to the experiment's own context.
         now: The timestamp to record on changed records.
 
     Returns:
@@ -724,9 +845,26 @@ def apply_changes(
             proposed, rev=base.rev + 1, updated_at=now
         )
 
+    experiment_record = catalog.experiment
+    if experiment is not None:
+        if _rev(experiment.base_rev) != experiment_record.rev:
+            stale.append("the experiment's context")
+        else:
+            cleaned = {
+                name: clean_experiment_field(name, value)
+                for name, value in experiment.changes.items()
+            }
+            proposed_experiment = replace(experiment_record, **cleaned)
+            if proposed_experiment.content() != experiment_record.content():
+                experiment_record = replace(
+                    proposed_experiment, rev=experiment_record.rev + 1, updated_at=now
+                )
+
     if stale:
         raise RecordConflict(stale)
-    return Catalog(runs=run_records, samples=sample_records)
+    return Catalog(
+        runs=run_records, samples=sample_records, experiment=experiment_record
+    )
 
 
 def _rev(value: Any) -> int:

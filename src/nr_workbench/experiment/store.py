@@ -1,10 +1,13 @@
-"""Where the catalog is kept: two parquet tables and a manifest, in ``experiment/``.
+"""Where the catalog is kept: parquet tables and a manifest, in ``experiment/``.
 
 ``runs.parquet`` holds one row per run and ``samples.parquet`` one row per
 sample -- the split data-assembler's lakehouse uses, where a measurement row
-carries a nullable sample id and samples are their own table. ``catalog.json``
-records the sha256 of both, is written *last* on every save, and is how an
-interrupted save is told apart from a complete one.
+carries a nullable sample id and samples are their own table.
+``experiment.parquet`` holds the experiment's own context, one row, and is
+written only once that has been set: a project that never sets it keeps the
+two files it always had. ``catalog.json`` records the sha256 of every table,
+is written *last* on every save, and is how an interrupted save is told apart
+from a complete one.
 
 Four failure modes decide how this is written, each of them silent if handled
 the obvious way:
@@ -24,10 +27,10 @@ a read-modify-write under a lock, and checks each edited record's revision, so
 a concurrent edit to a *different* record is merged and one to the *same*
 record is refused.
 
-**An interrupted save.** The two tables are replaced one after the other; a
-crash between them leaves a pair that parses. The manifest catches that, and
-the previous complete pair is kept under ``.nrw/cache/experiment/`` to recover
-from.
+**An interrupted save.** The tables are replaced one after another; a crash
+between them leaves a set that parses. The manifest catches that, and the
+previous complete set is kept under ``.nrw/cache/experiment/`` to recover
+from -- every table of it, so that recovery shows what the last load showed.
 
 pyarrow is imported inside the functions that use it: it costs about a second,
 and ``nrw --help`` must stay instant.
@@ -43,10 +46,13 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from nr_workbench.experiment.model import (
+    EXPERIMENT_FIELDS,
     Catalog,
+    ExperimentChange,
+    ExperimentContext,
     RunChange,
     RunEntry,
     RunKey,
@@ -67,7 +73,14 @@ SCHEMA_VERSION = 1
 
 RUNS_FILE = "runs.parquet"
 SAMPLES_FILE = "samples.parquet"
+EXPERIMENT_FILE = "experiment.parquet"
 MANIFEST_FILE = "catalog.json"
+
+#: Every table, by its name in the manifest. The runs and samples are always
+#: written and listed; the experiment's context only once it has been set,
+#: and an nrw from before it never lists it.
+_TABLES = {"runs": RUNS_FILE, "samples": SAMPLES_FILE, "experiment": EXPERIMENT_FILE}
+_OPTIONAL = frozenset({"experiment"})
 
 #: Columns this version reads. Anything else is preserved, untouched.
 _RUN_COLUMNS = (
@@ -94,6 +107,7 @@ _SAMPLE_COLUMNS = (
     "rev",
     "updated_at",
 )
+_EXPERIMENT_COLUMNS = (*EXPERIMENT_FIELDS, "rev", "updated_at")
 
 
 class CatalogError(Exception):
@@ -148,6 +162,7 @@ class CatalogStore(Protocol):
         *,
         runs: Iterable[RunChange] = (),
         samples: Iterable[SampleChange] = (),
+        experiment: ExperimentChange | None = None,
         now: str | None = None,
     ) -> Catalog:
         """Apply edits against the latest catalog and store the result."""
@@ -190,6 +205,16 @@ _THREAD_LOCKS_GUARD = threading.Lock()
 def _thread_lock(directory: Path) -> threading.Lock:
     with _THREAD_LOCKS_GUARD:
         return _THREAD_LOCKS.setdefault(directory.resolve(), threading.Lock())
+
+
+class _Loaded(NamedTuple):
+    """One read of the catalog, and what the save that follows must know."""
+
+    catalog: Catalog
+    problems: tuple[Problem, ...]
+    #: An experiment table in ``experiment/`` that the read left alone because
+    #: it came from an interrupted save.
+    partial_experiment: bool
 
 
 class ParquetCatalogStore:
@@ -235,7 +260,7 @@ class ParquetCatalogStore:
         """Whether any catalog file has been written."""
         return any(
             (self.directory / name).exists()
-            for name in (RUNS_FILE, SAMPLES_FILE, MANIFEST_FILE)
+            for name in (*_TABLES.values(), MANIFEST_FILE)
         )
 
     def load(self) -> Catalog:
@@ -256,7 +281,7 @@ class ParquetCatalogStore:
     def load_report(self) -> tuple[Catalog, tuple[Problem, ...]]:
         """Read the catalog, and say what reading it recovered from.
 
-        Taken under the same locks as a save. A save replaces three files one
+        Taken under the same locks as a save. A save replaces its files one
         after another, and a read landing between two of them would see a
         manifest that does not match its tables -- and report an interrupted
         save that is merely in progress.
@@ -265,7 +290,8 @@ class ParquetCatalogStore:
             CatalogError: As for :meth:`load`.
         """
         with self._reading():
-            return self._load_unlocked()
+            loaded = self._load_unlocked()
+        return (loaded.catalog, loaded.problems)
 
     @contextmanager
     def _reading(self) -> Iterator[None]:
@@ -287,27 +313,21 @@ class ParquetCatalogStore:
             finally:
                 context.__exit__(None, None, None)
 
-    def _load_unlocked(self) -> tuple[Catalog, tuple[Problem, ...]]:
+    def _load_unlocked(self) -> _Loaded:
         problems: list[Problem] = []
         self._refuse_if_unmerged()
         if not self.exists():
-            return (Catalog(), ())
+            return _Loaded(Catalog(), (), partial_experiment=False)
 
         manifest = self._read_manifest(self.directory / MANIFEST_FILE)
-        runs_path = self.directory / RUNS_FILE
-        samples_path = self.directory / SAMPLES_FILE
-
-        if manifest is not None and not _matches(manifest, runs_path, samples_path):
+        # Where the tables are read from, and the manifest that lists them: the
+        # catalog's own, or the kept set when the last save was interrupted.
+        source, listing = self.directory, manifest
+        if manifest is not None and not _matches(manifest, self.directory):
             recovered = self._recover(manifest)
             if recovered is None:
-                raise CatalogCorruptError(
-                    f"{self.directory.name}/ does not match its own manifest, "
-                    "and no complete earlier version is available. A save was "
-                    "probably interrupted, or a file was replaced by hand. "
-                    f"Restore it from git (`git checkout -- {self.directory.name}/`) "
-                    "or from a backup; nrw will not save over it until then."
-                )
-            runs_path, samples_path = recovered
+                raise CatalogCorruptError(self._unrecoverable(manifest))
+            source, listing = recovered
             problems.append(
                 Problem(
                     "catalog",
@@ -326,15 +346,76 @@ class ParquetCatalogStore:
                 )
             )
 
-        runs = _read_table(runs_path, "runs")
-        samples = _read_table(samples_path, "samples")
+        experiment_path = source / EXPERIMENT_FILE
+        if (
+            listing is not None
+            and "experiment" not in _tables(listing)
+            and experiment_path.exists()
+        ):
+            problems.append(
+                Problem(
+                    "catalog",
+                    f"{self.directory.name}/{EXPERIMENT_FILE}, the experiment's "
+                    "context, is not in the manifest, so whether it belongs with "
+                    "the other tables cannot be checked: an older nr-workbench "
+                    "may have saved the catalog since, a merge may have kept one "
+                    "side's catalog.json, or a save may have been interrupted. It "
+                    "is used as it is, so check the experiment's context on the "
+                    "Experiment page; the next save lists it again.",
+                )
+            )
+
+        runs = _read_table(source / RUNS_FILE, "runs")
+        samples = _read_table(source / SAMPLES_FILE, "samples")
+        experiment = _read_table(experiment_path, "experiment")
+        if len(experiment) > 1:
+            raise CatalogCorruptError(
+                f"{EXPERIMENT_FILE} holds {len(experiment)} rows; the experiment "
+                "has one context. Restore it from git "
+                f"(`git checkout -- {self.directory.name}/{EXPERIMENT_FILE}`)."
+            )
         catalog = Catalog(
             runs={entry.key: entry for entry in map(_run_from_row, runs)},
             samples={
                 entry.sample_id: entry for entry in map(_sample_from_row, samples)
             },
+            experiment=(
+                _experiment_from_row(experiment[0])
+                if experiment
+                else ExperimentContext()
+            ),
         )
-        return (catalog, tuple(problems))
+        # A table the recovered set does not hold is the interrupted save's:
+        # never read, and removed by the next save, so that it cannot come back.
+        partial = (
+            source != self.directory
+            and not experiment_path.exists()
+            and (self.directory / EXPERIMENT_FILE).exists()
+        )
+        return _Loaded(catalog, tuple(problems), partial_experiment=partial)
+
+    def _unrecoverable(self, manifest: dict[str, Any]) -> str:
+        """What to do about a catalog that matches neither its manifest nor a kept set."""
+        name = self.directory.name
+        if (
+            "experiment" in _tables(manifest)
+            and not (self.directory / EXPERIMENT_FILE).exists()
+        ):
+            # The manifest is written last, so this is no interrupted save: the
+            # file was saved and never reached here -- committed without it.
+            return (
+                f"{name}/{MANIFEST_FILE} lists {name}/{EXPERIMENT_FILE}, the "
+                "experiment's context, but the file is not here. If it was never "
+                f"committed, whoever saved it should run `git add {name}/"
+                f"{EXPERIMENT_FILE}` and commit it; otherwise restore it from git. "
+                "nrw will not save over the catalog until then."
+            )
+        return (
+            f"{name}/ does not match its own manifest, and no complete earlier "
+            "version is available. A save was probably interrupted, or a file was "
+            f"replaced by hand. Restore it from git (`git checkout -- {name}/`) or "
+            "from a backup; nrw will not save over it until then."
+        )
 
     # ------------------------------------------------------------------
     # Writing
@@ -345,6 +426,7 @@ class ParquetCatalogStore:
         *,
         runs: Iterable[RunChange] = (),
         samples: Iterable[SampleChange] = (),
+        experiment: ExperimentChange | None = None,
         now: str | None = None,
     ) -> Catalog:
         """Apply edits to the latest catalog, under the lock, and store it.
@@ -352,6 +434,7 @@ class ParquetCatalogStore:
         Args:
             runs: Edits to run records.
             samples: Edits to sample records.
+            experiment: An edit to the experiment's own context.
             now: Timestamp for changed records; the current UTC time if omitted.
 
         Returns:
@@ -366,17 +449,32 @@ class ParquetCatalogStore:
         run_changes, sample_changes = list(runs), list(samples)
 
         with _thread_lock(self.directory), advisory_lock(self.cache_dir / "catalog"):
-            current, _ = self._load_unlocked()
+            loaded = self._load_unlocked()
             updated = apply_changes(
-                current, runs=run_changes, samples=sample_changes, now=stamp
+                loaded.catalog,
+                runs=run_changes,
+                samples=sample_changes,
+                experiment=experiment,
+                now=stamp,
             )
-            if _same(current, updated):
-                return current
-            self._write(updated, stamp)
+            if _same(loaded.catalog, updated):
+                return loaded.catalog
+            self._write(updated, stamp, partial_experiment=loaded.partial_experiment)
             return updated
 
-    def _write(self, catalog: Catalog, stamp: str) -> None:
-        """Write both tables and then the manifest, keeping the last good set."""
+    def _write(
+        self, catalog: Catalog, stamp: str, *, partial_experiment: bool = False
+    ) -> None:
+        """Write the tables and then the manifest, keeping the last good set.
+
+        Args:
+            catalog: The catalog to store.
+            stamp: When.
+            partial_experiment: The load before this found an experiment table
+                left by an interrupted save, and did not read it. Unless this
+                save writes one, it is removed: listed by no manifest, it would
+                otherwise be read back as an older nrw's.
+        """
         runs_bytes = _table_bytes(
             "runs",
             _RUN_COLUMNS,
@@ -387,27 +485,45 @@ class ParquetCatalogStore:
             _SAMPLE_COLUMNS,
             [_sample_row(catalog.samples[k]) for k in sorted(catalog.samples)],
         )
+        tables: dict[str, Any] = {
+            "runs": {
+                "file": RUNS_FILE,
+                "sha256": _sha(runs_bytes),
+                "rows": len(catalog.runs),
+            },
+            "samples": {
+                "file": SAMPLES_FILE,
+                "sha256": _sha(samples_bytes),
+                "rows": len(catalog.samples),
+            },
+        }
+        writes = [(RUNS_FILE, runs_bytes), (SAMPLES_FILE, samples_bytes)]
+        # Only once it has been set: a project that never describes its
+        # experiment keeps exactly the files it always had.
+        if catalog.experiment.rev:
+            experiment_bytes = _table_bytes(
+                "experiment",
+                _EXPERIMENT_COLUMNS,
+                [_experiment_row(catalog.experiment)],
+            )
+            tables["experiment"] = {
+                "file": EXPERIMENT_FILE,
+                "sha256": _sha(experiment_bytes),
+                "rows": 1,
+            }
+            writes.append((EXPERIMENT_FILE, experiment_bytes))
         manifest = {
             "schema": SCHEMA_ID,
             "schema_version": SCHEMA_VERSION,
             "updated": stamp,
-            "tables": {
-                "runs": {
-                    "file": RUNS_FILE,
-                    "sha256": _sha(runs_bytes),
-                    "rows": len(catalog.runs),
-                },
-                "samples": {
-                    "file": SAMPLES_FILE,
-                    "sha256": _sha(samples_bytes),
-                    "rows": len(catalog.samples),
-                },
-            },
+            "tables": tables,
         }
 
         self.directory.mkdir(parents=True, exist_ok=True)
         self._keep_previous()
-        for name, data in ((RUNS_FILE, runs_bytes), (SAMPLES_FILE, samples_bytes)):
+        if partial_experiment and not catalog.experiment.rev:
+            (self.directory / EXPERIMENT_FILE).unlink(missing_ok=True)
+        for name, data in writes:
             _replace(self.directory / name, data, self.cache_dir)
         _replace(
             self.directory / MANIFEST_FILE,
@@ -420,42 +536,46 @@ class ParquetCatalogStore:
 
         Only a set that matches its own manifest is worth keeping: copying a
         half-written one over the last good copy would destroy the one thing
-        recovery needs.
+        recovery needs. Every table is kept, listed or not -- an experiment
+        table an older nrw no longer lists is still what a load reads -- so a
+        recovered catalog is the one the last load showed.
         """
         manifest = self._read_manifest(self.directory / MANIFEST_FILE)
-        runs_path = self.directory / RUNS_FILE
-        samples_path = self.directory / SAMPLES_FILE
-        if manifest is None or not _matches(manifest, runs_path, samples_path):
+        if manifest is None or not _matches(manifest, self.directory):
             return
         previous = self.cache_dir / "previous"
         previous.mkdir(parents=True, exist_ok=True)
-        for path in (runs_path, samples_path, self.directory / MANIFEST_FILE):
+        for name in (*_TABLES.values(), MANIFEST_FILE):
+            path = self.directory / name
             if path.exists():
-                shutil.copy2(path, previous / path.name)
+                shutil.copy2(path, previous / name)
+            else:
+                (previous / name).unlink(missing_ok=True)
 
-    def _recover(self, manifest: dict[str, Any]) -> tuple[Path, Path] | None:
-        """The kept pair, but only if it is exactly what *manifest* describes.
+    def _recover(self, manifest: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
+        """The kept set, but only if it is exactly what *manifest* describes.
 
         Being internally consistent is not enough: the kept copy could be from
         an older save, and restoring that silently would undo edits nobody
         was told about. The manifest in ``experiment/`` is written last, so
-        when it still names the kept pair's hashes, that pair is precisely the
+        when it still names the kept set's hashes, that set is precisely the
         last complete catalog -- and when it does not, nobody can say which
         version is right, and a person has to.
+
+        Returns:
+            The directory holding the kept set, and its manifest; or ``None``
+            when no kept set can be trusted.
         """
         previous = self.cache_dir / "previous"
         try:
             kept = self._read_manifest(previous / MANIFEST_FILE)
         except CatalogError:
             return None
-        if kept is None:
-            return None
-        runs_path, samples_path = previous / RUNS_FILE, previous / SAMPLES_FILE
-        if not _matches(kept, runs_path, samples_path):
+        if kept is None or not _matches(kept, previous):
             return None
         if _hashes(kept) != _hashes(manifest):
             return None
-        return (runs_path, samples_path)
+        return (previous, kept)
 
     # ------------------------------------------------------------------
     # Checks
@@ -516,11 +636,13 @@ class ParquetCatalogStore:
 
 def _same(before: Catalog, after: Catalog) -> bool:
     """Whether an update changed any record's revision (and so its content)."""
-    return {k: e.rev for k, e in before.runs.items()} == {
-        k: e.rev for k, e in after.runs.items()
-    } and {k: e.rev for k, e in before.samples.items()} == {
-        k: e.rev for k, e in after.samples.items()
-    }
+    return (
+        {k: e.rev for k, e in before.runs.items()}
+        == {k: e.rev for k, e in after.runs.items()}
+        and {k: e.rev for k, e in before.samples.items()}
+        == {k: e.rev for k, e in after.samples.items()}
+        and before.experiment.rev == after.experiment.rev
+    )
 
 
 def _run_row(entry: RunEntry) -> dict[str, Any]:
@@ -558,6 +680,13 @@ def _sample_row(entry: SampleContext) -> dict[str, Any]:
             "updated_at": entry.updated_at,
         }
     )
+    return row
+
+
+def _experiment_row(entry: ExperimentContext) -> dict[str, Any]:
+    row = dict(entry.extra)
+    row.update({name: getattr(entry, name) for name in EXPERIMENT_FIELDS})
+    row.update({"rev": entry.rev, "updated_at": entry.updated_at})
     return row
 
 
@@ -599,6 +728,20 @@ def _sample_from_row(row: dict[str, Any]) -> SampleContext:
     except (TypeError, ValueError) as exc:
         raise CatalogCorruptError(
             f"{SAMPLES_FILE}: a row cannot be read ({exc})."
+        ) from exc
+
+
+def _experiment_from_row(row: dict[str, Any]) -> ExperimentContext:
+    try:
+        return ExperimentContext(
+            **{name: _text(row, name) for name in EXPERIMENT_FIELDS},
+            rev=_int(row, "rev"),
+            updated_at=_text(row, "updated_at"),
+            extra=_extra(row, _EXPERIMENT_COLUMNS),
+        )
+    except (TypeError, ValueError) as exc:
+        raise CatalogCorruptError(
+            f"{EXPERIMENT_FILE}: its row cannot be read ({exc})."
         ) from exc
 
 
@@ -699,24 +842,36 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _hashes(manifest: dict[str, Any]) -> tuple[Any, Any]:
-    tables = manifest.get("tables") if isinstance(manifest.get("tables"), dict) else {}
+def _tables(manifest: dict[str, Any]) -> dict[str, Any]:
+    tables = manifest.get("tables")
+    return tables if isinstance(tables, dict) else {}
+
+
+def _hashes(manifest: dict[str, Any]) -> tuple[Any, ...]:
+    tables = _tables(manifest)
     return tuple(
         (tables.get(key) or {}).get("sha256")
         if isinstance(tables.get(key), dict)
         else None
-        for key in ("runs", "samples")
+        for key in _TABLES
     )
 
 
-def _matches(manifest: dict[str, Any], runs_path: Path, samples_path: Path) -> bool:
+def _matches(manifest: dict[str, Any], directory: Path) -> bool:
+    """Whether the tables in *directory* are exactly what *manifest* lists.
+
+    The runs and samples tables must be listed. An optional table -- the
+    experiment's -- is checked when it is listed, and only then.
+    """
     tables = manifest.get("tables")
     if not isinstance(tables, dict):
         return False
-    for key, path in (("runs", runs_path), ("samples", samples_path)):
+    for key, name in _TABLES.items():
+        if key in _OPTIONAL and key not in tables:
+            continue
         entry = tables.get(key)
         if not isinstance(entry, dict) or entry.get("sha256") != sha256_file_or_none(
-            path
+            directory / name
         ):
             return False
     return True

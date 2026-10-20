@@ -785,6 +785,106 @@ def test_a_sample_already_on_disk_cannot_be_removed(app, writer, expt: Path) -> 
     assert "release" in response.get_json()["error"]
 
 
+def put_context(client, app, **body):
+    return client.put("/api/experiment/context", json=body, headers=write_headers(app))
+
+
+def test_the_overview_carries_the_experiments_context(app) -> None:
+    experiment = app.test_client().get("/api/experiment").get_json()["experiment"]
+
+    assert experiment == {
+        "title": "",
+        "description": "",
+        "details": "",
+        "measurement_conditions": "",
+        "rev": 0,
+    }
+
+
+def test_the_experiments_context_is_written_and_previewed_in_each_sample(
+    app, writer, expt: Path
+) -> None:
+    from nr_workbench.experiment.render import plan_sample, project_context
+    from nr_workbench.project.scaffold import apply_scaffold
+
+    assert assign(writer, app, run=234277).status_code == 200
+    response = writer.put(
+        "/api/experiment/runs",
+        json={
+            "changes": [
+                {"run": 234280, "base_rev": 0, "fields": {"sample_id": "Sample7"}}
+            ]
+        },
+        headers=write_headers(app),
+    )
+    assert response.status_code == 200
+    # Both applied as they are now, so that the edit is what makes them due.
+    for sample in ("Sample6", "Sample7"):
+        apply_scaffold(expt, plan_sample(expt, project_context(expt), sample))
+    before = writer.get("/api/experiment").get_json()["catalog"]["version"]
+
+    response = put_context(
+        writer, app, base_rev=0, fields={"details": "Every sample in one cell."}
+    )
+
+    assert response.status_code == 200, response.get_json()
+    saved = response.get_json()
+    assert (saved["experiment"]["details"], saved["experiment"]["rev"]) == (
+        "Every sample in one cell.",
+        1,
+    )
+    assert {card["id"] for card in saved["samples"] if card["managed"]} == {
+        "Sample6",
+        "Sample7",
+    }
+    assert saved["catalog_version"] != before
+    for sample in ("Sample6", "Sample7"):
+        preview = writer.get(f"/api/experiment/samples/{sample}/preview").get_json()
+        assert "Every sample in one cell." in preview["markdown"]
+        assert preview["state"] == "upgrade"
+
+
+def test_a_stale_edit_of_the_experiments_context_is_a_409(app, writer) -> None:
+    assert (
+        put_context(writer, app, base_rev=0, fields={"title": "A"}).status_code == 200
+    )
+
+    response = put_context(writer, app, base_rev=0, fields={"title": "B"})
+
+    assert response.status_code == 409
+    assert "the experiment's context" in response.get_json()["error"]
+
+
+@pytest.mark.parametrize(
+    "body,reason",
+    [
+        ({"base_rev": 0, "fields": {"details": "x\n## Fits to perform\ny"}}, "heading"),
+        ({"base_rev": 0, "fields": {"fits_to_perform": "all"}}, "no field"),
+        ({"base_rev": True, "fields": {"title": "A"}}, "whole number"),
+        ({"base_rev": 0, "fields": {}}, "non-empty"),
+        ({"base_rev": 0}, "non-empty"),
+    ],
+)
+def test_a_bad_edit_of_the_experiments_context_is_a_400_and_changes_nothing(
+    app, writer, expt: Path, body, reason
+) -> None:
+    response = put_context(writer, app, **body)
+
+    assert response.status_code == 400
+    assert reason in response.get_json()["error"]
+    assert not (expt / "experiment" / "catalog.json").exists()
+
+
+def test_the_experiments_context_is_not_written_without_the_link(app) -> None:
+    response = app.test_client().put(
+        "/api/experiment/context",
+        json={"base_rev": 0, "fields": {"title": "A"}},
+        headers=write_headers(app),
+    )
+
+    assert response.status_code == 403
+
+
 def _hand_written(expt: Path, extra: str = "") -> Path:
     path = expt / "samples" / "Sample9" / "sample.md"
     path.parent.mkdir(parents=True)

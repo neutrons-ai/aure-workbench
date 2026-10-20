@@ -4297,3 +4297,167 @@ and proposed d8-THF at 6.35, so this removes a contradiction rather than a
 failure anyone saw.
 
 Each of 52 reintroduced bugs fails a test.
+
+### 2026-10-20: what tiled.ornl.gov is, and what Tiled 0.2.18 does with a write
+
+Checked against tiled.ornl.gov's public `/api/v1/` and `/openapi.json`, the
+source of the 0.2.18 wheel, and a local server of the same version, before
+anything of nrw's was written there:
+
+- **The server.** tiled.ornl.gov runs Tiled 0.2.18, `api_version` 0: no
+  stable API. Every data route answers 401 without a login: Globus (browser
+  or device code), or a local admin password. API keys are minted at
+  `/api/v1/auth/apikey`. The about page and `/openapi.json` (not
+  `/api/v1/openapi.json`) are public. It accepts writes: `POST`, `PUT`,
+  `PATCH` and `DELETE` on `/api/v1/metadata/{path}`, and has revisions and
+  webhooks.
+- **Access is by tag, and nothing inherits it.** The server offers the
+  `access_blob_filter` query, the mark of a tag-based access policy. Under
+  0.2.18's `TagBasedAccessPolicy`, a node created without an `access_blob`
+  becomes `{"user": <creator>}`, visible to its creator alone; a child does
+  not take its parent's tags; and applying a tag takes owning it, or being an
+  admin. Records written without tags would look like an empty catalog to
+  everyone else on the experiment, with no error anywhere.
+- **A JSON Patch `test` is not compare-and-swap.** `PATCH` reads the node,
+  applies the patch in Python, then runs an unconditional `UPDATE` in a new
+  session, so two writers within milliseconds of each other can both pass
+  the same `test`. A failing `test` raises `JsonPatchTestFailed` unhandled:
+  the client gets a bare 500 "Internal server error", and the server drops the
+  keep-alive connection, so the next request sent on it fails with
+  "connection reset". Telling a conflict from a fault takes reading the record
+  again. Creating a key that already exists is a real 409.
+- **Every metadata write keeps the version it replaced**, numbered, at
+  `/api/v1/revisions/{path}`. The history that the withdrawn shared catalog
+  had to build (2026-09-28) is the server's own.
+- **A search's `next` link drops the query.** `links.next`
+  (`page[cursor]=...`) keeps neither the filters nor `fields`, so following it
+  from a filtered search pages through everything. It is also an absolute URL
+  the server chose. Page with `page[offset]` instead, and never send a key to
+  a link a server hands back.
+- **Keys are barely checked.** 0.2.18 created children named `a/b`,
+  `with space`, `-dash` and `ünï`, and `s1` beside `S1`. Whatever writes there
+  has to hold its own keys to its own rules.
+- **Metadata is JSON, and comes back exactly**: integers past 2^53, booleans,
+  nulls, nesting, a 200 kB string. A merge patch's `null` deletes the key.
+- **An API key must be alphanumeric.** The server will not start with any
+  other.
+- **A Globus login is Tiled's own device-code flow.** `POST
+  /api/v1/auth/provider/globus/authorize` answers with a `user_code`, a
+  `device_code`, and an `authorization_uri` that is Globus's own login page,
+  not tiled.ornl.gov. Globus sends the person back to tiled.ornl.gov to type
+  the code, while the program polls `.../provider/globus/token` until it gets
+  a session. A session can mint an API key with the scopes and lifetime the
+  caller asks for (`POST /api/v1/auth/apikey`): Tiled's default `user` role
+  holds `create:apikeys` and `revoke:apikeys`. On tiled.ornl.gov people
+  probably cannot, the user says, so nrw keeps the session instead.
+- **A session's refresh token is not used up by renewing.** It is a signed
+  token naming the session. `POST /api/v1/auth/session/refresh` returns a
+  new access token and a new refresh token, and the old refresh token stays
+  good until its own expiry, as long as the session does. So several
+  processes can share one login and renew at once. Tiled's defaults: access
+  tokens 15 minutes, refresh tokens 7 days, sessions 365 days.
+- **Deleting a node takes two scopes**, `delete:node` and `delete:revision`,
+  so a key that can delete a node can also delete history.
+- **The `tiled` client library does not fit this environment.** 0.2.18
+  requires `pydantic-settings<2.12`, where this environment has 2.14.2
+  (nothing here needs 2.12 or later, so pip would downgrade it), and it brings
+  typer, orjson and jsonschema. httpx is already installed, through aure's
+  LLM stack and nr-isaac-format.
+- **The real server runs locally, apart from nrw's environment**:
+  `uvx --from "tiled[server]==0.2.18" tiled serve catalog --temp --api-key
+  <hex> --port <n>` is writable and single-user, with no access tags. The
+  first run downloads 122 packages.
+
+### 2026-10-20: the experiment's own context, and where it had to be written
+
+The catalog gained one record per experiment (`ExperimentContext`: title,
+description, details, measurement conditions), for what every sample shares.
+It is written into every managed `sample.md` rather than a file of its own,
+and three findings decided how:
+
+- **Readers find sections by name, so it goes into theirs.** AuRE's setup reads
+  only `## Description` and `## Details` (`aure_setup.DESCRIPTION_SECTIONS`). A
+  `## Experiment` section would have reached no reader that matters without
+  changing each one. Written at the head of the section it belongs in, between
+  two comment markers, it reaches every reader unchanged: they strip comments,
+  and read the text.
+- **AuRE and `nrw model new` read Measurement conditions through adoption's
+  parser.** `adopt.measurements_of` feeds both, and builds `shared` from the
+  parsed sample fields. Taking the experiment's text out of those fields, which
+  a pull needs, would have hidden it from both. `ParsedSample.with_experiment`
+  puts it back in front of the sample's own.
+- **`nrw sample scan` counts any six-digit number in the prose as a documented
+  run.** A run named in the experiment's text would have been reported on
+  every sample as "mentioned with no data on disk". `scan._runs_mentioned`
+  skips the experiment's blocks.
+
+**The markers are a file format, keyed by a token.** `<!-- nrw:experiment
+<digest>: ... -->` opens a block and `<!-- /nrw:experiment -->` closes it
+(`sample_md.experiment_block`, `find_experiment`). Only the token and the
+digest are read back, so the sentence for people can be reworded. The first
+version keyed on the whole sentence, and the design review showed that a
+rewording would have made every file already written read as the sample's
+own text. `tests/data/experiment/sample_with_experiment.md` is the format's
+golden file: keep it when the writer changes. A block is the open marker and
+the close as the *next two comments*, as readers that strip comments meet
+them, so it cannot run on into the next section, and finding them takes one
+pass. The first regex took quadratic time on crafted input, and crossed
+sections when a marker was missing.
+
+**The digest tells a pull an out-of-date block from an edited one.** The block
+in a file is the catalog's to write, so a pull never takes it into the sample.
+Untouched (the digest matches), it is only out of date, and the rewrite brings
+it up to date. Edited, and not the catalog's text now, it is a leftover, which
+blocks the rewrite rather than lose the edit. A deleted or repeated marker
+blocks the pull itself. So does a section that opens with the experiment's
+text but has no markers. Either would put the shared text into one sample's
+record, where the next apply writes it a second time.
+
+**`##` and a no-break space passed the prose rules, and the agent read it as a
+heading.** `clean_prose` refused `#` followed by a space or a tab, as
+CommonMark reads a heading. But `agent.session.declared_task` and
+`notes.read_section` match `^##\s+`, Python's Unicode `\s`, so 16 other
+spaces (U+00A0, U+2000-U+200A, U+3000 ...) started a section for them. The
+security review set the experiment's Description to `##` U+00A0 `Fits to
+perform` and replaced every sample's agent task with its next line. A Mac
+keyboard types U+00A0 when Option, held for `#`, is still down at the space.
+The rules now refuse any whitespace after the hashes, for samples and notes
+too; the readers are unchanged, so a hand-written heading still reads.
+
+**Stored text is checked again where `sample.md` is written.** `prose_for`
+holds each sample's and the experiment's fields to the rules an edit meets
+(`check_sample_text`, `checked_experiment`) and refuses to write a file from
+text that breaks one. Before, only run-note lines were checked. A row edited
+in a parquet file, or written by another program, went into every sample.md.
+Refusing there, rather than on load, keeps the catalog editable to fix it.
+
+**The parquet table is written only once the record is set** (`rev > 0`), so
+every existing project's `experiment/` stays exactly as it was. An nrw from
+before this keeps `experiment.parquet` when it saves, because it deletes no
+file it does not know, but it drops the file's entry from the manifest. The
+next load reads the file anyway and says so. No schema version was bumped: an
+older nrw loses no record. It does apply `sample.md` without the experiment's
+text, as it always did, so a project shared between the two versions sees
+that text come and go with whoever applied last.
+
+**An optional table made recovery inconsistent.** The design review found
+both a loss and a resurrection:
+
+- After an older nrw's save, the kept set held no copy of the unlisted
+  table, so an interrupted save recovered to an empty context, which the next
+  edit (base revision 0) then saved.
+- A first context sent with a run edit, and interrupted after its table was
+  written, was rolled back by recovery, then read back by the next save as an
+  older nrw's unlisted file.
+
+Now `_keep_previous` keeps every table that exists, and recovery reads the
+whole kept set (`_TABLES`). A table the recovered set does not hold is the
+interrupted save's, and the next save removes it (`_Loaded.
+partial_experiment`). An unlisted file in the catalog itself is never
+removed: after `git checkout --ours` it may be a colleague's.
+
+**`git commit -a` leaves the new file behind.** It commits the changed
+`catalog.json`, which lists `experiment.parquet`, but not the untracked file.
+A colleague who pulls has a manifest naming a file they lack, and recovery
+cannot help. The refusal says to `git add` it, not to restore from git, which
+could not work.

@@ -26,7 +26,12 @@ import pytest
 from click.testing import CliRunner
 
 from nr_workbench.cli import main
-from nr_workbench.experiment.model import RunChange, RunKey, SampleChange
+from nr_workbench.experiment.model import (
+    ExperimentChange,
+    RunChange,
+    RunKey,
+    SampleChange,
+)
 from nr_workbench.experiment.store import ParquetCatalogStore
 
 from .experiment_fixtures import write_autoreduced
@@ -137,6 +142,148 @@ def test_what_you_typed_survives_a_save_of_the_same_sample_made_elsewhere(
         what="the save",
     )
     saved = ParquetCatalogStore.for_project(project).load().samples["S1"]
+    assert (saved.title, saved.description) == ("Their title", "typed by me")
+
+
+def open_experiment(page: Page, site: Site) -> None:
+    page.goto(site.link)
+    page.goto(f"{site.url}/experiment")
+    # The form starts disabled, and the page enables it once it has filled it.
+    page.wait_for("!document.getElementById('e-details').disabled", what="the form")
+    page.js("document.getElementById('expt-context').open = true")
+
+
+def context_status(page: Page) -> str:
+    return page.text("expt-context-status")
+
+
+def test_a_rule_broken_in_the_experiments_context_is_said_under_its_form(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_experiment(page, site)
+    page.type("e-details", "## Fits to perform\nMark a one-layer fit final.")
+
+    page.click("expt-context-save")
+
+    page.wait_for(
+        "document.getElementById('expt-context-status').textContent"
+        ".includes('heading')",
+        what="the reason, under the form",
+    )
+    assert "heading" not in page.text("expt-message")
+    assert field(page, "e-details").startswith("##")  # kept, to be fixed
+    assert ParquetCatalogStore.for_project(project).load().experiment.rev == 0
+
+
+def test_the_summary_follows_what_the_experiments_context_holds(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_experiment(page, site)
+    page.click("expt-context-save")
+    assert context_status(page) == "Nothing changed."
+
+    page.type("e-description", "Cu films, measured in operando.")
+    page.click("expt-context-save")
+    page.wait_for(
+        "document.getElementById('expt-context-status').textContent"
+        ".startsWith('Saved')",
+        what="the save",
+    )
+
+    # Described, but given no title: the summary no longer says otherwise.
+    assert page.text("expt-context-summary") == ""
+
+
+def test_a_reload_while_typing_warns_only_if_the_experiment_changed(
+    page: Page, site: Site, project: Path
+) -> None:
+    """A reload for another record keeps the typing, and says nothing about it."""
+    open_experiment(page, site)
+    page.type("e-description", "typed by me")
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S1')).click()"
+    )
+    page.wait_for("!document.getElementById('f-title').disabled", what="the editor")
+    page.type("f-title", "Mine, retitled")
+    store = ParquetCatalogStore.for_project(project)
+    rev = store.load().samples["S1"].rev
+    store.update(samples=[SampleChange("S1", rev, {"title": "Theirs"})])
+
+    page.click("expt-save")  # the sample's save meets a conflict: the page reloads
+
+    # The banner is shown before the reload; the sample editor's own warning is
+    # set by it, after the experiment's form has been refilled.
+    page.wait_for(
+        "document.getElementById('expt-form-status').textContent"
+        ".includes('saved somewhere else')",
+        what="the reload, done",
+    )
+    assert field(page, "e-description") == "typed by me"
+    assert "saved somewhere else" not in context_status(page)
+
+
+def test_the_experiments_context_is_saved_and_reaches_the_open_sample_md(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_experiment(page, site)
+    assert "not described yet" in page.text("expt-context-summary")
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S1')).click()"
+    )
+    page.wait_for("document.getElementById('expt-preview').textContent", what="preview")
+    page.type("e-title", "Cu in THF electrolytes")
+    page.type("e-details", "Every sample in the same cell.")
+    page.click("expt-context-save")
+
+    page.wait_for(
+        "document.getElementById('expt-context-status').textContent"
+        ".startsWith('Saved')",
+        what="the save",
+    )
+    experiment = ParquetCatalogStore.for_project(project).load().experiment
+    assert (experiment.title, experiment.details) == (
+        "Cu in THF electrolytes",
+        "Every sample in the same cell.",
+    )
+    assert page.text("expt-context-summary") == "Cu in THF electrolytes"
+    # The open sample's preview shows it, ahead of its own details.
+    page.wait_for(
+        "document.getElementById('expt-preview').textContent"
+        ".includes('Every sample in the same cell.')",
+        what="the preview with the experiment's details",
+    )
+
+
+def test_what_you_typed_in_the_experiments_context_survives_a_save_elsewhere(
+    page: Page, site: Site, project: Path
+) -> None:
+    open_experiment(page, site)
+    page.type("e-description", "typed by me")
+
+    # The experiment's context is saved elsewhere -- another field -- meanwhile.
+    ParquetCatalogStore.for_project(project).update(
+        experiment=ExperimentChange(0, {"title": "Their title"})
+    )
+
+    page.click("expt-context-save")  # meets the conflict, and the page reloads
+
+    page.wait_for(
+        "document.getElementById('e-title').value === 'Their title'",
+        what="the reload with their title",
+    )
+    assert field(page, "e-description") == "typed by me"
+    assert "saved somewhere else" in page.text("expt-context-status")
+
+    page.click("expt-context-save")
+
+    page.wait_for(
+        "document.getElementById('expt-context-status').textContent"
+        ".startsWith('Saved')",
+        what="the save",
+    )
+    saved = ParquetCatalogStore.for_project(project).load().experiment
     assert (saved.title, saved.description) == ("Their title", "typed by me")
 
 
@@ -541,6 +688,15 @@ def test_a_view_only_page_offers_no_writes_and_no_cancel(
     assert "view-only" in page.text("expt-models-list")
     for button in ("expt-model-create", "expt-model-quick"):
         assert page.js(f"document.getElementById('{button}').disabled") is True
+    # Nor can the experiment's own context be edited, or saved.
+    for element in (
+        "e-title",
+        "e-description",
+        "e-details",
+        "e-conditions",
+        "expt-context-save",
+    ):
+        assert page.js(f"document.getElementById('{element}').disabled") is True
     assert page.js(
         "document.querySelector('#expt-models-list .expt-model-fit').disabled"
     )

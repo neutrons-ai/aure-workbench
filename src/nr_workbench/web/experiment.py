@@ -36,6 +36,7 @@ from nr_workbench.bounded import Bounded, Busy, TimedOut
 from nr_workbench.experiment.model import (
     MEASUREMENT_TYPES,
     Catalog,
+    ExperimentChange,
     RunChange,
     RunKey,
     SampleChange,
@@ -44,6 +45,7 @@ from nr_workbench.experiment.model import (
 from nr_workbench.experiment.sources import SOURCE_TIMEOUT
 from nr_workbench.experiment.status import STATES
 from nr_workbench.experiment.views import (
+    experiment_card,
     run_row,
     sample_card,
     unmanaged_card,
@@ -357,6 +359,7 @@ class ExperimentData:
             "cursor": changes.cursor,
             "scan": _scan(changes),
             "runs": [rows[k] for k in sorted(rows)],
+            "experiment": experiment_card(catalog),
             "samples": self._samples(catalog),
             "problems": [
                 p.as_dict()
@@ -631,6 +634,31 @@ class ExperimentData:
             "catalog_version": self._catalog_version(w),
         }
 
+    def update_experiment(self, payload: Any) -> dict[str, Any]:
+        """Record edits to the experiment's own context.
+
+        Raises:
+            RequestError: A malformed request (400).
+            CatalogValidationError: A rule broken (400).
+            RecordConflict: The record changed since the page loaded it (409).
+        """
+        w = self._wired()
+        self._require_writable()
+        if not isinstance(payload, dict):
+            raise RequestError("expected an object")
+        fields = payload.get("fields")
+        if not isinstance(fields, dict) or not fields:
+            raise RequestError("'fields' must be a non-empty object")
+        catalog = w.workspace.store.update(
+            experiment=ExperimentChange(payload.get("base_rev", 0), fields)
+        )
+        # Every managed sample.md is due to change with it, so the samples too.
+        return {
+            "experiment": experiment_card(catalog),
+            "samples": self._samples(catalog),
+            "catalog_version": self._catalog_version(w),
+        }
+
     def apply(
         self,
         plan_id: Any,
@@ -728,10 +756,15 @@ class ExperimentData:
         return w.workspace.store.load()
 
     def _catalog_version(self, w: _Wiring) -> str:
-        from nr_workbench.experiment.store import MANIFEST_FILE, RUNS_FILE, SAMPLES_FILE
+        from nr_workbench.experiment.store import (
+            EXPERIMENT_FILE,
+            MANIFEST_FILE,
+            RUNS_FILE,
+            SAMPLES_FILE,
+        )
 
         digest = hashlib.sha256()
-        for name in (MANIFEST_FILE, RUNS_FILE, SAMPLES_FILE):
+        for name in (MANIFEST_FILE, RUNS_FILE, SAMPLES_FILE, EXPERIMENT_FILE):
             path = w.workspace.store.directory / name
             try:
                 stat = path.stat()

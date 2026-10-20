@@ -249,7 +249,9 @@ misread it. A run's notes are held to the same rules, since they are written
 there too:
 
 - **A heading line inside a box.** A `## Fits to perform` typed into the
-  Description would become the agent's task.
+  Description would become the agent's task. That includes `##` followed by a
+  no-break space, which a Mac keyboard types when Option is still held for the
+  `#`: the agent's reader takes it as a heading too.
 - **`<!--` or `-->`.** These hide text from readers that strip comments.
 - **A `|` in a condition.** It splits the table cell.
 - **An unclosed code block.**
@@ -261,6 +263,65 @@ there too:
 - **In a run's notes, a heading or a code block**, however it is indented.
   A note is written inside its run's entry, where indenting it does not make
   it harmless.
+
+### The experiment's own context
+
+Some of what goes into a sample's context is true of every sample: the cell,
+the electrolyte, how the instrument was set up, how samples were aligned. Write
+that once, in the **Experiment** panel above the samples:
+
+- **Title**: the experiment's name. It stays on the page; each `sample.md`
+  keeps its own sample's title.
+- **Description**: what the experiment is, and what it is for.
+- **Details**: what every sample shares: composition, environment, cell.
+- **Measurement conditions**: what every measurement shares: alignment,
+  instrument, normalization.
+
+Apply writes each one into every sample's `sample.md`, at the head of the
+section of the same name, ahead of the sample's own text. So everything that
+reads a sample's notes reads it too: AuRE's setup, `nrw model new
+--from-notes`, and an unattended session. Saving it makes every sample's
+`sample.md` due to be applied, and the Review lists each one.
+
+It is marked in the file, between two comments, as the experiment's. The
+first carries a short digest of the text, which is how nrw tells later
+whether anyone edited it there:
+
+```markdown
+## Details
+
+<!-- nrw:experiment e1faa161e0cc: the experiment's context, written into every sample's sample.md. Edit it on the Experiment page. -->
+- One cell for every sample.
+- 1 M LiBF4 in d8-THF.
+<!-- /nrw:experiment -->
+
+Cu 20 nm, Pt 5 nm, Ti adhesion layer.
+```
+
+Edit it on the page, not in a `sample.md`: it belongs to every sample.
+**Pull hand edits** never takes it into the sample:
+
+- **Only out of date** (you changed the experiment's context since the file
+  was written): the pull goes ahead, and its rewrite brings the block up to
+  date.
+- **Edited in the file**: the pull says so and will not rewrite the file,
+  since that would lose the edit. Make the edit on the page if it is meant
+  for every sample; otherwise delete the marked block, and review again.
+- **A marker deleted, or the block there twice**: the pull is refused, since
+  which text is the experiment's can no longer be told. Delete the block, its
+  text and both markers, and review again; the next apply writes it back.
+
+`nrw sample scan` ignores run numbers in it: a run it names is not every
+sample's.
+
+The same rules as a sample's apply to it, for the same reasons, and they are
+checked again before anything is written from it. Text that breaks one --
+saved some other way than this page -- stops the apply with the reason, and the
+page still edits it.
+
+**Moving shared text here.** If you wrote what every sample shares into each
+`sample.md` before, it will be there twice once the experiment's context is
+set: delete it from each sample's own sections on the page.
 
 ## Applying
 
@@ -575,9 +636,16 @@ nrw experiment release Sample6
 |---|---|---|
 | `experiment/runs.parquet` | One row per run: its sample, type, condition, good or not, its notes | Yes |
 | `experiment/samples.parquet` | One row per sample: its context | Yes |
-| `experiment/catalog.json` | Digests of both, written last, so an interrupted save is noticed | Yes |
+| `experiment/experiment.parquet` | One row: the experiment's own context, once it has been set | Yes |
+| `experiment/catalog.json` | Digests of every table, written last, so an interrupted save is noticed | Yes |
 | `samples/<id>/data/sources.json` | What apply copied | Yes |
 | `nrw.toml` (`[beamtime]`, `[experiment.*]`) | The IPTS, where the data is, and how new runs are noticed | Yes |
+
+`experiment/experiment.parquet` is a new file the first time the experiment's
+context is saved, so `git commit -a` leaves it behind while committing the
+`catalog.json` that lists it. Add it (`git add experiment/`): a colleague who
+pulls the manifest without the file finds their catalog read-only, with a
+message saying so, until it arrives.
 
 The tables are parquet: the same shape the facility's data lakehouse uses,
 so that a later version can read the catalog from a facility service instead.

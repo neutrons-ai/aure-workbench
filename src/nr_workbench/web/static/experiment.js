@@ -43,6 +43,9 @@
   const state = {
     rows: new Map(),
     samples: [],
+    experiment: initial.experiment,
+    // The revision and values the experiment's form was last filled with.
+    contextBase: null,
     payload: initial,
     cursor: initial.cursor,
     catalogVersion: initial.catalog.version,
@@ -84,6 +87,7 @@
       return [row.key, row];
     }));
     state.samples = payload.samples;
+    state.experiment = payload.experiment;
     state.cursor = payload.cursor;
     state.catalogVersion = payload.catalog.version;
     state.writable = Boolean(payload.writable && TOKEN);
@@ -385,6 +389,90 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* The experiment's own context                                       */
+  /* ---------------------------------------------------------------- */
+
+  const CONTEXT_FIELDS = {
+    title: "e-title",
+    description: "e-description",
+    details: "e-details",
+    measurement_conditions: "e-conditions",
+  };
+
+  /* Fill each field from the server, except one typed in since the form was
+   * last filled: its value is not what it was filled with. The page reloads
+   * when the catalog is saved elsewhere, and refilling a field then would
+   * wipe an unsaved edit, or leave a stale value for the next save to write
+   * back. Shared by the sample's editor and the experiment's, so the two
+   * cannot come to disagree. Returns whether anything typed was kept. */
+  function refill(fields, fresh, filledWith, disabled) {
+    let typed = false;
+    Object.entries(fields).forEach(function ([name, id]) {
+      if (filledWith && $(id).value !== filledWith[name]) typed = true;
+      else $(id).value = fresh[name];
+      $(id).disabled = disabled;
+    });
+    return typed;
+  }
+
+  function renderContext() {
+    const current = state.experiment || {};
+    const base = state.contextBase;
+    const fresh = {};
+    Object.keys(CONTEXT_FIELDS).forEach(function (name) {
+      fresh[name] = current[name] || "";
+    });
+    const typed = refill(
+      CONTEXT_FIELDS, fresh, base ? base.values : null, !state.writable
+    );
+    $("expt-context-save").disabled = !state.writable;
+    const described = Object.values(fresh).some(Boolean);
+    $("expt-context-summary").textContent =
+      current.title || (described ? "" : "not described yet");
+    if (typed && (current.rev || 0) !== base.rev) {
+      $("expt-context-status").textContent =
+        "The experiment's context was saved somewhere else while you were " +
+        "editing. What you typed is kept; saving puts your version of the " +
+        "fields you changed over the saved ones.";
+    }
+    state.contextBase = { rev: current.rev || 0, values: fresh };
+  }
+
+  async function saveContext(event) {
+    event.preventDefault();
+    const current = state.experiment || {};
+    const fields = {};
+    Object.entries(CONTEXT_FIELDS).forEach(function ([name, id]) {
+      const value = $(id).value;
+      if ((current[name] || "") !== value) fields[name] = value;
+    });
+    if (!Object.keys(fields).length) {
+      $("expt-context-status").textContent = "Nothing changed.";
+      return;
+    }
+    try {
+      const result = await api(
+        "PUT", "/api/experiment/context",
+        { base_rev: current.rev || 0, fields: fields }
+      );
+      state.experiment = result.experiment;
+      state.samples = result.samples;
+      state.catalogVersion = result.catalog_version;
+      // Refilled from what the server now holds, which is what was typed.
+      state.contextBase = null;
+      renderContext();
+      renderSamples();
+      $("expt-context-status").textContent =
+        "Saved. Apply writes it into every sample's sample.md.";
+      // The open sample's sample.md is due to change with it.
+      if (state.editing) await refreshPreview(state.editing);
+    } catch (error) {
+      if (error.status === 400) $("expt-context-status").textContent = error.message;
+      else await failed(error, "Saving the experiment's context");
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Samples                                                            */
   /* ---------------------------------------------------------------- */
 
@@ -620,13 +708,10 @@
     const fresh = shownValues(current);
     $("expt-editor").classList.remove("d-none");
     $("expt-editor-title").textContent = "Sample " + id;
-    let typed = false;
-    Object.entries(FIELDS).forEach(function ([name, field]) {
-      const edited = same && $(field).value !== base.values[name];
-      if (edited) typed = true;
-      else $(field).value = fresh[name];
-      $(field).disabled = !state.writable || !(current && current.managed);
-    });
+    let typed = refill(
+      FIELDS, fresh, same ? base.values : null,
+      !state.writable || !(current && current.managed)
+    );
     $("expt-save").disabled = !state.writable || !(current && current.managed);
     const measured = renderMeasurements(
       id, base, same, state.writable && Boolean(current && current.managed)
@@ -957,6 +1042,7 @@
     renderProblems(state.payload.problems);
     renderRuns();
     renderBulk();
+    renderContext();
     renderSamples();
   }
 
@@ -994,6 +1080,7 @@
     editRuns({ include: true }, "Included");
   });
   $("expt-form").addEventListener("submit", saveSample);
+  $("expt-context-form").addEventListener("submit", saveContext);
   $("expt-adopt").addEventListener("click", showAdoptPlan);
   $("expt-review").addEventListener("click", review);
 

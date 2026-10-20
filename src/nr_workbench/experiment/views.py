@@ -101,6 +101,25 @@ def sample_card(root: Path, catalog: Catalog, sample_id: str) -> dict[str, Any]:
     }
 
 
+def experiment_card(catalog: Catalog) -> dict[str, Any]:
+    """The experiment's own context, as the page edits it.
+
+    Args:
+        catalog: The catalog.
+
+    Returns:
+        The JSON-ready card: each field, and the revision an edit is based on.
+    """
+    experiment = catalog.experiment
+    return {
+        "title": experiment.title,
+        "description": experiment.description,
+        "details": experiment.details,
+        "measurement_conditions": experiment.measurement_conditions,
+        "rev": experiment.rev,
+    }
+
+
 def unmanaged_card(sample_id: str) -> dict[str, Any]:
     """A sample on disk that the catalog does not manage, or not yet.
 

@@ -19,12 +19,14 @@ import pytest
 
 from nr_workbench.experiment import store as store_module
 from nr_workbench.experiment.model import (
+    ExperimentChange,
     RecordConflict,
     RunChange,
     RunKey,
     SampleChange,
 )
 from nr_workbench.experiment.store import (
+    EXPERIMENT_FILE,
     MANIFEST_FILE,
     RUNS_FILE,
     SAMPLES_FILE,
@@ -363,6 +365,307 @@ def test_concurrent_saves_from_many_threads_lose_nothing(store) -> None:
 
     assert errors == []
     assert {key.run for key in store.load().runs} == set(runs)
+
+
+# --------------------------------------------------------------------------
+# The experiment's own context
+# --------------------------------------------------------------------------
+
+
+def describe(store: ParquetCatalogStore, base_rev: int = 0, **changes):
+    return store.update(experiment=ExperimentChange(base_rev, changes), now=NOW)
+
+
+def _crash_on_write_to(monkeypatch, name: str) -> None:
+    """Make the next save's replacement of *name* raise, as a crash would."""
+    real = store_module._replace
+
+    def replace(target, data, scratch):
+        if Path(target).name == name:
+            raise OSError("simulated crash")
+        return real(target, data, scratch)
+
+    monkeypatch.setattr(store_module, "_replace", replace)
+
+
+def _list_again(store: ParquetCatalogStore) -> None:
+    """Make the manifest vouch for the experiment table as it now is."""
+    import hashlib
+
+    manifest = json.loads((store.directory / MANIFEST_FILE).read_text())
+    data = (store.directory / EXPERIMENT_FILE).read_bytes()
+    manifest["tables"]["experiment"]["sha256"] = hashlib.sha256(data).hexdigest()
+    (store.directory / MANIFEST_FILE).write_text(json.dumps(manifest))
+
+
+def _unlist(store: ParquetCatalogStore) -> None:
+    manifest = json.loads((store.directory / MANIFEST_FILE).read_text())
+    del manifest["tables"]["experiment"]
+    (store.directory / MANIFEST_FILE).write_text(json.dumps(manifest))
+
+
+def _as_an_older_nrw_saves(store: ParquetCatalogStore) -> None:
+    """What an nrw from before the experiment's table does when it saves.
+
+    It keeps the runs, the samples and the manifest aside, as its own
+    `_keep_previous` did, and writes a manifest that lists no experiment
+    table. The file it does not know stays where it is.
+    """
+    previous = store.cache_dir / "previous"
+    previous.mkdir(parents=True, exist_ok=True)
+    for name in (RUNS_FILE, SAMPLES_FILE, MANIFEST_FILE):
+        shutil.copy2(store.directory / name, previous / name)
+    _unlist(store)
+
+
+def test_the_experiments_context_round_trips(store) -> None:
+    populated(store)
+
+    describe(
+        store,
+        title="Cu in THF electrolytes",
+        details="Every sample in the same cell.",
+        measurement_conditions="Aligned once per sample.",
+    )
+
+    experiment = ParquetCatalogStore(store.directory, store.cache_dir).load().experiment
+    assert experiment.content() == (
+        "Cu in THF electrolytes",
+        "",
+        "Every sample in the same cell.",
+        "Aligned once per sample.",
+    )
+    assert (experiment.rev, experiment.updated_at) == (1, NOW)
+    manifest = json.loads((store.directory / MANIFEST_FILE).read_text())
+    assert manifest["tables"]["experiment"]["rows"] == 1
+
+
+def test_a_catalog_that_never_sets_it_keeps_the_files_it_always_had(store) -> None:
+    """Every project that predates it reads, and saves, exactly as before."""
+    populated(store)
+
+    assert not (store.directory / EXPERIMENT_FILE).exists()
+    manifest = json.loads((store.directory / MANIFEST_FILE).read_text())
+    assert "experiment" not in manifest["tables"]
+    catalog, problems = store.load_report()
+    assert catalog.experiment.rev == 0 and problems == ()
+
+
+def test_an_experiment_table_the_manifest_does_not_list_is_used_and_said(
+    store,
+) -> None:
+    """An nrw from before it keeps the file when it saves, but stops listing it."""
+    populated(store)
+    describe(store, title="Cu in THF")
+    _unlist(store)
+
+    catalog, problems = store.load_report()
+
+    assert catalog.experiment.title == "Cu in THF"
+    assert any("not in the manifest" in p.message for p in problems)
+    # The next save lists it again.
+    describe(store, base_rev=1, title="Cu in d8-THF")
+    assert store.load_report()[1] == ()
+
+
+@pytest.mark.parametrize("manifest", ["vouching for it", "not listing it"])
+def test_a_damaged_experiment_table_is_refused_not_read_as_empty(
+    store, manifest: str
+) -> None:
+    """Read as empty, the next apply would strip it from every sample.md."""
+    populated(store)
+    describe(store, title="Cu in THF")
+    (store.directory / EXPERIMENT_FILE).write_bytes(b"PAR1 damaged")
+    # So that the refusal is the table's own, and not the manifest's.
+    _list_again(store) if manifest == "vouching for it" else _unlist(store)
+
+    with pytest.raises(CatalogCorruptError, match="cannot be read"):
+        store.load()
+    with pytest.raises(CatalogCorruptError):
+        describe(store, base_rev=1, title="anything")
+
+
+def test_an_experiment_table_of_two_rows_is_refused(store) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    populated(store)
+    describe(store, title="Cu in THF")
+    path = store.directory / EXPERIMENT_FILE
+    table = pq.read_table(path)
+    pq.write_table(pa.concat_tables([table, table]), path)
+    _list_again(store)
+
+    with pytest.raises(CatalogCorruptError, match="2 rows"):
+        store.load()
+
+
+@pytest.mark.parametrize("column,value", [("rev", "1"), ("title", 7)])
+def test_an_experiment_row_of_the_wrong_type_is_refused(
+    store, column: str, value
+) -> None:
+    """Another program's `"1"` is no revision, and a number is no title."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    populated(store)
+    describe(store, title="Cu in THF")
+    path = store.directory / EXPERIMENT_FILE
+    rows = pq.read_table(path).to_pylist()
+    rows[0][column] = value
+    metadata = pq.read_schema(path).metadata
+    pq.write_table(pa.Table.from_pylist(rows).replace_schema_metadata(metadata), path)
+    _list_again(store)
+
+    with pytest.raises(CatalogCorruptError, match="its row cannot be read"):
+        store.load()
+
+
+def test_columns_the_experiment_table_does_not_know_survive_a_save(store) -> None:
+    """A field a newer nrw added -- a proposal, say -- outlives an older one's save."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    populated(store)
+    describe(store, title="Cu in THF")
+    path = store.directory / EXPERIMENT_FILE
+    table = pq.read_table(path).append_column("proposal", pa.array(["In operando"]))
+    pq.write_table(table.replace_schema_metadata(pq.read_schema(path).metadata), path)
+    _list_again(store)
+
+    assign(store, 218386, base_rev=1, condition="CA")  # a save of a run alone
+
+    reread = pq.read_table(path).to_pylist()
+    assert (reread[0]["proposal"], reread[0]["title"]) == ("In operando", "Cu in THF")
+
+
+def test_a_stale_edit_of_the_experiments_context_writes_nothing(store) -> None:
+    populated(store)
+    describe(store, title="Cu in THF")
+    before = {
+        name: (store.directory / name).read_bytes()
+        for name in (RUNS_FILE, EXPERIMENT_FILE)
+    }
+
+    with pytest.raises(RecordConflict, match="the experiment's context"):
+        store.update(
+            runs=[RunChange(RunKey(218393), 0, {"sample_id": "Sample6"})],
+            experiment=ExperimentChange(0, {"title": "Cu in d8-THF"}),
+            now=NOW,
+        )
+
+    after = {
+        name: (store.directory / name).read_bytes()
+        for name in (RUNS_FILE, EXPERIMENT_FILE)
+    }
+    assert after == before
+
+
+def test_a_crash_before_its_table_is_replaced_keeps_the_last_context(
+    store, monkeypatch
+) -> None:
+    populated(store)
+    describe(store, title="Cu in THF")
+    _crash_on_write_to(monkeypatch, EXPERIMENT_FILE)
+
+    with pytest.raises(OSError, match="simulated crash"):
+        describe(store, base_rev=1, title="Cu in d8-THF")
+    monkeypatch.undo()
+
+    catalog, problems = store.load_report()
+    assert catalog.experiment.title == "Cu in THF"
+    assert problems == ()  # the manifest was never replaced: nothing was half-saved
+
+
+def test_a_crash_after_its_table_is_replaced_recovers_the_last_context(
+    store, monkeypatch
+) -> None:
+    populated(store)
+    describe(store, title="Cu in THF")
+    describe(store, base_rev=1, title="Cu in d8-THF")
+    # Then a save whose experiment table lands and whose manifest does not.
+    _crash_on_write_to(monkeypatch, MANIFEST_FILE)
+
+    with pytest.raises(OSError, match="simulated crash"):
+        describe(store, base_rev=2, title="Cu in THF again")
+    monkeypatch.undo()
+
+    catalog, problems = store.load_report()
+    assert catalog.experiment.title == "Cu in d8-THF"
+    assert any("interrupted" in p.message for p in problems)
+
+
+def test_a_crash_after_an_older_nrw_saved_keeps_the_context_it_left(
+    store, monkeypatch
+) -> None:
+    """The kept set holds the table the manifest no longer lists, as loads read it."""
+    populated(store)
+    describe(store, title="Cu in THF")
+    _as_an_older_nrw_saves(store)
+    _crash_on_write_to(monkeypatch, MANIFEST_FILE)
+
+    with pytest.raises(OSError, match="simulated crash"):
+        assign(store, 218386, base_rev=1, condition="CA")
+    monkeypatch.undo()
+
+    catalog, problems = store.load_report()
+    assert catalog.experiment.title == "Cu in THF"
+    assert catalog.runs[RunKey(218386)].condition == "OCV"
+    assert any("interrupted" in p.message for p in problems)
+
+
+def test_an_edit_undone_by_recovery_does_not_come_back_with_the_next_save(
+    store, monkeypatch
+) -> None:
+    """One request, one answer -- even across a crash."""
+    populated(store)
+    # The first experiment edit, sent with a run edit, and interrupted after its
+    # table was written: recovery shows neither.
+    _crash_on_write_to(monkeypatch, MANIFEST_FILE)
+    with pytest.raises(OSError, match="simulated crash"):
+        store.update(
+            runs=[RunChange(RunKey(218386), 1, {"condition": "CA"})],
+            experiment=ExperimentChange(0, {"title": "Cu in THF"}),
+            now=NOW,
+        )
+    monkeypatch.undo()
+    catalog, _ = store.load_report()
+    assert (catalog.runs[RunKey(218386)].condition, catalog.experiment.rev) == (
+        "OCV",
+        0,
+    )
+
+    assign(store, 218393, sample_id="Sample6")
+
+    catalog, problems = store.load_report()
+    assert catalog.experiment.rev == 0 and problems == ()
+    assert not (store.directory / EXPERIMENT_FILE).exists()
+
+
+def test_a_first_context_interrupted_alone_is_kept_and_said(store, monkeypatch) -> None:
+    """One record, all of it written: kept as the edit made, with a note to check it."""
+    populated(store)
+    _crash_on_write_to(monkeypatch, MANIFEST_FILE)
+
+    with pytest.raises(OSError, match="simulated crash"):
+        describe(store, title="Cu in THF")
+    monkeypatch.undo()
+
+    catalog, problems = store.load_report()
+    assert catalog.experiment.title == "Cu in THF"
+    assert any("not in the manifest" in p.message for p in problems)
+
+
+def test_a_listed_experiment_table_that_never_arrived_says_to_commit_it(
+    store,
+) -> None:
+    """Committed with `git commit -a`, the manifest went and the new file did not."""
+    populated(store)
+    describe(store, title="Cu in THF")
+    (store.directory / EXPERIMENT_FILE).unlink()
+
+    with pytest.raises(CatalogCorruptError, match="git add experiment/experiment"):
+        store.load()
 
 
 # --------------------------------------------------------------------------
