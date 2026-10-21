@@ -3675,7 +3675,9 @@ False)` puts a file's values into `os.environ`. A child process inherits
 had `nrw serve` ever called `load_env()`, each job would run with the provider
 the server read at that moment, whatever `.env` said afterwards. The server
 does not call it today; the page only needs `is_available()`, which finds AuRE
-without importing it. Two things keep it that way:
+without importing it. (Flask loaded the files instead, until 2026-10-21: see
+"`nrw serve` loaded the project's `.env`, through Flask".) Two things keep it
+that way:
 
 - `where_set` works out each setting from the files, without loading them.
 - `load_env` records what it loaded (`loaded_from_files()`), and
@@ -4610,3 +4612,28 @@ the following.
   - control and formatting characters: a right-to-left override can make the
     name a person approves read as another;
   - names over 255 bytes.
+
+### 2026-10-21: `nrw serve` loaded the project's `.env`, through Flask
+
+- **`Flask.run` loads `.env` files by default.** Before serving, it sets
+  every key not already set from the nearest `.flaskenv` and `.env`. It finds
+  them by walking up from the working directory to `/`, not stopping at the
+  project. It reads them with `dotenv_values`, so `PYTHON_DOTENV_DISABLED`
+  does not stop it. Only `load_dotenv=False` or `FLASK_SKIP_DOTENV` does, and
+  a shell's `FLASK_SKIP_DOTENV=0` wins over `load_dotenv=False`.
+- **nrw then took those values for the person's own.** It records only what
+  its own `load_env` loaded (`_set_by_files`), so `where_set(skip_project=True)`
+  counted Flask's loads as the shell's. Under `nrw serve`, the project's `.env`
+  therefore chose `ISAAC_URL`: once the person confirmed the host the page
+  showed, a push would have sent their own `ISAAC_KEY` there. It also reached
+  every job the server started, as if exported. The 2026-09-30 entry "the
+  page chooses the language model in `.env`, and the server loads none"
+  rested on the server not calling `load_env`. That was true, but Flask
+  loaded the files anyway.
+- **Fixed:** the server starts through `web.app.run_app`, with
+  `load_dotenv=False` and `FLASK_SKIP_DOTENV=1`.
+  `test_serve_loads_no_env_file_into_its_own_environment` runs Flask's real
+  `run`, replacing only the socket server. The older serve tests replace
+  `Flask.run` whole, which is why none of them caught this.
+- Found by the security review of step 3 of `docs/plan-tiled-catalog.md`,
+  whose `TILED_URL` rests on the same rule as `ISAAC_URL`.
