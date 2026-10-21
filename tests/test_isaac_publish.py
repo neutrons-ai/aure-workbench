@@ -457,10 +457,45 @@ def test_nrw_doctor_says_the_key_is_set_and_never_what_it_is(
 ) -> None:
     result = nrw(project, monkeypatch, "doctor", "--json")
 
-    reported = next(c for c in json.loads(result.output) if c["name"] == "llm settings")
+    reported = next(c for c in json.loads(result.output) if c["name"] == "isaac")
     assert "ISAAC_KEY=set" in reported["detail"]
-    assert "ISAAC_URL=https://isaac.example.org/portal/api" in reported["detail"]
+    assert (
+        "ISAAC_URL=https://isaac.example.org/portal/api (~/.nrw)" in reported["detail"]
+    )
     assert PLANTED not in result.output
+
+
+@pytest.mark.parametrize("url", ["https://isaac.example:abc/portal", "https://[::1/x"])
+def test_nrw_doctor_says_a_portal_it_cannot_read_and_goes_on(
+    project: Path, monkeypatch, url: str
+) -> None:
+    """The setting doctor exists to show must not stop it."""
+    env_module.USER_ENV_PATH.write_text(f"ISAAC_URL={url}\n", encoding="utf-8")
+
+    result = nrw(project, monkeypatch, "doctor", "--json")
+
+    assert result.exit_code == 0, result.output
+    checks = {c["name"]: c for c in json.loads(result.output)}
+    assert checks["isaac"]["status"] == "warn"
+    assert "cannot be read as an address" in checks["isaac"]["detail"]
+
+
+def test_nrw_doctor_names_a_project_portal_as_ignored_not_as_in_use(
+    project: Path, settings: Path, monkeypatch
+) -> None:
+    """doctor loads the project's .env; the push never reads it for the portal."""
+    (project / ".env").write_text("ISAAC_URL=https://elsewhere.example/api\n")
+
+    result = nrw(project, monkeypatch, "doctor", "--json")
+
+    checks = {c["name"]: c for c in json.loads(result.output)}
+    assert checks["isaac"]["status"] == "warn"
+    assert "isaac.example.org" in checks["isaac"]["detail"]
+    assert (
+        "ignored, as set in this project's .env: ISAAC_URL"
+        in (checks["isaac"]["detail"])
+    )
+    assert "elsewhere.example" not in checks.get("llm settings", {}).get("detail", "")
 
 
 def test_the_real_tool_pushing_to_a_portal_that_refuses_one_record(

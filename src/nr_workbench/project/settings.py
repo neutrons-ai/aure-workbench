@@ -9,13 +9,15 @@ settings``. What can be set lives in :mod:`nr_workbench.project.experiment_schem
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from nr_workbench.project.config import TILED_KIND
 from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
     CATALOG_KINDS,
+    CATALOG_OPTIONS,
     CHANGE_KEYS,
     CONFIRM_IPTS_CHANGE,
     EXPERIMENT_KEYS,
@@ -28,17 +30,23 @@ from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
     PLANNED_SOURCE_KINDS,
     POLL_RANGE,
     RANGES,
+    READ_BY,
     SETTLE_RANGE,
     SOURCE_KINDS,
     SOURCE_OPTIONS,
     ExperimentValues,
     Option,
     experiment_block,
+    kind_of,
     normalize_ipts,
+    section_of,
     written_experiment,
 )
 from nr_workbench.project.layout import ProjectLayout
-from nr_workbench.project.tomlfile import Changes, Set, Unset, Value
+from nr_workbench.project.tomlfile import Changes, Set, TomlEditError, Unset, Value
+
+if TYPE_CHECKING:
+    from nr_workbench.tiled.address import Server
 
 # ---------------------------------------------------------------------------
 # Changing settings
@@ -149,8 +157,11 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
 
     Only the settings being changed are checked: a value typed into nrw.toml
     by hand must not stop someone saving an unrelated one. Every check is on
-    the text alone -- nothing here looks at the file system, which on a dead
-    data mount would hang the request.
+    the text alone -- nothing here looks at the data mount, which when dead
+    would hang the request, or asks Tiled anything; an address on Tiled is
+    held to the person's own server. A folder or an address the table's kind
+    will not read is warned of, against ``nrw.toml`` as it is now with the
+    change's kinds made.
 
     Args:
         root: Project root, so a data location inside the project is refused.
@@ -168,11 +179,19 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
         raise SettingsError(
             f"{', '.join(unknown)}: not a setting. Known: {', '.join(CHANGE_KEYS)}."
         )
+    from nr_workbench.tiled.address import lazily
+
     edits: dict[str, dict[str, Set | Unset]] = {}
     warnings: list[str] = []
     source = EXPERIMENT_KEYS["experiment.source"]
     feed = EXPERIMENT_KEYS["experiment.feed"]
-    for name, value in changes.items():
+    catalog = EXPERIMENT_KEYS["experiment.catalog"]
+    server = lazily(root)  # the person's Tiled server, looked up if needed
+
+    # In the schema's order: a kind is checked before the place it reads, so a
+    # kind that cannot be used is what is said.
+    for name in (key for key in CHANGE_KEYS if key in changes):
+        value = changes[name]
         if name == "ipts":
             edits.setdefault("beamtime", {})["ipts"] = Set(_ipts(value))
         elif name == "label":
@@ -188,6 +207,10 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
                 Unset(source["location"])
                 if value is None
                 else Set(_location(root, value, warnings), default=source["location"])
+            )
+        elif name == "source.url":
+            edits.setdefault("experiment.source", {})["url"] = _url(
+                value, name, source["url"], server
             )
         elif name == "source.settle_seconds":
             edits.setdefault("experiment.source", {})["settle_seconds"] = (
@@ -210,7 +233,88 @@ def validate(root: Path, changes: Mapping[str, Any]) -> tuple[Changes, list[str]
                     _seconds(value, POLL_RANGE, name), default=feed["poll_seconds"]
                 )
             )
+        elif name == "catalog.kind":
+            edits.setdefault("experiment.catalog", {})["kind"] = _kind(
+                value, CATALOG_OPTIONS, catalog["kind"], name
+            )
+        elif name == "catalog.url":
+            edits.setdefault("experiment.catalog", {})["url"] = _url(
+                value, name, catalog["url"], server
+            )
+        else:  # pragma: no cover - CHANGE_KEYS and the branches above are one list
+            # A key with no branch would pass the "is it a setting" check and
+            # then be dropped without a word.
+            raise AssertionError(f"{name} is a setting with no check")
+    warnings.extend(_in_context(root, edits))
     return edits, warnings
+
+
+def _in_context(root: Path, edits: Changes) -> list[str]:
+    """A folder or an address set where the table's kind will not read it: said.
+
+    Against ``nrw.toml`` as it is now, with the change's kinds made. Only
+    warnings come of it, so a file that cannot be read is taken as empty:
+    the save itself says what is wrong with it.
+    """
+    places = [
+        (table, key)
+        for table, key in READ_BY
+        if isinstance(edits.get(table, {}).get(key), Set)
+    ]
+    if not places:
+        return []
+    document = _document(root)
+    warnings = []
+    for table, key in places:
+        kind, reads = _kind_after(document, edits, table), READ_BY[(table, key)]
+        if kind != reads:
+            warnings.append(
+                f"{table.split('.', 1)[1]}.{key} is read only once [{table}] kind = "
+                f'"{reads}", and it is {kind!r}: until then it changes nothing.'
+            )
+    return warnings
+
+
+def _kind_after(document: Mapping[str, Any], edits: Changes, table: str) -> str:
+    """``[<table>] kind`` as nrw will read it once *edits* are made to *document*."""
+    short = table.split(".", 1)[1]
+    change = edits.get(table, {}).get("kind")
+    if isinstance(change, Set):
+        return kind_of({"kind": change.value}, short)
+    if isinstance(change, Unset):
+        return kind_of({}, short)
+    return kind_of(section_of(document, short), short)
+
+
+def _document(root: Path) -> Mapping[str, Any]:
+    """``nrw.toml`` as it is now, parsed; ``{}`` when it cannot be read."""
+    import tomllib
+
+    from nr_workbench.project.tomlfile import read_config
+
+    try:
+        return tomllib.loads(
+            read_config(ProjectLayout(root=Path(root)).config_file).text
+        )
+    except (OSError, ValueError, TomlEditError):
+        return {}
+
+
+def _url(
+    value: Any, name: str, default: Value, server: Callable[[], Server]
+) -> Set | Unset:
+    """An address on Tiled, held to every rule there is; or back to nrw's default."""
+    from nr_workbench.tiled.address import address_problem
+
+    if value is None:
+        return Unset(default)
+    text = _line(value, name, MAX_LOCATION)
+    if not text:
+        raise SettingsError(f"{name} is empty; give an address, or use nrw's default.")
+    problem = address_problem(text, server(), name)
+    if problem is not None:
+        raise SettingsError(problem)
+    return Set(text, default=default)
 
 
 def _ipts(value: Any) -> str:
@@ -373,11 +477,20 @@ def save(
             if catalogued_runs is not None
             else "The catalog cannot be read, so nrw cannot tell whether it holds runs."
         )
-        raise NeedsConfirmation(
-            CONFIRM_IPTS_CHANGE,
-            f"{held} Changing the IPTS to {after or 'none'} points nrw at "
-            "another experiment's data; runs already catalogued stay as they are.",
-        )
+        if _kind_after(document, edits, "experiment.catalog") == TILED_KIND:
+            # On Tiled the catalog is the experiment's own, beside its data.
+            then = (
+                f"Changing the IPTS to {after or 'none'} points nrw at another "
+                "experiment's data and at its catalog on Tiled: this project "
+                f"would then read and edit {after or 'no experiment'}'s, and "
+                f"leave {before or 'this one'}'s as it is."
+            )
+        else:
+            then = (
+                f"Changing the IPTS to {after or 'none'} points nrw at another "
+                "experiment's data; runs already catalogued stay as they are."
+            )
+        raise NeedsConfirmation(CONFIRM_IPTS_CHANGE, f"{held} {then}")
 
     result = write_as_nrw(
         root, edits, base_revision=base_revision, write=write, check=ask_first

@@ -75,8 +75,8 @@ model, which is saved in the project's `.env` ([Language model](#language-model)
 - **How new runs are noticed.** Files appearing in the data folder. The SNS web
   monitor and Tiled are listed as coming and cannot be chosen yet.
 - **Where samples and assignments are kept.** Parquet files in this project's
-  `experiment/`, committed with it. A metadata service, through which they
-  would be shared with everyone on the experiment, is listed as coming; see
+  `experiment/`, committed with it. Tiled, through which they would be shared
+  with everyone on the experiment, is listed as coming; see
   [experiment-sources.md](experiment-sources.md).
 - **Advanced**: the settle time and the poll interval.
 
@@ -95,6 +95,9 @@ shows the change as a diff, and `--write` saves it. `--check` looks at the
 folder first, as **Check folder** does, with the same 15-second deadline.
 `--json` prints one object, whichever options are given: `{"settings",
 "change", "check"}`, where `change` and `check` are `null` unless asked for.
+`--source-url` and `--catalog-url` set the addresses a source or a catalog on
+Tiled will read (`--default-source-url` and `--default-catalog-url` follow nrw's
+defaults again). Until Tiled can be chosen, each is said to change nothing.
 
 ### Language model
 

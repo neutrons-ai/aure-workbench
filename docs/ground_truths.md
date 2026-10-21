@@ -3836,7 +3836,8 @@ kept in `~/.nrw` reached the push only by accident. `ISAAC_URL` and `ISAAC_KEY`
 are now known settings, with the key secret: the page says where each is
 set, and never shows the key. *(`nrw doctor` lists them, the key redacted,
 among its "llm settings", but does not say where each is set, and shows a
-project `.env` value that the push ignores. Not fixed yet.)* See the next entry for how the
+project `.env` value that the push ignores. Fixed 2026-10-21: see "an
+address on Tiled, and who may choose the server".)* See the next entry for how the
 push reads them now.
 
 **What is validated is what is pushed.** An export asks a language model for
@@ -4666,3 +4667,98 @@ the following.
   none today, and the two that start one from the page are marked.
 - **Effect:** the default run, 2,864 tests, passes in about 82 s with no fit,
   against about 110 s before. Under the scan hook it logged none.
+
+### 2026-10-21: an address on Tiled, and who may choose the server
+
+Step 3 of `docs/plan-tiled-catalog.md`, as its reviews changed it.
+
+- **A key whose default follows another key's value breaks four things.**
+  The plan had one `[experiment.source] location`: a folder, or a URL when
+  `kind = "tiled"`, with its default following the kind. Every check that
+  compares a key with its default assumes there is one. These are the
+  editor's placeholder replacement, `settings_in_comments`, the render back
+  and the empty-table guard. Edit `kind = "tiled"` into `nrw.toml` as the
+  template says, and three things went wrong:
+  - every later `nrw init` left `nrw.toml.nrw-new`;
+  - the folder's placeholder was reported as a setting typed into a comment;
+  - setting the kind back left an empty active table.
+
+  So a folder is `location` and an address is `url`, each read only for its
+  own kind. A key the kind does not read is reported as changing nothing
+  when it is set.
+- **`urlsplit` is not a validator.**
+  - It silently drops a tab, CR or LF anywhere in a URL, so the string
+    checked was not the string stored. TOML escapes put them there.
+  - Older Pythons take the host of `https://evil.example[tiled.ornl.gov]/x`
+    from inside the brackets. That was seen on 3.9.6, and by the changelog
+    3.11 before 3.11.4 (gh-103848) does the same; 3.12 to 3.14 raise.
+  - `parts.port or 443` reads port 0 as 443.
+
+  So an address must be printable ASCII before it is parsed. Its host and
+  port, as written, must match a pattern of their own (`_NETLOC`), and
+  port 0 is refused.
+- **Checks in a tuple are all evaluated.** `for p in (a(), b(), c())` ran
+  the host check on an address the first check had refused, and the host
+  check's `urlsplit(...).port` raised `ValueError`. A bad port or a broken
+  IPv6 address then gave a 500, not its reason. There is now one
+  `address_problem`, an `or` chain of checks that each cannot raise, used by
+  the save and by the reader alike.
+- **No address is printed whole, anywhere.** Tiled takes a key as
+  `?api_key=`, and a URL pasted from a browser may carry one. Problems are
+  shown on pages that anyone logged in to the machine can read.
+  - Every reason prints an address through `tiled.address.shown`: scheme,
+    host, port and a plain path. It never shows a user name, password, query
+    or fragment, nor a host part that is no host.
+  - The first fix covered only the reasons. The settings view, `nrw
+    experiment settings` and the check for a setting typed into a comment
+    still repeated an address from `nrw.toml` whole. The re-review found
+    them: `url` values are now shown as `shown` prints them, and a `url`
+    typed into a comment is named by its line, never repeated.
+- **Being on the person's server is not enough.** A committed address naming
+  another IPTS, or a container above every IPTS (`/projects/isaac`), would
+  read it, or write to it, with the person's permissions.
+  - So an address names its experiment as `{ipts}`, a segment of its own,
+    and no IPTS may be written in, not even the project's own.
+  - The first rule, "every IPTS named is the project's", let through an
+    address that named none. It also let through a written-in IPTS, which
+    stays behind when `[beamtime] ipts` changes, while the confirmation of
+    that change said the catalog would follow.
+- **`skip_project=True` cannot leave out what is already in the
+  environment.**
+  - direnv, pipenv, an editor running a program, and Flask (see the entry
+    above) all load a project's `.env` into the environment, where
+    `where_set` takes it for the shell's.
+  - So while the project's `.env`, `.env.local`, `.flaskenv` or `.envrc`
+    sets `TILED_URL`, `TILED_API_KEY` or `HOME`, no address on Tiled is used
+    at all, whatever value is in effect (`env.person_setting`). Nobody needs
+    them there.
+  - **Those files are read as the loosest loader reads them, not with
+    python-dotenv's parser.** The first version missed lines that VS Code's
+    Python extension, node's dotenv or direnv read: a byte-order mark, a
+    byte that is not UTF-8 (the parser skipped the file), a line inside a
+    multi-line quoted value, a quoted name, and `KEY: value`. A
+    line-anchored pattern over the bytes now catches all of these.
+  - `TILED_URL` is also refused from a file another user owns or can write,
+    or from one in a folder others can write, unless the folder is sticky,
+    as `/tmp` is. A link counts too: a file the person owns can be swapped
+    in through a link that points into a folder anyone can write.
+  - Under `NRW_AGENT`, the value in effect must be what the person's files
+    alone say (`where_set(..., skip_environment=True)`), whatever its source.
+    Checking only a value from the environment let `TILED_URL=${HOST}` in
+    `~/.nrw` hand the choice to the environment.
+  - Still open, for step 5: `$HOME` decides which `~/.nrw` counts, and an
+    agent's command can set it.
+- **`nrw doctor` listed ISAAC's and Tiled's settings among the "llm
+  settings"**, read from the environment after the project's `.env` was
+  loaded. It showed a project value that nrw ignores, and never said where a
+  value was set. They now have lines of their own, read as their commands
+  read them. This closes the gap the 2026-09-30 ISAAC entry left ("Not fixed
+  yet").
+- **An older nrw downgrades `nrw.toml` without a word.** nrw records the
+  file as its own once a save or `nrw init` has written it. An older nrw
+  then finds file equal to lock, takes the file for its own unchanged
+  render, and "upgrades" it to its older template. That drops every key it
+  does not render: here the `url` keys and the whole catalog table. The
+  design re-review saw it with `git archive HEAD` as the older nrw. It is
+  harmless while nothing reads those keys; it must be fixed before the
+  catalog can be kept on Tiled (plan step 8).

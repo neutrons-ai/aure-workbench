@@ -111,8 +111,17 @@ def test_a_set_key_writes_its_table_out_and_keeps_the_rest_as_placeholders() -> 
 
 def test_every_managed_key_reads_back_as_written() -> None:
     chosen = {
-        "experiment.source": {"kind": "local", "location": "/d", "settle_seconds": 60},
+        "experiment.source": {
+            "kind": "local",
+            "location": "/d",
+            "url": "https://tiled.ornl.gov/projects/isaac/{ipts}/autoreduction",
+            "settle_seconds": 60,
+        },
         "experiment.feed": {"kind": "directory", "poll_seconds": 15},
+        "experiment.catalog": {
+            "kind": "parquet",
+            "url": "https://tiled.ornl.gov/projects/isaac/{ipts}/context",
+        },
     }
 
     document = tomllib.loads(experiment_block(chosen))

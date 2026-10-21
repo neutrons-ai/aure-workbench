@@ -41,6 +41,28 @@ DEFAULT_SOURCE_KIND = "local"
 DEFAULT_FEED_KIND = "directory"
 DEFAULT_CATALOG_KIND = "parquet"
 
+#: What stands for the project's IPTS in a folder or an address, filled in
+#: from ``[beamtime] ipts``.
+IPTS_PLACEHOLDER = "{ipts}"
+
+#: The kind of a source, a feed or a catalog on Tiled.
+TILED_KIND = "tiled"
+
+#: The Tiled server nrw talks to unless the person's ``TILED_URL`` names
+#: another; see :mod:`nr_workbench.tiled.address`.
+DEFAULT_TILED_URL = "https://tiled.ornl.gov"
+
+#: Where an experiment's reduced data, and its catalog, are on Tiled at ORNL:
+#: in the experiment's own container, which another process creates. For
+#: ``[experiment.source] url`` and ``[experiment.catalog] url``, each read only
+#: when its table's kind is :data:`TILED_KIND`.
+DEFAULT_TILED_SOURCE_URL = (
+    f"{DEFAULT_TILED_URL}/projects/isaac/{IPTS_PLACEHOLDER}/autoreduction"
+)
+DEFAULT_TILED_CATALOG_URL = (
+    f"{DEFAULT_TILED_URL}/projects/isaac/{IPTS_PLACEHOLDER}/context"
+)
+
 #: BL-4B conventions -- see skills/reflectometry/refl-bl4b-instrument.
 #:
 #: **The glob and dq entries are descriptive; nothing reads them.** The

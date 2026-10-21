@@ -393,7 +393,7 @@ def test_the_link_lands_on_settings_and_the_default_path_follows_the_ipts(
     # metadata service listed as coming, as Tiled and the web monitor are.
     catalogs = page.text("s-catalogs")
     assert "Parquet files in this project" in catalogs
-    assert "A metadata service" in catalogs and "coming" in catalogs
+    assert "Tiled" in catalogs and "coming" in catalogs
 
 
 def test_a_folder_check_shows_what_the_server_found_run_by_run(

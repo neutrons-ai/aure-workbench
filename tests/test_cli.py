@@ -16,7 +16,8 @@ from nr_workbench.cli import main
 #: `aure/__init__.py` eagerly imports its workflow package, which chains through
 #: every node module into langchain-core, periodictable and scipy -- roughly
 #: 1.5-3 seconds. refl1d and matplotlib are nearly as expensive, and pyarrow
-#: (the experiment catalog) costs about a second on its own.
+#: (the experiment catalog) costs about a second on its own, and httpx (the
+#: Tiled client) about a tenth of one.
 FORBIDDEN_ON_HELP = (
     "aure",
     "refl1d",
@@ -25,6 +26,7 @@ FORBIDDEN_ON_HELP = (
     "scipy",
     "langchain_core",
     "pyarrow",
+    "httpx",
 )
 
 

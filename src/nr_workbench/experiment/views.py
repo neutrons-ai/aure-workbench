@@ -158,6 +158,7 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
     from nr_workbench.project.config import ProjectConfigError, load_config
     from nr_workbench.project.settings import read as read_settings
     from nr_workbench.project.tomlfile import TomlEditError
+    from nr_workbench.tiled.address import shown
 
     problems: list[Problem] = []
     current = None
@@ -188,7 +189,12 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
     for table, keys in project.EXPERIMENT_KEYS.items():
         prefix = table.split(".", 1)[1]
         for key, default in keys.items():
-            values[f"{prefix}.{key}"] = chosen.get(table, {}).get(key)
+            value = chosen.get(table, {}).get(key)
+            # An address may hold a key, and this view is open to anyone on the
+            # machine: shown as nrw prints one, never whole.
+            if key == "url" and isinstance(value, str):
+                value = shown(value)
+            values[f"{prefix}.{key}"] = value
             defaults[f"{prefix}.{key}"] = default
     return {
         "schema": "nrw-settings/1",
@@ -198,10 +204,15 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
         "defaults": defaults,
         "effective": {
             "ipts": config.ipts,
+            "source_kind": config.source.kind,
             "location": config.source.location,
             "path": str(config.source.path) if config.source.path else None,
+            "url": shown(config.source.url),
+            "address": config.source.address,
             "needs_setup": config.needs_setup,
-            "catalog_kind": config.catalog_kind,
+            "catalog_kind": config.catalog.kind,
+            "catalog_url": shown(config.catalog.url),
+            "catalog_address": config.catalog.address,
         },
         "options": {
             "source": [dataclasses.asdict(o) for o in project.SOURCE_OPTIONS],

@@ -22,6 +22,9 @@ needs a setting.
 from __future__ import annotations
 
 import os
+import re
+import stat
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,13 +55,31 @@ KNOWN_VARS = (
     # with -- read by nr-isaac-format, which nrw passes its environment.
     "ISAAC_URL",
     "ISAAC_KEY",
+    # The Tiled server an experiment's data and catalog may be kept on, and a
+    # key for it where one was issued. Read from the person's own settings
+    # only; see nr_workbench.tiled.address.
+    "TILED_URL",
+    "TILED_API_KEY",
 )
 
 #: Variables whose value must never be printed.
 #: The language model's keys: one of these set is "a key is set" for it.
 LLM_KEYS = ("LLM_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "ALCF_ACCESS_TOKEN")
 
-SECRET_VARS = frozenset({*LLM_KEYS, "ISAAC_KEY"})
+SECRET_VARS = frozenset({*LLM_KEYS, "ISAAC_KEY", "TILED_API_KEY"})
+
+#: The settings only the person makes, by the service they reach: each read
+#: from the shell, ``~/.nrw`` or ``~/.aure``, and refused when anything but
+#: the person could have chosen it (:func:`person_setting`). A server named
+#: here is where the person's key or login is sent.
+PERSON_ONLY: dict[str, tuple[str, ...]] = {
+    "ISAAC": ("ISAAC_URL", "ISAAC_KEY"),
+    "Tiled": ("TILED_URL", "TILED_API_KEY"),
+}
+
+#: A project's files that programs other than nrw load into the environment:
+#: python-dotenv's and node's, Flask's, and direnv's.
+_PROJECT_ENV_FILES = (".env", ".env.local", ".flaskenv", ".envrc")
 
 #: Set once loading has run, so repeated calls are free.
 _loaded = False
@@ -143,7 +164,10 @@ class Setting:
 
 
 def where_set(
-    start: Path | None = None, *, skip_project: bool = False
+    start: Path | None = None,
+    *,
+    skip_project: bool = False,
+    skip_environment: bool = False,
 ) -> dict[str, Setting]:
     """Each known variable an ``nrw`` command started in *start* would read.
 
@@ -160,12 +184,18 @@ def where_set(
             by default.
         skip_project: Leave out the project's ``.env``: what applies when it
             sets nothing.
+        skip_environment: Leave out the environment too: what the files alone
+            say, as a command started from a clean shell would read them.
 
     Returns:
         Variable name to its value and source, for the variables set anywhere.
     """
     # What a child starts with: see nr_workbench.web.jobs.child_environment.
-    environ = {k: v for k, v in os.environ.items() if k not in _set_by_files}
+    environ = (
+        {}
+        if skip_environment
+        else {k: v for k, v in os.environ.items() if k not in _set_by_files}
+    )
     sources: dict[str, str | Path] = dict.fromkeys(environ, ENVIRONMENT)
     for path, is_project in _candidates(start):
         # Checked before each file, as load_dotenv does: one may set it.
@@ -187,6 +217,168 @@ def where_set(
         for name in KNOWN_VARS
         if name in environ
     }
+
+
+def person_setting(
+    name: str, start: Path | None = None
+) -> tuple[Setting | None, str | None]:
+    """A setting only the person makes, as nrw may use it; or why it may not be.
+
+    From the shell, ``~/.nrw`` or ``~/.aure``, never the project's ``.env``
+    (:func:`where_set` with ``skip_project``). That cannot leave out what is
+    already in the environment, so the setting is refused, with the reason:
+
+    * while the project's own files set any setting of its service, or
+      ``HOME``. A program that loads those files (direnv, pipenv, an editor
+      running a program) puts them in the environment, where they look like
+      the person's own (:func:`set_in_project`);
+    * when the file it comes from could be written by someone else, as ssh
+      refuses its own configuration;
+    * for an agent's command (``NRW_AGENT``), when it is not what the
+      person's files say. An agent sets the environment of every command it
+      runs, and may have been told to by something it read.
+
+    Args:
+        name: A setting in :data:`PERSON_ONLY`.
+        start: The project.
+
+    Returns:
+        The setting, ``None`` when it is not set or set empty; and why it may
+        not be used, ``None`` when it may.
+    """
+    from nr_workbench.agent.guard import AGENT_ENV
+
+    service = next(s for s, names in PERSON_ONLY.items() if name in names)
+    found = where_set(start, skip_project=True).get(name)
+    setting = found if found is not None and found.value.strip() else None
+    problem = _set_by_project(start, service)
+    if problem is None and setting is not None and isinstance(setting.source, Path):
+        problem = _writable_by_others(setting.source, name, service)
+    if problem is None and os.environ.get(AGENT_ENV):
+        own = where_set(start, skip_project=True, skip_environment=True).get(name)
+        mine = own.value.strip() if own is not None else ""
+        if (setting.value.strip() if setting is not None else "") != mine:
+            # Never the values: one may be a key.
+            problem = (
+                f"{name} for this command is not what ~/.nrw or ~/.aure says, "
+                "and an agent's command uses only those. Say in ESCALATIONS.md "
+                f"what you needed and why, and stop: a person sets {name} in "
+                "~/.nrw."
+            )
+    return setting, problem
+
+
+def set_in_project(start: Path | None, names: Collection[str]) -> dict[Path, list[str]]:
+    """Which of *names* the project's own files set: its ``.env`` and its neighbours.
+
+    The files programs other than nrw load into the environment
+    (:data:`_PROJECT_ENV_FILES`), read as the loosest of them would. A line
+    sets a name in any shape a loader takes: after ``export``, quoted, as
+    ``KEY: value``, behind a byte-order mark, or inside a quoted value. The
+    rest of the file is not looked at, so a byte that is not UTF-8 changes
+    nothing. Only the person sets these, so a false alarm costs a line moved
+    to ``~/.nrw``, and a miss could cost their login.
+
+    Args:
+        start: The project, or a directory in it.
+        names: The settings to look for.
+
+    Returns:
+        Each file that sets one, with the ones it sets, in the order *names*
+        has them.
+    """
+    directory = next(
+        (p.parent for p, is_project in _candidates(start) if is_project), None
+    )
+    if directory is None or not names:
+        return {}
+    pattern = re.compile(
+        rb"(?m)^[ \t\xef\xbb\xbf]*(?:export[ \t]+)?[\"']?("
+        + b"|".join(re.escape(name.encode()) for name in names)
+        + rb")[\"']?[ \t]*[=:]"
+    )
+    found: dict[Path, list[str]] = {}
+    for file_name in _PROJECT_ENV_FILES:
+        data = _regular_bytes(directory / file_name)
+        if data is None:
+            continue
+        given = {match.group(1).decode() for match in pattern.finditer(data)}
+        if hits := [name for name in names if name in given]:
+            found[directory / file_name] = hits
+    return found
+
+
+def _set_by_project(start: Path | None, service: str) -> str | None:
+    """Why no setting of *service* is used while the project's files set one."""
+    found = set_in_project(start, (*PERSON_ONLY[service], "HOME"))
+    if not found:
+        return None
+    path, names = next(iter(found.items()))
+    return (
+        f"This project's {shown_source(path, start)} sets {' and '.join(names)}. "
+        "Any program that loads that file puts them in the environment, where "
+        f"they would look like your own settings and choose where your {service} "
+        f"login or key is sent; so nrw uses no {service} setting for this project "
+        f"until they are removed from it. {service}'s own belong in ~/.nrw."
+    )
+
+
+def _writable_by_others(path: Path, name: str, service: str) -> str | None:
+    """Why *name* must not be taken from *path*, or ``None``.
+
+    As ssh treats its own configuration: the file, a link to it, and every
+    directory above it must be the person's or root's, and writable by no one
+    else -- a sticky directory, as /tmp is, excepted -- or whoever could write
+    one could choose where the person's login is sent.
+    """
+    if not hasattr(os, "getuid"):
+        return None  # Windows: no owner and mode to compare
+    uid = os.getuid()
+    where = shown_source(path)
+    why = (
+        f"so nrw takes no {name} from it: whoever can write it could choose "
+        f"where your {service} login is sent."
+    )
+    try:
+        link = path.lstat()
+        real = path.resolve(strict=True)
+        info = real.stat()
+        above = [(directory, directory.stat()) for directory in real.parents]
+    except (OSError, RuntimeError) as exc:
+        return f"{where} cannot be checked ({exc}), {why}"
+    if stat.S_ISLNK(link.st_mode) and link.st_uid not in (uid, 0):
+        return f"{where} is a link another user made, {why}"
+    if info.st_uid != uid:
+        return f"{where} belongs to another user, {why}"
+    if info.st_mode & 0o022:
+        return (
+            f"{where} can be written by others (mode {info.st_mode & 0o777:03o}), "
+            f"{why} Run: chmod go-w {where}"
+        )
+    for directory, held in above:
+        if held.st_uid not in (uid, 0):
+            return f"{directory}, which holds {where}, belongs to another user, {why}"
+        if held.st_mode & 0o022 and not held.st_mode & stat.S_ISVTX:
+            return (
+                f"{directory}, which holds {where}, can be written by others "
+                f"(mode {held.st_mode & 0o777:03o}), {why}"
+            )
+    return None
+
+
+def _regular_bytes(path: Path) -> bytes | None:
+    """A regular file's bytes, or ``None``: never waits on a FIFO put in its place."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as stream:
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return None
+            return stream.read()
+        except OSError:
+            return None
 
 
 def _resolved(path: Path, environ: dict[str, str]) -> dict[str, str | None]:

@@ -526,6 +526,10 @@ def run_settings(
     label: str | None = None,
     location: str | None = None,
     default_location: bool = False,
+    source_url: str | None = None,
+    default_source_url: bool = False,
+    catalog_url: str | None = None,
+    default_catalog_url: bool = False,
     settle: float | None = None,
     poll: float | None = None,
     check: bool = False,
@@ -548,23 +552,32 @@ def run_settings(
 
     if write:
         refuse_if_agent("experiment")
-    if location is not None and default_location:
-        raise click.ClickException(
-            "--location and --default-location contradict each other; give one."
-        )
+    resets = (
+        ("source.location", "--location", location, default_location),
+        ("source.url", "--source-url", source_url, default_source_url),
+        ("catalog.url", "--catalog-url", catalog_url, default_catalog_url),
+    )
+    for _, option, value, reset in resets:
+        if value is not None and reset:
+            raise click.ClickException(
+                f"{option} and --default-{option[2:]} contradict each other; give one."
+            )
     project = _root(root)
     changes: dict[str, Any] = {}
     for name, value in (
         ("ipts", ipts),
         ("label", label),
         ("source.location", location),
+        ("source.url", source_url),
         ("source.settle_seconds", settle),
         ("feed.poll_seconds", poll),
+        ("catalog.url", catalog_url),
     ):
         if value is not None:
             changes[name] = value
-    if default_location:
-        changes["source.location"] = None
+    for name, _, _, reset in resets:
+        if reset:
+            changes[name] = None
     if write and not changes:
         raise click.ClickException(
             "Nothing to write: name a setting to change, e.g. --ipts IPTS-34347."
@@ -659,28 +672,44 @@ def _check(project: Path, changes: dict[str, Any]) -> dict[str, Any]:
 
 
 def _echo_settings(view: dict[str, Any]) -> None:
-    values, defaults = view["values"], view["defaults"]
+    from nr_workbench.project.config import TILED_KIND
 
-    def shown(name: str, unit: str = "") -> str:
+    values, defaults = view["values"], view["defaults"]
+    effective = view["effective"]
+
+    def as_set(name: str, unit: str = "") -> str:
         value = values[name]
         if value is None:
             return f"{defaults[name]}{unit}  (nrw's default)"
         return f"{value}{unit}"
 
+    def worked_out(value: str | None) -> None:
+        click.echo(f"             -> {value or 'cannot be worked out yet'}")
+
     click.echo("Settings, from nrw.toml")
     click.echo(f"  IPTS       {values['ipts'] or '(none)'}")
     click.echo(f"  label      {values['label'] or '(none)'}")
-    click.echo(f"  source     {shown('source.kind')}")
-    location = shown("source.location")
-    if values["source.location"] is None:
-        location = location.replace("(nrw's default)", "(nrw's default; provisional)")
-    click.echo(f"  location   {location}")
-    effective = view["effective"]
-    click.echo(f"             -> {effective['path'] or 'cannot be worked out yet'}")
-    click.echo(f"  settle     {shown('source.settle_seconds', ' s')}")
-    click.echo(f"  watcher    {shown('feed.kind')}")
-    click.echo(f"  poll       {shown('feed.poll_seconds', ' s')}")
-    click.echo(f"  catalog    {effective['catalog_kind']}")
+    click.echo(f"  source     {as_set('source.kind')}")
+    # Only the place the kind reads: the other changes nothing, and says so
+    # among the problems when it is set.
+    if effective["source_kind"] == TILED_KIND:
+        click.echo(f"  url        {as_set('source.url')}")
+        worked_out(effective["address"])
+    else:
+        location = as_set("source.location")
+        if values["source.location"] is None:
+            location = location.replace(
+                "(nrw's default)", "(nrw's default; provisional)"
+            )
+        click.echo(f"  location   {location}")
+        worked_out(effective["path"])
+    click.echo(f"  settle     {as_set('source.settle_seconds', ' s')}")
+    click.echo(f"  watcher    {as_set('feed.kind')}")
+    click.echo(f"  poll       {as_set('feed.poll_seconds', ' s')}")
+    click.echo(f"  catalog    {as_set('catalog.kind')}")
+    if effective["catalog_kind"] == TILED_KIND:
+        click.echo(f"  url        {as_set('catalog.url')}")
+        worked_out(effective["catalog_address"])
     coming = [
         f"{option['label']} ({side})"
         for side, options in (
@@ -694,10 +723,18 @@ def _echo_settings(view: dict[str, Any]) -> None:
     if coming:
         click.echo(f"  coming     {', '.join(coming)}")
     if effective["needs_setup"]:
-        click.secho(
-            "\n  Not set up yet: give the IPTS (--ipts) or a full data folder (--location).",
-            fg="yellow",
-        )
+        kind = effective["source_kind"]
+        option = next((o for o in view["options"]["source"] if o["kind"] == kind), None)
+        if option is None:
+            why = f"[experiment.source] kind = {kind!r} is not a source nrw knows."
+        elif not option["available"]:
+            why = (
+                f"{option['label']} is not available as a source yet; until it "
+                'is, [experiment.source] kind = "local" reads a folder.'
+            )
+        else:
+            why = "give the IPTS (--ipts) or a full data folder (--location)."
+        click.secho(f"\n  Not set up yet: {why}", fg="yellow")
     if view["problems"]:
         click.echo()
     for problem in view["problems"]:

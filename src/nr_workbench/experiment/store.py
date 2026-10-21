@@ -184,9 +184,11 @@ def open_store(root: Path, kind: str = "parquet") -> ParquetCatalogStore:
     """
     if kind == "parquet":
         return ParquetCatalogStore.for_project(root)
-    if kind == "api":
+    from nr_workbench.project.config import TILED_KIND
+
+    if kind == TILED_KIND:
         raise CatalogUnavailableError(
-            '[experiment.catalog] kind = "api" is planned but not implemented '
+            '[experiment.catalog] kind = "tiled" is planned but not implemented '
             "yet; see docs/experiment-sources.md. The catalog is not editable "
             'until it is, or until kind = "parquet".'
         )

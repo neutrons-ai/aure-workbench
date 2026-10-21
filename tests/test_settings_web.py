@@ -61,17 +61,15 @@ def test_the_settings_say_what_is_set_what_is_default_and_what_is_coming(
     assert payload["effective"]["needs_setup"] is False
 
 
-def test_a_metadata_service_is_listed_as_coming_where_the_catalog_is_kept(
-    app,
-) -> None:
+def test_tiled_is_listed_as_coming_where_the_catalog_is_kept(app) -> None:
     payload = app.test_client().get("/api/experiment/settings").get_json()
 
     catalogs = {o["kind"]: o for o in payload["options"]["catalog"]}
     assert {k: o["available"] for k, o in catalogs.items()} == {
         "parquet": True,
-        "api": False,
+        "tiled": False,
     }
-    assert catalogs["api"]["label"] == "A metadata service"
+    assert catalogs["tiled"]["label"] == "Tiled"
     assert payload["effective"]["catalog_kind"] == "parquet"
 
 
@@ -80,7 +78,7 @@ def test_the_planned_service_is_refused_by_name_never_replaced_by_files(
 ) -> None:
     """Edits meant for everyone must not land in the project, where nobody looks."""
     with (expt / "nrw.toml").open("a", encoding="utf-8") as handle:
-        handle.write('\n[experiment.catalog]\nkind = "api"\n')
+        handle.write('\n[experiment.catalog]\nkind = "tiled"\n')
     app = make_app(expt)
     client = app.test_client()
     client.get(f"/auth/{TOKEN}")

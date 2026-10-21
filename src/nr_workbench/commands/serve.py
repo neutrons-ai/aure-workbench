@@ -145,12 +145,24 @@ def _echo_data_folder(root: Path) -> None:
     once left the server on its default folder, and nothing it printed said so.
     """
     from nr_workbench.experiment.config import experiment_config_for
-    from nr_workbench.project.config import DEFAULT_EXPERIMENT_LOCATION
+    from nr_workbench.project.config import (
+        DEFAULT_EXPERIMENT_LOCATION,
+        DEFAULT_TILED_SOURCE_URL,
+        TILED_KIND,
+    )
+    from nr_workbench.tiled.address import shown
 
     config = experiment_config_for(root)
-    folder = config.source.path or config.source.location
-    default = config.source.location == DEFAULT_EXPERIMENT_LOCATION
-    click.echo(f"  Data folder  {folder}" + ("  (nrw's default)" if default else ""))
+    if config.source.kind == TILED_KIND:
+        # Filled in only once it keeps every rule; until then, never printed whole.
+        where = config.source.address or shown(config.source.url)
+        default = config.source.url == DEFAULT_TILED_SOURCE_URL
+        label = "Data on Tiled"
+    else:
+        where = str(config.source.path or config.source.location)
+        default = config.source.location == DEFAULT_EXPERIMENT_LOCATION
+        label = "Data folder"
+    click.echo(f"  {label}  {where}" + ("  (nrw's default)" if default else ""))
     for problem in config.problems:
         click.secho(f"  ! {problem.message}", fg="yellow")
     click.echo("")

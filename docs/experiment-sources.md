@@ -8,7 +8,7 @@ replaced without touching the others or the page:
 |---|---|---|---|
 | Where does the reduced data come from? | `DataSource` (`experiment/sources/`) | a local folder | Tiled |
 | How do we learn that a run exists? | `RunFeed` (`experiment/feeds/`) | files appearing in that folder | the SNS web monitor, Tiled |
-| Where is the organization kept? | `CatalogStore` (`experiment/store.py`) | parquet in the project | a metadata service |
+| Where is the organization kept? | `CatalogStore` (`experiment/store.py`) | parquet in the project | Tiled |
 
 They are configured independently in `nrw.toml` (`[experiment.source]`,
 `[experiment.feed]`, `[experiment.catalog]`), on the Settings page of
@@ -83,18 +83,61 @@ Rules a source must keep:
   watched and no other.
 
 **Where Tiled keeps an experiment.** On the facility server an experiment is a
-container at `projects/isaac/IPTS-<n>/`. It can be browsed at
-`https://tiled.ornl.gov/ui/browse/projects/isaac/IPTS-<n>/`; the matching API,
-under `/api/v1/`, needs ORNL authentication. How runs and their reduced files
-are laid out *inside* that container has not been checked yet (it needs a
-logged-in look), and it decides the mapping below. The configuration this
-points to:
+container at `projects/isaac/IPTS-<n>/`, created by another process. Its
+reduced files are in `autoreduction/`, one node per file, keyed by the file's
+own name (see `docs/ground_truths.md`, 2026-10-21). It can be browsed at
+`https://tiled.ornl.gov/ui/browse/projects/isaac/IPTS-<n>/`; the API, under
+`/api/v1/`, needs a login. A source on Tiled reads `url`, not the folder's
+`location`; this is its default:
 
 ```toml
 [experiment.source]
 kind = "tiled"                        # planned: refused by name today
-location = "https://tiled.ornl.gov/projects/isaac/{ipts}"
+url = "https://tiled.ornl.gov/projects/isaac/{ipts}/autoreduction"
 ```
+
+Each key is read only for its own kind, and one set for the other kind is
+reported as changing nothing. One key with two meanings would need a default
+that followed the kind, and every placeholder `nrw.toml` shows would go stale
+the moment the kind was changed by hand.
+
+**An address on Tiled** (the source's, or the catalog's) is held to these rules
+when it is saved and when `nrw.toml` is read (`nr_workbench/tiled/address.py`):
+
+- printable ASCII, checked whole before it is parsed: a parser drops a tab or a
+  line break, so the address checked would not be the one stored;
+- `https://`, or plain `http://` only to this machine, for a test server;
+- a host name or an IP address, matched as written, and a port other than 0;
+- no user name, query or fragment -- and never printed whole in a message, on
+  a page or in a listing: anyone on the machine can read the pages;
+- a path of segments of letters, digits, `.`, `_` and `-`;
+- **its experiment named as `{ipts}`**, a segment of its own, and no IPTS
+  written in. On the person's server, with their permissions, a committed
+  address naming another proposal, or a container above every proposal, would
+  read it or write to it; and a written-in IPTS would stay behind when
+  `[beamtime] ipts` changed;
+- **on the person's own Tiled server**, `TILED_URL` (default
+  `https://tiled.ornl.gov`), from `~/.nrw` or the shell and never from the
+  project's `.env`. `nrw.toml` is committed with the project, so an address on
+  any other host is refused, naming both. That is the one server a login, or
+  `TILED_API_KEY`, is ever sent to.
+
+**`TILED_URL` itself** is a setting only the person makes
+(`env.person_setting`). It is refused, and with it every address on Tiled:
+
+- while the project's `.env`, `.env.local`, `.flaskenv` or `.envrc` sets
+  `TILED_URL`, `TILED_API_KEY` or `HOME`, whatever value is in effect. A
+  program that loads those files (direnv, pipenv, an editor) puts them in the
+  environment, where they would look like the person's own. The files are read
+  as the loosest loader would, so `export`, quoting, `KEY: value` and a
+  byte-order mark all count;
+- from a file that someone else owns or can write, or that sits in a folder
+  someone else can write (a sticky one, as `/tmp` is, excepted), as ssh refuses
+  its configuration;
+- for an agent's command (`NRW_AGENT`), when it is not what the person's files
+  say, however it came to be set.
+
+`nrw doctor` shows the server in use and where it was set.
 
 **A Tiled source**:
 
@@ -176,14 +219,25 @@ the record it was based on:
 A facility service holding the same tables should keep those semantics.
 Otherwise two people editing one experiment overwrite each other.
 
-### Planned: a metadata service
+### Planned: the catalog on Tiled
 
 The catalog is kept in the project, and committed with it. It is shared the
 way the project is: through git. Sharing it more widely -- between the projects
 of everyone on an experiment, and with other programs that record samples --
-is a metadata service's job, reached with `[experiment.catalog] kind = "api"`.
+is Tiled's job, in the experiment's own container
+([plan-tiled-catalog.md](plan-tiled-catalog.md)):
+
+```toml
+[experiment.catalog]
+kind = "tiled"                        # planned: refused by name today
+url = "https://tiled.ornl.gov/projects/isaac/{ipts}/context"   # the default
+```
+
 That kind is refused by name today, and listed as coming on the Settings page
-and in `nrw experiment settings`.
+and in `nrw experiment settings`. The address may already be set
+(`nrw experiment settings --catalog-url`), held to the rules above; it is read
+only once the kind is `"tiled"`, and until then it is reported as changing
+nothing.
 
 A store for it implements `CatalogStore` above, and must:
 

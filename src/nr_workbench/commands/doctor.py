@@ -129,6 +129,7 @@ def collect_checks() -> list[Check]:
         checks.append(Check(name, _OK, detail))
 
     checks.extend(_llm_checks())
+    checks.extend(_person_checks())
     checks.extend(_project_checks())
     checks.extend(_agent_checks())
     checks.extend(_toolpath_checks())
@@ -483,7 +484,7 @@ def _llm_checks() -> list[Check]:
     not have known was being read.
     """
     from nr_workbench.aure_adapter import llm_info
-    from nr_workbench.env import describe, load_env
+    from nr_workbench.env import PERSON_ONLY, describe, load_env
 
     sources = load_env()
     checks: list[Check] = []
@@ -510,7 +511,10 @@ def _llm_checks() -> list[Check]:
             )
         )
 
-    settings = describe()
+    # Without the settings only the person makes, which this would show from
+    # the environment after a project's .env is loaded: see _person_checks.
+    person = {name for names in PERSON_ONLY.values() for name in names}
+    settings = {k: v for k, v in describe().items() if k not in person}
     if settings:
         checks.append(
             Check(
@@ -519,6 +523,55 @@ def _llm_checks() -> list[Check]:
                 ", ".join(f"{k}={v}" for k, v in sorted(settings.items())),
             )
         )
+    return checks
+
+
+def _person_checks() -> list[Check]:
+    """The settings only the person makes, each read as the command that uses it does.
+
+    ISAAC's portal and key, and the Tiled server: from the shell, ``~/.nrw``
+    or ``~/.aure``, never the project's ``.env``. Listed among the "llm
+    settings", they were read from the environment after that file is
+    loaded, which showed a project's value nrw ignores, and never said where
+    one was set.
+    """
+    from nr_workbench.commands.isaac_cmd import portal_settings, shown_portal
+    from nr_workbench.env import redact, shown_source, where_set
+    from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
+    from nr_workbench.tiled.address import server, shown
+
+    try:
+        root = ProjectLayout.discover().root
+    except ProjectNotFoundError:
+        root = Path.cwd()
+
+    def where(setting: Any) -> str:
+        return shown_source(setting.source, root)
+
+    url, key, ignored = portal_settings(root)
+    try:
+        portal = f"ISAAC_URL={shown_portal(url.value)}" if url else "ISAAC_URL not set"
+        readable = True
+    except ValueError:  # the setting doctor exists to show must not stop it
+        portal, readable = "ISAAC_URL cannot be read as an address", False
+    said = [
+        f"{portal} ({where(url)})" if url else portal,
+        f"ISAAC_KEY={redact(key.value)} ({where(key)})" if key else "ISAAC_KEY not set",
+    ]
+    if ignored:
+        said.append(f"ignored, as set in this project's .env: {', '.join(ignored)}")
+    status = "warn" if ignored or not readable else (_OK if url and key else _MISSING)
+    checks = [Check("isaac", status, "; ".join(said))]
+
+    tiled = server(root)
+    detail = f"{shown(tiled.url)} ({tiled.source})"
+    tiled_key = where_set(root, skip_project=True).get("TILED_API_KEY")
+    if tiled_key and tiled_key.value:
+        detail += f"; TILED_API_KEY={redact(tiled_key.value)} ({where(tiled_key)})"
+    if tiled.problem:
+        checks.append(Check("tiled", "warn", f"{detail}. {tiled.problem}"))
+    else:
+        checks.append(Check("tiled", _OK, detail))
     return checks
 
 

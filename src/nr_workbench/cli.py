@@ -1628,6 +1628,28 @@ def experiment_status_command(**kwargs: object) -> None:
     help="Follow nrw's default data location again (it is provisional).",
 )
 @click.option(
+    "--source-url",
+    default=None,
+    metavar="URL",
+    help="The reduced data's address on Tiled, read once the source is Tiled.",
+)
+@click.option(
+    "--default-source-url",
+    is_flag=True,
+    help="Follow nrw's default address for the data on Tiled again.",
+)
+@click.option(
+    "--catalog-url",
+    default=None,
+    metavar="URL",
+    help="The catalog's address on Tiled, read once the catalog is kept there.",
+)
+@click.option(
+    "--default-catalog-url",
+    is_flag=True,
+    help="Follow nrw's default address for the catalog on Tiled again.",
+)
+@click.option(
     "--settle",
     type=float,
     default=None,

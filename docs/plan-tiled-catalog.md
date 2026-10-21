@@ -250,7 +250,7 @@ It is the same for the folder and for Tiled, since both list versions.
 ```toml
 [experiment.source]
 kind = "tiled"
-location = "https://tiled.ornl.gov/projects/isaac/{ipts}/autoreduction"   # its default
+url = "https://tiled.ornl.gov/projects/isaac/{ipts}/autoreduction"   # its default
 ```
 
 `TiledDataSource` (`experiment/sources/tiled.py`) keeps every rule
@@ -292,7 +292,7 @@ catalog (steps 4 and 5), and never writes.
 ```toml
 [experiment.catalog]
 kind = "tiled"
-location = "https://tiled.ornl.gov/projects/isaac/{ipts}/context"   # the default
+url = "https://tiled.ornl.gov/projects/isaac/{ipts}/context"   # the default
 ```
 
 - `"tiled"` replaces the planned `"api"` in `CATALOG_OPTIONS`. `"api"` was
@@ -301,15 +301,21 @@ location = "https://tiled.ornl.gov/projects/isaac/{ipts}/context"   # the defaul
   `nrw init` render it back from what the file says. Without it, a catalog
   set by hand would leave `nrw.toml.nrw-new` on every later `init` (the
   2026-09-25 entry). It also puts the table, commented out, into new
-  projects' `nrw.toml`, and makes `catalog.kind` and `catalog.location`
+  projects' `nrw.toml`, and makes `catalog.kind` and `catalog.url`
   settings of the Settings page and `nrw experiment settings`.
+- **An address on Tiled is `url`, and a folder `location`**, each read only
+  for its own kind. This plan first had one `location` for both, a URL when
+  the kind was `"tiled"`: its default then followed the kind, and every
+  placeholder `nrw.toml` shows went stale when the kind was edited by hand
+  (built that way in step 3, and changed after its review).
 - `project/settings.py` gets a branch for each, with validation. A key in
   `CHANGE_KEYS` with no branch passes the "is it a setting" check and is
   then dropped without a word.
-- `location` must be `https://`, or plain `http://` on this machine's
-  loopback, for tests. It may hold no user name, query or fragment, and its
-  path is segments of letters, digits, `.`, `_` and `-`. `{ipts}` is filled
-  in as it is for the data location. It is read only when `kind = "tiled"`.
+- `url` is held to the rules in `docs/experiment-sources.md`
+  (`nr_workbench/tiled/address.py`): printable ASCII, `https://` or plain
+  `http://` on this machine's loopback for tests, no user name, query or
+  fragment, a path of plain segments, on the person's server, and its
+  experiment named as `{ipts}`, a segment of its own, with no IPTS written in.
 - On Tiled, changing the IPTS changes which catalog the project reads. The
   confirmation the Settings page already asks for an IPTS change must say so.
 
@@ -359,10 +365,16 @@ the commands themselves: a login is the person's to make.
   (optional, secret) become known settings, read the way `ISAAC_KEY` is:
   from `~/.nrw` or the shell, never from the project's `.env`, which anyone
   who can commit to the project can write. `nrw doctor` lists them, the key
-  redacted.
+  redacted, with where each is set.
 - **Credentials go to one server: the person's `TILED_URL`.** `nrw.toml` is
-  committed too, so a `location` on any other host is refused, and the
+  committed too, so an address on any other host is refused, and the
   refusal names both. This is the lesson of the ISAAC key (2026-09-30).
+- **The project cannot choose it by the back door.** Tiled is refused while
+  the project's `.env` or `.flaskenv` sets `TILED_URL` or `TILED_API_KEY`:
+  a program that loads those files puts them in the environment, where they
+  look like the shell's. So is a `TILED_URL` from a file others can write,
+  and, for an agent's command, one in its environment that the person's
+  files do not name.
 - A credential travels only in the `Authorization` header (`Bearer` for a
   session, `Apikey` for a key): never in a URL, a message, a log or a page.
   Redirects are not followed. Paging uses `page[offset]`, never a link the
@@ -583,22 +595,47 @@ Each step is one commit, with its tests, and leaves the whole suite green.
      - a run in no sample counted apart;
      - the sign agreeing with the Review's plan on the same snapshot;
      - the page showing it, in the browser tests.
-3. **Settings.**
+3. **Settings.** Done (2026-10-21).
    - `SOURCE_OPTIONS` and `CATALOG_OPTIONS` offer `"tiled"`, the catalog's in
      place of `"api"`.
-   - `EXPERIMENT_KEYS` gains `experiment.catalog` (`kind`, `location`); a
-     source's `location` is a URL when its kind is `tiled`, held to the rules
-     above, and its default is the experiment's `autoreduction/`.
-   - `project/settings.py` gets a validated branch for each key.
+   - `EXPERIMENT_KEYS` gains `experiment.catalog` (`kind`, `url`), and the
+     source a `url`, whose default is the experiment's `autoreduction/`.
+   - `nr_workbench/tiled/address.py` holds the address rules: one ordered
+     check that both the save and the reader use, and that never raises or
+     prints a secret. `env.person_setting` holds the rules for a setting only
+     the person makes (the project's files, file permissions, an agent's
+     environment), which `TILED_URL` follows.
+   - `project/settings.py` gets a validated branch for each key;
+     `nrw experiment settings` gets `--source-url` and `--catalog-url`.
    - `env.py` knows `TILED_URL` and `TILED_API_KEY`, the key secret.
+   - `nrw doctor` reports ISAAC's settings and Tiled's apart from the
+     language model's, as their commands read them. Listed among the "llm
+     settings", a project `.env` value nrw ignores was shown as in use.
    - Tests:
-     - `nrw init --check` is clean after a save that sets either;
+     - `nrw init --check` is clean after a save that sets either, and after
+       a kind set by hand as the template says;
      - a default edited in a comment is reported;
-     - every location rule is enforced;
-     - a change of a kind or a location is applied, not dropped;
+     - every address rule is enforced, with no crash and no secret repeated;
+     - a change of a kind or an address is applied, not dropped;
+     - the project's files, a file others can write, and an agent's
+       environment cannot choose the server;
      - the key is never printed.
-4. **A Tiled client** (`nr_workbench/tiled.py`, with httpx imported inside
-   functions so that `nrw --help` stays instant).
+   - Followed by a commit of its own: ISAAC's settings follow
+     `env.person_setting` too. A project `.env` that a program had loaded
+     chose `ISAAC_URL` (the security re-review of this step).
+4. **A Tiled client** (`nr_workbench/tiled/client.py`, with httpx imported
+   inside functions so that `nrw --help` stays instant).
+   - It is given a checked address and builds every request from the
+     server's scheme, host and port and the address's checked path, so no
+     address in `nrw.toml` picks the host a request reaches. First,
+     `address.py` returns a frozen `TiledAddress(origin, path, text)` that
+     only it builds, and the configuration holds one in place of today's
+     `address` string beside the unchecked `url`. The client takes only a
+     `TiledAddress` and a `Server` without a problem, and refuses anything
+     else.
+   - An error that quotes a credential is scrubbed with the credential in
+     hand: one read from `~/.nrw` is never in the environment, where the
+     existing scrubber looks.
    - The calls nrw needs and no more: read a node, list a container's
      children with their metadata and data sources, create a container,
      patch a node's metadata, delete a node, read an asset's bytes (with an
@@ -614,7 +651,19 @@ Each step is one commit, with its tests, and leaves the whole suite green.
 5. **Logging in** (`nrw tiled login`, `nrw tiled logout`).
    - The device-code login, the session file, and renewing the session in
      every process, as described above.
+   - The session records the server it was made for, and is sent to no
+     other: with another `TILED_URL`, nrw says to log in again.
+   - `TILED_API_KEY` is read as `TILED_URL` is (`env.person_setting`). A key
+     has no login to bind it to a server, so it is bound to the `TILED_URL`
+     of the same file.
+   - The person's files (`~/.nrw`, `~/.aure`, `~/.nrw-tiled`) are found
+     from the account's home (`pwd`), as ssh finds `~/.ssh`, not from
+     `$HOME`, which an agent's command, or a loaded `.env`, can set. The
+     suite's isolation of `~/.nrw` has to follow.
    - The guard, and the commands themselves, refuse both under the agent.
+     The guard also refuses a command that sets `TILED_URL`,
+     `TILED_API_KEY`, `HOME`, `PYTHON_DOTENV_DISABLED` or `NRW_AGENT`
+     inline, or clears one (`unset`, `env -u`, `env -i`).
    - Tests, against the stand-in:
      - a login that is approved, one that expires, and one refused;
      - `~/.nrw-tiled` readable by its owner only, replaced whole, and a link
@@ -645,7 +694,15 @@ Each step is one commit, with its tests, and leaves the whole suite green.
      record. The parquet store's row helpers move into the same module
      (`experiment/records.py`), so a record reads the same from either store.
    - Pure functions, tested without a server.
-8. **The store** (`TiledCatalogStore`).
+8. **The store** (`TiledCatalogStore`). First, an older nrw must not
+   overwrite `nrw.toml` with its own render, which has no `url` keys and no
+   catalog table. It does so today: the file matches the lock, so it reads as
+   nrw's own, unchanged, and is "upgraded" down. From this step that would put
+   a project back on parquet without a word (the design re-review of step 3).
+   Record an `owner` on `nrw.toml`'s lock entry, which nrw 0.2 and later
+   honour by writing `nrw.toml.nrw-new`, and record which experiment schema
+   wrote the file, so a later nrw can refuse to downgrade it. nrw 0.1 cannot
+   be protected; the release notes say so.
    - `load`, `load_report`, `update`, `describe`, `exists` and `version`, as
      described above. It refuses a project with local records, a location
      on another host, and untagged writes. It leaves alone every node that
@@ -669,8 +726,19 @@ Each step is one commit, with its tests, and leaves the whole suite green.
    - `nrw experiment status` prints the store's description instead of
      `experiment/`; the parquet line reads as it does today.
    - The page's version comes from the store.
-   - The Settings page can choose the source and the catalog, shows a
-     location for Tiled, and runs the checks described above.
+   - The Settings page can choose the source and the catalog, shows the
+     address on Tiled, and runs the checks described above. A kind changed
+     keeps the other kind's key, which is then said to change nothing. Until
+     then, a Tiled source set by hand shows the folder's settings on the
+     page, with no notice that nothing reads them.
+   - Why a project is not set up moves onto the model
+     (`ExperimentConfig.setup_reason`), shipped in the settings view, so the
+     command line and the page give one reason for every kind; today the
+     command line works it out, in a folder's terms. `check_source` reports
+     what the kind reads, not `path`.
+   - The kind each table reads by comes from `READ_BY`, not from `==
+     TILED_KIND` in each presenter; and one table of change keys, options
+     and resets generates `nrw experiment settings`'s options.
    - Tests: the web and command-line paths for every kind, and the Settings
      page in the browser tests.
 10. **Contract tests against a real Tiled 0.2.18.**
@@ -707,17 +775,17 @@ Each step is one commit, with its tests, and leaves the whole suite green.
 
 ## Size
 
-Rough line counts, at this codebase's comment density. Steps 1 and 2 are
-what they came to. Both came to about three times their estimates (350 and
-300; 250 and 300), most of it from what their reviews found. The rest are
-estimates raised by about a third, which those two say is too little: expect
-them to grow the same way.
+Rough line counts, at this codebase's comment density. Steps 1 to 3 are
+what they came to: each came to three to five times its estimate (350 and
+300; 250 and 300; 250 and 250), most of it from what its reviews found, and
+step 3's from two rounds of them. The rest are estimates raised by about a
+third, which those three say is too little: expect them to grow the same way.
 
 | Step | Code | Tests |
 |---|---|---|
 | 1. The experiment's own context (built) | about 1,050 | about 1,150 |
 | 2. The sign of new data (built) | about 650 | about 950 |
-| 3. Settings | 250 | 250 |
+| 3. Settings (built) | about 1,200 | about 1,150 |
 | 4. Tiled client | 350 | 400, with the stand-in |
 | 5. Logging in | 250 | 250 |
 | 6. The data from Tiled | 450 | 550 |
@@ -725,17 +793,17 @@ them to grow the same way.
 | 8. The store | 400 | 350 |
 | 9. Wiring | 250 | 250 |
 | 10. Contract tests | — | 450 |
-| **Steps 3 to 10** | **about 2,300** | **about 2,700** |
+| **Steps 3 to 10** | **about 3,050** | **about 3,550** |
 
-With about 450 lines of documentation, steps 3 to 13 come to about 5,500
-lines by these estimates. With steps 1 and 2, the whole plan is about the
-size of the shared catalog withdrawn on 2026-09-28. It is three pieces, each
-of use on its own, and each a place to stop:
+With about 450 lines of documentation, steps 3 to 13 come to about 7,050
+lines by these estimates. With steps 1 and 2 (about 3,800), the whole plan is
+now larger than the shared catalog withdrawn on 2026-09-28. It is three
+pieces, each of use on its own, and each a place to stop:
 
 - **The sign of new data** (step 2, built: about 1,600 lines with its tests).
   Useful today, with the folder.
 - **The data from Tiled** (steps 3 to 6, and their parts of 9 to 13, about
-  3,300). The usual case: work from any machine, with what the facility put
+  4,900). The usual case: work from any machine, with what the facility put
   on Tiled. This is the one the login is for.
 - **The catalog on Tiled** (steps 7 and 8, and the rest, about 2,200). Shared
   between everyone on the experiment, and other applications.

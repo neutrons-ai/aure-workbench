@@ -24,6 +24,9 @@ from nr_workbench.project.config import (
     DEFAULT_EXPERIMENT_POLL_SECONDS,
     DEFAULT_FEED_KIND,
     DEFAULT_SOURCE_KIND,
+    DEFAULT_TILED_CATALOG_URL,
+    DEFAULT_TILED_SOURCE_URL,
+    TILED_KIND,
 )
 from nr_workbench.project.tomlfile import Value, key_line, placeholder_line
 
@@ -55,11 +58,12 @@ SOURCE_OPTIONS = (
         "Reads the reduced files from one folder, usually on the data mount.",
     ),
     Option(
-        "tiled",
+        TILED_KIND,
         "Tiled",
         False,
-        "Coming: for working away from the data mount. At ORNL an experiment "
-        "is the container projects/isaac/IPTS-<n> on tiled.ornl.gov.",
+        "Coming: reads the same reduced files from the experiment's container "
+        "on Tiled, from any machine -- at ORNL, projects/isaac/IPTS-<n>/"
+        "autoreduction on tiled.ornl.gov.",
     ),
 )
 
@@ -80,7 +84,7 @@ FEED_OPTIONS = (
         "beamtime included.",
     ),
     Option(
-        "tiled",
+        TILED_KIND,
         "Tiled",
         False,
         "Coming: Tiled can announce runs whatever the data comes from.",
@@ -95,9 +99,9 @@ PLANNED_SOURCE_KINDS = tuple(o.kind for o in SOURCE_OPTIONS if not o.available)
 FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if o.available)
 PLANNED_FEED_KINDS = tuple(o.kind for o in FEED_OPTIONS if not o.available)
 
-#: Where the experiment's samples, runs and their conditions are kept. A
-#: metadata service is how they will be shared -- between projects, and with
-#: other programs -- rather than by several projects writing one set of files.
+#: Where the experiment's samples, runs and their conditions are kept. Tiled
+#: is how they will be shared -- between projects, and with other programs --
+#: rather than by several projects writing one set of files.
 CATALOG_OPTIONS = (
     Option(
         DEFAULT_CATALOG_KIND,
@@ -106,12 +110,12 @@ CATALOG_OPTIONS = (
         "Two tables and a manifest in experiment/, committed with the project.",
     ),
     Option(
-        "api",
-        "A metadata service",
+        TILED_KIND,
+        "Tiled",
         False,
-        "Coming: samples, runs and their conditions kept by a facility service, "
-        "where everyone on the experiment -- and other programs -- read and "
-        "record them.",
+        "Coming: samples, runs and their conditions kept in the experiment's "
+        "container on Tiled, where everyone on the experiment -- and other "
+        "programs -- read and edit them, live.",
     ),
 )
 
@@ -122,20 +126,64 @@ PLANNED_CATALOG_KINDS = tuple(o.kind for o in CATALOG_OPTIONS if not o.available
 #: The experiment keys nrw writes, by table, each with nrw's default. A key
 #: left unset follows the default -- which matters because the default
 #: location is provisional and expected to move.
+#:
+#: **One default per key, whatever the others say.** A folder is ``location``
+#: and an address on Tiled is ``url``, each read only for its own kind: a key
+#: whose default followed another key's value would leave its placeholder
+#: stale whenever that value changed by hand, and the render back, the check
+#: for a setting typed into a comment, and the empty-table guard all compare
+#: against one default.
 EXPERIMENT_KEYS: dict[str, dict[str, Value]] = {
     "experiment.source": {
         "kind": DEFAULT_SOURCE_KIND,
         "location": DEFAULT_EXPERIMENT_LOCATION,
+        "url": DEFAULT_TILED_SOURCE_URL,
         "settle_seconds": DEFAULT_SETTLE_SECONDS,
     },
     "experiment.feed": {
         "kind": DEFAULT_FEED_KIND,
         "poll_seconds": DEFAULT_EXPERIMENT_POLL_SECONDS,
     },
+    "experiment.catalog": {
+        "kind": DEFAULT_CATALOG_KIND,
+        "url": DEFAULT_TILED_CATALOG_URL,
+    },
+}
+
+#: Each place a table reads, and the kind that reads it there. A key its
+#: table's kind does not read changes nothing, and is said to when it is set.
+READ_BY: dict[tuple[str, str], str] = {
+    ("experiment.source", "location"): DEFAULT_SOURCE_KIND,
+    ("experiment.source", "url"): TILED_KIND,
+    ("experiment.catalog", "url"): TILED_KIND,
 }
 
 #: What a table of experiment settings holds: the keys that are set.
 ExperimentValues = Mapping[str, Mapping[str, Value]]
+
+
+def section_of(document: Mapping[str, Any], table: str) -> Mapping[str, Any]:
+    """``[experiment.<table>]`` in a parsed ``nrw.toml``, or ``{}``."""
+    experiment = document.get("experiment")
+    section = experiment.get(table) if isinstance(experiment, Mapping) else None
+    return section if isinstance(section, Mapping) else {}
+
+
+def kind_of(section: Mapping[str, Any], table: str) -> str:
+    """A table's kind as nrw reads it: the name written, stripped, or the default.
+
+    The one reading of a kind, for the reader of ``nrw.toml`` and for the
+    checks of a change, so the two never take one file two ways.
+
+    Args:
+        section: The table, e.g. from :func:`section_of`.
+        table: ``"source"``, ``"feed"`` or ``"catalog"``.
+    """
+    kind = section.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+    return str(EXPERIMENT_KEYS[f"experiment.{table}"]["kind"])
+
 
 #: An IPTS as written in nrw.toml: ``IPTS-34347``, ``ipts-34347`` or ``34347``.
 # At most eight digits: IPTS numbers have five or six, and it becomes a path.

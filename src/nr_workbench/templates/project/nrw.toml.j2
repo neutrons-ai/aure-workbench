@@ -112,18 +112,24 @@ tnr_slice_glob = "r{run}_t{t_s:06d}.txt"
 tnr_intervals_glob = "r{run}_*reduction.json"
 dq_convention = "per-file, read from the header"
 
-# The experiment: where its runs are read from, and how new ones are noticed.
-# Set these on the Settings page of `nrw serve`, or here. `nrw experiment
-# status` shows what they find, and names any key it does not recognise -- a
-# setting that changes nothing is never silently accepted.
+# The experiment: where its runs are read from, how new ones are noticed, and
+# where its catalog of samples and runs is kept. Set these on the Settings page
+# of `nrw serve`, or here. `nrw experiment status` shows what they find, and
+# names any key it does not recognise -- a setting that changes nothing is
+# never silently accepted.
 #
 # A setting left commented out follows nrw's default, shown beside it; once
 # one of a table's settings is set, the table is written out. To set one by
 # hand, remove the `# ` from its line AND from its table's `[...]` line: a value
 # typed inside a comment is not read. Edit that table rather than adding a
-# second one: TOML allows each table once. The default
-# location is PROVISIONAL: it is where REF_L's new_reduction pipeline writes
-# today, and it is expected to move. `{ipts}` is filled from [beamtime] ipts.
-# The "directory" feed notices a run when its reduced files appear.
+# second one: TOML allows each table once. The default folder is PROVISIONAL:
+# it is where REF_L's new_reduction pipeline writes today, and it is expected
+# to move. `{ipts}` is filled from [beamtime] ipts.
+#
+# A folder is `location`; an address on Tiled is `url`, read only when its
+# table's kind is "tiled" -- for the data, or for the catalog, which is kept in
+# experiment/ ("parquet") otherwise. An address must be on your Tiled server:
+# https://tiled.ornl.gov, unless ~/.nrw sets TILED_URL. The "directory" feed
+# notices a run when its reduced files appear.
 #
 {{ experiment_block }}

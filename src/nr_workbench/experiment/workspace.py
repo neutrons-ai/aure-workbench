@@ -175,7 +175,8 @@ def candidate_source(
     import dataclasses
 
     from nr_workbench.experiment.sources import open_source
-    from nr_workbench.project.config import load_config
+    from nr_workbench.project.config import IPTS_PLACEHOLDER, load_config
+    from nr_workbench.project.experiment_schema import SOURCE_KINDS
     from nr_workbench.project.settings import SettingsError, validate
     from nr_workbench.project.tomlfile import applied
 
@@ -186,8 +187,10 @@ def candidate_source(
     config = experiment_config(
         dataclasses.replace(project, ipts=beamtime.get("ipts") or None, raw=raw)
     )
-    if config.source.path is None:
-        if "{ipts}" in config.source.location and not config.ipts:
+    # A kind nrw cannot open yet is said by name first: a Tiled source has no
+    # folder to work out, and "cannot be worked out" would blame its address.
+    if config.source.kind in SOURCE_KINDS and config.source.resolved is None:
+        if IPTS_PLACEHOLDER in config.source.configured and not config.ipts:
             raise SettingsError(
                 "This location is filled in from the IPTS; set the IPTS to check it."
             )
@@ -206,8 +209,8 @@ def check_source(
 
     The one check behind the Settings page's "Check folder" and ``nrw
     experiment settings --check``. A setting the change leaves out keeps the
-    value ``nrw.toml`` gives it; only the IPTS, the source's kind and its
-    location matter.
+    value ``nrw.toml`` gives it; only the IPTS, the source's kind and where it
+    reads matter.
 
     Args:
         root: Project root.
@@ -228,7 +231,7 @@ def check_source(
     wanted = {
         k: v
         for k, v in changes.items()
-        if k in ("ipts", "source.kind", "source.location")
+        if k in ("ipts", "source.kind", "source.location", "source.url")
     }
     try:
         source, config, warnings = candidate_source(root, wanted)
