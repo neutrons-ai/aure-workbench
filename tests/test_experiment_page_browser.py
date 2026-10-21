@@ -634,6 +634,30 @@ def test_a_review_with_nothing_it_may_apply_does_not_say_in_step(
     )
 
 
+def test_the_review_lists_a_dropped_samples_copies_to_move_out_and_says_why(
+    page: Page, served, project: Path
+) -> None:
+    site, app = served
+    more_runs(served, project)
+    store = ParquetCatalogStore.for_project(project)
+    # A sample made by assigning to it alone, applied, then left empty.
+    store.update(runs=[RunChange(RunKey(234280), 0, {"sample_id": "S4"})])
+    data = app.config["NRW_EXPERIMENT"]
+    assert not data.apply(data.apply_plan()["plan_id"])["failed"]
+    entry = store.load().runs[RunKey(234280)]
+    store.update(runs=[RunChange(entry.key, entry.rev, {"sample_id": "S1"})])
+    open_frozen(page, site)
+
+    page.click("expt-review")
+    page.wait_for(
+        "document.getElementById('expt-plan').textContent"
+        ".includes('S4 is no longer in the catalog')",
+        what="the review",
+    )
+
+    assert "move-out" in page.text("expt-plan")
+
+
 def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     page: Page, site: Site, project: Path, monkeypatch
 ) -> None:

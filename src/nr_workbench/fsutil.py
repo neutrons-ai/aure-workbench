@@ -1,4 +1,4 @@
-"""Two file operations several modules need, done one way.
+"""File operations and rules several modules need, done one way.
 
 The fit index, the scaffold lock, the experiment catalog and the copy record
 are each written by more than one process at once -- ``nrw serve``'s request
@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import secrets
 import stat
+import unicodedata
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -21,6 +22,35 @@ from pathlib import Path
 #: creates in a project is one another account could plant a link at, when
 #: the project sits in a group-writable shared directory.
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+#: The longest file name most filesystems accept, in bytes.
+MAX_NAME_BYTES = 255
+
+#: Names Windows takes for a device, in any case and with any extension.
+WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+
+
+def is_bare_name(name: str) -> bool:
+    """Whether *name* names one file, and the same file on every system.
+
+    Projects travel between systems through git, so a name is held to all of
+    them at once. Refused: a path (``a/b``, ``..``); what Windows reads as
+    something else (a drive ``C:x``, a stream ``a:b``, a device ``NUL.txt``, a
+    trailing dot or space, which it drops); any control or formatting
+    character, which can make a name show as another, as a right-to-left
+    override does; and a name too long for a filesystem.
+    """
+    if name in ("", ".", "..") or len(name.encode("utf-8")) > MAX_NAME_BYTES:
+        return False
+    if name[-1] in ". " or any(
+        c in "/\\:" or unicodedata.category(c) in ("Cc", "Cf") for c in name
+    ):
+        return False
+    return name.split(".", 1)[0].casefold() not in WINDOWS_DEVICE_NAMES
 
 
 @contextmanager

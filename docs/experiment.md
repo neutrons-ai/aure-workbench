@@ -359,7 +359,12 @@ apply writes into folders that people and agents are working in.
   copied as that.
 - **− move-out**: copies of runs you have since excluded, or moved to another
   sample, go to `samples/<id>/data/excluded/<run>/`. They are moved back if you
-  include the run again. They are never deleted.
+  include the run again. They are never deleted. This holds for a sample the
+  catalog no longer has, too: one made by assigning runs to it, and never given
+  a context of its own, drops out of the catalog when its last run moves
+  elsewhere. Its copies of runs the catalog now places elsewhere move out at the
+  next apply, and its `sample.md` is left as it is. A catalog that knows none of
+  a folder's runs, such as one lost with `experiment/`, moves nothing.
 - **sample.md**: created, updated, or left alone, with the reason.
 
 Nothing is ever overwritten. Each case below is shown and left alone for you to
@@ -373,6 +378,10 @@ decide:
 
 `samples/<id>/data/sources.json` records what apply copied and from which
 version of the source file; it is how those cases are told apart.
+
+Apply writes nothing through a link. A sample whose folder, or whose `data/`,
+`data/steady/` or `data/excluded/`, is a link is not applied, and the Review
+says which.
 
 Only runs that are *complete*, or that you confirmed, are copied. A run is
 copied whole or not at all.

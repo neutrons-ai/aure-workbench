@@ -25,8 +25,13 @@ reports all three rather than choosing.
 
 **Exclusion is real.** A copied run that is now excluded, or assigned to
 another sample, is *moved* to ``data/excluded/<run>/``: reversibly, and out of
-every reader's way, rather than left for each one to remember a flag. Files
-nrw did not copy are reported and never moved.
+every reader's way, rather than left for each one to remember a flag -- also
+out of a sample folder the catalog no longer has. Files nrw did not copy are
+reported and never moved.
+
+**Nothing is written through a link.** A link among a sample's folders would
+carry a copy, or a move, to wherever it points; whoever can write in the
+project can plant one, so such a sample is refused.
 
 **sample.md goes through the scaffold's three-way rule.** A hand-edited one is
 kept and the catalog's version is written beside it as ``sample.md.nrw-new``.
@@ -65,7 +70,7 @@ from nr_workbench.experiment.render import (
     sample_md_relpath,
 )
 from nr_workbench.experiment.status import RunStatus
-from nr_workbench.fsutil import advisory_lock, atomic_write_bytes
+from nr_workbench.fsutil import advisory_lock, atomic_write_bytes, is_bare_name
 from nr_workbench.instrument.reduced import reduced_table
 from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
@@ -141,6 +146,13 @@ class Action(StrEnum):
     NOT_MANAGED = "not-managed"
 
 
+#: What the Review says of a folder the catalog no longer has, after its name.
+FORMER_NOTE = (
+    "is no longer in the catalog: its copies of runs the catalog places "
+    "elsewhere move out, and its sample.md is left as it is. Remove the folder "
+    "if the sample is gone."
+)
+
 #: Actions that change the working tree.
 WRITING_ACTIONS = frozenset(
     {Action.COPY, Action.RESTORE, Action.RECORD, Action.MOVE_OUT}
@@ -198,6 +210,9 @@ class SamplePlan:
         sample_md_detail: What that verdict means, for a person.
         scaffold: The files handed to the scaffold.
         problems: Why nothing is done for this sample, if anything.
+        former: A folder the catalog no longer has (see
+            :func:`_former_samples`): only its copies of runs placed elsewhere
+            are moved out, and its ``sample.md`` is not looked at.
     """
 
     sample_id: str
@@ -207,6 +222,7 @@ class SamplePlan:
     sample_md_detail: str
     scaffold: tuple[PlannedFile, ...] = ()
     problems: tuple[Problem, ...] = ()
+    former: bool = False
 
     @property
     def writes(self) -> bool:
@@ -239,6 +255,8 @@ class SamplePlan:
             "files": [f.as_dict() for f in self.files],
             "sample_md": str(self.sample_md) if self.sample_md else None,
             "sample_md_detail": self.sample_md_detail,
+            "former": self.former,
+            "note": FORMER_NOTE if self.former else "",
             "writes": self.writes,
             "needs_attention": self.needs_attention,
             "problems": [p.as_dict() for p in self.problems],
@@ -333,7 +351,9 @@ def plan_apply(
         source: The data source, read only to compare a file whose version
             changed since it was copied.
         context: The project's render context.
-        samples: Restrict to these samples; all the catalog manages if omitted.
+        samples: Restrict to these samples. If omitted: every sample the
+            catalog has, and every folder it no longer has that still holds
+            copies of runs it places elsewhere.
         confirmed: Unconfirmed runs a person has confirmed may be copied.
 
     Returns:
@@ -342,10 +362,18 @@ def plan_apply(
     root = Path(root)
     problems = _plan_problems(root)
     lock = load_lock(ProjectLayout(root=root).scaffold_lock) if not problems else {}
-    chosen = sorted(samples) if samples is not None else catalog.sample_ids()
     existing = _existing_sample_dirs(root)
+    former = _former_samples(root, catalog, existing)
+    chosen = (
+        sorted(samples)
+        if samples is not None
+        else sorted({*catalog.sample_ids(), *former})
+    )
     plans = []
     for sample_id in chosen:
+        if sample_id in former:
+            plans.append(former[sample_id])
+            continue
         if not catalog.manages(sample_id):
             problems.append(
                 Problem(
@@ -468,12 +496,12 @@ def new_data(
     again: dict[str, tuple[int, ...]] = {}
     problems: list[Problem] = []
     for sample_id in catalog.sample_ids():
-        refusal = _sample_refusal(catalog, sample_id, existing)
-        if refusal is not None:
-            problems.append(refusal)
-            continue
         sample_dir = root / "samples" / sample_id
         try:
+            refusal = _sample_refusal(root, catalog, sample_id, existing)
+            if refusal is not None:
+                problems.append(refusal)
+                continue
             steps = _copy_steps(
                 _wanted(catalog, sample_id),
                 runs,
@@ -518,7 +546,7 @@ def _plan_problems(root: Path) -> list[Problem]:
 
 
 def _sample_refusal(
-    catalog: Catalog, sample_id: str, existing: Mapping[str, str]
+    root: Path, catalog: Catalog, sample_id: str, existing: Mapping[str, str]
 ) -> Problem | None:
     """Why apply would do nothing at all for this sample, or ``None``.
 
@@ -526,6 +554,8 @@ def _sample_refusal(
     sample the other refuses. A new refusal belongs here: anywhere else, the
     sign would go on promising copies apply never makes. The one other is a
     copy record that cannot be read (:func:`read_sources`), which both catch.
+    Folders the catalog no longer has are planning's alone: the sign counts
+    new data for the catalog's own samples.
     """
     try:
         # nrw's own edits hold every sample id to this, so one that fails it
@@ -544,6 +574,14 @@ def _sample_refusal(
             f"samples/{clash}/ already exists and differs from {sample_id} only "
             "in case; on macOS and Windows they are one directory. Rename the "
             "sample in the catalog to match.",
+        )
+    in_the_way = _link_in_the_way(root, root / "samples" / sample_id)
+    if in_the_way is not None:
+        return Problem(
+            f"sample:{sample_id}",
+            f"{in_the_way} is a link, or not a folder; apply writes nowhere "
+            f"through one, so nothing is applied to {sample_id} until it is a "
+            "folder again.",
         )
     try:
         # Everything that stops sample.md being written from the catalog is
@@ -576,6 +614,74 @@ def _cannot_look(sample_id: str, exc: OSError) -> Problem:
     )
 
 
+def _former_samples(
+    root: Path, catalog: Catalog, existing: Mapping[str, str]
+) -> dict[str, SamplePlan]:
+    """Plans for folders the catalog no longer has, still holding copies of its runs.
+
+    A sample is the catalog's while a run or a record names it. One made by
+    assigning runs to a new id has no record, so moving its last run away
+    drops it -- with its copies still in ``data/steady/``, where every reader
+    looks, and the run then in two samples. Apply moves those copies out, as
+    for any sample: each copy the folder's record lists, still there as a
+    file, of a run the catalog has a record of, and so places elsewhere or in
+    no sample. A catalog that knows none of a folder's runs moves nothing:
+    one emptied or lost, or a folder copied in from another experiment.
+    """
+    managed = {sample_id.casefold() for sample_id in catalog.sample_ids()}
+    plans: dict[str, SamplePlan] = {}
+    for folded, name in sorted(existing.items()):
+        if folded in managed:
+            continue
+        sample_dir = root / "samples" / name
+        try:
+            validate_sample_id(name)
+            if (
+                _link_in_the_way(root, sample_dir) is not None
+                or _lstat(sample_dir / "data" / SOURCES_FILE) is None
+            ):
+                continue
+            record = read_sources(sample_dir)
+            steady = sample_dir / "data" / STEADY_DIR
+            stale = {
+                file: entry
+                for file, entry in record.items()
+                if entry.in_steady
+                and RunKey(entry.run) in catalog.runs
+                and _is_file(steady / file)
+            }
+        except ApplyRefused as exc:
+            # nrw's record, and unreadable: what it holds cannot be told.
+            plans[name] = dataclasses.replace(
+                _refused(
+                    name,
+                    Problem(
+                        f"sample:{name}", f"{name} is not in the catalog, and {exc}"
+                    ),
+                ),
+                former=True,
+            )
+            continue
+        except (CatalogValidationError, OSError):
+            # Not a name nrw gives a sample, or a folder this account may not
+            # look into: nothing in it is nrw's to move.
+            continue
+        if stale:
+            plans[name] = SamplePlan(
+                name,
+                creates=False,
+                files=tuple(
+                    _move_out_steps(
+                        catalog, name, set(), stale, sample_dir / "data" / EXCLUDED_DIR
+                    )
+                ),
+                sample_md=None,
+                sample_md_detail="",
+                former=True,
+            )
+    return plans
+
+
 def _existing_sample_dirs(root: Path) -> dict[str, str]:
     """Casefolded name to the real name of every directory under samples/."""
     base = root / "samples"
@@ -596,7 +702,7 @@ def _plan_sample(
     existing: Mapping[str, str],
     confirmed: set[RunKey],
 ) -> SamplePlan:
-    refusal = _sample_refusal(catalog, sample_id, existing)
+    refusal = _sample_refusal(root, catalog, sample_id, existing)
     if refusal is not None:
         return _refused(sample_id, refusal)
 
@@ -607,7 +713,9 @@ def _plan_sample(
     wanted = _wanted(catalog, sample_id)
     steps = [
         *_copy_steps(wanted, runs, statuses, steady, record, confirmed),
-        *_move_out_steps(catalog, sample_id, wanted, record),
+        *_move_out_steps(
+            catalog, sample_id, wanted, record, sample_dir / "data" / EXCLUDED_DIR
+        ),
         *_not_managed_steps(steady, record, wanted),
     ]
     actions = [
@@ -730,12 +838,24 @@ def _move_out_steps(
     sample_id: str,
     wanted: set[RunKey],
     record: Mapping[str, CopyEntry],
-) -> list[_Step]:
+    excluded: Path,
+) -> list[FileAction]:
     """nrw's own copies of runs that no longer belong here: moved aside."""
-    steps: list[_Step] = []
+    steps: list[FileAction] = []
     for name, entry in sorted(record.items()):
         key = RunKey(entry.run)
-        if key in wanted or entry.location == EXCLUDED_DIR:
+        if key in wanted or not entry.in_steady:
+            continue
+        if _not_a_folder(excluded / str(key.run)):
+            steps.append(
+                FileAction(
+                    key.run,
+                    name,
+                    Action.CONFLICT,
+                    f"data/{EXCLUDED_DIR}/{key.run} is a link, or not a folder; "
+                    "nothing is moved through it",
+                )
+            )
             continue
         other = catalog.runs.get(key)
         if other is None or other.sample_id is None:
@@ -758,7 +878,7 @@ def _move_out_steps(
 
 def _not_managed_steps(
     steady: Path, record: Mapping[str, CopyEntry], wanted: set[RunKey]
-) -> list[_Step]:
+) -> list[FileAction]:
     """Files nrw did not copy, for runs this sample does not use: said, and left.
 
     A link is said too, and never followed: `nrw import` points them into the
@@ -773,7 +893,7 @@ def _not_managed_steps(
         paths = sorted(steady.iterdir())
     except (FileNotFoundError, NotADirectoryError):
         return []
-    steps: list[_Step] = []
+    steps: list[FileAction] = []
     for path in paths:
         info = _lstat(path)
         if (
@@ -869,6 +989,33 @@ def _run_steps(
     return steps
 
 
+def _link_in_the_way(root: Path, sample_dir: Path) -> str | None:
+    """The first of a sample's folders apply writes into that is a link, or
+    not a folder, as a path from the project root; ``None`` if there is none.
+
+    Folders not made yet are none: apply makes them, as folders. Each is
+    looked at by its own status, the outermost first, so none is looked
+    through.
+    """
+    data = sample_dir / "data"
+    for path in (sample_dir, data, data / STEADY_DIR, data / EXCLUDED_DIR):
+        if _not_a_folder(path):
+            return path.relative_to(root).as_posix()
+    return None
+
+
+def _not_a_folder(path: Path) -> bool:
+    """Whether something is at *path* that is not a folder: a link, or a file."""
+    info = _lstat(path)
+    return info is not None and not stat.S_ISDIR(info.st_mode)
+
+
+def _is_file(path: Path) -> bool:
+    """Whether *path* is a plain file, itself and not by a link."""
+    info = _lstat(path)
+    return info is not None and stat.S_ISREG(info.st_mode)
+
+
 def _lstat(path: Path) -> os.stat_result | None:
     """A file's own status, not following a link; ``None`` if there is none.
 
@@ -908,6 +1055,14 @@ def _already_copied(
 ) -> _Step:
     """A file nrw copied earlier, as far as can be told without reading it."""
     if entry.location == EXCLUDED_DIR:
+        if _not_a_folder(steady.parent / EXCLUDED_DIR / str(run)):
+            return FileAction(
+                run,
+                name,
+                Action.CONFLICT,
+                f"data/{EXCLUDED_DIR}/{run} is a link, or not a folder; nothing "
+                "is moved back through it",
+            )
         return FileAction(
             run,
             name,
@@ -919,8 +1074,7 @@ def _already_copied(
     target = steady / name
     # Its own status, not where a link points: `nrw import` points them at a
     # mount that may not answer.
-    info = _lstat(target)
-    if info is None or not stat.S_ISREG(info.st_mode):
+    if not _is_file(target):
         return FileAction(
             run,
             name,
@@ -1143,6 +1297,18 @@ def _apply_sample(
     root: Path, plan: SamplePlan, source: Any, report: ApplyReport
 ) -> None:
     sample_dir = root / "samples" / plan.sample_id
+    # Planned without a link among its folders, and so looked at again now:
+    # one planted since would carry every write below to where it points.
+    in_the_way = _link_in_the_way(root, sample_dir)
+    if in_the_way is not None:
+        report.failed.extend(
+            dataclasses.replace(
+                action, detail=f"not done: {in_the_way} is a link, or not a folder"
+            )
+            for action in plan.files
+            if action.action in WRITING_ACTIONS
+        )
+        return
     if plan.creates:
         apply_scaffold(root, list(plan.scaffold))
         report.sample_md[plan.sample_id] = str(plan.sample_md)
@@ -1159,7 +1325,7 @@ def _apply_sample(
         # nrw made but did not record would read as someone else's file.
         write_sources(sample_dir, record)
 
-    if not plan.creates:
+    if not plan.creates and plan.scaffold:
         md = apply_scaffold(root, list(plan.scaffold))
         report.sample_md[plan.sample_id] = str(md.files[0].outcome) if md.files else ""
 
@@ -1315,6 +1481,17 @@ def _move(
             )
         else:
             continue
+        if _not_a_folder(excluded):
+            report.failed.append(
+                FileAction(
+                    action.run,
+                    action.name,
+                    action.action,
+                    f"not moved: data/{EXCLUDED_DIR}/{action.run} is a link, or "
+                    "not a folder",
+                )
+            )
+            continue
         if target.exists() or not origin.is_file() or origin.is_symlink():
             report.failed.append(
                 FileAction(
@@ -1373,6 +1550,12 @@ class CopyEntry:
     location: str = STEADY_DIR
     kind: str = "steady"
     extra: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def in_steady(self) -> bool:
+        """Whether the copy is in ``data/steady/``, where readers look. A
+        location this nrw does not know is left alone."""
+        return self.location == STEADY_DIR
 
     @classmethod
     def copied(cls, run: int, sha256: str, source: SourceFile | None) -> CopyEntry:
@@ -1452,7 +1635,10 @@ def read_sources(sample_dir: Path) -> dict[str, CopyEntry]:
     for name, entry in files.items():
         run = entry.get("run") if isinstance(entry, dict) else None
         if (
-            isinstance(run, bool)
+            # Apply moves files by these names: `../../x` would move one from
+            # outside the sample.
+            not is_bare_name(name)
+            or isinstance(run, bool)
             or not isinstance(run, int)
             or run <= 0
             or not isinstance(entry.get("sha256"), str)

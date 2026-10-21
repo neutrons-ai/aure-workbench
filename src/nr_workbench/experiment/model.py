@@ -27,6 +27,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from nr_workbench.fsutil import WINDOWS_DEVICE_NAMES
+
 #: A steady-state measurement: a set of angle segments reduced from one run.
 STEADY = "steady"
 
@@ -52,11 +54,7 @@ MOUNTINGS = ("unknown", "once", "remounted")
 _SAMPLE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", re.ASCII)
 
 #: Names Windows refuses as files or directories, in any case.
-_RESERVED_NAMES = frozenset(
-    {"con", "prn", "aux", "nul"}
-    | {f"com{i}" for i in range(1, 10)}
-    | {f"lpt{i}" for i in range(1, 10)}
-)
+_RESERVED_NAMES = WINDOWS_DEVICE_NAMES
 
 #: Longest single-line value (a title, a condition).
 MAX_LINE = 200

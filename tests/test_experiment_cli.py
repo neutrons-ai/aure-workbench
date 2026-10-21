@@ -131,6 +131,26 @@ def test_apply_write_copies_then_a_second_apply_is_in_step(expt: Path) -> None:
     assert plan["samples"][0]["sample_md"] == "unchanged"
 
 
+def test_apply_says_why_a_dropped_sample_only_has_its_copies_moved_out(
+    expt: Path,
+) -> None:
+    """`assign` makes no record of the sample, so moving its only run away
+    drops it from the catalog, with its copies still in it."""
+    root = ("--root", str(expt))
+    nrw("experiment", "assign", "234277", "--sample", "Sample8", *root)
+    assert nrw("experiment", "apply", "--write", *root).exit_code == 0
+    nrw("experiment", "assign", "234277", "--sample", "Sample7", *root)
+
+    preview = nrw("experiment", "apply", *root)
+
+    assert preview.exit_code == 0, preview.output
+    assert "Sample8 is no longer in the catalog" in preview.output
+    assert "- move-out       REFL_234277_1_" in preview.output
+    written = nrw("experiment", "apply", "--write", *root)
+    assert written.exit_code == 0, written.output
+    assert not list((expt / "samples/Sample8/data/steady").glob("REFL_234277_*"))
+
+
 def test_apply_confirm_copies_an_unconfirmed_run(expt: Path) -> None:
     nrw("experiment", "assign", "234283", "--sample", "Sample6", "--root", str(expt))
 

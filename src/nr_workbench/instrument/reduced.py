@@ -40,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nr_workbench import fsutil
+
 #: The complete curve: every segment spliced into one file.
 COMBINED_RE = re.compile(r"^REFL_(?P<run>\d+)_combined_data_auto\.txt$")
 
@@ -119,7 +121,7 @@ def parse_combined_name(name: str) -> int | None:
 # ---------------------------------------------------------------------------
 
 #: The longest filename most filesystems accept, in bytes.
-MAX_NAME_BYTES = 255
+MAX_NAME_BYTES = fsutil.MAX_NAME_BYTES
 
 
 def segment_filename(run: int, segment: int, subrun: int, dialect: str) -> str:
@@ -173,9 +175,7 @@ def canonical_name(name: str) -> ReducedName | int | None:
         The parsed segment, the run of a combined curve, or ``None`` when the
         name is not exactly canonical.
     """
-    if not name or "\x00" in name or len(name.encode("utf-8")) > MAX_NAME_BYTES:
-        return None
-    if Path(name).name != name or "/" in name or "\\" in name:
+    if not fsutil.is_bare_name(name):
         return None
 
     segment = parse_segment_name(name)

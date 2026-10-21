@@ -342,6 +342,8 @@ _SYMBOLS = {
 
 
 def _echo_plan(plan: Any) -> None:
+    from nr_workbench.experiment.apply import FORMER_NOTE
+
     _echo_problems(plan.problems)
     if not plan.samples:
         click.echo("  The catalog assigns no runs to any sample yet.")
@@ -368,6 +370,9 @@ def _echo_plan(plan: Any) -> None:
                 click.secho(label, fg="yellow")
             else:
                 click.echo(label)
+        if sample.former:
+            # A folder the catalog no longer has: why only its copies move.
+            click.echo(f"  {sample.sample_id} {FORMER_NOTE}")
 
 
 # ---------------------------------------------------------------------------

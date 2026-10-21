@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -1350,8 +1351,12 @@ def test_new_data_names_a_sample_whose_directory_differs_only_in_case(
 @needs_posix_permissions
 @pytest.mark.parametrize(
     ("locked", "said"),
-    [("data", "may not read"), ("data/steady", "cannot be looked at")],
-    ids=["its-data", "its-copies"],
+    [
+        ("data", "cannot be looked at"),
+        ("data/steady", "cannot be looked at"),
+        ("data/sources.json", "may not read"),
+    ],
+    ids=["its-data", "its-copies", "its-copy-record"],
 )
 def test_a_sample_folder_nobody_may_read_is_that_samples_problem(
     applier: Applier, project: Path, locked: str, said: str
@@ -1507,3 +1512,470 @@ def test_new_data_as_dict_lists_the_runs_overall_and_per_sample() -> None:
             "Sample8": {"ready": [], "reduced_again": [234271]},
         },
     }
+
+
+# --------------------------------------------------------------------------
+# A sample the catalog no longer has, with copies still in it
+# --------------------------------------------------------------------------
+
+
+def dropped_sample(applier: Applier, sample: str = "Sample8") -> Catalog:
+    """234280 assigned to *sample* alone -- no record of its own -- and applied,
+    then moved to Sample7: no run names *sample* now, so the catalog has none."""
+    catalog = apply_changes(
+        catalog_for(234277),
+        runs=[RunChange(RunKey(234280), 0, {"sample_id": sample})],
+        now=NOW,
+    )
+    applier.apply(catalog)
+    return edit(catalog, 234280, sample_id="Sample7")
+
+
+def planned(plan) -> set[str]:
+    return {s.sample_id for s in plan.samples}
+
+
+def test_a_sample_dropped_from_the_catalog_has_its_copies_moved_out(
+    applier: Applier, project: Path
+) -> None:
+    """Found in review: its copies stayed where every reader looks, and the run
+    was in two samples."""
+    catalog = dropped_sample(applier)
+    assert "Sample8" not in catalog.sample_ids()
+    sample_md = (project / "samples" / "Sample8" / "sample.md").read_bytes()
+    # Files nrw did not copy there are someone's, and are never moved.
+    notes = steady(project, "Sample8") / "notes.txt"
+    notes.write_text("mine\n")
+    by_hand = steady(project, "Sample8") / "REFL_234271_1_234271_autoreduction.dat"
+    by_hand.write_text("# by hand\n")
+
+    plan, report = applier.apply(catalog)
+
+    (dropped,) = (s for s in plan.samples if s.sample_id == "Sample8")
+    assert dropped.former
+    assert dropped.as_dict()["note"].startswith("is no longer in the catalog")
+    assert set(actions(plan, "Sample8")) == {
+        f"REFL_234280_{n}_{234279 + n}_autoreduction.dat" for n in (1, 2, 3)
+    }
+    assert set(actions(plan, "Sample8").values()) == {Action.MOVE_OUT}
+    assert not list(steady(project, "Sample8").glob("REFL_234280_*"))
+    out = project / "samples" / "Sample8" / "data" / "excluded" / "234280"
+    assert len(list(out.glob("REFL_234280_*"))) == 3
+    assert len(list(steady(project, "Sample7").glob("REFL_234280_*"))) == 3
+    # Not the catalog's to write any more: left exactly as it was.
+    assert (project / "samples" / "Sample8" / "sample.md").read_bytes() == sample_md
+    assert (notes.read_text(), by_hand.read_text()) == ("mine\n", "# by hand\n")
+    assert not report.failed
+
+
+def test_a_dropped_sample_is_nothing_new_to_the_sign(applier: Applier) -> None:
+    """What moves out is what a person moved, as for any sample."""
+    news = news_of(applier, dropped_sample(applier))
+
+    assert (news.ready, news.reduced_again, news.problems) == (
+        {"Sample7": (234280,)},
+        {},
+        (),
+    )
+
+
+def test_a_dropped_sample_with_its_copies_out_is_not_planned_again(
+    applier: Applier,
+) -> None:
+    catalog = dropped_sample(applier)
+    applier.apply(catalog)
+
+    plan = applier.plan(catalog)
+
+    assert "Sample8" not in planned(plan)
+    assert not plan.writes
+
+
+def test_a_dropped_samples_copies_come_back_when_its_run_does(
+    applier: Applier, project: Path
+) -> None:
+    catalog = dropped_sample(applier)
+    applier.apply(catalog)
+    back = edit(catalog, 234280, sample_id="Sample8")
+
+    plan, report = applier.apply(back)
+
+    assert set(actions(plan, "Sample8").values()) == {Action.RESTORE}
+    assert set(actions(plan, "Sample7").values()) == {Action.MOVE_OUT}
+    assert len(list(steady(project, "Sample8").glob("REFL_234280_*"))) == 3
+    assert not report.failed
+    assert not applier.plan(back).writes
+
+
+def test_a_dropped_sample_is_applied_only_when_named(
+    applier: Applier, project: Path
+) -> None:
+    catalog = dropped_sample(applier)
+
+    assert "Sample8" not in planned(applier.plan(catalog, samples=["Sample7"]))
+    plan, report = applier.apply(catalog, samples=["Sample8"])
+
+    assert not plan.problems and not report.failed
+    out = project / "samples" / "Sample8" / "data" / "excluded" / "234280"
+    assert len(list(out.glob("REFL_234280_*"))) == 3
+    assert not (project / "samples" / "Sample7").exists()
+
+
+def test_a_dropped_sample_moves_out_only_what_is_still_in_steady(
+    applier: Applier, project: Path
+) -> None:
+    """One run excluded and moved out earlier, then both moved away."""
+    catalog = apply_changes(
+        Catalog(),
+        runs=[RunChange(RunKey(run), 0, {"sample_id": "Sample8"}) for run in RUNS],
+        now=NOW,
+    )
+    applier.apply(catalog)
+    catalog = edit(catalog, 234277, include=False)
+    applier.apply(catalog)
+    catalog = edit(
+        edit(catalog, 234277, sample_id="Sample7"), 234280, sample_id="Sample7"
+    )
+
+    plan, report = applier.apply(catalog)
+
+    moving = actions(plan, "Sample8")
+    assert len(moving) == 3 and all(n.startswith("REFL_234280_") for n in moving)
+    assert not list(steady(project, "Sample8").glob("REFL_*"))
+    assert not report.failed
+
+
+def test_a_dropped_sample_whose_copies_are_gone_is_not_planned(
+    applier: Applier, project: Path
+) -> None:
+    """Deleted by hand, as someone tidying a stale folder would: nothing is
+    left to move, and no apply after fails over it."""
+    catalog = dropped_sample(applier)
+    for copy in steady(project, "Sample8").glob("REFL_*"):
+        copy.unlink()
+
+    plan, report = applier.apply(catalog)
+
+    assert "Sample8" not in planned(plan)
+    assert not report.failed
+
+
+def test_a_catalog_that_knows_none_of_a_samples_runs_moves_nothing(
+    applier: Applier, project: Path
+) -> None:
+    """What the store gives once experiment/ is gone -- a fresh clone that
+    never had it, a `git clean` -- is no instruction to empty every sample."""
+    applier.apply(catalog_for(*RUNS))
+
+    plan, report = applier.apply(Catalog())
+
+    assert plan.samples == () and not report.done
+    assert len(list(steady(project).glob("REFL_*"))) == 6
+
+
+def _release(project: Path) -> str:
+    """`nrw experiment release`: the lock forgets sample.md."""
+    from nr_workbench.project.scaffold import forget
+
+    forget(project, "samples/Sample8/sample.md")
+    return "Sample8"
+
+
+def _edit_the_template(project: Path) -> str:
+    """Sample1, as `nrw sample new` made it, with sample.md edited by hand."""
+    md = project / "samples" / "Sample1" / "sample.md"
+    md.write_text(md.read_text() + "\nMy own line.\n")
+    return "Sample1"
+
+
+def _write_one_by_hand(project: Path) -> str:
+    """A sample.md nrw never wrote."""
+    (project / "samples" / "Sample9").mkdir(parents=True)
+    (project / "samples" / "Sample9" / "sample.md").write_text("# Sample9\n")
+    return "Sample9"
+
+
+@pytest.mark.parametrize(
+    "made",
+    [_release, _edit_the_template, _write_one_by_hand],
+    ids=["released", "an-edited-template", "written-by-hand"],
+)
+def test_a_dropped_sample_has_its_copies_moved_out_whoever_wrote_its_sample_md(
+    applier: Applier, project: Path, made
+) -> None:
+    """The copies are apply's, whoever wrote the file beside them."""
+    if made is _release:
+        catalog = dropped_sample(applier)
+        sample = made(project)
+    else:
+        sample = made(project)
+        catalog = dropped_sample(applier, sample)
+
+    plan, report = applier.apply(catalog)
+
+    assert set(actions(plan, sample).values()) == {Action.MOVE_OUT}
+    assert not list(steady(project, sample).glob("REFL_234280_*"))
+    assert not report.failed
+
+
+def test_a_sample_copied_in_from_another_experiment_is_left_alone(
+    applier: Applier, project: Path
+) -> None:
+    """Its copy record names runs this catalog has never heard of."""
+    stranger = project / "samples" / "Elsewhere"
+    (stranger / "data" / "steady").mkdir(parents=True)
+    name = "REFL_199001_1_199001_autoreduction.dat"
+    (stranger / "data" / "steady" / name).write_text("# theirs\n")
+    (stranger / "data" / "sources.json").write_text(
+        json.dumps(
+            {
+                "schema": "nrw-sources/1",
+                "files": {name: {"run": 199001, "sha256": "0" * 64}},
+            }
+        )
+    )
+
+    plan, _ = applier.apply(catalog_for(*RUNS))
+
+    assert "Elsewhere" not in planned(plan)
+    assert (stranger / "data" / "steady" / name).read_text() == "# theirs\n"
+
+
+def test_a_folder_differing_only_in_case_is_no_dropped_sample(
+    applier: Applier,
+) -> None:
+    """The run moved on to `sample8`: on macOS and Windows that is Sample8's own
+    folder, so Sample8 is not emptied, and `sample8` is refused."""
+    catalog = edit(dropped_sample(applier), 234280, sample_id="sample8")
+
+    plan = applier.plan(catalog)
+
+    by_id = {s.sample_id: s for s in plan.samples}
+    assert "Sample8" not in by_id
+    assert "only in case" in by_id["sample8"].problems[0].message
+
+
+@needs_posix_permissions
+def test_a_folder_nobody_may_look_into_is_no_dropped_sample(
+    applier: Applier, project: Path
+) -> None:
+    """Not the catalog's, and not looked into: nothing to plan, and no error."""
+    catalog = dropped_sample(applier)
+    data = project / "samples" / "Sample8" / "data"
+    data.chmod(0)
+    try:
+        plan = applier.plan(catalog)
+    finally:
+        data.chmod(0o755)
+
+    assert "Sample8" not in planned(plan)
+
+
+def test_a_folder_named_as_nrw_names_no_sample_is_no_dropped_sample(
+    applier: Applier, project: Path
+) -> None:
+    catalog = dropped_sample(applier)
+    (project / "samples" / "Sample8").rename(project / "samples" / "-Sample8")
+
+    assert "-Sample8" not in planned(applier.plan(catalog))
+
+
+def test_a_dropped_sample_whose_record_cannot_be_read_is_named(
+    applier: Applier, project: Path
+) -> None:
+    """nrw's record, damaged: its copies cannot be told apart, and the Review says so."""
+    catalog = dropped_sample(applier)
+    (project / "samples" / "Sample8" / "data" / "sources.json").write_text("{nope")
+
+    plan = applier.plan(catalog)
+
+    (dropped,) = (s for s in plan.samples if s.sample_id == "Sample8")
+    assert dropped.former and [p.scope for p in dropped.problems] == ["sample:Sample8"]
+    assert dropped.problems[0].message.startswith("Sample8 is not in the catalog, and")
+    assert "sources.json" in dropped.problems[0].message
+
+
+# --------------------------------------------------------------------------
+# Nothing is written through a link, nor by a name that is not a file's
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "linked", ["data/excluded/234280", "data/excluded", "data/steady", "data", "."]
+)
+def test_nothing_is_moved_or_copied_through_a_link_among_a_samples_folders(
+    applier: Applier, project: Path, tmp_path: Path, linked: str
+) -> None:
+    """A link there would carry a move, or a copy, to wherever it points; whoever
+    can write in the project can plant one."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    folder = (project / "samples" / "Sample6" / linked).resolve()
+    if folder.exists():
+        shutil.move(folder, tmp_path / "set-aside")
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    folder.symlink_to(elsewhere)
+
+    # Excluding a copied run moves it out; a new run would be copied in.
+    write_autoreduced(
+        folder_of(applier), 234283, [1], planned=1, mtime=time.time() - 3600
+    )
+    catalog = apply_changes(
+        edit(catalog, 234280, include=False),
+        runs=[RunChange(RunKey(234283), 0, {"sample_id": "Sample6"})],
+        now=NOW,
+    )
+    plan, report = applier.apply(catalog)
+
+    assert list(elsewhere.iterdir()) == []
+    assert plan.needs_attention
+    assert not any(done.run == 234280 for done in report.done)
+
+
+def test_nothing_is_moved_back_through_a_link(
+    applier: Applier, project: Path, tmp_path: Path
+) -> None:
+    catalog = edit(catalog_for(*RUNS), 234280, include=False)
+    applier.apply(catalog_for(*RUNS))
+    applier.apply(catalog)
+    out = project / "samples" / "Sample6" / "data" / "excluded" / "234280"
+    elsewhere = tmp_path / "elsewhere"
+    shutil.move(out, elsewhere)
+    out.symlink_to(elsewhere)  # the copies to move back, reached by a link
+
+    plan, report = applier.apply(edit(catalog, 234280, include=True))
+
+    assert {a for n, a in actions(plan).items() if "234280" in n} == {Action.CONFLICT}
+    assert not list(steady(project).glob("REFL_234280_*"))
+    assert len(list(elsewhere.glob("REFL_234280_*"))) == 3
+    assert not report.done
+
+
+def test_a_link_planted_while_apply_runs_takes_nothing_through_it(
+    project: Path, context: RenderContext, tmp_path: Path
+) -> None:
+    """Planned without links, and looked at again right before each write."""
+    source = InMemorySource()
+    for run in (*RUNS, 234283, 234286):
+        source.add_segments(run, [1, 2, 3])
+    source.add_segments(234289, [1], planned=1)
+    source.add_segments(NEXT_RUN, [1])
+    applier = Applier(project, context, source)
+    catalog = apply_changes(
+        catalog_for(*RUNS),
+        runs=[RunChange(RunKey(234283), 0, {"sample_id": "Sample7"})],
+        now=NOW,
+    )
+    applier.apply(catalog)
+    # Sample6 is to copy 234286 and move 234277 out; Sample7 to copy 234289.
+    catalog = apply_changes(
+        edit(catalog, 234277, include=False),
+        runs=[
+            RunChange(RunKey(234286), 0, {"sample_id": "Sample6"}),
+            RunChange(RunKey(234289), 0, {"sample_id": "Sample7"}),
+        ],
+        now=NOW,
+    )
+    plan = applier.plan(catalog)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    out = project / "samples" / "Sample6" / "data" / "excluded" / "234277"
+    sample7 = project / "samples" / "Sample7"
+    read = source.read_bytes
+
+    # The first copy apply makes -- Sample6's -- plants a link where Sample6 is
+    # about to move to, and puts one in place of Sample7, not reached yet.
+    def plant_then_read(file, *, max_bytes):
+        if not out.is_symlink():
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.symlink_to(elsewhere)
+            shutil.move(sample7, tmp_path / "Sample7-aside")
+            sample7.symlink_to(elsewhere)
+        return read(file, max_bytes=max_bytes)
+
+    source.read_bytes = plant_then_read
+    runs, statuses = observe(source)
+    report = apply(
+        project, catalog, runs, statuses, source, context, expected_plan_id=plan.plan_id
+    )
+
+    assert list(elsewhere.iterdir()) == []
+    linked = {f.run for f in report.failed if "is a link" in f.detail}
+    assert linked == {234277, 234289}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../../outside.dat",
+        "a/b.dat",
+        "..",
+        "",
+        "a\\b.dat",
+        "a\x00.dat",
+        "C:x.dat",
+        "a.dat:stream",
+        "NUL",
+        "com1.dat",
+        "a.dat.",
+        "a.dat ",
+        "a\u202e.dat",
+        "a" * 252 + ".dat",
+    ],
+    ids=[
+        "up-and-out",
+        "a-folder",
+        "the-parent",
+        "empty",
+        "a-backslash",
+        "a-nul",
+        "a-drive",
+        "a-stream",
+        "a-device",
+        "a-device-with-a-suffix",
+        "a-trailing-dot",
+        "a-trailing-space",
+        "a-right-to-left-override",
+        "too-long",
+    ],
+)
+def test_a_copy_record_naming_anything_but_a_file_of_its_own_is_refused(
+    project: Path, name: str
+) -> None:
+    """Apply moves files by these names, and a person approves them by reading."""
+    sources_json(project).write_text(
+        json.dumps(
+            {
+                "schema": "nrw-sources/1",
+                "files": {name: {"run": 234277, "sha256": "0" * 64}},
+            }
+        )
+    )
+
+    with pytest.raises(ApplyRefused, match="not one nrw wrote"):
+        read_sources(project / "samples" / "Sample6")
+
+
+def test_apply_never_moves_a_file_a_copy_record_points_outside_at(
+    applier: Applier, project: Path
+) -> None:
+    """A key of `../../../../notes.txt` once had apply move the project's own
+    file; moving back was as open."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    notes = project / "notes.txt"
+    notes.write_text("mine\n")
+    record = project / "samples" / "Sample6" / "data" / "sources.json"
+    document = json.loads(record.read_text())
+    document["files"]["../../../../notes.txt"] = {"run": 234280, "sha256": "0" * 64}
+    record.write_text(json.dumps(document))
+
+    # Excluding the run is what would move its "copies" out.
+    plan, report = applier.apply(edit(catalog, 234280, include=False))
+
+    assert notes.read_text() == "mine\n"
+    assert not (project / "samples" / "notes.txt").exists()
+    (sample6,) = (s for s in plan.samples if s.sample_id == "Sample6")
+    assert sample6.problems and not report.done

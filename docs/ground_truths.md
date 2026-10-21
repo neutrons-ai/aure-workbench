@@ -4548,10 +4548,65 @@ the following.
   caught. The browser tests now hold the poll and run it by hand:
   `freeze_polling` captures the 10-s `setInterval` callback. Of the 57
   mutants of step 2, all are now caught, the page's 15 among them.
-- **Open, and older than this work** (found by the design review): a sample
-  made from the bulk bar ("new sample…") has no context record. When its last
-  run moves to another sample, it drops out of `Catalog.sample_ids()`. After
-  that neither apply nor the sign looks at it, and its copies are never moved
-  out, so the run sits in two samples' `data/steady/`.
+- **Older than this work** (found by the design review): a sample made from
+  the bulk bar ("new sample…") has no context record. When its last run moves
+  to another sample, it drops out of `Catalog.sample_ids()`. After that apply
+  never looked at it, and its copies were never moved out, so the run sat in
+  two samples' `data/steady/`. Fixed the same day; see the next entry.
 - **Cost:** about 40 ms a poll, uncached, for 30 samples, 300 runs and 1,200
   copies on a local disk, mostly in file-status calls.
+
+### 2026-10-21: a sample the catalog drops, links, and the copy record's names
+
+- **A sample is the catalog's while a run or a record names it.** One made by
+  assigning runs to a new id has no record, so it drops out of
+  `Catalog.sample_ids()` when its last run moves away. Its copies were then
+  stranded in `data/steady/`, where every reader looks.
+- **The fix is apply's, not the catalog's.** Creating a record on the first
+  assignment was rejected:
+  - a mistyped sample would then stay for good, since neither the page nor
+    the command line can remove a sample;
+  - apply creates the folder of every sample the catalog has, so each Apply
+    would recreate it.
+
+  Instead, planning also takes a folder the catalog no longer has, and moves
+  some of its copies out (`_former_samples`). A copy moves out only when its
+  record lists it in `data/steady/`, the catalog has a record of its run, and
+  it is still there as a file. Its `sample.md` is left as it is. That also
+  repairs projects the bug had already reached.
+- **Who wrote `sample.md` is the wrong test.** The first version took only
+  folders whose `sample.md` the scaffold lock said the catalog wrote. That
+  missed every sample whose `sample.md` the catalog never reached:
+  - a released one (release makes the lock forget its `sample.md`);
+  - one from `nrw sample new` that was edited by hand;
+  - one written by hand.
+
+  Apply had copied data into each of them. Only the copies matter.
+- **A catalog that knows a folder's runs is what makes it the catalog's.**
+  Without that test, a catalog read as empty would move every copy in the
+  project out, with a false reason. That happens when `experiment/` is
+  missing, after a `git clean`, or after a merge that kept only one side's
+  runs. A folder copied in from another experiment is left alone the same
+  way. One copied in from this experiment is treated as the catalog says.
+- **Apply wrote through links among a sample's folders.** A link planted at
+  `data/excluded/<run>` made a move-out hard-link a file of the planter's
+  choosing to wherever it pointed. A link at the same place pulled a file in
+  on a restore. Both showed in the Review as ordinary lines. Now:
+  - a sample whose folder, `data/`, `data/steady/` or `data/excluded/` is a
+    link, or not a folder, is refused (`_link_in_the_way`, in
+    `_sample_refusal`), by the sign as well;
+  - a link at `excluded/<run>` is a conflict;
+  - apply looks at all of them again right before it writes.
+
+  `samples/` itself is not checked: it is the project's own.
+- **Apply used the copy record's keys as paths.** `_move` moves
+  `data/steady/<key>`, so a key of `../../../../notes.txt` moved the
+  project's own `notes.txt` out of place. That was reproduced against
+  6ffd3ec, and moving back was just as open. Keys are now held to
+  `fsutil.is_bare_name`. That is one rule, shared with the reduced-name
+  parser and the Windows device names that sample ids avoid. It refuses:
+  - paths, and what Windows reads as something else: a drive, a stream, a
+    device, a trailing dot or space;
+  - control and formatting characters: a right-to-left override can make the
+    name a person approves read as another;
+  - names over 255 bytes.

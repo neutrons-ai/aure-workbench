@@ -1099,6 +1099,10 @@
           text: "sample.md " + sample.sample_md_detail,
         }));
       }
+      if (sample.note) {
+        // A folder the catalog no longer has: why only its copies move.
+        box.append(el("p", { className: "text-secondary mb-1", text: sample.sample + " " + sample.note }));
+      }
     });
     if (report) {
       box.append(el("p", {
