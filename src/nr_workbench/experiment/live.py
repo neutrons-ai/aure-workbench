@@ -117,6 +117,9 @@ class ChangeSet:
         stuck: Whether that poll has been running implausibly long -- usually
             an unreachable data mount.
         problems: What the source, the feed and the scanner report.
+        snapshot: The snapshot all of this was read from, for anything else
+            the reader works out: from a later one, a run could be counted
+            that has no row yet.
     """
 
     cursor: str
@@ -128,6 +131,7 @@ class ChangeSet:
     scanning: bool
     stuck: bool
     problems: tuple[Problem, ...]
+    snapshot: Snapshot
 
 
 class LiveInventory:
@@ -253,6 +257,7 @@ class LiveInventory:
             scanning=started is not None,
             stuck=stuck,
             problems=tuple(problems),
+            snapshot=snapshot,
         )
 
     # ------------------------------------------------------------------

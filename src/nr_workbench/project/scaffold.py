@@ -205,7 +205,9 @@ def _lock_is_healthy(lock_path: Path) -> bool:
         return False
     try:
         document = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+    except (ValueError, RecursionError, OSError):
+        # Bad JSON and a bad encoding are ValueErrors; nesting too deep to
+        # parse is a RecursionError, and would otherwise escape every caller.
         return False
     return isinstance(document, dict) and isinstance(document.get("files"), dict)
 
@@ -233,7 +235,11 @@ def lock_problem(lock_path: Path) -> str | None:
     try:
         text = lock_path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        return f"{lock_path.name} cannot be read ({exc})."
+        # Not the error's own text: it names the full path, and the page
+        # shows this to anyone who can view it.
+        return (
+            f"{lock_path.name} cannot be read ({exc.strerror or type(exc).__name__})."
+        )
     if "<<<<<<<" in text or ">>>>>>>" in text:
         return (
             f"{lock_path.name} contains git conflict markers. Resolve the merge "

@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nr_workbench.bounded import Bounded, Busy, TimedOut
 from nr_workbench.experiment.model import (
@@ -52,6 +53,11 @@ from nr_workbench.experiment.views import (
 )
 from nr_workbench.problems import Problem
 from nr_workbench.project.layout import ProjectLayout
+
+if TYPE_CHECKING:
+    from nr_workbench.experiment.apply import NewData
+
+logger = logging.getLogger(__name__)
 
 #: Reads of the data source that may be waiting at once, per configuration:
 #: quick looks and plan reviews, which anyone who can see the pages may ask for.
@@ -335,6 +341,7 @@ class ExperimentData:
         workspace = w.workspace
         changes = w.live.changes(None)
         catalog, catalog_problems, readable = self._catalog(w)
+        news = self._new_data(catalog, readable, changes.snapshot)
         rows = {view.key: self._row(view.key, view, catalog) for view in changes.runs}
         for key in catalog.runs:
             if key not in rows:
@@ -361,6 +368,7 @@ class ExperimentData:
             "runs": [rows[k] for k in sorted(rows)],
             "experiment": experiment_card(catalog),
             "samples": self._samples(catalog),
+            "new_data": news.as_dict(),
             "problems": [
                 p.as_dict()
                 for p in (
@@ -368,6 +376,7 @@ class ExperimentData:
                     *workspace.problems,
                     *catalog_problems,
                     *changes.problems,
+                    *news.problems,
                 )
             ],
         }
@@ -377,13 +386,14 @@ class ExperimentData:
 
         Returns:
             Changed runs (all of them after a server restart), removed runs,
-            the new cursor, and the catalog's version -- when that differs from
-            what the page holds, someone else edited the catalog and the page
-            should reload it.
+            the new cursor, what applying would bring in now, and the catalog's
+            version -- when that differs from what the page holds, someone else
+            edited the catalog and the page should reload it.
         """
         w = self._wired()
         changes = w.live.changes(since)
-        catalog, catalog_problems, _ = self._catalog(w)
+        catalog, catalog_problems, readable = self._catalog(w)
+        news = self._new_data(catalog, readable, changes.snapshot)
         return {
             "cursor": changes.cursor,
             "resync": changes.resync,
@@ -391,12 +401,14 @@ class ExperimentData:
             "removed": [k.slug() for k in changes.removed],
             "catalog_version": self._catalog_version(w),
             "scan": _scan(changes),
+            "new_data": news.as_dict(),
             "problems": [
                 p.as_dict()
                 for p in (
                     *self._config_problems(),
                     *catalog_problems,
                     *changes.problems,
+                    *news.problems,
                 )
             ],
         }
@@ -594,6 +606,9 @@ class ExperimentData:
                 self._row(c.key, snapshot.runs.get(c.key), catalog) for c in run_changes
             ],
             "samples": self._samples(catalog),
+            # Assigning, excluding and including are what change it. What
+            # stops it, the next poll reports with the page's other notes.
+            "new_data": self._new_data(catalog, True, snapshot).as_dict(),
             "catalog_version": self._catalog_version(w),
         }
 
@@ -777,6 +792,34 @@ class ExperimentData:
     def _observed(self, snapshot: Any) -> tuple[dict, dict]:
         runs = {k: v.source for k, v in snapshot.runs.items() if v.source is not None}
         return (runs, {k: v.status for k, v in snapshot.runs.items()})
+
+    def _new_data(self, catalog: Catalog, readable: bool, snapshot: Any) -> NewData:
+        """What applying would bring in, from the poller's last listing.
+
+        Nothing at all when the catalog cannot be read: its empty stand-in
+        would put every complete run in no sample. And never an error: it is
+        worked out for every load and poll of the page, and for the answer to
+        a saved edit, none of which a fault in it may take down.
+        """
+        from nr_workbench.experiment.apply import NewData, new_data
+
+        if not readable:
+            return NewData()
+        runs, statuses = self._observed(snapshot)
+        try:
+            return new_data(self.root, catalog, runs, statuses)
+        except Exception:  # noqa: BLE001 - logged, and said on the page
+            logger.exception("Working out the new data failed")
+            return NewData(
+                problems=(
+                    Problem(
+                        "new-data",
+                        "nrw could not work out what is new to apply; the "
+                        "server's log says why. Review still shows what "
+                        "apply would do.",
+                    ),
+                )
+            )
 
     def _row(self, key: RunKey, view: Any, catalog: Catalog) -> dict[str, Any]:
         return run_row(key, view, catalog.runs.get(key))

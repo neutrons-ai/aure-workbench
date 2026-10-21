@@ -325,6 +325,32 @@ set: delete it from each sample's own sections on the page.
 
 ## Applying
 
+### When there is new data
+
+Each time the page checks the data source, it works out what an apply would
+bring in, and says so at the top, beside when it last checked:
+
+- **ready to copy**: runs assigned to a sample, complete, with files the
+  sample does not have yet. Click it to open the Review.
+- **reduced again**: a file apply copied has changed at the source since. The
+  Review reads both, and says whether it is a new reduction or the same bytes.
+- **complete runs in no sample**: click it to select them in the table, ready
+  to assign. A run that belongs to no sample, such as a direct beam or an
+  alignment scan, can be excluded, and it is no longer counted.
+
+Each sample in the list shows its own count, and the browser tab shows how many
+runs are ready to copy, so a page left open in another tab says so too. A run
+waiting for you to confirm it is not counted: you confirm it in the Review.
+
+The counts follow apply's own rules, so what they count, apply copies. A
+sample apply would refuse is not counted, and the notes at the top of the page
+say why: its `sample.md` cannot be written from the catalog, say, or its
+`data/sources.json` cannot be read. The counts read no data file, which is why
+they can be worked out on every check. Nothing is copied until you apply, since
+apply writes into folders that people and agents are working in.
+
+### What apply does
+
 **Review** shows exactly what apply would do:
 
 - **+ copy**: new files into `samples/<id>/data/steady/`. These are the files a

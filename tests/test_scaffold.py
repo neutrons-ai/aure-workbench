@@ -300,6 +300,34 @@ def test_apply_refuses_a_damaged_lock_unless_asked_to_rebuild(tmp_path: Path) ->
     assert lock.read_text(encoding="utf-8") == "{ not json"
 
 
+def test_a_lock_nested_too_deep_to_parse_is_a_problem_not_an_error(
+    tmp_path: Path,
+) -> None:
+    """json raises RecursionError for it, which is no ValueError."""
+    from nr_workbench.project.scaffold import lock_problem
+
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    lock.parent.mkdir()
+    lock.write_text("[" * 200_000, encoding="utf-8")
+
+    assert "not a lock nrw can read" in (lock_problem(lock) or "")
+
+
+def test_a_lock_that_cannot_be_read_is_named_without_its_full_path(
+    tmp_path: Path,
+) -> None:
+    """The Experiment page shows this to anyone who can view it."""
+    from nr_workbench.project.scaffold import lock_problem
+
+    lock = tmp_path / ".nrw" / "scaffold.lock.json"
+    lock.mkdir(parents=True)
+
+    trouble = lock_problem(lock) or ""
+
+    assert trouble.startswith("scaffold.lock.json cannot be read")
+    assert str(tmp_path) not in trouble
+
+
 def test_even_a_rebuild_refuses_git_conflict_markers(tmp_path: Path) -> None:
     """Two people's entries: a rebuild would keep neither side's samples."""
     from nr_workbench.project.scaffold import LockProblemError

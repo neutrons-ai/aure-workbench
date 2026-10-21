@@ -230,6 +230,13 @@ tr.fit-story > td > span + span::before {
   overflow-y: auto;
 }
 
+/* The sign of new data, beside when the source was last checked. */
+.expt-news {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .expt-title {
   max-width: 22rem;
   overflow: hidden;

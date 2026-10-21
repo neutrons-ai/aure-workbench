@@ -1,4 +1,4 @@
-# Plan: the experiment catalog on Tiled
+# Plan: the experiment's data and catalog on Tiled
 
 > **A design record, kept for its reasoning.** What the code does now is in
 > the code, `docs/experiment-sources.md` and `docs/ground_truths.md`; where
@@ -6,9 +6,12 @@
 
 **Status:** in progress. Step 1 (the experiment's own context) was built and
 reviewed on 2026-10-20; its review changed the marker format and the parquet
-store's recovery (`docs/ground_truths.md`, same date). Steps 2 to 11 are not
-started. This is the first part of the Tiled work, and the only part planned
-here (see "Not in this plan").
+store's recovery (`docs/ground_truths.md`, same date). On 2026-10-21 the plan
+gained reading the reduced data from Tiled (step 6) and a sign on the page
+that there is new data to sync (step 2). Step 2 was built and reviewed the
+same day; its review made the sign share apply's refusals instead of copying
+two of them, and made the page survive any one sample it cannot look at.
+Steps 3 to 13 are not started.
 
 ## What this adds, and what it leaves alone
 
@@ -38,12 +41,26 @@ recovery and checks. It gains one table, for the experiment's context.
 Nothing moves unless a project chooses Tiled. The rule for every step below:
 **the parquet store's existing tests pass unchanged.**
 
-**Only the metadata.** Another process creates each experiment's container on
-Tiled and catalogues its reduced data there. nrw does not write that data,
-and in this plan does not read it either: the data still comes from the data
-mount (`[experiment.source] kind = "local"`), and new runs are still noticed
-when their files appear there. Both sides know a run by the same thing, its
-run number.
+**And the data, from beside it.** Another process creates each experiment's
+container on Tiled and catalogues its reduced data there, in `autoreduction/`,
+and that data is never written by nrw. With
+
+```toml
+[experiment.source]
+kind = "tiled"
+```
+
+it reads it, instead of the data mount: the same reduced files, byte for
+byte, so a project can be worked on from any machine that reaches
+tiled.ornl.gov. Apply copies them into `samples/<id>/data/` exactly as it
+copies from the folder. `kind = "local"`, the folder, stays the default. Both
+sides know a run by the same thing, its run number.
+
+**A sign that there is new data.** Whichever the source, the page says when
+runs assigned to a sample have files that apply has not copied yet, or that
+were reduced again since, and when new runs belong to no sample yet. Copying
+stays a person's decision: the sign leads to the Review, and apply copies
+what was reviewed.
 
 ## Why
 
@@ -81,18 +98,23 @@ What stays nrw's is what Tiled cannot know: that a record must meet
 `sample.md`'s rules before it is used, that every node needs tags because
 Tiled's default is private to its writer, the Globus login, and telling the
 page that someone else has edited. That attempt came to about 8,500 lines;
-the Tiled part of this plan (steps 2 to 11) to about 3,650, of which about
-1,500 are code.
+the catalog on Tiled in this plan, with its share of the client and the
+login, to about 3,000 (see "Size").
 
 ## What the server gives us
 
-Checked on 2026-10-20; the details and how each was found are in
-`docs/ground_truths.md` under the same date.
+Checked on 2026-10-20 and 2026-10-21; the details and how each was found are
+in `docs/ground_truths.md` under those dates.
 
 - tiled.ornl.gov runs Tiled 0.2.18, `api_version` 0: no stable API. Every
-  data route answers 401 without a login. That includes the example
-  experiment, `projects/isaac/IPTS-37740/`, so its layout has not been seen
-  from here yet.
+  data route answers 401 without a login.
+- An experiment, such as `projects/isaac/IPTS-37740/`, holds `nexus/` and
+  `autoreduction/`, tagged `isaac` like the experiment itself.
+  `autoreduction/` is one `bytes` node per reduced file, keyed by the file's
+  own name and served from the data mount's `new_reduction` folder: the bytes
+  nrw's local source reads. The nodes carry no metadata. The listing gives
+  each file's size, and each download an `ETag` and a `Last-Modified` taken
+  from the file on the mount.
 - It accepts metadata writes, and keeps every version a write replaces,
   numbered.
 - Access is by tag. A node created without one is visible only to its
@@ -122,6 +144,8 @@ Checked on 2026-10-20; the details and how each was found are in
 | Who creates what | another process creates `IPTS-<n>/` and its data, and never rebuilds it. nrw creates `context/` when it is missing, and `runs/`, `samples/` and its records inside it |
 | Who can see it | every node nrw creates carries its parent's access tags, never none |
 | The experiment's own context | a third kind of record, in both stores, written into every managed `sample.md` |
+| The data | `[experiment.source] kind = "tiled"`, read from the experiment's `autoreduction/`; the folder stays the default (2026-10-21) |
+| Syncing it | a sign on the page, for whatever source, of what apply would copy and of runs no sample holds; apply stays a person's decision (2026-10-21) |
 | Existing projects | new experiments only: a project whose `experiment/` holds catalog records is not switched |
 | Sign-in | a Globus login, `nrw tiled login`, kept as a session that nrw renews. People probably cannot mint API keys in production; a key set by hand still works |
 | Client | a few HTTP routes through httpx, not the `tiled` library |
@@ -168,6 +192,100 @@ later, is one more field of this record.
 - **A change reaches every sample.** Editing the experiment's context makes
   every managed `sample.md` due to be applied, as editing a sample does for
   that sample today.
+
+### New data, and the sign to sync
+
+The page polls the source already, and every copy apply has made is recorded
+in the sample's `data/sources.json`, each file with the source's version of it.
+Comparing the two needs no file read, so every poll can say what an apply
+would do:
+
+- **ready to copy**: runs that apply would copy now, by its own rules (assigned,
+  included, complete or confirmed), with a file `sources.json` does not hold;
+- **reduced again**: a copied file whose version at the source has changed
+  since (the Review then reads it, to tell a new reduction from the same bytes);
+- **in no sample**: complete runs no sample holds, which nothing copies until
+  someone assigns them.
+
+The totals sit in the page's top line, beside when the source was last
+checked: the Apply panel is below the runs and the quick look, off a laptop's
+screen. One opens the Review, the other selects the runs in no sample, ready to
+assign. Each sample's count is beside its name in the list, and the number
+ready to copy is in the tab's title, for a page left open behind others. The
+Review shows exactly what would be copied, and apply copies it. Nothing is
+copied by itself: apply writes into folders people and agents are working in.
+
+The rules are apply's own, so the sign never promises what apply will not do
+(as built, 2026-10-21):
+
+- **Planning is split where it would read.** Each file's fate, as far as no
+  read decides it, comes from one set of steps; the Review then reads what it
+  must, and the sign stops there. It takes only the steps for the runs a
+  sample uses, so it never walks the sample's other files.
+- **The refusals are shared, not copied.** What stops apply for one sample
+  (an id nrw would not write, a folder differing only in case, a `sample.md`
+  the catalog cannot write, a copy record that cannot be read) or for all of
+  them (a damaged scaffold lock) is asked in one place by both. The sign
+  counts nothing there, and names it in the page's notes. The first version
+  copied two of the four, and promised copies that apply skipped.
+- **It reads no data file, and never waits.** It follows no link in a
+  sample's data (`nrw import` points them into the facility's tree), and opens
+  `sources.json` without blocking, taking only a regular file of at most
+  8 MiB.
+- **One sample cannot take the page down.** A sample it cannot look at is
+  that sample's note. Anything else is logged, and the sign is empty with one
+  note; the page, its poll and the answer to a saved edit go on.
+- **A run in no sample is one nobody decided about.** Excluding it (a direct
+  beam, an alignment scan) stops it being counted. Assigning is not applying,
+  so a damaged lock leaves this count alone.
+- **What a person did is not new data.** A run included again, whose copy
+  comes back from `data/excluded/`, and one excluded, whose copy moves out,
+  are not counted. Either could be signed later ("N runs to move out"), from
+  the same steps.
+
+It is the same for the folder and for Tiled, since both list versions.
+
+### The reduced data from Tiled
+
+```toml
+[experiment.source]
+kind = "tiled"
+location = "https://tiled.ornl.gov/projects/isaac/{ipts}/autoreduction"   # its default
+```
+
+`TiledDataSource` (`experiment/sources/tiled.py`) keeps every rule
+`docs/experiment-sources.md` sets for a source:
+
+- **Listing.** `autoreduction/` is listed a page at a time, with each node's
+  data source: one node, one file. Its key is the file's name, held to the
+  rule the folder's names meet (`instrument/reduced.canonical_name`). A name
+  that is not exactly canonical is refused by name, never renamed, and files
+  group into runs as the folder's do.
+- **Versions.** A file's version is its asset's id and size, from the listing,
+  so it changes when the file is registered again or rewritten at another
+  size. A rewrite that keeps the size does not show in the listing. The
+  Review therefore asks again for each copied file with its `ETag`, which
+  costs a 304 when it is unchanged, so an apply never copies past one. (Open
+  question: the cataloguing process could record each file's time in its
+  node's metadata, which would make the listing exact.)
+- **Headers and times.** The first time a version is listed, its bytes are
+  read once (about 10 kB a file), for the title, angle and start time the page
+  shows. The `Last-Modified` of that read is the file's time on the server's
+  clock, and the server's `Date` is its now, so settling needs no clock of
+  nrw's. Both are cached by version, as the folder source caches headers. The
+  first look at a full experiment reads each file once: 336 files, about
+  3.4 MB, for IPTS-37740.
+- **Bytes.** `read_bytes` is `GET /asset/bytes/<path>?id=<asset id>`: the
+  original bytes, under the original name. It raises `SourceChangedError` if
+  the size, or the `ETag` the header read saw, is not the one listed.
+- **The check.** `probe` lists once and reads the newest few runs, for the
+  Settings page.
+- **Run announcements** need nothing new. The folder feed is built on the
+  source's own listing, so with `kind = "tiled"` a run is noticed when it
+  appears on Tiled.
+
+It shares the client, the login, the host binding and the deadlines with the
+catalog (steps 4 and 5), and never writes.
 
 ### Configuration
 
@@ -328,7 +446,7 @@ without it, and a run would drop out of its measurement table, and out of
 the next fit, without anyone deciding so.
 
 Since step 1, the rules for text are also enforced where `sample.md` is
-written (`prose_for`), for every store. That leaves step 6 a choice for text
+written (`prose_for`), for every store. That leaves step 8 a choice for text
 that breaks a rule but is otherwise a sound record: refuse the catalog on
 reading, as above, or read it and let `prose_for` refuse the files, which
 keeps the catalog editable so the text can be fixed on the page. A record of
@@ -448,50 +566,52 @@ credential only to `TILED_URL`.
 
 Each step is one commit, with its tests, and leaves the whole suite green.
 
-1. **The experiment's own context, in both stores** (nothing of Tiled yet).
-   - `ExperimentContext` in `experiment/model.py`, with its rules, edited
-     through `apply_changes` with a revision check.
-   - The parquet store's third table, `experiment.parquet`.
-   - The Experiment page edits the record above the samples.
-   - `prose_for` writes it into each managed `sample.md`, marked as the
-     experiment's, and `adopt` leaves the marked text out of a sample's
-     fields.
+1. **The experiment's own context, in both stores.** Done, e06203c
+   (2026-10-20).
+2. **The sign of new data** (for any source, nothing of Tiled yet). Done
+   (2026-10-21).
+   - On every poll, and with no file read: per sample, the runs apply would
+     copy and the copied files reduced again; overall, the complete runs no
+     sample holds. Apply's own rules decide what it would copy, so the sign
+     and the Review cannot disagree.
+   - The page shows the totals beside **Apply**, each sample's count in the
+     list, and the Review as the way on.
    - Tests:
-     - the record's rules, and a stale edit refused;
-     - the parquet round trip, and a catalog written before this step read
-       as one with an empty experiment record;
-     - every managed `sample.md` carrying the text in the right sections,
-       and due to be applied when it changes;
-     - `adopt` not pulling it into a sample;
-     - the page editing it, in the browser tests.
-2. **Settings.**
-   - `CATALOG_OPTIONS` offers `"tiled"`, in place of `"api"`.
-   - `EXPERIMENT_KEYS` gains `experiment.catalog` (`kind`, `location`), and
-     `experiment/config.py` resolves the location with the rules above.
+     - a new run of a sample counted, then not, once applied;
+     - a re-reduced file counted as reduced again;
+     - an excluded or unconfirmed run not counted as ready;
+     - a run in no sample counted apart;
+     - the sign agreeing with the Review's plan on the same snapshot;
+     - the page showing it, in the browser tests.
+3. **Settings.**
+   - `SOURCE_OPTIONS` and `CATALOG_OPTIONS` offer `"tiled"`, the catalog's in
+     place of `"api"`.
+   - `EXPERIMENT_KEYS` gains `experiment.catalog` (`kind`, `location`); a
+     source's `location` is a URL when its kind is `tiled`, held to the rules
+     above, and its default is the experiment's `autoreduction/`.
    - `project/settings.py` gets a validated branch for each key.
    - `env.py` knows `TILED_URL` and `TILED_API_KEY`, the key secret.
    - Tests:
-     - `nrw init --check` is clean after a save that sets the catalog;
+     - `nrw init --check` is clean after a save that sets either;
      - a default edited in a comment is reported;
      - every location rule is enforced;
-     - a change of `catalog.kind` or `catalog.location` is applied, not
-       dropped;
+     - a change of a kind or a location is applied, not dropped;
      - the key is never printed.
-3. **A Tiled client** (`nr_workbench/tiled.py`, with httpx imported inside
+4. **A Tiled client** (`nr_workbench/tiled.py`, with httpx imported inside
    functions so that `nrw --help` stays instant).
-   - The calls the store needs and no more: read a node, list a container's
-     children with their metadata, create a container, patch a node's
-     metadata, delete a node, and say whose a credential is.
+   - The calls nrw needs and no more: read a node, list a container's
+     children with their metadata and data sources, create a container,
+     patch a node's metadata, delete a node, read an asset's bytes (with an
+     `ETag` to ask "still this?"), and say whose a credential is.
    - Every request has a deadline: connect and read timeouts, and one for a
      whole listing. Each error names the server, with the server's own
-     message cut to one line before it is shown; the store raises it as a
-     `CatalogError`.
+     message cut to one line before it is shown.
    - `pyproject.toml` declares httpx, which aure already brings.
    - Tests use a small in-process stand-in for Tiled (`httpx.MockTransport`)
      that reproduces the quirks above: 409 for an existing key, a bare 500 and
-     a dropped connection for a failed `test`, and `next` links without the
-     query.
-4. **Logging in** (`nrw tiled login`, `nrw tiled logout`).
+     a dropped connection for a failed `test`, `next` links without the query,
+     and the asset id that bytes need.
+5. **Logging in** (`nrw tiled login`, `nrw tiled logout`).
    - The device-code login, the session file, and renewing the session in
      every process, as described above.
    - The guard, and the commands themselves, refuse both under the agent.
@@ -505,13 +625,27 @@ Each step is one commit, with its tests, and leaves the whole suite green.
      - logout ending the session on the server;
      - no token or key ever printed, and nothing sent to a host other than
        `TILED_URL`'s, whatever the server's answers name.
-5. **Records.**
+6. **The data from Tiled** (`TiledDataSource`).
+   - `inventory`, `read_bytes` and `probe`, as described above, opened by
+     `open_source` for `kind = "tiled"`.
+   - The Review asks again for each copied file by its `ETag`, so a rewrite
+     at the same size is caught before an apply.
+   - Tests:
+     - the apply tests run against both sources: copied whole or not at all,
+       never overwriting, a re-reduction noticed, a hand-edited copy noticed;
+     - names refused unless exactly canonical, and never renamed;
+     - a file changed between listing and reading refused;
+     - headers read once per version, and settling from the server's clock;
+     - a source that cannot be reached is an inventory with the reason, never
+       an exception;
+     - the folder feed announcing runs as they appear on Tiled.
+7. **Records.**
    - Converting each of the three records to metadata and back, with its
      spec and version; the checks on reading; and the match between key and
-     record.
-   - Pure functions, tested without a server. They use the same field table
-     as the parquet rows, so a record reads the same from either store.
-6. **The store** (`TiledCatalogStore`).
+     record. The parquet store's row helpers move into the same module
+     (`experiment/records.py`), so a record reads the same from either store.
+   - Pure functions, tested without a server.
+8. **The store** (`TiledCatalogStore`).
    - `load`, `load_report`, `update`, `describe`, `exists` and `version`, as
      described above. It refuses a project with local records, a location
      on another host, and untagged writes. It leaves alone every node that
@@ -529,77 +663,91 @@ Each step is one commit, with its tests, and leaves the whole suite green.
        parents' tags, the create race, telling the 500 apart, an edit that
        stops partway, another application's record edited and kept whole,
        and a bad record or a spec-less node left untouched.
-7. **Wiring.**
-   - `Workspace` and `render.load_catalog` open the configured store.
+9. **Wiring.**
+   - `Workspace` and `render.load_catalog` open the configured store, and
+     the configured source as they do now.
    - `nrw experiment status` prints the store's description instead of
      `experiment/`; the parquet line reads as it does today.
    - The page's version comes from the store.
-   - The Settings page can choose the catalog, shows a location field for
-     Tiled, and runs the check described above.
-   - Tests: the web and command-line paths for both stores, and the Settings
+   - The Settings page can choose the source and the catalog, shows a
+     location for Tiled, and runs the checks described above.
+   - Tests: the web and command-line paths for every kind, and the Settings
      page in the browser tests.
-8. **Contract tests against a real Tiled 0.2.18.**
-   - The store tests of step 6 run again, against a server started with
-     `uvx --from "tiled[server]==0.2.18" tiled serve ...` in an environment
-     of its own, so nothing of Tiled's enters nrw's.
-   - Renewing and ending a session run against it too, after a password
-     login on the local server. The Globus part itself can only be tried
-     live, in step 11.
-   - One server runs Tiled's tag policy with two members of one experiment.
-     What one writes in `context/`, the other can read and edit, and a node
-     written without tags is invisible to the other. That is the trap the
-     "never untagged" rule exists for.
-   - Skipped, with the reason, where `uv` or the network is missing. These
-     tests catch Tiled changing under us, which `api_version` 0 allows.
-9. **Documentation.**
-   - `docs/experiment-sources.md`: its metadata-service section becomes the
-     Tiled store, covering the layout, the schema for other applications,
-     and the write protocol and its limits.
-   - `docs/experiment.md`: the experiment's own context; and putting a new
-     experiment's catalog on Tiled, from `nrw tiled login` through the
-     setting to the check.
-   - `docs/ground_truths.md`: whatever implementation turns up.
-10. **Review.** The design, security and test reviewers, with their findings
+10. **Contract tests against a real Tiled 0.2.18.**
+    - The store and source tests run again, against a server started with
+      `uvx --from "tiled[server]==0.2.18" tiled serve ...` in an environment
+      of its own, so nothing of Tiled's enters nrw's. For the source, a folder
+      of reduced files is registered with it as external assets, as on
+      tiled.ornl.gov.
+    - Renewing and ending a session run against it too, after a password
+      login on the local server. The Globus part itself can only be tried
+      live, in step 13.
+    - One server runs Tiled's tag policy with two members of one experiment.
+      What one writes in `context/`, the other can read and edit, and a node
+      written without tags is invisible to the other. That is the trap the
+      "never untagged" rule exists for.
+    - Skipped, with the reason, where `uv` or the network is missing. These
+      tests catch Tiled changing under us, which `api_version` 0 allows.
+11. **Documentation.**
+    - `docs/experiment-sources.md`: the Tiled source, with what it lists and
+      how its versions work; and its metadata-service section becomes the
+      Tiled store, covering the layout, the schema for other applications,
+      and the write protocol and its limits.
+    - `docs/experiment.md`: the sign of new data; and putting a new
+      experiment's data and catalog on Tiled, from `nrw tiled login` through
+      the settings to the checks.
+    - `docs/ground_truths.md`: whatever implementation turns up.
+12. **Review.** The design, security and test reviewers, with their findings
     fixed. As before, each deliberately reintroduced bug must fail a test.
-11. **A live check against tiled.ornl.gov.** You run `nrw tiled login`,
+13. **A live check against tiled.ornl.gov.** You run `nrw tiled login`,
     which is the first test of the Globus login itself. Then a read-only
-    check (`--check`) of an experiment such as IPTS-37740. The first write
-    happens only on your go-ahead.
+    check (`--check`) of IPTS-37740, and its data synced into a scratch
+    project from Tiled, which writes nothing there. The first write to Tiled,
+    the catalog's, happens only on your go-ahead.
 
 ## Size
 
-Rough line counts, at this codebase's comment density:
+Rough line counts, at this codebase's comment density. Steps 1 and 2 are
+what they came to. Both came to about three times their estimates (350 and
+300; 250 and 300), most of it from what their reviews found. The rest are
+estimates raised by about a third, which those two say is too little: expect
+them to grow the same way.
 
 | Step | Code | Tests |
 |---|---|---|
-| 1. The experiment's own context | 350 | 300 |
-| 2. Settings | 200 | 200 |
-| 3. Tiled client | 300 | 350, with the stand-in |
-| 4. Logging in | 250 | 250 |
-| 5. Records | 150 | 150 |
-| 6. The store | 400 | 350 |
-| 7. Wiring | 200 | 200 |
-| 8. Contract tests | — | 300 |
-| **Total** | **about 1,850** | **about 2,100** |
+| 1. The experiment's own context (built) | about 1,050 | about 1,150 |
+| 2. The sign of new data (built) | about 650 | about 950 |
+| 3. Settings | 250 | 250 |
+| 4. Tiled client | 350 | 400, with the stand-in |
+| 5. Logging in | 250 | 250 |
+| 6. The data from Tiled | 450 | 550 |
+| 7. Records | 150 | 150 |
+| 8. The store | 400 | 350 |
+| 9. Wiring | 250 | 250 |
+| 10. Contract tests | — | 450 |
+| **Steps 3 to 10** | **about 2,300** | **about 2,700** |
 
-With about 350 lines of documentation, that is about 4,300 lines, half the
-withdrawn shared catalog. It has two parts that could be split:
+With about 450 lines of documentation, steps 3 to 13 come to about 5,500
+lines by these estimates. With steps 1 and 2, the whole plan is about the
+size of the shared catalog withdrawn on 2026-09-28. It is three pieces, each
+of use on its own, and each a place to stop:
 
-- **Step 1 stands on its own.** It is a catalog feature, useful with the
-  parquet store alone (about 650 lines). Built first, it means the Tiled
-  store is written for the whole catalog from the start, rather than
-  growing a third kind of record later.
-- **Steps 2 to 11 are Tiled** (about 3,650).
+- **The sign of new data** (step 2, built: about 1,600 lines with its tests).
+  Useful today, with the folder.
+- **The data from Tiled** (steps 3 to 6, and their parts of 9 to 13, about
+  3,300). The usual case: work from any machine, with what the facility put
+  on Tiled. This is the one the login is for.
+- **The catalog on Tiled** (steps 7 and 8, and the rest, about 2,200). Shared
+  between everyone on the experiment, and other applications.
 
-The login is needed, since Globus is how people sign in. Three other pieces
-go beyond the bare minimum. Each could wait, at a cost:
+Three pieces go beyond the bare minimum. Each could wait, at a cost:
 
-- **Choosing the catalog on the Settings page** (about 150 lines). Until
-  then it is set with `nrw experiment settings`, and the page shows it
-  read-only.
+- **Choosing the source and the catalog on the Settings page** (about 200
+  lines). Until then they are set with `nrw experiment settings`, and the page
+  shows them read-only.
 - **The two-user contract test** (about 150). Until then, that colleagues can
   see the records is checked only by hand, on tiled.ornl.gov.
-- **The check** (about 250 with its tests). Until then, a refused login or
+- **The checks** (about 300 with their tests). Until then, a refused login or
   tag shows up only at the first edit.
 
 The last two guard against failures that would otherwise give no sign at all.
@@ -618,19 +766,39 @@ The last two guard against failures that would otherwise give no sign at all.
 - The experiment's record holds the four fields above and no others. A
   proposal's text, if it comes, is a field of that record.
 
-**Not known:** tiled.ornl.gov's session lifetimes. At Tiled's defaults, a
-session used at least weekly lasts a year; the server's operators may have
-set them shorter. Nothing depends on it. The check reports when the session
-must next be renewed, and the docs will point to that rather than promise a
-number.
+**Answered on 2026-10-21:**
+
+- Another process populates each experiment's container with its data. nrw
+  reads it from there, and copies it where the analysis reads it, rather than
+  anyone copying it by hand.
+- The page says when there is new data, counting the runs ready to copy and
+  the runs no sample holds yet. Syncing is a person's apply.
+- What the container holds was looked at, read-only, after a Globus login:
+  `docs/ground_truths.md`, 2026-10-21.
+
+**Not known:**
+
+- tiled.ornl.gov's session lifetimes. At Tiled's defaults, a session used at
+  least weekly lasts a year; the server's operators may have set them
+  shorter. Nothing depends on it. The check reports when the session must
+  next be renewed, and the docs will point to that rather than promise a
+  number.
+- Whether the process populating `autoreduction/` registers a file again
+  when it is reduced again. If not, a rewrite at the same size shows only
+  when the Review asks for the file by its `ETag` (step 6). That process
+  could record each file's time in its node's metadata, which would make the
+  listing exact.
+- Whether experiment members own the `isaac` tag, which every node nrw creates
+  in `context/` must carry. The live check finds out; if not, nrw needs to be
+  told which tag to use.
 
 ## Not in this plan
 
 - **Copying an existing parquet catalog to Tiled.** New experiments only,
   for now.
-- **Reduced data and run announcements from Tiled.** Others catalogue the
-  data. Whether nrw should ever read it from there is a later decision, and
-  needs a look at its layout.
+- **Syncing by itself.** The sign says what an apply would copy; nothing is
+  copied until a person applies.
+- **The NeXus files** in `nexus/`. nrw reads reduced data only.
 - **Fit results on Tiled.** A plan of its own: which fits, what each record
   holds, and how it relates to the ISAAC push.
 - **Logging in from the Settings page.** In this plan the login is a

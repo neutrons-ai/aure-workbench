@@ -58,6 +58,8 @@
     writable: Boolean(initial.writable && TOKEN),
     confirmed: new Set(),
     plan: null,
+    // What applying would bring in, as the server last worked it out.
+    newData: null,
   };
 
   const $ = window.NRWPage.$;
@@ -88,6 +90,7 @@
     }));
     state.samples = payload.samples;
     state.experiment = payload.experiment;
+    state.newData = payload.new_data || NO_NEWS;
     state.cursor = payload.cursor;
     state.catalogVersion = payload.catalog.version;
     state.writable = Boolean(payload.writable && TOKEN);
@@ -125,6 +128,7 @@
       state.cursor = changes.cursor;
       renderScan(changes.scan);
       renderProblems(changes.problems);
+      takeNews(changes.new_data);
       if (changes.runs.length || changes.removed.length) renderRuns();
       firstLook(changes.scan);
     } catch (error) {
@@ -183,6 +187,89 @@
 
   function renderProblems(problems) {
     window.NRWPage.renderProblems($("expt-problems"), problems);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* New data                                                           */
+  /* ---------------------------------------------------------------- */
+
+  const NO_NEWS = { ready: [], reduced_again: [], unassigned: [], samples: {} };
+  const PAGE_TITLE = document.title;
+
+  /* "1 run", "2 runs": the sign is read at a glance, so no "run(s)". */
+  function counted(count, noun) {
+    return count + " " + noun + (count === 1 ? "" : "s");
+  }
+
+  /* Take the server's sign, and redraw only when it says something new:
+   * rebuilding the sample list on every poll would take the focus from
+   * someone moving through it with the keyboard. */
+  function takeNews(news) {
+    const fresh = news || NO_NEWS;
+    if (JSON.stringify(fresh) === JSON.stringify(state.newData)) return;
+    state.newData = fresh;
+    renderNews();
+    renderSamples();
+  }
+
+  /* What applying would bring in, which the server works out on every poll
+   * by apply's own rules: a button to the Review, and the complete runs no
+   * sample holds yet. Nothing is copied until someone applies. */
+  function renderNews() {
+    const news = state.newData || NO_NEWS;
+    const ready = news.ready.length;
+    const again = news.reduced_again.length;
+    const parts = [];
+    if (ready || again) {
+      const said = [];
+      if (ready) said.push(counted(ready, "run") + " ready to copy");
+      if (again) said.push((ready ? again : counted(again, "run")) + " reduced again");
+      const button = el("button", {
+        type: "button", id: "expt-news-review", className: "btn btn-sm btn-primary py-0",
+        text: said.join(", "),
+        title: "Review what Apply would copy. A run reduced again has a file the " +
+          "source rewrote after it was copied; the Review reads both to tell.",
+      });
+      button.addEventListener("click", function () {
+        $("expt-apply").scrollIntoView({ block: "start" });
+        review();
+      });
+      parts.push(button);
+    }
+    if (news.unassigned.length) {
+      const count = news.unassigned.length;
+      const button = el("button", {
+        type: "button", id: "expt-news-unassigned",
+        className: "btn btn-sm btn-outline-secondary py-0",
+        text: counted(count, "complete run") + " in no sample",
+        title: "Select them, to assign them to a sample. Exclude a run that " +
+          "belongs to none, and it is no longer counted.",
+      });
+      button.addEventListener("click", function () {
+        selectRuns(news.unassigned);
+      });
+      parts.push(button);
+    }
+    const box = $("expt-news");
+    box.replaceChildren(...parts);
+    box.classList.toggle("d-none", !parts.length);
+    // A page left open in a background tab says so in its tab.
+    document.title = (ready ? "(" + ready + ") " : "") + PAGE_TITLE;
+  }
+
+  /* The runs in no sample, shown and selected: the bulk bar is then one
+   * choice of sample away from assigning them. */
+  function selectRuns(numbers) {
+    const wanted = new Set(numbers);
+    state.selected = new Set(Array.from(state.rows.values()).filter(function (row) {
+      return wanted.has(row.run) && !row.sample;
+    }).map(function (row) {
+      return row.key;
+    }));
+    setFilter("unassigned");
+    renderBulk();
+    scheduleQuickLook();
+    $("expt-runs").scrollIntoView({ block: "nearest" });
   }
 
   /* ---------------------------------------------------------------- */
@@ -311,6 +398,7 @@
       state.samples = result.samples;
       state.catalogVersion = result.catalog_version;
       state.selected.clear();
+      takeNews(result.new_data);
       renderRuns();
       renderBulk();
       renderSamples();
@@ -485,19 +573,37 @@
         text: "No samples yet. Select runs and assign them to a new sample.",
       }));
     }
+    const news = state.newData || NO_NEWS;
     state.samples.forEach(function (card) {
       const detail = card.managed
         ? card.runs.length + " run(s)" +
           (card.excluded.length ? ", " + card.excluded.length + " excluded" : "")
         : "on disk, not in the catalog";
+      const open = state.editing === card.id;
+      // Its own key only: a sample may be called "constructor".
+      const own = Object.prototype.hasOwnProperty.call(news.samples, card.id)
+        ? news.samples[card.id] : { ready: [], reduced_again: [] };
+      const badges = [];
+      if (own.ready.length) {
+        badges.push(el("span", {
+          // The open sample's row is drawn in the primary colour already.
+          className: "badge " + (open ? "text-bg-light" : "text-bg-primary"),
+          text: own.ready.length + " to copy",
+        }));
+      }
+      if (own.reduced_again.length) {
+        badges.push(el("span", {
+          className: "badge text-bg-warning", text: own.reduced_again.length + " reduced again",
+        }));
+      }
       const item = el("button", {
         type: "button",
-        className: "list-group-item list-group-item-action" +
-          (state.editing === card.id ? " active" : ""),
+        className: "list-group-item list-group-item-action" + (open ? " active" : ""),
       }, [
         el("div", { className: "d-flex gap-2" }, [
           el("span", { className: "mono", text: card.id }),
           el("span", { className: "text-truncate", text: card.title || "" }),
+          badges.length ? el("span", { className: "ms-auto d-flex gap-1" }, badges) : null,
         ]),
         el("div", { className: "small opacity-75", text: detail }),
       ]);
@@ -808,6 +914,7 @@
         });
         state.samples = saved.samples;
         state.catalogVersion = saved.catalog_version;
+        takeNews(saved.new_data);
         renderRuns();
         renderBulk();  // a type added here is a choice there now
       }
@@ -1007,6 +1114,12 @@
       });
       button.addEventListener("click", applyPlan);
       box.append(button);
+    } else if (!plan.writes && plan.needs_attention) {
+      // Nothing to do is not "in step" while something above is marked.
+      box.append(el("p", {
+        className: "text-secondary mt-2 mb-0",
+        text: "Nothing to apply. What is marked above needs a look first.",
+      }));
     } else if (!plan.writes && plan.samples.length) {
       box.append(el("p", { className: "text-secondary mt-2 mb-0", text: "Everything is in step." }));
     }
@@ -1039,6 +1152,7 @@
 
   function renderAll() {
     renderHeader();
+    renderNews();
     renderProblems(state.payload.problems);
     renderRuns();
     renderBulk();
@@ -1046,13 +1160,17 @@
     renderSamples();
   }
 
+  function setFilter(name) {
+    state.filter = name;
+    document.querySelectorAll("#expt-filters button").forEach(function (button) {
+      button.classList.toggle("active", button.dataset.filter === name);
+    });
+    renderRuns();
+  }
+
   document.querySelectorAll("#expt-filters button").forEach(function (button) {
     button.addEventListener("click", function () {
-      state.filter = button.dataset.filter;
-      document.querySelectorAll("#expt-filters button").forEach(function (other) {
-        other.classList.toggle("active", other === button);
-      });
-      renderRuns();
+      setFilter(button.dataset.filter);
     });
   });
   $("expt-search").addEventListener("input", function (event) {

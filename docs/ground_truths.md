@@ -4461,3 +4461,97 @@ removed: after `git checkout --ours` it may be a colleague's.
 A colleague who pulls has a manifest naming a file they lack, and recovery
 cannot help. The refusal says to `git add` it, not to restore from git, which
 could not work.
+
+### 2026-10-21: what an experiment on tiled.ornl.gov holds
+
+Seen once, read-only, after a Globus login as the user (device code), in
+`projects/isaac/IPTS-37740/`. Another process populates it; nrw does not.
+
+- **Two containers, `nexus/` and `autoreduction/`**, both tagged `isaac`, as
+  is `IPTS-37740/` itself: access is by project, not by IPTS. There is no
+  `context/` yet.
+- **`autoreduction/` is a flat list of `bytes` nodes, one per reduced file**,
+  336 of them, each keyed by the file's own name:
+  `REFL_234277_1_234277_autoreduction.dat` for a segment,
+  `REFL_234277_combined_autoreduction.dat` for the combined curve. These are
+  the `new_reduction` folder's names, which `instrument.reduced` already
+  reads.
+- **Each node is an external asset, served from the data mount.** Its one
+  data source points at
+  `file://localhost/SNS/REF_L/IPTS-37740/shared/autoreduce/new_reduction/<name>`,
+  the folder nrw's local source reads. Tiled serves those very bytes, so a fit
+  from either source reads the same files.
+- **The nodes carry no metadata.** Run, segment and subrun come from the name,
+  and title, angle and start time from the header, as for the folder. The
+  listing gives each file's asset `id` and `size`, and no time or checksum.
+- **The bytes need the asset's id**: `GET /api/v1/asset/bytes/<path>?id=<asset
+  id>`. Without it, Tiled answers 422. It sends the file through Starlette's
+  `FileResponse`, built from `os.stat` on the mount, so every download carries
+  an `ETag` and a `Last-Modified` taken from the file itself.
+- **The user's role is Tiled's default `user`**: `create:node`,
+  `write:metadata`, `create:apikeys` and the rest. Whether a user owns the
+  `isaac` tag, which a new node needs, is not something whoami says.
+
+### 2026-10-21: the sign of new data, and what a poll may not do
+
+On every poll, the Experiment page now works out what an apply would copy
+(`apply.new_data`). Its first version passed its own tests; three reviews found
+the following.
+
+- **A refusal copied by hand is a broken promise.** The sign first repeated two
+  of the four reasons apply skips a sample: a folder differing only in case,
+  and a copy record that cannot be read. It missed the other two:
+  - a `sample.md` the catalog cannot write, from any run note, sample text or
+    experiment text that breaks the rules;
+  - a damaged scaffold lock.
+
+  It said "2 runs ready to copy". Apply then copied nothing, said "Applied.",
+  and the sign stayed up. Both now ask every refusal through one of two
+  helpers: `_sample_refusal` for one sample, `_plan_problems` for all of
+  them. The agreement test takes its answer from what `apply()` copies, not
+  from the Review's lines, because a refused sample still listed its copies.
+- **Work done on every poll inherits every error in every sample folder.**
+  Before the sign, these broke only the Review. With it, they took down the
+  page and its poll, and the answer to a saved assignment: the assignment was
+  saved, then answered with 400 or 500.
+  - A file in `data/steady/` named for run 0, `REFL_0_combined_data_auto.txt`:
+    `RunKey(0)` raised in the walk over files nrw did not copy.
+  - A `data/` this account may not search.
+  - A `sources.json` nested 200,000 deep: `json` raises `RecursionError`,
+    which is no `ValueError`. An integer of over 4,300 digits raises a plain
+    `ValueError`, not `JSONDecodeError`. The scaffold lock's check had the
+    same hole.
+
+  Each is now a note against its sample. Any other fault is logged, and the
+  sign is then empty, with one note.
+- **On Python 3.14, `Path.exists()`, `is_file()` and `is_symlink()` answer
+  False when permission is denied; 3.11 to 3.13 raise instead.** So on 3.14:
+  - `read_sources` read a `data/` that nobody may search as "nothing copied";
+  - an unsearchable `data/steady/` made every copy look absent: the Review
+    planned to copy them all again, and the sign counted them ready.
+
+  Apply then failed at the write, so nothing was overwritten. Planning now
+  tries the read itself, and only `FileNotFoundError` means "none". It looks
+  at files with `os.lstat` (`_lstat`).
+- **`Path.is_file()` follows links, and `nrw import` points the links in
+  `data/steady/` into the facility's tree.** A poll that asks where one
+  points waits on that mount. Planning looks at each file's own status, and
+  the sign skips the walk over files nrw did not copy.
+- **A FIFO named `sources.json` blocks `read_text()` forever, and a link to
+  `/dev/zero` never ends.** The record is opened with `O_NONBLOCK`, checked
+  with `fstat`, and read only when it is a regular file of at most 8 MiB.
+- **An `OSError`'s message names the full path**, and the page shows its
+  notes to every viewer. Use `strerror` instead.
+- **The page polls every 10 s, and a browser test's wait gives up after
+  15 s.** So a wait for the sign passed even when the path under test was
+  broken, because the next poll repainted it. Only 4 of 14 page mutants were
+  caught. The browser tests now hold the poll and run it by hand:
+  `freeze_polling` captures the 10-s `setInterval` callback. Of the 57
+  mutants of step 2, all are now caught, the page's 15 among them.
+- **Open, and older than this work** (found by the design review): a sample
+  made from the bulk bar ("new sample…") has no context record. When its last
+  run moves to another sample, it drops out of `Catalog.sample_ids()`. After
+  that neither apply nor the sign looks at it, and its copies are never moved
+  out, so the run sits in two samples' `data/steady/`.
+- **Cost:** about 40 ms a poll, uncached, for 30 samples, 300 runs and 1,200
+  copies on a local disk, mostly in file-status calls.

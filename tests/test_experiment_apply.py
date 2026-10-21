@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -20,8 +21,10 @@ from nr_workbench.experiment.apply import (
     Action,
     ApplyBusy,
     ApplyRefused,
+    NewData,
     PlanChanged,
     apply,
+    new_data,
     plan_apply,
     read_sources,
 )
@@ -924,3 +927,583 @@ def test_a_note_that_would_break_sample_md_stops_its_sample_and_says_why(
         sample.problems[0].message
     )
     assert not (project / "samples" / "Sample6").exists()
+
+
+# --------------------------------------------------------------------------
+# The sign of new data: what each poll says applying would bring in
+# --------------------------------------------------------------------------
+
+#: Permissions mean nothing to root, and Windows has none of these.
+needs_posix_permissions = pytest.mark.skipif(
+    os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="needs POSIX permissions, as a user other than root",
+)
+
+
+def news_of(applier: Applier, catalog: Catalog) -> NewData:
+    runs, statuses = observe(applier.source)
+    return new_data(applier.project, catalog, runs, statuses)
+
+
+def touch(path: Path) -> None:
+    """The same bytes with a new modification time: a new version to a listing."""
+    when = time.time() - 100
+    os.utime(path, (when, when))
+
+
+def test_new_data_a_new_run_is_ready_to_copy_until_it_is_applied(
+    applier: Applier,
+) -> None:
+    catalog = catalog_for(*RUNS)
+
+    assert news_of(applier, catalog).ready == {"Sample6": RUNS}
+
+    applier.apply(catalog)
+
+    after = news_of(applier, catalog)
+    assert (after.ready, after.reduced_again) == ({}, {})
+
+
+def test_new_data_a_file_rewritten_at_the_source_is_reduced_again(
+    applier: Applier, folder: Path
+) -> None:
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    (folder / name).write_text((folder / name).read_text() + "0.3 1e-9 1e-10 0.001\n")
+
+    news = news_of(applier, catalog)
+
+    assert news.reduced_again == {"Sample6": (234277,)}
+    assert news.ready == {}
+    # The Review reads both files, and says what the sign could not.
+    assert actions(applier.plan(catalog))[name] is Action.SOURCE_CHANGED
+
+
+def test_new_data_a_touched_file_is_reduced_again_until_apply_records_it(
+    applier: Applier, folder: Path
+) -> None:
+    """Only the bytes tell a touch from a re-reduction, and the sign reads none."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    touch(folder / "REFL_234280_2_234281_autoreduction.dat")
+
+    assert news_of(applier, catalog).reduced_again == {"Sample6": (234280,)}
+
+    applier.apply(catalog)
+
+    assert news_of(applier, catalog).reduced_again == {}
+
+
+def test_new_data_a_copy_edited_by_hand_and_reduced_again_is_said_by_both(
+    applier: Applier, project: Path, folder: Path
+) -> None:
+    """The sign reads no copy, so it says reduced again; the Review says both."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    (steady(project) / name).write_text("# edited by hand\n")
+    touch(folder / name)
+
+    assert news_of(applier, catalog).reduced_again == {"Sample6": (234277,)}
+    (chosen,) = (f for f in applier.plan(catalog).samples[0].files if f.name == name)
+    assert chosen.action is Action.LOCAL_EDITED
+    assert "rewritten" in chosen.detail
+
+
+def test_new_data_an_excluded_run_is_not_ready(applier: Applier) -> None:
+    catalog = edit(catalog_for(*RUNS), 234280, include=False)
+
+    assert news_of(applier, catalog).ready == {"Sample6": (234277,)}
+
+
+def test_new_data_an_unconfirmed_run_is_not_ready(applier: Applier) -> None:
+    """A person confirms one, and only in the Review."""
+    catalog = catalog_for(NEXT_RUN)
+
+    assert news_of(applier, catalog).ready == {}
+    assert set(actions(applier.plan(catalog)).values()) == {Action.DEFERRED}
+
+
+def test_new_data_a_run_partly_copied_is_ready_when_a_file_arrives(
+    applier: Applier, folder: Path
+) -> None:
+    """Confirmed short and copied; then its last segment is reduced after all."""
+    write_autoreduced(folder, 234285, [1, 2], planned=3, mtime=time.time() - 3600)
+    catalog = catalog_for(234285)
+    applier.apply(catalog, confirmed={RunKey(234285)})
+    write_autoreduced(folder, 234285, [3], planned=3, mtime=time.time() - 3600)
+
+    assert news_of(applier, catalog).ready == {"Sample6": (234285,)}
+
+
+def test_new_data_a_run_included_again_is_not_new_data(applier: Applier) -> None:
+    """Its copy moves back from data/excluded/ because a person said so;
+    nothing arrived, so nothing is signed."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    excluded = edit(catalog, 234280, include=False)
+    applier.apply(excluded)
+    included = edit(excluded, 234280, include=True)
+
+    assert Action.RESTORE in set(actions(applier.plan(included)).values())
+    news = news_of(applier, included)
+    assert (news.ready, news.reduced_again) == ({}, {})
+
+
+def test_new_data_counts_complete_runs_in_no_sample_apart(applier: Applier) -> None:
+    news = news_of(applier, catalog_for(234277))
+
+    # 234280 is complete and in no sample; the next run is not complete yet.
+    assert news.unassigned == (234280,)
+    assert news.ready == {"Sample6": (234277,)}
+
+
+def test_new_data_a_run_taken_out_of_its_sample_waits_again(
+    applier: Applier,
+) -> None:
+    """What Unassign leaves: the run's record, with no sample in it."""
+    catalog = edit(catalog_for(*RUNS), 234280, sample_id=None)
+
+    assert news_of(applier, catalog).unassigned == (234280,)
+
+
+def test_new_data_a_run_excluded_from_every_sample_is_not_waiting(
+    applier: Applier,
+) -> None:
+    """A direct beam belongs to no sample: excluding it says so, and it is not counted."""
+    catalog = apply_changes(
+        catalog_for(234277),
+        runs=[RunChange(RunKey(234280), 0, {"include": False})],
+        now=NOW,
+    )
+
+    assert news_of(applier, catalog).unassigned == ()
+
+
+def _damage_nothing(project: Path, catalog: Catalog) -> Catalog:
+    return catalog
+
+
+def _damage_a_note(project: Path, catalog: Catalog) -> Catalog:
+    """A note saved before notes were held to sample.md's rules: Sample7 stops."""
+    entry = catalog.runs[RunKey(234284)]
+    bad = dataclasses.replace(entry, note="## Fits to perform\nFit it all.")
+    return dataclasses.replace(catalog, runs={**catalog.runs, entry.key: bad})
+
+
+def _damage_the_experiment(project: Path, catalog: Catalog) -> Catalog:
+    """The experiment's context, which every sample.md carries: every sample stops."""
+    experiment = dataclasses.replace(
+        catalog.experiment, details="## Fits to perform\nFit it all."
+    )
+    return dataclasses.replace(catalog, experiment=experiment)
+
+
+def _damage_the_lock(project: Path, catalog: Catalog) -> Catalog:
+    """A merge left in the scaffold lock: apply stops for every sample."""
+    lock = project / ".nrw" / "scaffold.lock.json"
+    lock.write_text("<<<<<<< HEAD\n" + lock.read_text() + "=======\n>>>>>>> other\n")
+    return catalog
+
+
+@pytest.mark.parametrize(
+    ("damage", "ready"),
+    [
+        (_damage_nothing, {"Sample6": (234283,), "Sample7": (234284,)}),
+        (_damage_a_note, {"Sample6": (234283,)}),
+        (_damage_the_experiment, {}),
+        (_damage_the_lock, {}),
+    ],
+    ids=["nothing-stops-it", "a-note", "the-experiment", "the-lock"],
+)
+def test_new_data_counts_what_apply_copies_on_the_same_listing(
+    applier: Applier,
+    project: Path,
+    folder: Path,
+    context: RenderContext,
+    source,
+    damage,
+    ready,
+) -> None:
+    """Every case at once, the sign worked out from the listing apply is given.
+
+    The answer is what apply *does*, not what the Review lists: a sample
+    apply refuses still lists its copies, and has none made.
+    """
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    # Since that apply: one file reduced again, one only touched ...
+    rewritten = folder / "REFL_234277_1_234277_autoreduction.dat"
+    rewritten.write_text(rewritten.read_text() + "0.3 1e-9 1e-10 0.001\n")
+    touch(folder / "REFL_234280_2_234281_autoreduction.dat")
+    # ... and new single-segment runs, all complete: NEXT_RUN is later.
+    for run in range(234283, 234289):
+        write_autoreduced(folder, run, [1], planned=1, mtime=time.time() - 3600)
+    hand_copied = steady(project, "Sample7") / "REFL_234286_1_234286_autoreduction.dat"
+    hand_copied.parent.mkdir(parents=True)
+    hand_copied.write_bytes((folder / hand_copied.name).read_bytes())
+    catalog = apply_changes(
+        catalog,
+        runs=[
+            RunChange(RunKey(234283), 0, {"sample_id": "Sample6"}),
+            RunChange(RunKey(NEXT_RUN), 0, {"sample_id": "Sample6"}),  # unconfirmed
+            RunChange(RunKey(234284), 0, {"sample_id": "Sample7"}),
+            RunChange(RunKey(234285), 0, {"sample_id": "Sample7", "include": False}),
+            RunChange(RunKey(234286), 0, {"sample_id": "Sample7"}),
+            RunChange(RunKey(234288), 0, {"include": False}),  # in no sample, decided
+        ],
+        now=NOW,
+    )
+    catalog = damage(project, catalog)
+
+    runs, statuses = observe(source)
+    news = new_data(project, catalog, runs, statuses)
+    plan = plan_apply(project, catalog, runs, statuses, source, context)
+    # Read again by the Review because the version moved, where apply would
+    # act at all -- taken before apply rewrites the copy records.
+    reread = {
+        f.run
+        for sample in plan.samples
+        if not sample.problems and not plan.problems
+        for f in sample.files
+        if f.action in (Action.RECORD, Action.SOURCE_CHANGED)
+        and f.name in read_sources(project / "samples" / sample.sample_id)
+    }
+    try:
+        report = apply(
+            project,
+            catalog,
+            runs,
+            statuses,
+            source,
+            context,
+            expected_plan_id=plan.plan_id,
+        )
+        copied = {done.run for done in report.done if done.action is Action.COPY}
+    except ApplyRefused:
+        copied = set()
+
+    assert {run for runs in news.ready.values() for run in runs} == copied
+    assert {run for runs in news.reduced_again.values() for run in runs} == reread
+    refusals = {p.scope for p in plan.problems} | {
+        p.scope for sample in plan.samples for p in sample.problems
+    }
+    assert {p.scope for p in news.problems} == refusals
+    # No Apply is offered for what apply would refuse.
+    assert not any(s.writes for s in plan.samples if s.problems)
+    assert not (plan.problems and plan.writes)
+    assert news.ready == ready
+    assert news.unassigned == (234287,)  # assigning is not applying
+
+
+def test_new_data_reads_no_copy(applier: Applier, folder: Path, monkeypatch) -> None:
+    """The page asks on every poll: hashing each copy would read the experiment."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    touch(folder / "REFL_234277_1_234277_autoreduction.dat")
+
+    def no_reading(path: Path) -> None:
+        raise AssertionError(f"read {path}")
+
+    monkeypatch.setattr(apply_module, "sha256_file_or_none", no_reading)
+    # The tripwire is on planning's path: the Review trips it.
+    with pytest.raises(AssertionError, match="read"):
+        applier.plan(catalog)
+
+    assert news_of(applier, catalog).reduced_again == {"Sample6": (234277,)}
+
+
+@needs_posix_permissions
+def test_new_data_reads_no_copy_by_any_means(applier: Applier, project: Path) -> None:
+    """Copies nobody may read: any read of one would be the sample's problem."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    copies = list(steady(project).iterdir())
+    for path in copies:
+        path.chmod(0)
+    try:
+        news = news_of(applier, catalog)
+    finally:
+        for path in copies:
+            path.chmod(0o644)
+
+    assert news.problems == ()
+
+
+def test_new_data_never_asks_where_a_link_in_the_sample_points(
+    applier: Applier, project: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """`nrw import` links into the facility's tree, on a mount that may stop
+    answering: a poll that followed a link would wait with it."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    copy = steady(project) / "REFL_234277_1_234277_autoreduction.dat"
+    target = tmp_path / "facility-mount" / copy.name
+    target.parent.mkdir()
+    target.write_bytes(copy.read_bytes())
+    copy.unlink()
+    copy.symlink_to(target)
+    # And one nrw did not make, for a run this sample does not use.
+    imported = steady(project) / "REFL_234271_1_234271_autoreduction.dat"
+    imported.symlink_to(target)
+    runs, statuses = observe(applier.source)
+    real_stat = os.stat
+
+    def stat(path, *args, follow_symlinks=True, **kwargs):
+        if (
+            follow_symlinks
+            and isinstance(path, (str, os.PathLike))
+            and Path(path) in (copy, imported)
+        ):
+            raise AssertionError(f"followed {path}")
+        return real_stat(path, *args, follow_symlinks=follow_symlinks, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    # The tripwire is where a look that follows links looks.
+    for link in (copy, imported):
+        with pytest.raises(AssertionError, match="followed"):
+            link.is_file()
+
+    news = new_data(project, catalog, runs, statuses)
+    plan = applier.plan(catalog)
+
+    assert (news.ready, news.problems) == ({}, ())
+    # The Review says both, and follows neither.
+    assert actions(plan)[copy.name] is Action.CONFLICT
+    assert actions(plan)[imported.name] is Action.NOT_MANAGED
+
+
+def test_a_moved_source_that_cannot_be_read_is_named_not_taken_as_in_step(
+    project: Path, context: RenderContext
+) -> None:
+    """A remote source can go between listing and reading: a re-reduction must
+    not then pass for unchanged."""
+    source = InMemorySource()
+    source.add_segments(234277, [1, 2, 3])
+    source.add_segments(NEXT_RUN, [1])
+    applier = Applier(project, context, source)
+    catalog = catalog_for(234277)
+    applier.apply(catalog)
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    source.touch(name, mtime=1.0)
+    source.fail_reads_after = source.reads
+
+    plan = applier.plan(catalog)
+
+    (chosen,) = (f for f in plan.samples[0].files if f.name == name)
+    assert chosen.action is Action.SOURCE_CHANGED
+    assert "cannot be read" in chosen.detail
+    assert plan.needs_attention
+
+
+def test_a_hand_copied_file_whose_source_cannot_be_read_is_a_conflict(
+    project: Path, context: RenderContext
+) -> None:
+    source = InMemorySource()
+    source.add_segments(234277, [1, 2, 3])
+    source.add_segments(NEXT_RUN, [1])
+    name = "REFL_234277_1_234277_autoreduction.dat"
+    steady(project).mkdir(parents=True)
+    (steady(project) / name).write_bytes(source.files[name].data)
+    source.fail_reads_after = 0
+
+    plan = Applier(project, context, source).plan(catalog_for(234277))
+
+    (chosen,) = (f for f in plan.samples[0].files if f.name == name)
+    assert chosen.action is Action.CONFLICT
+    assert "cannot be read" in chosen.detail
+
+
+def test_new_data_names_a_sample_it_cannot_work_out_and_counts_the_rest(
+    applier: Applier, project: Path
+) -> None:
+    """A sample nothing can be applied to must not look like one with nothing new."""
+    catalog = apply_changes(
+        catalog_for(234277),
+        runs=[RunChange(RunKey(234280), 0, {"sample_id": "Sample7"})],
+        now=NOW,
+    )
+    record = project / "samples" / "Sample6" / "data" / "sources.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+
+    news = news_of(applier, catalog)
+
+    assert [p.scope for p in news.problems] == ["sample:Sample6"]
+    assert "sources.json" in news.problems[0].message
+    assert news.ready == {"Sample7": (234280,)}
+
+
+def test_new_data_names_a_sample_whose_directory_differs_only_in_case(
+    applier: Applier, project: Path
+) -> None:
+    (project / "samples" / "sample6").mkdir(parents=True)
+
+    news = news_of(applier, catalog_for(*RUNS))
+
+    assert news.ready == {}
+    assert [p.scope for p in news.problems] == ["sample:Sample6"]
+    assert "samples/sample6/" in news.problems[0].message
+
+
+@needs_posix_permissions
+@pytest.mark.parametrize(
+    ("locked", "said"),
+    [("data", "may not read"), ("data/steady", "cannot be looked at")],
+    ids=["its-data", "its-copies"],
+)
+def test_a_sample_folder_nobody_may_read_is_that_samples_problem(
+    applier: Applier, project: Path, locked: str, said: str
+) -> None:
+    """Not the page's: a colleague's umask must not take every poll down. Nor
+    read as nothing copied, which Python 3.14's `exists()` would say."""
+    catalog = catalog_for(234277)
+    applier.apply(catalog)
+    catalog = apply_changes(
+        catalog, runs=[RunChange(RunKey(234280), 0, {"sample_id": "Sample7"})], now=NOW
+    )
+    folder = project / "samples" / "Sample6" / locked
+    folder.chmod(0)
+    try:
+        news = news_of(applier, catalog)
+        plan = applier.plan(catalog)
+    finally:
+        folder.chmod(0o755)
+
+    assert [p.scope for p in news.problems] == ["sample:Sample6"]
+    # Said as what it is, and without the project's full path.
+    assert said in news.problems[0].message
+    assert str(project) not in news.problems[0].message
+    assert news.ready == {"Sample7": (234280,)}
+    refused = {s.sample_id for s in plan.samples if s.problems}
+    assert refused == {"Sample6"}
+
+
+def test_a_sample_id_nrw_would_not_write_is_refused_and_nothing_outside_read(
+    applier: Applier, project: Path
+) -> None:
+    """Only a catalog changed some other way than nrw -- by hand, or a remote
+    one -- can hold one, and it may name a path outside samples/."""
+    outside = project / "elsewhere"
+    (outside / "data").mkdir(parents=True)
+    (outside / "data" / "sources.json").write_text("{read if looked at")
+    odd = os.path.relpath(outside, project / "samples")
+    entry = catalog_for(234277).runs[RunKey(234277)]
+    catalog = Catalog(runs={entry.key: dataclasses.replace(entry, sample_id=odd)})
+
+    news = news_of(applier, catalog)
+    plan = applier.plan(catalog)
+
+    assert [p.scope for p in news.problems] == [f"sample:{odd}"]
+    assert "not a usable sample id" in news.problems[0].message
+    assert [p.message for s in plan.samples for p in s.problems] == [
+        news.problems[0].message
+    ]
+
+
+def test_a_file_named_for_run_0_is_reported_not_raised(
+    applier: Applier, project: Path
+) -> None:
+    """It raised from planning, which the page's every poll now shares."""
+    catalog = catalog_for(*RUNS)
+    applier.apply(catalog)
+    stray = steady(project) / "REFL_0_combined_data_auto.txt"
+    stray.write_text("# not a run\n")
+
+    assert actions(applier.plan(catalog))[stray.name] is Action.NOT_MANAGED
+    assert news_of(applier, catalog).problems == ()
+
+
+def sources_json(project: Path) -> Path:
+    path = project / "samples" / "Sample6" / "data" / "sources.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "[" * 200_000,
+        '{"schema": "nrw-sources/1", "files": {}, "n": ' + "1" * 5000 + "}",
+    ],
+    ids=["nested-too-deep", "a-number-too-long"],
+)
+def test_a_copy_record_python_cannot_parse_is_refused_not_raised(
+    project: Path, text: str
+) -> None:
+    """Neither is a JSONDecodeError: one is a RecursionError, one a ValueError."""
+    sources_json(project).write_text(text)
+
+    with pytest.raises(ApplyRefused, match="sources.json"):
+        read_sources(project / "samples" / "Sample6")
+
+
+def test_a_copy_record_that_is_a_directory_is_refused_without_the_full_path(
+    project: Path,
+) -> None:
+    sources_json(project).mkdir()
+
+    with pytest.raises(ApplyRefused) as refused:
+        read_sources(project / "samples" / "Sample6")
+
+    assert "samples/Sample6/data/sources.json" in str(refused.value)
+    assert str(project) not in str(refused.value)
+
+
+def test_a_copy_record_too_large_is_refused_unread(project: Path, monkeypatch) -> None:
+    monkeypatch.setattr(apply_module, "MAX_SOURCES_BYTES", 1000)
+    sources_json(project).write_text(" " * 1001)
+
+    with pytest.raises(ApplyRefused, match="larger than"):
+        read_sources(project / "samples" / "Sample6")
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
+def test_a_copy_record_that_is_a_fifo_is_refused_without_waiting(
+    project: Path,
+) -> None:
+    """Nothing ever writes to it: a read would wait for good, and hold the poll."""
+    os.mkfifo(sources_json(project))
+    outcome: list[BaseException] = []
+
+    def read() -> None:
+        try:
+            read_sources(project / "samples" / "Sample6")
+        except BaseException as exc:  # noqa: BLE001 - kept for the assertion
+            outcome.append(exc)
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(timeout=5)
+
+    assert not reader.is_alive(), "read_sources is waiting on the FIFO"
+    assert isinstance(outcome[0], ApplyRefused)
+
+
+@pytest.mark.skipif(not Path("/dev/zero").exists(), reason="no /dev/zero here")
+def test_a_copy_record_linked_to_a_device_is_refused_not_read(project: Path) -> None:
+    """/dev/zero never ends: read whole on every poll, it would fill memory."""
+    sources_json(project).symlink_to("/dev/zero")
+
+    with pytest.raises(ApplyRefused, match="not a regular file"):
+        read_sources(project / "samples" / "Sample6")
+
+
+def test_new_data_as_dict_lists_the_runs_overall_and_per_sample() -> None:
+    news = NewData(
+        ready={"Sample6": (234277, 234283), "Sample7": (234280,)},
+        reduced_again={"Sample8": (234271,)},
+        unassigned=(234287, 234281),
+    )
+
+    assert news.as_dict() == {
+        "ready": [234277, 234280, 234283],
+        "reduced_again": [234271],
+        "unassigned": [234281, 234287],
+        "samples": {
+            "Sample6": {"ready": [234277, 234283], "reduced_again": []},
+            "Sample7": {"ready": [234280], "reduced_again": []},
+            "Sample8": {"ready": [], "reduced_again": [234271]},
+        },
+    }

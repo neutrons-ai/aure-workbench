@@ -15,6 +15,7 @@ skipped where there is no Chrome.
 
 from __future__ import annotations
 
+import os
 import secrets
 import sys
 import threading
@@ -416,6 +417,221 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
     )
     assign_selected()
     assert store.load().runs[RunKey(234277)].measurement == "steady"
+
+
+def more_runs(served, project: Path) -> None:
+    """Runs to sign. A later run ends S1's 234277; S2 has two runs of its own;
+    234280 is complete and in no sample; S3 is in the catalog, with no runs."""
+    facility = project.parent / "facility"
+    for run in (234280, 234283, 234286):
+        write_autoreduced(facility, run, [1, 2, 3], mtime=time.time() - 3600)
+    write_autoreduced(facility, 234290, [1], mtime=time.time() - 3600)
+    ParquetCatalogStore.for_project(project).update(
+        runs=[
+            RunChange(RunKey(run), 0, {"sample_id": "S2"}) for run in (234283, 234286)
+        ],
+        samples=[SampleChange("S3", 0, {"title": "Not measured yet"})],
+    )
+    served[1].config["NRW_EXPERIMENT"].live.scan_once()
+
+
+def freeze_polling(page: Page) -> None:
+    """Hold the page's 10-second poll, for :func:`poll_now` to run by hand.
+
+    Left running, the poll repaints the sign inside any wait long enough to
+    be safe, so a wait would pass whichever path was broken. Frozen, each
+    wait passes only by the path it names.
+    """
+    page.send(
+        "Page.addScriptToEvaluateOnNewDocument",
+        source=(
+            "(function () {"
+            "  const every = window.setInterval;"
+            "  window.setInterval = function (fn, ms, ...rest) {"
+            "    if (ms === 10000) { window.nrwPoll = fn; return 0; }"
+            "    return every.call(window, fn, ms, ...rest);"
+            "  };"
+            "})();"
+        ),
+    )
+
+
+def poll_now(page: Page) -> None:
+    page.js("window.nrwPoll()")
+
+
+def open_frozen(page: Page, site: Site) -> None:
+    freeze_polling(page)
+    page.goto(site.link)
+    page.goto(f"{site.url}/experiment")
+    assert page.js("typeof window.nrwPoll") == "function", "the poll was not held"
+
+
+def sample_item(page: Page, sample_id: str) -> str:
+    return page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        f".find(b => b.querySelector('.mono').textContent === '{sample_id}')"
+        ".textContent"
+    )
+
+
+def shown(page: Page, element_id: str) -> bool:
+    """On screen, not merely in the page."""
+    return page.js(
+        f"(e => e !== null && e.checkVisibility())(document.getElementById('{element_id}'))"
+    )
+
+
+def test_new_data_is_signed_and_the_sign_leads_to_the_review(
+    page: Page, served, project: Path
+) -> None:
+    site, app = served
+    more_runs(served, project)
+
+    open_frozen(page, site)
+
+    # Drawn with the page, not by a poll.
+    assert shown(page, "expt-news-review")
+    assert page.text("expt-news-review") == "3 runs ready to copy"
+    assert page.js("document.title").startswith("(3) ")
+    # Each sample its own count, and none on a sample with nothing new.
+    assert "1 to copy" in sample_item(page, "S1")
+    assert "2 to copy" in sample_item(page, "S2")
+    assert "to copy" not in sample_item(page, "S3")
+
+    page.click("expt-news-review")
+    page.wait_for(
+        "document.getElementById('expt-plan').textContent.includes('REFL_234277_1_')",
+        what="the review",
+    )
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-plan button'))"
+        ".find(b => b.textContent === 'Apply').click()"
+    )
+    page.wait_for(
+        "document.getElementById('expt-message').textContent === 'Applied.'",
+        what="the apply",
+    )
+
+    # The page reloaded after applying, and that alone cleared the sign.
+    assert page.js("document.getElementById('expt-news-review')") is None
+    assert not page.js("document.title").startswith("(")
+    assert "to copy" not in sample_item(page, "S1")
+    copied = project / "samples" / "S1" / "data" / "steady"
+    assert len(list(copied.glob("REFL_234277_*"))) == 3
+
+    # Then the facility reduces one of S1's files again.
+    rewritten = project.parent / "facility" / "REFL_234277_2_234278_autoreduction.dat"
+    rewritten.write_text(rewritten.read_text() + "0.3 1e-9 1e-10 0.001\n")
+    old = time.time() - 3600
+    os.utime(rewritten, (old, old))
+    app.config["NRW_EXPERIMENT"].live.scan_once()
+    poll_now(page)
+
+    assert shown(page, "expt-news-review")
+    assert page.text("expt-news-review") == "1 run reduced again"
+    assert "1 reduced again" in sample_item(page, "S1")
+    assert "reduced again" not in sample_item(page, "S2")
+    assert not page.js("document.title").startswith("(")  # nothing to copy
+
+
+def test_runs_in_no_sample_are_selected_to_assign_and_the_sign_follows(
+    page: Page, served, project: Path
+) -> None:
+    site, app = served
+    more_runs(served, project)
+    open_frozen(page, site)
+    assert shown(page, "expt-news-unassigned")
+    assert page.text("expt-news-unassigned") == "1 complete run in no sample"
+
+    page.click("expt-news-unassigned")
+
+    assert page.text("expt-selected") == "1 selected"
+    active = "document.querySelector('#expt-filters .active').dataset.filter"
+    assert page.js(active) == "unassigned"
+    rows = page.js(
+        "Array.from(document.querySelectorAll('#expt-runs tbody tr'))"
+        ".map(r => [r.cells[1].textContent, r.querySelector('input').checked])"
+    )
+    # Only runs in no sample are shown, and of them, the complete one chosen.
+    assert rows == [["234280", True], ["234290", False]]
+    page.js(
+        "{ const s = document.getElementById('expt-sample'); s.value = 'S1';"
+        " s.dispatchEvent(new Event('change')); }"
+    )
+    page.click("expt-assign")
+    page.wait_for(
+        "document.getElementById('expt-message').textContent.startsWith('Assigned')",
+        what="the assignment",
+    )
+
+    # The answer to the assignment carried the sign: no poll has run.
+    assert page.js("document.getElementById('expt-news-unassigned')") is None
+    assert page.text("expt-news-review") == "4 runs ready to copy"
+    assert "2 to copy" in sample_item(page, "S1")
+
+    # A poll with nothing new leaves the sample list, and the focus in it, be.
+    page.js(
+        "window.focused = Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('S2')); window.focused.focus()"
+    )
+    poll_now(page)
+    assert page.js("document.activeElement === window.focused")
+
+    # A run that arrives while the page is open is signed at the next poll.
+    facility = project.parent / "facility"
+    write_autoreduced(facility, 234293, [1, 2, 3], mtime=time.time() - 3600)
+    write_autoreduced(facility, 234300, [1], mtime=time.time() - 3600)
+    app.config["NRW_EXPERIMENT"].live.scan_once()
+    poll_now(page)
+    assert shown(page, "expt-news-unassigned")
+    assert page.text("expt-news-unassigned") == "1 complete run in no sample"
+
+
+def test_excluding_a_run_in_the_editor_takes_it_off_the_sign_at_once(
+    page: Page, served, project: Path
+) -> None:
+    site, _ = served
+    more_runs(served, project)
+    freeze_polling(page)
+    open_s1(page, site)
+    assert page.text("expt-news-review") == "3 runs ready to copy"
+
+    page.js(
+        f"{{ const g = {in_row('[data-field=include]')}; g.checked = false;"
+        " g.dispatchEvent(new Event('change')); }"
+    )
+    page.click("expt-save")
+    page.wait_for(
+        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
+        what="the save",
+    )
+
+    assert page.text("expt-news-review") == "2 runs ready to copy"
+    assert "to copy" not in sample_item(page, "S1")
+
+
+def test_a_review_with_nothing_it_may_apply_does_not_say_in_step(
+    page: Page, site: Site, project: Path
+) -> None:
+    """A sample apply refuses writes nothing, and that is not being in step."""
+    record = project / "samples" / "S1" / "data" / "sources.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+    open_frozen(page, site)
+
+    page.click("expt-review")
+    page.wait_for(
+        "document.getElementById('expt-plan').textContent.includes('sources.json')",
+        what="the review",
+    )
+
+    text = page.text("expt-plan")
+    assert "Nothing to apply" in text and "in step" not in text
+    assert page.js(
+        "Array.from(document.querySelectorAll('#expt-plan button'))"
+        ".every(b => b.textContent !== 'Apply')"
+    )
 
 
 def test_a_model_is_written_from_the_samples_data_once_it_has_some(

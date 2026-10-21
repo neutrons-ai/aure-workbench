@@ -35,11 +35,13 @@ kept and the catalog's version is written beside it as ``sample.md.nrw-new``.
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import json
 import os
 import secrets
 import shutil
+import stat
 import threading
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -49,10 +51,17 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.experiment.inventory import SourceFile, SourceRun
-from nr_workbench.experiment.model import Catalog, RunKey
+from nr_workbench.experiment.model import (
+    Catalog,
+    CatalogValidationError,
+    RunEntry,
+    RunKey,
+    validate_sample_id,
+)
 from nr_workbench.experiment.render import (
     SampleRenderError,
     plan_sample,
+    prose_for,
     sample_md_relpath,
 )
 from nr_workbench.experiment.status import RunStatus
@@ -74,6 +83,15 @@ from nr_workbench.provenance.hashing import sha256_file_or_none
 #: The record of what nrw copied into a sample, beside the data.
 SOURCES_FILE = "sources.json"
 SOURCES_SCHEMA = "nrw-sources/1"
+
+#: Largest copy record read. A sample's copies make a few hundred entries of a
+#: few hundred bytes; this stops a file that is not nrw's record from being
+#: read whole on every poll of the page.
+MAX_SOURCES_BYTES = 8 * 1024 * 1024
+
+#: How the copy record is opened: without waiting, so a FIFO by that name
+#: cannot hold a poll, and as bytes on every system.
+_RECORD_OPEN = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
 
 #: Where a sample's steady-state data is, under ``data/`` -- what every reader
 #: of the sample looks at.
@@ -245,8 +263,10 @@ class ApplyPlan:
 
     @property
     def writes(self) -> bool:
-        """Whether applying changes anything on disk."""
-        return any(sample.writes for sample in self.samples)
+        """Whether applying changes anything on disk: never while a problem
+        stops apply for every sample, so the Review offers no Apply that
+        would only be refused."""
+        return not self.problems and any(sample.writes for sample in self.samples)
 
     @property
     def needs_attention(self) -> bool:
@@ -320,14 +340,9 @@ def plan_apply(
         The plan.
     """
     root = Path(root)
-    problems: list[Problem] = []
-    lock_path = ProjectLayout(root=root).scaffold_lock
-    trouble = lock_problem(lock_path)
-    if trouble:
-        problems.append(Problem("scaffold", trouble))
-
+    problems = _plan_problems(root)
+    lock = load_lock(ProjectLayout(root=root).scaffold_lock) if not problems else {}
     chosen = sorted(samples) if samples is not None else catalog.sample_ids()
-    lock = load_lock(lock_path) if not trouble else {}
     existing = _existing_sample_dirs(root)
     plans = []
     for sample_id in chosen:
@@ -355,20 +370,209 @@ def plan_apply(
                 )
             )
         except ApplyRefused as exc:
-            plans.append(
-                SamplePlan(
-                    sample_id,
-                    creates=False,
-                    files=(),
-                    sample_md=None,
-                    sample_md_detail="",
-                    problems=(Problem(f"sample:{sample_id}", str(exc)),),
-                )
-            )
+            plans.append(_refused(sample_id, Problem(f"sample:{sample_id}", str(exc))))
+        except OSError as exc:
+            plans.append(_refused(sample_id, _cannot_look(sample_id, exc)))
     return ApplyPlan(
         samples=tuple(plans),
         plan_id=_plan_id(plans, catalog, source),
         problems=tuple(problems),
+    )
+
+
+@dataclass(frozen=True)
+class NewData:
+    """What applying would bring in, by apply's own rules, read off a listing.
+
+    Attributes:
+        ready: Per sample, the runs apply would copy now: assigned, included,
+            complete, and with a file the sample does not have yet. An
+            unconfirmed run waits for a person in the Review, so it is not here.
+        reduced_again: Per sample, the runs with a copy whose file the source
+            now lists in another version. Only the Review, which reads both,
+            can say whether the bytes changed.
+        unassigned: Complete runs in no sample that nobody excluded. Nothing
+            copies them until someone assigns them.
+        problems: What stops apply, for one sample or for all of them; the
+            sign counts nothing there, as apply would copy nothing.
+    """
+
+    ready: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    reduced_again: Mapping[str, tuple[int, ...]] = field(default_factory=dict)
+    unassigned: tuple[int, ...] = ()
+    problems: tuple[Problem, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the JSON form: run numbers, over all samples and per sample."""
+        return {
+            "ready": sorted(run for runs in self.ready.values() for run in runs),
+            "reduced_again": sorted(
+                run for runs in self.reduced_again.values() for run in runs
+            ),
+            "unassigned": sorted(self.unassigned),
+            "samples": {
+                sample_id: {
+                    "ready": list(self.ready.get(sample_id, ())),
+                    "reduced_again": list(self.reduced_again.get(sample_id, ())),
+                }
+                for sample_id in sorted({*self.ready, *self.reduced_again})
+            },
+        }
+
+
+def new_data(
+    root: Path,
+    catalog: Catalog,
+    runs: Mapping[RunKey, SourceRun],
+    statuses: Mapping[RunKey, RunStatus],
+) -> NewData:
+    """What applying would bring in now, without reading a single data file.
+
+    The page asks on every poll, so this takes the steps :func:`plan_apply`
+    takes and stops where planning would read: it stops at the same
+    refusals, then compares the source's listing with each sample's
+    ``data/sources.json`` and looks at the files the sample uses, by name and
+    type, nothing more -- never through a link, which ``nrw import`` points
+    into the facility's tree. What it counts, apply copies; what only a read
+    can tell, the Review tells: a copy edited by hand, and whether a file
+    listed in a new version really changed.
+
+    Args:
+        root: Project root.
+        catalog: The catalog.
+        runs: What the source lists, by key.
+        statuses: Each listed run's arrival state.
+
+    Returns:
+        The runs to copy and those reduced again, per sample; the runs in no
+        sample; and what stops apply, where it stops it.
+    """
+    root = Path(root)
+    # Assigning is not applying: what stops apply leaves these waiting.
+    unassigned = tuple(
+        sorted(
+            {
+                key.run
+                for key, status in statuses.items()
+                if status.complete and _in_no_sample(catalog.runs.get(key))
+            }
+        )
+    )
+    # What stops apply stops the rest of the sign: copies promised that apply
+    # will not make would stay on the page after every apply.
+    blocked = _plan_problems(root)
+    if blocked:
+        return NewData(unassigned=unassigned, problems=tuple(blocked))
+    existing = _existing_sample_dirs(root)
+    ready: dict[str, tuple[int, ...]] = {}
+    again: dict[str, tuple[int, ...]] = {}
+    problems: list[Problem] = []
+    for sample_id in catalog.sample_ids():
+        refusal = _sample_refusal(catalog, sample_id, existing)
+        if refusal is not None:
+            problems.append(refusal)
+            continue
+        sample_dir = root / "samples" / sample_id
+        try:
+            steps = _copy_steps(
+                _wanted(catalog, sample_id),
+                runs,
+                statuses,
+                sample_dir / "data" / STEADY_DIR,
+                read_sources(sample_dir),
+                set(),  # nobody confirms a run outside a Review
+            )
+        except ApplyRefused as exc:
+            problems.append(Problem(f"sample:{sample_id}", str(exc)))
+            continue
+        except OSError as exc:
+            problems.append(_cannot_look(sample_id, exc))
+            continue
+        copies = {
+            s.run
+            for s in steps
+            if isinstance(s, FileAction) and s.action is Action.COPY
+        }
+        moved = {s.run for s in steps if isinstance(s, _UnreadCopy) and s.version_moved}
+        if copies:
+            ready[sample_id] = tuple(sorted(copies))
+        if moved:
+            again[sample_id] = tuple(sorted(moved))
+    return NewData(ready, again, unassigned, tuple(problems))
+
+
+def _in_no_sample(entry: RunEntry | None) -> bool:
+    """Whether a run waits for someone to put it in a sample.
+
+    An excluded run is one somebody decided about -- a direct beam, an
+    alignment scan -- so it is no longer waiting.
+    """
+    return entry is None or (entry.sample_id is None and entry.include)
+
+
+def _plan_problems(root: Path) -> list[Problem]:
+    """What stops apply for every sample at once: a scaffold lock it must not
+    write over. Planning and the sign of new data both ask here."""
+    trouble = lock_problem(ProjectLayout(root=root).scaffold_lock)
+    return [Problem("scaffold", trouble)] if trouble else []
+
+
+def _sample_refusal(
+    catalog: Catalog, sample_id: str, existing: Mapping[str, str]
+) -> Problem | None:
+    """Why apply would do nothing at all for this sample, or ``None``.
+
+    Planning and the sign of new data both stop here, so neither counts on a
+    sample the other refuses. A new refusal belongs here: anywhere else, the
+    sign would go on promising copies apply never makes. The one other is a
+    copy record that cannot be read (:func:`read_sources`), which both catch.
+    """
+    try:
+        # nrw's own edits hold every sample id to this, so one that fails it
+        # was written some other way -- and could name a path outside samples/.
+        validate_sample_id(sample_id)
+    except CatalogValidationError as exc:
+        return Problem(
+            f"sample:{sample_id}",
+            f"{exc} The catalog names it, written some other way than nrw; "
+            "nothing is applied to it until that is corrected.",
+        )
+    clash = existing.get(sample_id.casefold())
+    if clash is not None and clash != sample_id:
+        return Problem(
+            f"sample:{sample_id}",
+            f"samples/{clash}/ already exists and differs from {sample_id} only "
+            "in case; on macOS and Windows they are one directory. Rename the "
+            "sample in the catalog to match.",
+        )
+    try:
+        # Everything that stops sample.md being written from the catalog is
+        # refused while its text is put together, from the catalog alone.
+        prose_for(catalog, sample_id)
+    except SampleRenderError as exc:
+        return Problem(f"sample:{sample_id}", str(exc))
+    return None
+
+
+def _refused(sample_id: str, problem: Problem) -> SamplePlan:
+    """The plan for a sample apply does nothing for, and the reason."""
+    return SamplePlan(
+        sample_id,
+        creates=False,
+        files=(),
+        sample_md=None,
+        sample_md_detail="",
+        problems=(problem,),
+    )
+
+
+def _cannot_look(sample_id: str, exc: OSError) -> Problem:
+    """A sample's folder that cannot be looked at, said without its full path."""
+    return Problem(
+        f"sample:{sample_id}",
+        f"samples/{sample_id}/ cannot be looked at "
+        f"({exc.strerror or type(exc).__name__}); nothing is applied to it "
+        "until it can be.",
     )
 
 
@@ -392,97 +596,30 @@ def _plan_sample(
     existing: Mapping[str, str],
     confirmed: set[RunKey],
 ) -> SamplePlan:
-    clash = existing.get(sample_id.casefold())
-    if clash is not None and clash != sample_id:
-        return SamplePlan(
-            sample_id,
-            creates=False,
-            files=(),
-            sample_md=None,
-            sample_md_detail="",
-            problems=(
-                Problem(
-                    f"sample:{sample_id}",
-                    f"samples/{clash}/ already exists and differs from {sample_id} "
-                    "only in case; on macOS and Windows they are one directory. "
-                    "Rename the sample in the catalog to match.",
-                ),
-            ),
-        )
+    refusal = _sample_refusal(catalog, sample_id, existing)
+    if refusal is not None:
+        return _refused(sample_id, refusal)
 
     sample_dir = root / "samples" / sample_id
-    creates = not (sample_dir / "sample.md").exists()
+    creates = _lstat(sample_dir / "sample.md") is None
     steady = sample_dir / "data" / STEADY_DIR
     record = read_sources(sample_dir)
-
-    wanted = {
-        entry.key: entry for entry in catalog.runs_for(sample_id) if entry.include
-    }
-    actions: list[FileAction] = []
-
-    for key in sorted(wanted):
-        actions.extend(
-            _plan_run(
-                key, runs.get(key), statuses.get(key), steady, record, source, confirmed
-            )
-        )
-
-    # nrw's own copies of runs that no longer belong here: move them aside.
-    for name, entry in sorted(record.items()):
-        key = RunKey(entry.run)
-        if key in wanted or entry.location == EXCLUDED_DIR:
-            continue
-        other = catalog.runs.get(key)
-        if other is None or other.sample_id is None:
-            why = "no longer assigned to this sample"
-        elif other.sample_id != sample_id:
-            why = f"assigned to {other.sample_id} now"
-        else:
-            why = "excluded"
-        actions.append(
-            FileAction(
-                key.run,
-                name,
-                Action.MOVE_OUT,
-                f"run {key.run} is {why}; its copy moves to data/{EXCLUDED_DIR}/{key.run}/",
-                sha256=entry.sha256,
-            )
-        )
-
-    # Files nrw did not copy, for runs this sample does not use: say so.
-    if steady.is_dir():
-        from nr_workbench.instrument.reduced import (
-            parse_combined_name,
-            parse_segment_name,
-        )
-
-        for path in sorted(steady.iterdir()):
-            if path.name in record or not path.is_file():
-                continue
-            segment = parse_segment_name(path.name)
-            run = segment.run if segment else parse_combined_name(path.name)
-            if run is None or RunKey(run) in wanted:
-                continue
-            actions.append(
-                FileAction(
-                    run,
-                    path.name,
-                    Action.NOT_MANAGED,
-                    "not copied by nrw, and its run is not assigned here; left alone",
-                )
-            )
+    wanted = _wanted(catalog, sample_id)
+    steps = [
+        *_copy_steps(wanted, runs, statuses, steady, record, confirmed),
+        *_move_out_steps(catalog, sample_id, wanted, record),
+        *_not_managed_steps(steady, record, wanted),
+    ]
+    actions = [
+        step if isinstance(step, FileAction) else step.decide(source) for step in steps
+    ]
 
     try:
         planned = plan_sample(root, context, sample_id, catalog=catalog)
     except SampleRenderError as exc:
-        return SamplePlan(
-            sample_id,
-            creates=False,
-            files=tuple(actions),
-            sample_md=None,
-            sample_md_detail="",
-            problems=(Problem(f"sample:{sample_id}", str(exc)),),
-        )
+        # What the catalog's text refuses was refused above, where the sign
+        # refuses it too; this is for a refusal of plan_sample's own.
+        return _refused(sample_id, Problem(f"sample:{sample_id}", str(exc)))
     relpath = sample_md_relpath(sample_id)
     scaffold = tuple(
         planned if creates else [p for p in planned if p.relpath == relpath]
@@ -499,25 +636,186 @@ def _plan_sample(
     )
 
 
-def _plan_run(
+@dataclass(frozen=True)
+class _UnreadCopy:
+    """A copy nrw made, which only reading it, and the source, says more about.
+
+    Planning reads them (:meth:`decide`); the sign of new data stops here, so
+    a poll reads neither the copy nor the source.
+
+    Attributes:
+        run: The run the file belongs to.
+        name: The file's name.
+        target: The copy, in the sample.
+        listed: The source's listing of the file, when it lists it.
+        entry: nrw's record of copying it.
+    """
+
+    run: int
+    name: str
+    target: Path
+    listed: SourceFile | None
+    entry: CopyEntry
+
+    @property
+    def version_moved(self) -> bool:
+        """Whether the source lists another version than the one nrw copied.
+
+        Probably reduced again; only the bytes can tell that from a touch.
+        """
+        return (
+            self.listed is not None and self.listed.version != self.entry.source_version
+        )
+
+    def decide(self, source: Any) -> FileAction:
+        """Read the copy, and the source when its version moved, and decide."""
+        return _check_copy(self, source)
+
+
+@dataclass(frozen=True)
+class _UnreadForeign:
+    """A file with the source's name that nrw did not copy.
+
+    Only comparing its bytes with the source's says whether it is the same.
+
+    Attributes:
+        run: The run the file belongs to.
+        name: The file's name.
+        target: The file, in the sample.
+        listed: The source's listing of it.
+    """
+
+    run: int
+    name: str
+    target: Path
+    listed: SourceFile
+
+    def decide(self, source: Any) -> FileAction:
+        """Read both, and decide."""
+        return _hand_copied(self.run, self.name, self.target, self.listed, source)
+
+
+#: One step of a plan before anything is read: decided, or still to read.
+_Step = FileAction | _UnreadCopy | _UnreadForeign
+
+
+def _wanted(catalog: Catalog, sample_id: str) -> set[RunKey]:
+    """The runs a sample uses: assigned to it, and included."""
+    return {entry.key for entry in catalog.runs_for(sample_id) if entry.include}
+
+
+def _copy_steps(
+    wanted: set[RunKey],
+    runs: Mapping[RunKey, SourceRun],
+    statuses: Mapping[RunKey, RunStatus],
+    steady: Path,
+    record: Mapping[str, CopyEntry],
+    confirmed: set[RunKey],
+) -> list[_Step]:
+    """What happens to the files of the runs a sample uses, short of reading.
+
+    Every copy apply makes, and every copy whose source moved, is one of
+    these; the sign of new data takes these steps and no others.
+    """
+    steps: list[_Step] = []
+    for key in sorted(wanted):
+        steps.extend(
+            _run_steps(key, runs.get(key), statuses.get(key), steady, record, confirmed)
+        )
+    return steps
+
+
+def _move_out_steps(
+    catalog: Catalog,
+    sample_id: str,
+    wanted: set[RunKey],
+    record: Mapping[str, CopyEntry],
+) -> list[_Step]:
+    """nrw's own copies of runs that no longer belong here: moved aside."""
+    steps: list[_Step] = []
+    for name, entry in sorted(record.items()):
+        key = RunKey(entry.run)
+        if key in wanted or entry.location == EXCLUDED_DIR:
+            continue
+        other = catalog.runs.get(key)
+        if other is None or other.sample_id is None:
+            why = "no longer assigned to this sample"
+        elif other.sample_id != sample_id:
+            why = f"assigned to {other.sample_id} now"
+        else:
+            why = "excluded"
+        steps.append(
+            FileAction(
+                key.run,
+                name,
+                Action.MOVE_OUT,
+                f"run {key.run} is {why}; its copy moves to data/{EXCLUDED_DIR}/{key.run}/",
+                sha256=entry.sha256,
+            )
+        )
+    return steps
+
+
+def _not_managed_steps(
+    steady: Path, record: Mapping[str, CopyEntry], wanted: set[RunKey]
+) -> list[_Step]:
+    """Files nrw did not copy, for runs this sample does not use: said, and left.
+
+    A link is said too, and never followed: `nrw import` points them into the
+    facility's tree, on a mount that may not answer.
+    """
+    from nr_workbench.instrument.reduced import (
+        parse_combined_name,
+        parse_segment_name,
+    )
+
+    try:
+        paths = sorted(steady.iterdir())
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    steps: list[_Step] = []
+    for path in paths:
+        info = _lstat(path)
+        if (
+            path.name in record
+            or info is None
+            or not (stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode))
+        ):
+            continue
+        segment = parse_segment_name(path.name)
+        run = segment.run if segment else parse_combined_name(path.name)
+        # A name for run 0 is no run, and still not nrw's to move.
+        if run is None or (run > 0 and RunKey(run) in wanted):
+            continue
+        steps.append(
+            FileAction(
+                run,
+                path.name,
+                Action.NOT_MANAGED,
+                "not copied by nrw, and its run is not assigned here; left alone",
+            )
+        )
+    return steps
+
+
+def _run_steps(
     key: RunKey,
     listed: SourceRun | None,
     status: RunStatus | None,
     steady: Path,
     record: Mapping[str, CopyEntry],
-    source: Any,
     confirmed: set[RunKey],
-) -> list[FileAction]:
-    """What happens to one assigned, included run's files."""
+) -> list[_Step]:
+    """What happens to one assigned, included run's files, short of reading them."""
     run = key.run
     recorded = {n: e for n, e in record.items() if e.run == run}
-    actions: list[FileAction] = []
+    steps: list[_Step] = []
 
     if listed is None:
         for name, entry in sorted(recorded.items()):
-            actions.append(_already_copied(run, name, entry, None, steady, source))
+            steps.append(_already_copied(run, name, entry, None, steady))
         if not recorded:
-            actions.append(
+            steps.append(
                 FileAction(
                     run,
                     f"run {run}",
@@ -526,7 +824,7 @@ def _plan_run(
                     "reduced yet, or the source cannot be reached",
                 )
             )
-        return actions
+        return steps
 
     listed_by_name = {f.name: f for f in listed.files}
     fitting = {f.name for f in listed.fitting_files}
@@ -534,10 +832,8 @@ def _plan_run(
         if name not in fitting:
             # No longer listed; or an artifact nrw copied before only the
             # files a fit reads were copied -- still nrw's, still checked.
-            actions.append(
-                _already_copied(
-                    run, name, entry, listed_by_name.get(name), steady, source
-                )
+            steps.append(
+                _already_copied(run, name, entry, listed_by_name.get(name), steady)
             )
 
     may_copy, why_not = _may_copy(key, status, confirmed)
@@ -548,13 +844,12 @@ def _plan_run(
         name = source_file.name
         entry = recorded.get(name)
         if entry is not None:
-            actions.append(
-                _already_copied(run, name, entry, source_file, steady, source)
-            )
+            steps.append(_already_copied(run, name, entry, source_file, steady))
             continue
         target = steady / name
-        if target.is_symlink():
-            actions.append(
+        info = _lstat(target)
+        if info is not None and stat.S_ISLNK(info.st_mode):
+            steps.append(
                 FileAction(
                     run,
                     name,
@@ -564,14 +859,30 @@ def _plan_run(
                 )
             )
             continue
-        if target.exists():
-            actions.append(_hand_copied(run, name, target, source_file, source))
+        if info is not None:
+            steps.append(_UnreadForeign(run, name, target, source_file))
             continue
         if not may_copy:
-            actions.append(FileAction(run, name, Action.DEFERRED, why_not, source_file))
+            steps.append(FileAction(run, name, Action.DEFERRED, why_not, source_file))
             continue
-        actions.append(FileAction(run, name, Action.COPY, "", source_file))
-    return actions
+        steps.append(FileAction(run, name, Action.COPY, "", source_file))
+    return steps
+
+
+def _lstat(path: Path) -> os.stat_result | None:
+    """A file's own status, not following a link; ``None`` if there is none.
+
+    Not ``Path.exists()`` or ``is_file()``: on Python 3.14 they answer False
+    for a file in a folder this account may not look into, where 3.11 to 3.13
+    raise -- and a copy that cannot be seen is not a copy that is not there.
+
+    Raises:
+        OSError: The file may not be looked at, or the look failed.
+    """
+    try:
+        return os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
 
 
 def _may_copy(
@@ -594,9 +905,8 @@ def _already_copied(
     entry: CopyEntry,
     listed: SourceFile | None,
     steady: Path,
-    source: Any,
-) -> FileAction:
-    """A file nrw copied earlier: is it still what nrw copied, and is the source?"""
+) -> _Step:
+    """A file nrw copied earlier, as far as can be told without reading it."""
     if entry.location == EXCLUDED_DIR:
         return FileAction(
             run,
@@ -607,7 +917,10 @@ def _already_copied(
             entry.sha256,
         )
     target = steady / name
-    if not target.is_file() or target.is_symlink():
+    # Its own status, not where a link points: `nrw import` points them at a
+    # mount that may not answer.
+    info = _lstat(target)
+    if info is None or not stat.S_ISREG(info.st_mode):
         return FileAction(
             run,
             name,
@@ -615,15 +928,28 @@ def _already_copied(
             "nrw copied this file, but it is no longer here as a plain file; "
             "remove its entry from data/sources.json to copy it again",
         )
-    local = sha256_file_or_none(target)
-    if local != entry.sha256:
+    return _UnreadCopy(run, name, target, listed, entry)
+
+
+def _check_copy(step: _UnreadCopy, source: Any) -> FileAction:
+    """A copy nrw made: is it still what nrw copied, and is the source?"""
+    run, name, listed = step.run, step.name, step.listed
+    local = sha256_file_or_none(step.target)
+    if local != step.entry.sha256:
+        # The sign of new data, which reads nothing, counted a moved version
+        # as reduced again: say so here too, or the Review never mentions it.
+        also = (
+            ", and the facility's file was rewritten since -- probably re-reduced"
+            if step.version_moved
+            else ""
+        )
         return FileAction(
             run,
             name,
             Action.LOCAL_EDITED,
-            "the copy has been edited since nrw copied it; left alone",
+            f"the copy has been edited since nrw copied it{also}; left alone",
         )
-    if listed is None or listed.version == entry.source_version:
+    if not step.version_moved:
         return FileAction(run, name, Action.UNCHANGED, "", listed, local)
     # The listing says the source file changed. Only its bytes can say whether
     # it really did: a new inode or ctime alone (another client, a restore) is
@@ -1091,14 +1417,31 @@ def read_sources(sample_dir: Path) -> dict[str, CopyEntry]:
             would stop managing all of them.
     """
     path = Path(sample_dir) / "data" / SOURCES_FILE
-    if not path.exists():
-        return {}
+    shown = path.relative_to(Path(sample_dir).parent.parent)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raw = _read_record(path)
+    except FileNotFoundError:
+        # Tried, not checked first: on Python 3.14 `exists()` answers False
+        # where it may not look, and a record read as empty loses every copy.
+        return {}
+    except PermissionError as exc:
+        # Nothing is wrong with the file that git could restore.
         raise ApplyRefused(
-            f"{path.relative_to(Path(sample_dir).parent.parent)} cannot be read "
-            f"({exc}). Restore it from git before applying."
+            f"{shown} cannot be read: this account may not read it, or its "
+            "folder. Ask whoever owns it to let you, before applying."
+        ) from exc
+    except OSError as exc:
+        raise ApplyRefused(
+            f"{shown} cannot be read ({exc.strerror or type(exc).__name__}). "
+            "Restore it from git before applying."
+        ) from exc
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
+        # A bad encoding, bad JSON, or an integer too long to convert, are
+        # ValueErrors; nesting too deep to parse is a RecursionError.
+        raise ApplyRefused(
+            f"{shown} cannot be read ({exc}). Restore it from git before applying."
         ) from exc
     files = document.get("files") if isinstance(document, dict) else None
     if not isinstance(document, dict) or document.get("schema") != SOURCES_SCHEMA:
@@ -1115,17 +1458,35 @@ def read_sources(sample_dir: Path) -> dict[str, CopyEntry]:
             or not isinstance(entry.get("sha256"), str)
         ):
             raise ApplyRefused(
-                f"{path.name}: the entry for {name!r} is not one nrw wrote. "
-                "Restore the file from git before applying."
+                f"{path.name}: the entry for {str(name)[:80]!r} is not one nrw "
+                "wrote. Restore the file from git before applying."
             )
         try:
             record[str(name)] = CopyEntry.from_json(entry)
         except TypeError as exc:
             raise ApplyRefused(
-                f"{path.name}: the entry for {name!r} is not one nrw wrote ({exc}). "
-                "Restore the file from git before applying."
+                f"{path.name}: the entry for {str(name)[:80]!r} is not one nrw "
+                f"wrote ({exc}). Restore the file from git before applying."
             ) from exc
     return record
+
+
+def _read_record(path: Path) -> bytes:
+    """A regular file's bytes, up to :data:`MAX_SOURCES_BYTES`.
+
+    Raises:
+        FileNotFoundError: There is no such file.
+        OSError: It cannot be opened or read, is not a regular file -- a FIFO
+            would hold the read forever, a device never end it -- or is too
+            large.
+    """
+    with os.fdopen(os.open(path, _RECORD_OPEN), "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise OSError(errno.EINVAL, "not a regular file")
+        data = handle.read(MAX_SOURCES_BYTES + 1)
+    if len(data) > MAX_SOURCES_BYTES:
+        raise OSError(errno.EFBIG, f"larger than {MAX_SOURCES_BYTES} bytes")
+    return data
 
 
 def write_sources(sample_dir: Path, record: Mapping[str, CopyEntry]) -> None:

@@ -575,6 +575,150 @@ def test_the_preview_shows_what_sample_md_would_become(app, writer) -> None:
     assert "<table>" in preview["html"]
 
 
+# --------------------------------------------------------------------------
+# The sign of new data
+# --------------------------------------------------------------------------
+
+NO_NEWS = {"ready": [], "reduced_again": [], "unassigned": [], "samples": {}}
+
+
+def test_the_sign_of_new_data_follows_assignment_and_apply(app, writer) -> None:
+    # Both complete runs wait for a sample; the unconfirmed one is not counted.
+    overview = writer.get("/api/experiment").get_json()
+    assert overview["new_data"] == {**NO_NEWS, "unassigned": [234277, 234280]}
+
+    assigned = assign(writer, app).get_json()["new_data"]
+
+    assert assigned == {
+        "ready": [234277],
+        "reduced_again": [],
+        "unassigned": [234280],
+        "samples": {"Sample6": {"ready": [234277], "reduced_again": []}},
+    }
+    polled = writer.get("/api/experiment/changes?since=x").get_json()
+    assert polled["new_data"] == assigned
+    # What the Review shows on the same listing: the sign's runs, copied.
+    plan = writer.get("/api/experiment/apply").get_json()
+    copies = {
+        f["run"]
+        for sample in plan["samples"]
+        for f in sample["files"]
+        if f["action"] == "copy"
+    }
+    assert copies == set(assigned["ready"])
+
+    applied = writer.post(
+        "/api/experiment/apply",
+        json={"plan_id": plan["plan_id"]},
+        headers=write_headers(app),
+    )
+    assert applied.status_code == 200, applied.get_json()
+
+    after = writer.get("/api/experiment").get_json()["new_data"]
+    assert after == {**NO_NEWS, "unassigned": [234280]}
+
+
+def test_a_sample_the_sign_cannot_work_out_is_reported_on_load_and_each_poll(
+    app, writer, expt: Path
+) -> None:
+    assert assign(writer, app).status_code == 200
+    record = expt / "samples" / "Sample6" / "data" / "sources.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+
+    for path in ("/api/experiment", "/api/experiment/changes?since=x"):
+        problems = writer.get(path).get_json()["problems"]
+        assert any(
+            p["scope"] == "sample:Sample6" and "sources.json" in p["message"]
+            for p in problems
+        ), path
+
+
+def test_an_unreadable_catalog_puts_no_run_in_no_sample(
+    app, writer, expt: Path
+) -> None:
+    """Its empty stand-in would say that every complete run waits for a sample."""
+    assert assign(writer, app).status_code == 200
+    (expt / "experiment" / "runs.parquet").write_bytes(b"")
+
+    for path in ("/api/experiment", "/api/experiment/changes?since=x"):
+        assert writer.get(path).get_json()["new_data"] == NO_NEWS, path
+
+
+def _stray_file(expt: Path) -> None:
+    (
+        expt
+        / "samples"
+        / "Sample6"
+        / "data"
+        / "steady"
+        / "REFL_0_combined_data_auto.txt"
+    ).write_text("# not a run\n")
+
+
+def _record_nested_too_deep(expt: Path) -> None:
+    (expt / "samples" / "Sample6" / "data" / "sources.json").write_text("[" * 200_000)
+
+
+def _folder_nobody_may_read(expt: Path) -> None:
+    if os.name == "nt" or os.geteuid() == 0:
+        pytest.skip("needs POSIX permissions, as a user other than root")
+    (expt / "samples" / "Sample6" / "data").chmod(0)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [_stray_file, _record_nested_too_deep, _folder_nobody_may_read],
+    ids=["a-file-for-run-0", "a-record-nested-too-deep", "a-folder-nobody-may-read"],
+)
+def test_one_odd_sample_takes_down_neither_the_page_nor_a_save(
+    app, writer, expt: Path, damage
+) -> None:
+    """Each of these once raised from every load and poll of the page, and
+    made a saved assignment answer as if it had failed."""
+    assert assign(writer, app).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    assert (
+        writer.post(
+            "/api/experiment/apply",
+            json={"plan_id": plan["plan_id"]},
+            headers=write_headers(app),
+        ).status_code
+        == 200
+    )
+    damage(expt)
+    try:
+        assert writer.get("/experiment").status_code == 200
+        for path in ("/api/experiment", "/api/experiment/changes?since=x"):
+            assert writer.get(path).status_code == 200, path
+        saved = assign(writer, app, run=234280)
+        assert saved.status_code == 200, saved.get_json()
+        assert "new_data" in saved.get_json()
+    finally:
+        (expt / "samples" / "Sample6" / "data").chmod(0o755)
+
+
+def test_a_fault_in_the_sign_is_said_and_logged_not_raised(
+    app, writer, monkeypatch, caplog
+) -> None:
+    """It is worked out for every load, poll and saved edit: a bug in it must
+    cost the sign, not the page."""
+    from nr_workbench.experiment import apply as apply_module
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr(apply_module, "new_data", broken)
+
+    overview = writer.get("/api/experiment")
+    saved = assign(writer, app)
+
+    assert overview.status_code == 200 and saved.status_code == 200
+    assert overview.get_json()["new_data"] == NO_NEWS
+    assert any(p["scope"] == "new-data" for p in overview.get_json()["problems"])
+    assert "a bug" in caplog.text
+
+
 @pytest.mark.parametrize("sample_id", ["S.1", "-S1", "con"])
 def test_an_unusable_sample_id_is_refused_on_every_route(
     app, writer, sample_id
