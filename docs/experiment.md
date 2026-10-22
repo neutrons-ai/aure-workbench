@@ -616,10 +616,14 @@ ISAAC_KEY=...
 ```
 
 They are read from your own settings only (the shell, `~/.nrw`, or
-`~/.aure` if you keep them there) and never from the project's `.env`. Anyone who can write the project writes that file,
-and a portal named there would decide where your key and the records go. The
-panel says where each is set, the portal's host, and when the project's
-`.env` names one that is ignored. It never shows the key. From the terminal:
+`~/.aure` if you keep them there) and never from the project's `.env`. Anyone
+who can write the project writes that file, and a portal named there would
+decide where your key and the records go. So while the project's `.env` (or
+its `.env.local`, `.flaskenv` or `.envrc`) sets either one, nothing is sent at
+all: a program that loads that file would make its portal look like yours.
+Neither is taken from a file someone else can write, either. The panel says
+where each is set and the portal's host, or why neither is used. It never
+shows the key. From the terminal:
 
 ```bash
 nrw isaac export <fit_id>

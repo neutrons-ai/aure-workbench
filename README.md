@@ -245,7 +245,8 @@ For the language-model endpoint, nrw takes each variable from the first of:
 
 The ISAAC Portal's `ISAAC_URL` and `ISAAC_KEY` follow the same order but skip
 the project's `.env`: anyone who can write the project can write that file, and
-it would choose where your key and your records are sent.
+it would choose where your key and your records are sent. A project whose
+`.env` sets either one sends nothing to ISAAC until it is removed.
 
 `nrw doctor` lists the files it read and the settings it found, with keys
 redacted. Keys and endpoints never go in `nrw.toml`, because it is committed

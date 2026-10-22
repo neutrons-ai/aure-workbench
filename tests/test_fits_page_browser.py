@@ -199,6 +199,7 @@ def test_the_isaac_panel_is_for_the_final_fit_and_asks_before_it_pushes(
     settings.write_text(
         "ISAAC_URL=https://isaac.example.org/api\nISAAC_KEY=k-1234567\n"
     )
+    settings.chmod(0o600)  # only its owner may write it, or it is not used
     monkeypatch.setattr(env_module, "USER_ENV_PATH", settings)
     # Each step says what it was asked, and succeeds: what is tested is the
     # page -- the panel, the confirmation, the job followed -- not ISAAC.
@@ -268,6 +269,7 @@ def test_a_push_that_never_reported_back_is_shown_as_one_that_may_have(
     settings.write_text(
         "ISAAC_URL=https://isaac.example.org/api\nISAAC_KEY=k-1234567\n"
     )
+    settings.chmod(0o600)  # only its owner may write it, or it is not used
     monkeypatch.setattr(env_module, "USER_ENV_PATH", settings)
     records = project / "samples" / "S1" / "results" / A / "isaac" / "records"
     records.mkdir(parents=True)

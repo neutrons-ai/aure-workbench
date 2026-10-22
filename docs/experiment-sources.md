@@ -123,7 +123,8 @@ when it is saved and when `nrw.toml` is read (`nr_workbench/tiled/address.py`):
   `TILED_API_KEY`, is ever sent to.
 
 **`TILED_URL` itself** is a setting only the person makes
-(`env.person_setting`). It is refused, and with it every address on Tiled:
+(`env.person_setting`, which ISAAC's portal and key follow too). It is
+refused, and with it every address on Tiled:
 
 - while the project's `.env`, `.env.local`, `.flaskenv` or `.envrc` sets
   `TILED_URL`, `TILED_API_KEY` or `HOME`, whatever value is in effect. A

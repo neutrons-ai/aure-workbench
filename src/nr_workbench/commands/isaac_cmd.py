@@ -36,7 +36,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlsplit
 
 import click
@@ -45,6 +45,9 @@ from nr_workbench.isaac import Staged, reset, stage
 from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 from nr_workbench.provenance.index import FitIndex
 from nr_workbench.provenance.lookup import FitNotFoundError, resolve_fit
+
+if TYPE_CHECKING:
+    from nr_workbench.env import Setting
 
 #: How the tools are installed. Not `pip install 'nr-workbench[isaac]'`:
 #: nr-workbench is not on PyPI, so that installs nothing (docs/install.md).
@@ -416,37 +419,40 @@ def run_push(
     )
 
 
-#: The settings a push needs.
-PORTAL_VARIABLES = ("ISAAC_URL", "ISAAC_KEY")
+class Portal(NamedTuple):
+    """The portal and the key a push may use.
+
+    Attributes:
+        url: ``ISAAC_URL``, or ``None`` when it is not set or may not be used.
+        key: ``ISAAC_KEY``, the same way.
+        refused: Why neither may be used, or ``None``.
+    """
+
+    url: Setting | None
+    key: Setting | None
+    refused: str | None
 
 
-def portal_settings(root: Path) -> tuple[Any, Any, list[str]]:
-    """The portal and the key, from the person's own settings only.
+def portal_settings(root: Path) -> Portal:
+    """The portal and the key, as only the person sets them.
 
     The shell, ``~/.nrw`` or ``~/.aure`` -- never the project's ``.env``: that
     is written by anyone who can write the project, and would choose where the
-    person's key, and the records, are sent.
-
-    Returns:
-        ``(ISAAC_URL, ISAAC_KEY, ignored)``: each a
-        :class:`~nr_workbench.env.Setting` or ``None``, and the variables the
-        project's ``.env`` sets that are ignored.
+    person's key, and the records, are sent. Both are refused, with the
+    reason, for any reason :func:`nr_workbench.env.person_setting` gives. One
+    of them is the project's own files setting either: leaving that file out
+    is not enough, since a program that has loaded it (direnv, pipenv, an
+    editor) puts its values in the environment, where they look like the
+    person's own.
     """
-    from nr_workbench.env import where_set
+    from nr_workbench.env import person_setting
 
-    own = where_set(root, skip_project=True)
-    everywhere = where_set(root)
-    ignored = [
-        name
-        for name in PORTAL_VARIABLES
-        if name in everywhere and everywhere[name] != own.get(name)
-    ]
-    url, key = own.get("ISAAC_URL"), own.get("ISAAC_KEY")
-    return (
-        url if url and url.value else None,
-        key if key and key.value else None,
-        ignored,
-    )
+    url, url_refused = person_setting("ISAAC_URL", root)
+    key, key_refused = person_setting("ISAAC_KEY", root)
+    refused = url_refused or key_refused
+    if refused is not None:
+        return Portal(None, None, refused)
+    return Portal(url, key, None)
 
 
 def portal_host(url: str) -> str:
@@ -524,18 +530,14 @@ def _upload(
             f"{refusal} (nrw promote {fit_id} --reason '...'), or ask the server "
             "whether its records would be accepted with --validate-only."
         )
-    url, key, ignored = portal_settings(layout.root)
+    settings = portal_settings(layout.root)
+    if settings.refused is not None:
+        raise click.ClickException(f"Nothing was sent. {settings.refused}")
+    url, key = settings.url, settings.key
     if url is None or key is None:
         raise click.ClickException(
             "Set ISAAC_URL and ISAAC_KEY in your own settings -- ~/.nrw, or the "
             "shell -- to send records to the portal."
-            + (
-                f" The project's .env sets {' and '.join(ignored)}, which is "
-                "ignored: anyone who can write the project writes that file, and "
-                "would choose where your key goes."
-                if ignored
-                else ""
-            )
         )
     host = portal_host(url.value)
     if expect_host is not None and expect_host != host:

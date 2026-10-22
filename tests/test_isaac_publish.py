@@ -58,6 +58,9 @@ def settings(tmp_path: Path, monkeypatch) -> Iterator[Path]:
     (home / ".nrw").write_text(
         f"ISAAC_URL=https://isaac.example.org/portal/api\nISAAC_KEY={PLANTED}\n"
     )
+    # Only its owner may write it, or the key is not taken from it (whatever
+    # the umask makes of a new file).
+    (home / ".nrw").chmod(0o600)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(env_module, "USER_ENV_PATH", home / ".nrw")
     saved = dict(os.environ)
@@ -240,22 +243,66 @@ def test_the_tool_reads_no_portal_of_its_own_choosing(
     assert seen[0]["ISAAC_URL"] == "https://isaac.example.org/portal/api"
 
 
-def test_a_portal_the_projects_env_names_is_never_the_one_used(
+@pytest.mark.parametrize("loaded", [False, True], ids=["in-the-file", "loaded-too"])
+@pytest.mark.parametrize(
+    "step", [["--yes"], ["--validate-only"]], ids=["push", "validate"]
+)
+def test_a_portal_the_projects_env_names_stops_every_send(
+    project: Path, settings: Path, monkeypatch, loaded: bool, step: list[str]
+) -> None:
+    """Anyone who can write the project writes its .env: it would choose where
+    the person's key, and the records, go. Leaving the file out is not enough:
+    direnv, pipenv or an editor may have put it in the environment already,
+    where it looks like the person's own."""
+    (project / ".env").write_text("ISAAC_URL=https://attacker.example/api\n")
+    if loaded:
+        monkeypatch.setenv("ISAAC_URL", "https://attacker.example/api")
+    exported(project, A)
+    finalize(project)
+
+    def never(names):
+        raise AssertionError("the tool was run")
+
+    monkeypatch.setattr(isaac_cmd, "_find", never)
+
+    result = nrw(project, monkeypatch, "isaac", "push", A, *step)
+
+    assert result.exit_code != 0
+    assert "Nothing was sent. This project's .env sets ISAAC_URL" in result.output
+    assert "attacker" not in result.output
+    assert pushes(project) == ()
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="no owner and mode to check")
+def test_a_portal_from_a_file_others_can_write_sends_nothing(
     project: Path, settings: Path, monkeypatch
 ) -> None:
-    # Anyone who can write the project writes its .env: it would choose where
-    # the person's key, and the records, go.
-    (project / ".env").write_text("ISAAC_URL=https://attacker.example/api\n")
+    """Whoever can write the file could choose where the key goes."""
+    (settings / ".nrw").chmod(0o664)
     exported(project, A)
     finalize(project)
     portal(monkeypatch)
 
     result = nrw(project, monkeypatch, "isaac", "push", A, "--yes")
 
-    assert result.exit_code == 0, result.output
-    (push,) = pushes(project)
-    assert push["records"][0]["record_id"].endswith("@isaac.example.org")
-    assert "attacker" not in result.output
+    assert result.exit_code != 0
+    assert "can be written by others (mode 664)" in result.output
+    assert pushes(project) == ()
+
+
+def test_the_panel_says_why_no_portal_is_used_and_offers_no_send(
+    app, project: Path
+) -> None:
+    exported(project, A)
+    finalize(project)
+    (project / ".env").write_text("ISAAC_KEY=planted-by-someone\n")
+
+    shown = app.test_client().get(f"/api/experiment/fits/{A}/isaac").json
+
+    assert shown["portal"] == {"host": None, "from": None}
+    assert shown["key"] == {"set": False, "from": None}
+    assert "This project's .env sets ISAAC_KEY" in shown["refused"]
+    assert "planted-by-someone" not in json.dumps(shown)
 
 
 def test_no_portal_or_key_of_ones_own_sends_nothing(project: Path, monkeypatch) -> None:
@@ -471,6 +518,7 @@ def test_nrw_doctor_says_a_portal_it_cannot_read_and_goes_on(
 ) -> None:
     """The setting doctor exists to show must not stop it."""
     env_module.USER_ENV_PATH.write_text(f"ISAAC_URL={url}\n", encoding="utf-8")
+    env_module.USER_ENV_PATH.chmod(0o600)
 
     result = nrw(project, monkeypatch, "doctor", "--json")
 
@@ -480,22 +528,18 @@ def test_nrw_doctor_says_a_portal_it_cannot_read_and_goes_on(
     assert "cannot be read as an address" in checks["isaac"]["detail"]
 
 
-def test_nrw_doctor_names_a_project_portal_as_ignored_not_as_in_use(
+def test_nrw_doctor_says_a_project_portal_stops_the_push_and_never_shows_it(
     project: Path, settings: Path, monkeypatch
 ) -> None:
-    """doctor loads the project's .env; the push never reads it for the portal."""
+    """doctor loads the project's .env; the push never takes the portal from it."""
     (project / ".env").write_text("ISAAC_URL=https://elsewhere.example/api\n")
 
     result = nrw(project, monkeypatch, "doctor", "--json")
 
     checks = {c["name"]: c for c in json.loads(result.output)}
     assert checks["isaac"]["status"] == "warn"
-    assert "isaac.example.org" in checks["isaac"]["detail"]
-    assert (
-        "ignored, as set in this project's .env: ISAAC_URL"
-        in (checks["isaac"]["detail"])
-    )
-    assert "elsewhere.example" not in checks.get("llm settings", {}).get("detail", "")
+    assert "This project's .env sets ISAAC_URL" in checks["isaac"]["detail"]
+    assert "elsewhere.example" not in result.output
 
 
 def test_the_real_tool_pushing_to_a_portal_that_refuses_one_record(
@@ -536,6 +580,7 @@ def test_the_real_tool_pushing_to_a_portal_that_refuses_one_record(
     url = f"http://127.0.0.1:{server.server_port}/portal/api"
     settings = tmp_path / "nrw-settings"
     settings.write_text(f"ISAAC_URL={url}\nISAAC_KEY={PLANTED}\n")
+    settings.chmod(0o600)
     monkeypatch.setattr(env_module, "USER_ENV_PATH", settings)
     exported(project, A, count=3)
     finalize(project)

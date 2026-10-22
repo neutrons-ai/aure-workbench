@@ -4762,3 +4762,24 @@ Step 3 of `docs/plan-tiled-catalog.md`, as its reviews changed it.
   design re-review saw it with `git archive HEAD` as the older nrw. It is
   harmless while nothing reads those keys; it must be fixed before the
   catalog can be kept on Tiled (plan step 8).
+
+### 2026-10-21: ISAAC's portal and key follow the same rule as Tiled's server
+
+- **"Ignored" could not see what a program had already loaded.** The push
+  read `ISAAC_URL` and `ISAAC_KEY` with `where_set(skip_project=True)` and
+  listed a project `.env` value as "ignored". When direnv, pipenv or an
+  editor had loaded that `.env` into the environment, the two agreed, nothing
+  was ignored, and the project's portal was taken for the person's own.
+  `nrw isaac push --validate-only` then sent the person's key there without
+  asking; a full push named the host and asked first (the security re-review
+  of Tiled step 3).
+- **So ISAAC now follows `env.person_setting`, as `TILED_URL` does.** While
+  the project's `.env`, `.env.local`, `.flaskenv` or `.envrc` sets
+  `ISAAC_URL`, `ISAAC_KEY` or `HOME`, nothing is sent to ISAAC, and the
+  command, the panel and `nrw doctor` say why. Neither is taken from a file
+  others can write, nor, for an agent's command, from anything but the
+  person's files.
+- **What this changes for a person:** a project `.env` that sets either one
+  used to be ignored, and now stops every send until the line is removed. A
+  `~/.nrw` that the group can write (the default under a umask of 002) is
+  refused until `chmod go-w ~/.nrw`; the message says so.

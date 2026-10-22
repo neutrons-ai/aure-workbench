@@ -36,17 +36,17 @@
     Object.entries(shown.tools).forEach(function ([name, installed]) {
       if (!installed) items.push(line(name + " is not installed: " + shown.install, "text-danger"));
     });
-    items.push(shown.portal.host
-      ? line("Portal: " + shown.portal.host + " (ISAAC_URL, in " + shown.portal.from + ")")
-      : line("ISAAC_URL is not set: add it to ~/.nrw.", "text-warning-emphasis"));
-    items.push(shown.key.set
-      ? line("Key: ISAAC_KEY is set, in " + shown.key.from + ".")
-      : line("ISAAC_KEY is not set: add it to ~/.nrw. It is never shown here.",
-        "text-warning-emphasis"));
-    if (shown.ignored.length) {
-      items.push(line("The project's .env sets " + shown.ignored.join(" and ") +
-        ": ignored. The portal and the key are yours, and come from your own " +
-        "settings only.", "text-warning-emphasis"));
+    if (shown.refused) {
+      // Neither is used, so neither is shown as set or missing: the reason is.
+      items.push(line(shown.refused, "text-warning-emphasis"));
+    } else {
+      items.push(shown.portal.host
+        ? line("Portal: " + shown.portal.host + " (ISAAC_URL, in " + shown.portal.from + ")")
+        : line("ISAAC_URL is not set: add it to ~/.nrw.", "text-warning-emphasis"));
+      items.push(shown.key.set
+        ? line("Key: ISAAC_KEY is set, in " + shown.key.from + ".")
+        : line("ISAAC_KEY is not set: add it to ~/.nrw. It is never shown here.",
+          "text-warning-emphasis"));
     }
     items.push(shown.records.length
       ? line(shown.records.length + " record(s) exported, " + shown.exported_at + ".")
@@ -105,8 +105,9 @@
     const tools = Object.values(shown.tools).every(Boolean);
     const sendable = tools && shown.records.length && shown.portal.host && shown.key.set;
     const why = !tools ? "install the tools first"
-      : !shown.records.length ? "export first"
-        : !shown.key.set || !shown.portal.host ? "set ISAAC_URL and ISAAC_KEY in ~/.nrw" : "";
+      : shown.refused ? "nrw uses no ISAAC setting for this project: see above"
+        : !shown.records.length ? "export first"
+          : !shown.key.set || !shown.portal.host ? "set ISAAC_URL and ISAAC_KEY in ~/.nrw" : "";
     $("isaac-buttons").replaceChildren(
       button("Export", "isaac-export", function () { start("export"); }, running || !tools),
       button("Validate with the server", "isaac-validate", validate,

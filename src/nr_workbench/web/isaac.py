@@ -92,7 +92,8 @@ class IsaacData:
             if directory is not None
             else []
         )
-        url, key, ignored = portal_settings(self.root)
+        settings = portal_settings(self.root)
+        url, key = settings.url, settings.key
         return {
             "fit_id": fit_id,
             "sample": entry.get("sample"),
@@ -107,8 +108,9 @@ class IsaacData:
                 "set": key is not None,
                 "from": shown_source(key.source, self.root) if key else None,
             },
-            # Set in the project's .env, and not used: said, so it is no mystery.
-            "ignored": ignored,
+            # Why neither may be used -- the project's files setting one, say:
+            # said, so it is no mystery.
+            "refused": settings.refused,
             "records": [path.name for path in records],
             "exported_at": _when(max(p.stat().st_mtime for p in records))
             if records

@@ -548,19 +548,20 @@ def _person_checks() -> list[Check]:
     def where(setting: Any) -> str:
         return shown_source(setting.source, root)
 
-    url, key, ignored = portal_settings(root)
+    portal = portal_settings(root)
+    url, key = portal.url, portal.key
     try:
-        portal = f"ISAAC_URL={shown_portal(url.value)}" if url else "ISAAC_URL not set"
+        address = f"ISAAC_URL={shown_portal(url.value)}" if url else "ISAAC_URL not set"
         readable = True
     except ValueError:  # the setting doctor exists to show must not stop it
-        portal, readable = "ISAAC_URL cannot be read as an address", False
+        address, readable = "ISAAC_URL cannot be read as an address", False
     said = [
-        f"{portal} ({where(url)})" if url else portal,
+        f"{address} ({where(url)})" if url else address,
         f"ISAAC_KEY={redact(key.value)} ({where(key)})" if key else "ISAAC_KEY not set",
     ]
-    if ignored:
-        said.append(f"ignored, as set in this project's .env: {', '.join(ignored)}")
-    status = "warn" if ignored or not readable else (_OK if url and key else _MISSING)
+    status = "warn" if not readable else (_OK if url and key else _MISSING)
+    if portal.refused is not None:
+        said, status = [portal.refused], "warn"
     checks = [Check("isaac", status, "; ".join(said))]
 
     tiled = server(root)

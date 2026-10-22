@@ -811,8 +811,9 @@ def test_serve_loads_no_env_file_into_its_own_environment(
         assert result.exit_code == 0, result.output
         assert started, "the server was never started"
         assert [name for name in planted if name in os.environ] == []
-        url, _, ignored = portal_settings(expt)
-        assert url is None and ignored == ["ISAAC_URL"]
+        settings = portal_settings(expt)
+        assert settings.url is None
+        assert "This project's .env sets ISAAC_URL" in (settings.refused or "")
     finally:
         for name in planted:  # what a failure loaded must not reach a later test
             os.environ.pop(name, None)

@@ -1004,7 +1004,8 @@ sent is copied under the fit's `isaac/published/`. The fit's page in
 The portal and the key are yours, not the project's: set `ISAAC_URL` and
 `ISAAC_KEY` in `~/.nrw` (or your shell, or `~/.aure`). The project's `.env` is
 never read for them: anyone who can write the project can write that file, and
-it would choose where your key and your records are sent.
+it would choose where your key and your records are sent. A project whose
+`.env` sets either one sends nothing to ISAAC until it is removed.
 
 nr-workbench does not map anything to the ISAAC schema itself — `data-assembler`
 and `nr-isaac-format` own that, and a second copy would drift from a schema
