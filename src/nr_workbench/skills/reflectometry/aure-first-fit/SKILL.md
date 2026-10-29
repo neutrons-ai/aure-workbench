@@ -117,8 +117,8 @@ It prints two lists, and they mean different things:
 
 - **read from the files** — the run, its segment files, their order. Exact.
   Do not edit these.
-- **read from sample.md** — the description, the hypothesis, the geometry.
-  Yours, and the part worth checking.
+- **read from sample.md** — the description, ending with which run this fit
+  is of, and the geometry. Yours, and the part worth checking.
 
 ### 5. Read the setup back before running it
 

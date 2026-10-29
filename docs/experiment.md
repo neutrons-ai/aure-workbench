@@ -333,9 +333,12 @@ co-refine several, write one with **New model**. From `sample.md` it reads:
   through the silicon substrate" or "back reflection": without them, or with
   them negated ("not through the substrate"), the setup takes the beam to
   arrive from the ambient side;
-- *Fits to perform*, as a hypothesis;
 - for the run it fits, its condition in the Measurements table, the sample's
   *Measurement conditions*, and the notes on that run.
+
+The description ends by saying which run the fit is of, and its files: the
+other runs the sample's text names are context. *Fits to perform* is not sent:
+it is the sample's plan, and often names runs a fit of one run is not given.
 
 AuRE reads `sample.md` as it is on disk. Edits saved on this page reach the
 file only when you **Apply**, and the Models panel says so when there are some

@@ -128,9 +128,10 @@ def test_applied_reference_sample_md_every_reader_agrees(
     project: Path, context: RenderContext
 ) -> None:
     from nr_workbench.agent.session import declared_task
-    from nr_workbench.aure_setup import describe_sample, read_hypothesis
+    from nr_workbench.aure_setup import describe_sample
     from nr_workbench.conditions import from_table
     from nr_workbench.instrument.header import read_header
+    from nr_workbench.notes import read_section
     from nr_workbench.project.scan import scan_sample
     from nr_workbench.reconcile import documented_runs, reconcile
     from nr_workbench.web.project import ProjectData
@@ -138,9 +139,9 @@ def test_applied_reference_sample_md_every_reader_agrees(
 
     text = render_into(project, context, reference_catalog())
 
-    # The unattended agent's task, and AuRE's description and hypothesis.
+    # The unattended agent's task, the section as written, and AuRE's description.
     assert declared_task(text) == FITS
-    assert read_hypothesis(text) == FITS
+    assert read_section(text, "Fits to perform").strip() == FITS
     assert describe_sample(text) == f"{DESCRIPTION}\n\n{DETAILS}"
     # ISAAC export's conditions, and reconcile's table.
     assert from_table(text, "218386") == "OCV"

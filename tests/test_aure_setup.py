@@ -329,9 +329,11 @@ def test_compose_refuses_an_unfilled_description(project: Path) -> None:
         )
 
 
-def test_compose_carries_the_hypothesis_from_the_notes(project: Path) -> None:
-    """What the scientist already suspects is worth more than a blank slate."""
-    notes = DESCRIBED + "\n## Fits to perform\n\nThere may be a CuOx skin.\n"
+def test_compose_says_which_run_it_fits_instead_of_the_fits_to_perform(
+    project: Path,
+) -> None:
+    """The sample's plan can name runs a fit of one run is not given."""
+    notes = DESCRIBED + "\n## Fits to perform\n\nCo-refine 218393 with 218400.\n"
     _sample_with_data(project, notes=notes)
     scan = scan_sample(project, "Sample1")
 
@@ -339,7 +341,14 @@ def test_compose_carries_the_hypothesis_from_the_notes(project: Path) -> None:
         sample="Sample1", scan=scan, notes=notes, root=project, run=218386
     )
 
-    assert "CuOx" in composed.document["hypothesis"]
+    description = composed.document["sample_description"]
+    files = [Path(f["file"]).name for f in composed.document["states"][0]["data_files"]]
+    assert "hypothesis" not in composed.document
+    assert "218393" not in description
+    assert description.endswith(
+        f"This fit is of run 218386 alone: {', '.join(files)}. The other runs "
+        "this text names are its context, not part of this fit."
+    )
 
 
 def test_compose_requires_a_run_when_the_sample_has_several(project: Path) -> None:
@@ -386,12 +395,14 @@ def test_compose_tells_aure_what_was_written_about_the_measurement(
     )
 
     description = composed.document["sample_description"]
+    *_, said, scope = description.split("\n\n")
     assert description.startswith("50 nm copper on 5 nm titanium")
-    assert description.splitlines()[-3:] == [
+    assert said.splitlines() == [
         "The condition of run 218386: D2O, 25 C.",
         "Measurement conditions: The cell was filled the day before.",
         "Notes on run 218386: realigned after mounting",
     ]
+    assert scope.startswith("This fit is of run 218386 alone: ")
     assert "extra_description" not in composed.document["states"][0]
     assert "run 218386's condition" in composed.from_notes[0]
 
@@ -407,8 +418,9 @@ def test_a_note_on_the_run_reaches_aure_though_no_table_lists_it(project: Path) 
         sample="Sample1", scan=scan, notes=notes, root=project, run=218386
     )
 
-    assert composed.document["sample_description"].endswith(
-        "\n\nNotes on run 218386: in D2O"
+    assert (
+        "\n\nNotes on run 218386: in D2O\n\nThis fit is of run 218386 alone: "
+        in composed.document["sample_description"]
     )
 
 
@@ -431,8 +443,13 @@ def test_compose_adds_nothing_when_nothing_was_written_about_it(project: Path) -
         sample="Sample1", scan=scan, notes=DESCRIBED, root=project, run=218386
     )
 
+    from nr_workbench.aure_setup import fit_scope
+
+    files = [f["file"] for f in composed.document["states"][0]["data_files"]]
     assert "extra_description" not in composed.document["states"][0]
-    assert composed.document["sample_description"] == describe_sample(DESCRIBED)
+    assert composed.document["sample_description"] == (
+        f"{describe_sample(DESCRIBED)}\n\n{fit_scope(218386, files)}"
+    )
 
 
 @pytest.mark.parametrize("notes", [DESCRIBED, MEASURED], ids=["described", "measured"])

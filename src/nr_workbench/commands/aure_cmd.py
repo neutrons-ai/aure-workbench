@@ -194,9 +194,9 @@ def _validated(document: dict[str, Any], target: Path) -> dict[str, Any]:
         "# AuRE setup, written by `nrw aure new`.\n"
         "#\n"
         "# `states` and `data_files` were read from the files on disk and are\n"
-        "# exact -- the segment order is Q order. `sample_description` and\n"
-        "# `hypothesis` came from sample.md and are yours to correct; AuRE\n"
-        "# builds the entire model from them.\n"
+        "# exact -- the segment order is Q order. `sample_description` came\n"
+        "# from sample.md, and ends by saying which run this fit is of; it is\n"
+        "# yours to correct. AuRE builds the entire model from it.\n"
         "#\n"
         "#   nrw aure run <this file>\n"
     )

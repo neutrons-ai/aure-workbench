@@ -45,15 +45,15 @@
     <text x="26" y="108" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#db2777">Electrochemical cell with the Cu film as the working …</text>
     <text x="26" y="122" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#7c3aed">The condition of run 218386: OCV, before the EIS sequence.</text>
     <text x="26" y="136" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#7c3aed">Measurement conditions: Mounted once and left in the cell …</text>
-    <text x="14" y="150" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">data_dir: ../../../..</text>
-    <text x="14" y="164" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#334155">states:</text>
-    <text x="26" y="178" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">- name: state0</text>
-    <text x="26" y="192" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  data_files:</text>
-    <text x="26" y="206" font-size="9.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: samples/Sample6/data/steady/REFL_218386_1_218386_partial.txt</text>
-    <text x="26" y="220" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: …_2_218387_partial.txt</text>
-    <text x="26" y="234" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: …_3_218388_partial.txt</text>
-    <text x="26" y="248" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#16a34a">  back_reflection: true</text>
-    <text x="14" y="262" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#d97706">hypothesis: Co-refine 218386 and 218393 with the 218389 series. …</text>
+    <text x="26" y="150" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#d97706">This fit is of run 218386 alone: REFL_218386_1_218386_partial.txt, …</text>
+    <text x="14" y="164" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">data_dir: ../../../..</text>
+    <text x="14" y="178" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#334155">states:</text>
+    <text x="26" y="192" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">- name: state0</text>
+    <text x="26" y="206" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  data_files:</text>
+    <text x="26" y="220" font-size="9.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: samples/Sample6/data/steady/REFL_218386_1_218386_partial.txt</text>
+    <text x="26" y="234" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: …_2_218387_partial.txt</text>
+    <text x="26" y="248" font-size="10.5" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0369a1">  - file: …_3_218388_partial.txt</text>
+    <text x="26" y="262" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#16a34a">  back_reflection: true</text>
     <text x="14" y="282" font-size="11" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#64748b">fit_method: de · fit_steps: 300 · max_refinements: 2</text>
     <text x="26" y="296" font-size="10" fill="#64748b">written by nrw aure run --budget quick (the default)</text>
   </g>
@@ -122,11 +122,11 @@
     <rect width="420" height="110" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2" filter="url(#shadow)"/>
     <rect width="420" height="32" rx="10" fill="#d97706"/>
     <rect y="22" width="420" height="10" fill="#d97706"/>
-    <text x="14" y="22" font-size="13" font-weight="700" fill="#ffffff">hypothesis  ·  ## Fits to perform</text>
-    <text x="14" y="52" font-size="10" fill="#64748b">sent word for word: to the parse ("The hypothesis to test</text>
-    <text x="14" y="66" font-size="10" fill="#64748b">is: …"), to the ranking as its top candidate (origin="user"),</text>
-    <text x="14" y="80" font-size="10" fill="#64748b">and to every evaluation. Here it is the co-refinement task,</text>
-    <text x="14" y="94" font-size="10" fill="#64748b">handed to a fit of one run</text>
+    <text x="14" y="22" font-size="13" font-weight="700" fill="#ffffff">what this fit is of  ·  the run's files</text>
+    <text x="14" y="52" font-size="10" fill="#64748b">the description ends by saying it: "This fit is of run N</text>
+    <text x="14" y="66" font-size="10" fill="#64748b">alone: REFL_N_1_…, …". The other runs the sample's text</text>
+    <text x="14" y="80" font-size="10" fill="#64748b">names are its context. ## Fits to perform is not sent: it is</text>
+    <text x="14" y="94" font-size="10" fill="#64748b">the sample's plan, and often names runs this fit is not given</text>
   </g>
   <g transform="translate(40, 714)">
     <rect width="420" height="138" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 4" filter="url(#shadow)"/>
@@ -141,9 +141,9 @@
     <text x="14" y="122" font-size="10" fill="#64748b">must not choose where this machine's key is sent</text>
   </g>
   <line x1="460" y1="202" x2="494" y2="202" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
-  <line x1="460" y1="368" x2="494" y2="286" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
-  <line x1="460" y1="504" x2="494" y2="384" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
-  <line x1="460" y1="612" x2="494" y2="398" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
+  <line x1="460" y1="368" x2="494" y2="300" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
+  <line x1="460" y1="504" x2="494" y2="398" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
+  <line x1="460" y1="612" x2="494" y2="286" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-light)" fill="none"/>
 
   <!-- ================================================================ -->
   <!-- Column 3: AuRE's LLM calls                                       -->
@@ -179,7 +179,7 @@
     <rect width="560" height="32" rx="10" fill="#7c3aed"/>
     <rect y="22" width="560" height="10" fill="#7c3aed"/>
     <text x="14" y="22" font-size="12.5" font-weight="700" fill="#ffffff">parse_sample_with_llm()  ·  SAMPLE_PARSE_PROMPT<tspan fill="#fde68a">   ×1</tspan></text>
-    <text x="14" y="52" font-size="10" fill="#64748b">reads <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#db2777">sample_description</tspan>, <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#d97706">hypothesis</tspan> and the selected skills</text>
+    <text x="14" y="52" font-size="10" fill="#64748b">reads <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#db2777">sample_description</tspan> and the selected skills</text>
     <text x="14" y="66" font-size="10" fill="#64748b">→ ParsedSample: substrate, layers, ambient, intensity …</text>
   </g>
   <g transform="translate(1080, 560)">
@@ -187,7 +187,7 @@
     <rect width="560" height="32" rx="10" fill="#7c3aed"/>
     <rect y="22" width="560" height="10" fill="#7c3aed"/>
     <text x="14" y="22" font-size="12.5" font-weight="700" fill="#ffffff">generate_structural_hypotheses_with_llm()<tspan fill="#fde68a">   ×1</tspan></text>
-    <text x="14" y="52" font-size="10" fill="#64748b">reads <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#db2777">sample_description</tspan>, the parse, <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#d97706">hypothesis</tspan> (folded in first)</text>
+    <text x="14" y="52" font-size="10" fill="#64748b">reads <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#db2777">sample_description</tspan> and the parse</text>
     <text x="14" y="66" font-size="10" fill="#64748b">→ the ranked structural_hypotheses list</text>
   </g>
   <text x="1080" y="664" font-size="11" font-style="italic" fill="#64748b">analysis, the first model and the fit: deterministic, no model</text>

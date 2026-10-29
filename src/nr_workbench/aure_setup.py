@@ -80,10 +80,6 @@ _NEGATION_REACH = 4
 #: that must be filled in; ``Details`` adds composition and environment.
 DESCRIPTION_SECTIONS = ("Description", "Details")
 
-#: The section whose prose becomes AuRE's ``hypothesis`` -- what the scientist
-#: already suspects, which AuRE folds in as top-ranked candidate structures.
-HYPOTHESIS_SECTION = "Fits to perform"
-
 #: Where a sample's AuRE runs live, under ``samples/<id>/``.
 AURE_DIR = "aure"
 
@@ -135,18 +131,22 @@ def describe_sample(notes: str) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def read_hypothesis(notes: str) -> str:
-    """Return what the scientist already suspects, if they wrote it down.
+def fit_scope(run: int, files: list[str]) -> str:
+    """What this fit is of, for the end of AuRE's description.
+
+    The sample's text names its other runs too, as context; this says which
+    files are this fit's. ``## Fits to perform`` is not sent: it is the
+    sample's plan, and often names runs a fit of one run is not given.
 
     Args:
-        notes: The full text of ``sample.md``.
-
-    Returns:
-        The prose under ``## Fits to perform``, or ``""``.
+        run: The run AuRE is fitting.
+        files: Its files, as the setup lists them.
     """
-    from nr_workbench.notes import read_section
-
-    return read_section(notes, HYPOTHESIS_SECTION).strip()
+    names = ", ".join(Path(file).name for file in files)
+    return (
+        f"This fit is of run {run} alone: {names}. The other runs this text "
+        "names are its context, not part of this fit."
+    )
 
 
 def measurement_context(notes: str, run: int) -> str:
@@ -389,6 +389,7 @@ def compose(
     context = measurement_context(notes, chosen)
     if context:
         description = f"{description}\n\n{context}"
+    description = f"{description}\n\n{fit_scope(chosen, files)}"
 
     document: dict[str, Any] = {
         "name": run_name,
@@ -396,10 +397,6 @@ def compose(
         "data_dir": Path(data_dir).as_posix(),
         "states": [state],
     }
-
-    hypothesis = read_hypothesis(notes)
-    if hypothesis:
-        document["hypothesis"] = hypothesis
 
     from_files = [
         f"run {chosen}, {len(files)} {kind} file(s), in segment order",
@@ -418,10 +415,8 @@ def compose(
             if context
             else ""
         )
-        + f" ({len(description)} chars)"
+        + f", ending with what this fit is of ({len(description)} chars)"
     ]
-    if hypothesis:
-        from_notes.append("hypothesis: ## Fits to perform")
     from_notes.append(
         f"back_reflection: {back_reflection} "
         + {

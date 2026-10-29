@@ -165,7 +165,7 @@ def test_new_writes_prose_as_a_literal_block(sample: Path) -> None:
     assert "sample_description: |" in text
 
 
-def test_new_carries_the_hypothesis(sample: Path) -> None:
+def test_new_says_which_run_it_fits_and_sends_no_hypothesis(sample: Path) -> None:
     import yaml
 
     _run("aure", "new", "Sample1")
@@ -173,7 +173,8 @@ def test_new_carries_the_hypothesis(sample: Path) -> None:
         (sample / "samples/Sample1/aure/Sample1-218386/setup.yaml").read_text()
     )
 
-    assert "CuOx" in document["hypothesis"]
+    assert "hypothesis" not in document
+    assert "This fit is of run 218386 alone" in document["sample_description"]
 
 
 def test_new_writes_no_absolute_paths(sample: Path) -> None:
