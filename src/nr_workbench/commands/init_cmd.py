@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from contextlib import nullcontext
 from dataclasses import replace
@@ -227,6 +228,14 @@ def run_init(
     root = Path(path).resolve()
     if not (root / "nrw.toml").is_file():
         _refuse_if_nested(root, allow=nested)
+        # A new project in a folder named for its experiment: offer that IPTS.
+        named = ipts is None and re.fullmatch(r"IPTS-[0-9]+", root.name)
+        if (
+            named
+            and sys.stdin.isatty()
+            and click.confirm(f"Use {root.name} as the project's IPTS?", default=True)
+        ):
+            ipts = root.name
 
     # One writer at a time, from planning to writing: a settings save landing
     # between init's plan and its write would otherwise be put back -- the

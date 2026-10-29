@@ -83,6 +83,39 @@ def test_init_produces_the_expected_file_set(
     assert installed_files(tmp_path) == expected_project_files()
 
 
+@pytest.mark.parametrize(
+    "folder,terminal,answer,ipts",
+    [
+        ("IPTS-33333", True, "\n", "IPTS-33333"),
+        ("IPTS-33333", True, "n\n", ""),
+        ("IPTS-33333-b", True, "", ""),
+        ("IPTS-33333", False, "", ""),
+    ],
+)
+def test_init_offers_the_ipts_a_new_projects_folder_is_named_for(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    folder: str,
+    terminal: bool,
+    answer: str,
+    ipts: str,
+) -> None:
+    """Asked at a terminal only: a script or an assistant is never asked."""
+    import io
+
+    from nr_workbench.commands.init_cmd import run_init
+
+    class Stdin(io.StringIO):
+        def isatty(self) -> bool:
+            return terminal
+
+    monkeypatch.setattr("sys.stdin", Stdin(answer))
+    run_init(path=str(tmp_path / folder))
+
+    toml = tomllib.loads((tmp_path / folder / "nrw.toml").read_text(encoding="utf-8"))
+    assert toml["beamtime"]["ipts"] == ipts
+
+
 def test_init_gives_an_existing_project_its_incoming_folder(project: Path) -> None:
     """nrw's default data folder, for a project made before it was in it."""
     shutil.rmtree(project / "incoming")
