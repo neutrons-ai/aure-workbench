@@ -300,9 +300,7 @@ def test_status_names_a_misspelled_setting_and_the_folder_it_fell_back_to(
 
     messages = [p["message"] for p in payload["problems"]]
     assert any("locaton" in m for m in messages)
-    assert payload["reachable"] is False
-    assert any("data mount" in m for m in messages)
-    assert payload["source"]["path"].startswith("/SNS/REF_L/IPTS-00001/")
+    assert payload["source"]["path"] == str(project.resolve() / "incoming")
 
 
 def test_sample_new_is_refused_on_a_conflicted_lock(project: Path, monkeypatch) -> None:
@@ -395,7 +393,7 @@ def test_settings_write_saves_and_names_the_backup(expt: Path) -> None:
         (["--location", "/x", "--default-location"], "contradict"),
         (["--write"], "Nothing to write"),
         (["--poll", "1"], "from 5 to 600"),
-        (["--location", "relative/path"], "not a full path"),
+        (["--location", "~/reduced"], "is not expanded"),
     ],
 )
 def test_settings_refuses_with_the_reason(expt: Path, args, message: str) -> None:
@@ -405,6 +403,28 @@ def test_settings_refuses_with_the_reason(expt: Path, args, message: str) -> Non
 
     assert result.exit_code != 0
     assert message in result.output
+
+
+def test_settings_reads_a_relative_location_from_the_project(expt: Path) -> None:
+    from nr_workbench.project.config import load_config
+
+    written = CliRunner().invoke(
+        main,
+        [
+            "experiment",
+            "settings",
+            "--location",
+            "reduced",
+            "--write",
+            "--root",
+            str(expt),
+        ],
+    )
+    shown = CliRunner().invoke(main, ["experiment", "settings", "--root", str(expt)])
+
+    assert written.exit_code == 0, written.output
+    assert load_config(expt).raw["experiment"]["source"]["location"] == "reduced"
+    assert f"-> {expt.resolve() / 'reduced'}" in shown.output
 
 
 def test_settings_asks_before_changing_a_catalogued_experiments_ipts(

@@ -4,7 +4,7 @@ Read from ``nrw.toml``::
 
     [experiment.source]
     kind = "local"
-    location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+    location = "incoming"
     settle_seconds = 300
 
     [experiment.feed]
@@ -12,7 +12,9 @@ Read from ``nrw.toml``::
     poll_seconds = 30
 
 Every key is optional. A project with no ``[experiment]`` table at all watches
-:data:`DEFAULT_LOCATION` for its own IPTS.
+:data:`DEFAULT_LOCATION`, its own ``incoming/``. A relative location is read
+from the project root, and ``{ipts}`` in a location is filled from
+``[beamtime] ipts``.
 
 **An unknown key is reported, never ignored.** ``[conventions]`` in the same
 file taught this: a block that looks like configuration but controls nothing
@@ -22,6 +24,7 @@ eliminates the right suspect while changing nothing.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -52,9 +55,8 @@ from nr_workbench.project.experiment_schema import (  # noqa: F401 - re-exported
 #: something below this package needs it too: the settle time in
 #: :mod:`nr_workbench.arrival`, which ``nrw agent watch`` shares, and the
 #: location and poll interval in :mod:`nr_workbench.project.config`, which the
-#: scaffolded ``nrw.toml`` is rendered from. The location is provisional --
-#: see there. Settled is necessary for complete, not sufficient -- see
-#: :mod:`nr_workbench.experiment.status`.
+#: scaffolded ``nrw.toml`` is rendered from. Settled is necessary for
+#: complete, not sufficient -- see :mod:`nr_workbench.experiment.status`.
 DEFAULT_LOCATION = DEFAULT_EXPERIMENT_LOCATION
 DEFAULT_POLL_SECONDS = DEFAULT_EXPERIMENT_POLL_SECONDS
 
@@ -74,8 +76,9 @@ class SourceConfig:
             sources.open_source`, not here.
         location: The location as configured, placeholders unresolved --
             this is what may be recorded, because it is true on every machine.
-        path: ``location`` with the IPTS substituted, or ``None`` when it
-            cannot be resolved (no IPTS configured).
+        path: ``location`` with the IPTS substituted, read from the project
+            root when relative; ``None`` when it cannot be resolved (no IPTS
+            configured, say).
         settle_seconds: How long files must be unchanged.
     """
 
@@ -130,12 +133,14 @@ class ExperimentConfig:
         return self.source.kind not in SOURCE_KINDS or self.source.path is None
 
 
-def experiment_config(project: Any) -> ExperimentConfig:
+def experiment_config(project: Any, *, root: Path | None = None) -> ExperimentConfig:
     """Resolve the ``[experiment]`` table of a project's ``nrw.toml``.
 
     Args:
         project: A :class:`nr_workbench.project.config.ProjectConfig`, or
             ``None`` when nrw.toml could not be read.
+        root: The project root, which a relative location is read from;
+            ``project``'s own when not given.
 
     Returns:
         The resolved configuration, with any problems listed rather than
@@ -184,7 +189,9 @@ def experiment_config(project: Any) -> ExperimentConfig:
             )
         sections[name] = section
 
-    source = _source(sections["source"], ipts, problems)
+    if root is None:
+        root = getattr(project, "root", None)
+    source = _source(sections["source"], ipts, root, problems)
     feed = FeedConfig(
         kind=_kind(sections["feed"], "feed", DEFAULT_FEED_KIND, problems),
         poll_seconds=_seconds(
@@ -240,7 +247,10 @@ def _settings_in_comments(project: Any, document: dict[str, Any]) -> list[Proble
 
 
 def _source(
-    section: dict[str, Any], ipts: str | None, problems: list[Problem]
+    section: dict[str, Any],
+    ipts: str | None,
+    root: Path | None,
+    problems: list[Problem],
 ) -> SourceConfig:
     kind = _kind(section, "source", DEFAULT_SOURCE_KIND, problems)
     location = section.get("location", DEFAULT_LOCATION)
@@ -251,15 +261,22 @@ def _source(
         location = DEFAULT_LOCATION
     location = location.strip()
 
-    path: Path | None
+    path: Path | None = None
     if "{ipts}" in location and ipts is None:
-        path = None
         problems.append(
             Problem(
                 "source",
                 f"The data location {location} needs the project's IPTS, and "
-                "nrw.toml has none. Set [beamtime] ipts, or give "
-                "[experiment.source] location as a full path.",
+                "nrw.toml has none. Set [beamtime] ipts, or give an "
+                "[experiment.source] location without {ipts}.",
+            )
+        )
+    elif location.startswith("~"):
+        problems.append(
+            Problem(
+                "source",
+                f"The data location {location} starts with `~`, which nrw does "
+                "not expand: give the full path, or one relative to the project.",
             )
         )
     else:
@@ -267,15 +284,19 @@ def _source(
         # `format` would try to fill them.
         path = Path(location.replace("{ipts}", ipts or ""))
         if not path.is_absolute():
-            problems.append(
-                Problem(
-                    "source",
-                    f"The data location {location} is not an absolute path, so "
-                    "it would mean something different from every directory "
-                    "nrw is started in.",
+            if root is None:
+                problems.append(
+                    Problem(
+                        "source",
+                        f"The data location {location} is read from the project "
+                        "folder, which is not known here.",
+                    )
                 )
-            )
-            path = None
+                path = None
+            else:
+                # Lexical, as the Settings page checks it: resolving a path
+                # can block on a dead mount.
+                path = Path(os.path.normpath(Path(root) / path))
 
     return SourceConfig(
         kind=kind,
@@ -285,6 +306,11 @@ def _source(
             section, "source", "settle_seconds", DEFAULT_SETTLE_SECONDS, problems
         ),
     )
+
+
+def default_path(root: Path, ipts: str | None = None) -> Path | None:
+    """The folder nrw's default location names in the project at *root*."""
+    return _source({}, ipts, root, []).path
 
 
 def _kind(
@@ -348,7 +374,7 @@ def experiment_config_for(root: Path) -> ExperimentConfig:
     try:
         return experiment_config(load_config(Path(root)))
     except ProjectConfigError as exc:
-        config = experiment_config(None)
+        config = experiment_config(None, root=Path(root).resolve())
         return ExperimentConfig(
             ipts=config.ipts,
             source=config.source,

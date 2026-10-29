@@ -1694,12 +1694,15 @@ def experiment_status_command(**kwargs: object) -> None:
     "--location",
     default=None,
     metavar="PATH",
-    help="The folder the reduced data is in; {ipts} is filled in.",
+    help=(
+        "The folder the reduced data is in: a full path, or one relative to the "
+        "project; {ipts} is filled in."
+    ),
 )
 @click.option(
     "--default-location",
     is_flag=True,
-    help="Follow nrw's default data location again (it is provisional).",
+    help="Follow nrw's default data location again: incoming/, in the project.",
 )
 @click.option(
     "--settle",

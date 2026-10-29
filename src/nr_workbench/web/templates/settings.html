@@ -46,7 +46,7 @@
           <div class="form-check mt-2">
             <input class="form-check-input" type="radio" name="s-where" id="s-default" value="default">
             <label class="form-check-label" for="s-default">
-              nrw's default location <span class="text-secondary">(provisional: it is expected to move)</span>
+              nrw's default location <span class="text-secondary">(in this project)</span>
             </label>
             <div id="s-default-path" class="small mono text-secondary"></div>
           </div>
@@ -55,9 +55,9 @@
             <label class="form-check-label" for="s-custom">Another folder</label>
           </div>
           <input id="s-location" class="form-control form-control-sm mono mt-1"
-                 placeholder="e.g. /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+                 placeholder="e.g. {{ payload.facility_location }}"
                  autocomplete="off" spellcheck="false" aria-label="Data folder">
-          <div class="form-text">A full path. <code>{ipts}</code> is filled in from the IPTS.</div>
+          <div class="form-text">A full path, or one relative to this project. <code>{ipts}</code> is filled in from the IPTS.</div>
           <div class="d-flex gap-2 mt-2 align-items-center">
             <button type="button" class="btn btn-sm btn-outline-secondary" id="s-check">Check folder</button>
             <span id="s-check-status" class="small text-secondary" aria-live="polite"></span>

@@ -370,16 +370,13 @@ def location_of(facility: Path) -> str:
 # --------------------------------------------------------------------------
 
 
-def test_settings_is_editable_and_the_default_path_follows_the_ipts(
-    page: Page, site: Site
+def test_settings_is_editable_and_shows_the_default_folder_in_the_project(
+    page: Page, site: Site, fresh: Path
 ) -> None:
     page.goto(f"{site.url}/settings")
     page.wait_for("!document.getElementById('s-save').disabled", what="editable")
-    assert "needs the IPTS" in page.text("s-default-path")
 
-    page.type("s-ipts", "34347")
-
-    assert "/IPTS-34347/" in page.text("s-default-path")
+    assert page.text("s-default-path") == str(fresh.resolve() / "incoming")
     # Where samples and assignments are kept: the project's files, and
     # nothing else promised as coming.
     catalogs = page.text("s-catalogs")

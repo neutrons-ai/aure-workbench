@@ -415,11 +415,12 @@ def test_the_experiment_has_no_other_fields() -> None:
 
 
 class _Project:
-    """The two attributes of ProjectConfig that experiment_config reads."""
+    """The attributes of ProjectConfig that experiment_config reads."""
 
-    def __init__(self, ipts=None, raw=None) -> None:
+    def __init__(self, ipts=None, raw=None, root=None) -> None:
         self.ipts = ipts
         self.raw = raw or {}
+        self.root = root
 
 
 @pytest.mark.parametrize(
@@ -439,20 +440,23 @@ def test_normalize_ipts(value, expected) -> None:
     assert normalize_ipts(value) == expected
 
 
-def test_experiment_config_defaults_to_the_provisional_new_reduction_folder() -> None:
-    config = experiment_config(_Project(ipts="IPTS-34347"))
+def test_experiment_config_defaults_to_the_projects_incoming_folder(
+    tmp_path: Path,
+) -> None:
+    config = experiment_config(_Project(root=tmp_path))
 
-    assert config.source.location == DEFAULT_LOCATION
-    assert config.source.path == Path(
-        "/SNS/REF_L/IPTS-34347/shared/autoreduce/new_reduction"
-    )
+    assert config.source.location == DEFAULT_LOCATION == "incoming"
+    assert config.source.path == tmp_path / "incoming"
     assert config.source.kind == "local"
     assert config.feed.kind == "directory"
     assert config.problems == ()
+    assert not config.needs_setup
 
 
 def test_experiment_config_without_an_ipts_says_so_rather_than_guessing() -> None:
-    config = experiment_config(_Project())
+    config = experiment_config(
+        _Project(raw={"experiment": {"source": {"location": "/data/{ipts}"}}})
+    )
 
     assert config.source.path is None
     assert any("IPTS" in p.message for p in config.problems)
@@ -470,13 +474,46 @@ def test_experiment_config_location_is_configurable() -> None:
     assert config.source.path == Path("/data/IPTS-1/reduced{v2}")
 
 
-def test_experiment_config_relative_location_is_refused() -> None:
+def test_experiment_config_reads_a_relative_location_from_the_project_root(
+    tmp_path: Path,
+) -> None:
     config = experiment_config(
-        _Project(raw={"experiment": {"source": {"location": "data/reduced"}}})
+        _Project(
+            ipts="1",
+            raw={"experiment": {"source": {"location": "../shared/{ipts}"}}},
+            root=tmp_path,
+        )
+    )
+
+    assert config.source.path == tmp_path.parent / "shared" / "IPTS-1"
+    assert config.problems == ()
+
+
+def test_experiment_config_relative_location_without_a_root_says_so() -> None:
+    config = experiment_config(_Project())
+
+    assert config.source.path is None
+    assert any("not known here" in p.message for p in config.problems)
+
+
+def test_experiment_config_root_reads_the_default_of_an_unreadable_project(
+    tmp_path: Path,
+) -> None:
+    config = experiment_config(None, root=tmp_path)
+
+    assert config.source.path == tmp_path / "incoming"
+
+
+def test_experiment_config_a_home_relative_location_is_said_not_read(
+    tmp_path: Path,
+) -> None:
+    """Read from the project folder, `~/data` would be a folder named `~`."""
+    config = experiment_config(
+        _Project(raw={"experiment": {"source": {"location": "~/data"}}}, root=tmp_path)
     )
 
     assert config.source.path is None
-    assert any("absolute" in p.message for p in config.problems)
+    assert any("`~`" in p.message for p in config.problems)
 
 
 def test_experiment_config_reports_a_key_that_changes_nothing() -> None:
@@ -525,8 +562,20 @@ def test_experiment_config_reads_a_scaffolded_project(project: Path) -> None:
     # The fixture's IPTS is IPTS-00001: kept as written, not "normalized" to
     # IPTS-1, which would be a different directory.
     assert config.ipts == "IPTS-00001"
-    assert config.source.path == Path(
-        "/SNS/REF_L/IPTS-00001/shared/autoreduce/new_reduction"
+    assert config.source.path == project.resolve() / "incoming"
+    assert config.problems == ()
+
+
+def test_the_scaffolded_nrw_toml_says_how_to_read_the_facility_folder(
+    project: Path,
+) -> None:
+    from nr_workbench.project.config import FACILITY_REDUCTION_LOCATION
+
+    text = (project / "nrw.toml").read_text(encoding="utf-8")
+
+    assert (
+        f'nrw experiment settings --location "{FACILITY_REDUCTION_LOCATION}" --write'
+        in text
     )
 
 

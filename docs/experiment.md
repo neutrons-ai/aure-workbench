@@ -1,6 +1,6 @@
 # The experiment page: organizing a beamtime's runs
 
-During a beamtime, reduced runs land in a folder on the data mount one after
+During a beamtime, reduced runs land in the experiment's data folder one after
 another. The **Experiment page** shows all of them in one table, lets you say
 which sample each belongs to and how it was measured, and writes that into the
 project: the data into `samples/<id>/data/`, and the context into
@@ -23,17 +23,14 @@ nrw serve
   http://127.0.0.1:8765/experiment      the experiment's runs
   http://127.0.0.1:8765/settings        its IPTS, data folder, watcher and language model
 
-  Data folder  /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction  (nrw's default)
-  ! The data location /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction needs the
-    project's IPTS, and nrw.toml has none. …
-
-  This experiment is not set up yet: nrw needs its IPTS, or the
-  folder its reduced data is in, before it can watch anything.
+  Data folder  ~/beamtime/incoming  (nrw's default)
 ```
 
-On a project that is not set up yet, start with **Settings** (see
-[Settings](#settings) below). The pages edit the project when the server is
-bound to loopback, as it is by default; started with `--host`, it only shows it.
+The page watches the project's own `incoming/` until **Settings** points it
+elsewhere ([Where the runs come from](#where-the-runs-come-from)); the IPTS is
+set there too ([Settings](#settings)). The pages edit the project when the
+server is bound to loopback, as it is by default; started with `--host`, it
+only shows it.
 
 The same organization is available from the command line, for scripts and for
 anyone who prefers it:
@@ -54,8 +51,9 @@ model, which is saved in the project's `.env` ([Language model](#language-model)
 
 - **The experiment.** Its IPTS and beamtime label. When the project's own path
   names an IPTS (`/SNS/REF_L/IPTS-34347/shared/…`), the page offers it.
-- **Where the data is.** Either nrw's default location (see below), shown
-  resolved as you type the IPTS, or another folder. **Check folder** says what
+- **Where the data is.** Either nrw's default location, `incoming/` in the
+  project (see below), or another folder: a full path, or one relative to the
+  project. **Check folder** says what
   a folder holds before you choose it: how many runs and their range, the
   newest runs, files it does not recognise, and the IPTS their headers name.
   A run whose headers name an experiment other than the IPTS on the page is
@@ -132,16 +130,23 @@ never more than ten minutes, then stops, along with any `claude` it started.
 
 ## Where the runs come from
 
-By default the page watches the folder REF_L's `new_reduction` pipeline writes:
+By default the page watches `incoming/`, a folder in the project that `nrw
+init` creates. `nrw tiled pull --data` copies the experiment's reduced files
+into it from Tiled, and a file copied there by hand counts the same. Git
+ignores what lands in it: each sample's own copy, in `samples/<id>/data/`, is
+the one committed. A relative location is read from the project folder, so it
+names the same folder on every machine.
+
+On a computer with the facility's `/SNS` mount, read the runs where REF_L's
+`new_reduction` pipeline writes them instead:
 
 ```
 /SNS/REF_L/{ipts}/shared/autoreduce/new_reduction
 ```
 
 with `{ipts}` taken from `[beamtime] ipts` in `nrw.toml`. **That location is
-provisional** and expected to move. A project that keeps the default follows it
-when nrw's default moves. To point somewhere else, use the Settings page or
-`nrw experiment settings --location PATH`. By hand, edit the
+provisional** and expected to move. Set it on the Settings page or with
+`nrw experiment settings --location PATH --write`. By hand, edit the
 `[experiment.source]` table `nrw.toml` already has:
 
 ```toml
@@ -154,7 +159,8 @@ allows each table once, and a file that declares it twice stops every `nrw`
 command until one is removed.
 
 `nrw experiment status` says whether the folder can be reached, and names any
-key in `[experiment]` it does not recognise rather than ignoring it.
+key in `[experiment]` it does not recognise rather than ignoring it. `nrw
+doctor` names the folder and how many runs it holds.
 
 The folder is re-read every 30 seconds while the page is open, and not at all
 once nobody has looked for ten minutes. If the data mount stops answering, the

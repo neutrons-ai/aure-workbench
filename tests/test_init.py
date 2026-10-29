@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -39,6 +41,7 @@ EXPECTED_SCAFFOLD_FILES = {
     "CLAUDE.md",
     "README.md",
     "docs/ground_truths.md",
+    "incoming/.gitkeep",
     "nrw.toml",
     "samples/.gitkeep",
 }
@@ -78,6 +81,42 @@ def test_init_produces_the_expected_file_set(
     apply_scaffold(tmp_path, plan_project_files(context))
 
     assert installed_files(tmp_path) == expected_project_files()
+
+
+def test_init_gives_an_existing_project_its_incoming_folder(project: Path) -> None:
+    """nrw's default data folder, for a project made before it was in it."""
+    shutil.rmtree(project / "incoming")
+
+    result = CliRunner().invoke(main, ["init", str(project)])
+
+    assert result.exit_code == 0, result.output
+    assert (project / "incoming").is_dir()
+
+
+def test_git_ignores_what_lands_in_incoming_but_keeps_the_folder(
+    project: Path, tmp_path: Path
+) -> None:
+    # git as on a fresh machine: no global excludes to hide a missing rule.
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    subprocess.run(["git", "init", "-q", str(project)], check=True, env=env)
+    (project / "incoming" / "REFL_234520_1_234520_autoreduction.dat").write_text("x")
+
+    def ignored(relpath: str) -> bool:
+        found = subprocess.run(
+            ["git", "check-ignore", "-q", relpath], cwd=project, env=env
+        )
+        return found.returncode == 0
+
+    assert ignored("incoming/REFL_234520_1_234520_autoreduction.dat")
+    assert not ignored("incoming/.gitkeep")
+    assert not ignored(
+        "samples/Sample1/data/steady/REFL_234520_1_234520_autoreduction.dat"
+    )
 
 
 def test_a_fresh_nrw_toml_assumes_no_angles(tmp_path: Path) -> None:
@@ -426,6 +465,86 @@ def test_doctor_reports_a_missing_spec_schema(
     by_name = {check.name: check for check in collect_checks()}
 
     assert by_name["spec schema"].status == "missing"
+
+
+def _data_folder_check(project: Path, monkeypatch: pytest.MonkeyPatch):
+    from nr_workbench.commands.doctor import collect_checks
+
+    monkeypatch.chdir(project)
+    return {check.name: check for check in collect_checks()}["data folder"]
+
+
+def test_doctor_says_the_default_data_folder_is_empty_and_how_to_fill_it(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nr_workbench.project.config import FACILITY_REDUCTION_LOCATION
+
+    check = _data_folder_check(project, monkeypatch)
+
+    assert check.status == "warn"
+    assert f"{project.resolve() / 'incoming'} (nrw's default)" in check.detail
+    assert "nrw tiled pull --data" in check.detail
+    assert FACILITY_REDUCTION_LOCATION in check.detail
+
+
+def test_doctor_counts_the_runs_in_the_data_folder(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from .experiment_fixtures import write_autoreduced
+
+    write_autoreduced(project / "incoming", 234520, [1, 2, 3])
+    write_autoreduced(project / "incoming", 234523, [1])
+
+    check = _data_folder_check(project, monkeypatch)
+
+    assert check.status == "ok"
+    assert check.detail.endswith(": 2 run(s), 234520-234523")
+
+
+def test_doctor_says_init_creates_a_missing_default_data_folder(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project made before nrw's default folder was in it has none."""
+    shutil.rmtree(project / "incoming")
+
+    check = _data_folder_check(project, monkeypatch)
+
+    assert check.status == "error"
+    assert "is not there; `nrw init` creates it" in check.detail
+
+
+def test_doctor_says_a_configured_data_folder_that_is_not_there(
+    project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from nr_workbench.project.settings import save
+
+    save(project, {"source.location": str(tmp_path / "SNS" / "{ipts}")})
+
+    check = _data_folder_check(project, monkeypatch)
+
+    assert check.status == "error"
+    assert str(tmp_path / "SNS" / "IPTS-00001") in check.detail
+    assert "nrw experiment settings --location DIR --write" in check.detail
+    assert CliRunner().invoke(main, ["doctor"]).exit_code == 1
+
+
+def test_doctor_gives_a_data_mount_that_stopped_answering_a_deadline(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from nr_workbench.experiment.sources import local
+
+    stuck = threading.Event()
+    monkeypatch.setattr("nr_workbench.experiment.sources.SOURCE_TIMEOUT", 0.2)
+    monkeypatch.setattr(local.LocalDirectorySource, "probe", lambda self: stuck.wait())
+    try:
+        check = _data_folder_check(project, monkeypatch)
+    finally:
+        stuck.set()
+
+    assert check.status == "error"
+    assert "The data folder" in check.detail
 
 
 # --------------------------------------------------------------------------

@@ -34,7 +34,7 @@ cd cu-thf-expt11
 ```
 Scaffolded .../cu-thf-expt11
   for        Claude Code, GitHub Copilot
-  create   74 file(s)
+  create   75 file(s)
 ```
 
 `nrw init` is safe to run in a directory that already has files in it, and safe
@@ -67,6 +67,8 @@ nrw doctor
   ✓ bumps         1.0.4
   ✓ aure          1.0.1 @ d6e38e481fcf
   ✓ instrument    SNS REF_L
+  ✓ beamtime      apr2025
+  ! data folder   .../cu-thf-expt11/incoming (nrw's default): no reduced files yet; ...
   ! samples       none yet; run `nrw sample new <ID>`
   ✓ skills        19 installed: analysis-provenance, analyst-handoff, ...
 ```
@@ -78,10 +80,10 @@ nrw sample new Sample6 --title "Cu/Pt in d8-THF, 1 M LiBF4 (expt 11)"
 ```
 
 > **Measuring right now?** The Experiment page in `nrw serve` does this step
-> for you. It watches the reduction's output folder, lets you assign each run to
+> for you. It watches the experiment's data folder, lets you assign each run to
 > a sample, and copies the data in only once a run has finished arriving. Its
-> **Settings** page sets the IPTS and the data folder if `nrw init` was run
-> without `--ipts`. See
+> **Settings** page sets the IPTS, and the data folder when it is not the
+> project's own `incoming/`. See
 > [experiment.md](experiment.md). The manual route below is what it automates
 > — and it is still the route for a sliced time-resolved series like this
 > walkthrough's, which the page does not handle yet

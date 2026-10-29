@@ -279,10 +279,7 @@ def test_a_save_changes_no_byte_outside_the_managed_lines(project: Path) -> None
     assert changed_lines(edited, after) == [
         (['ipts = "IPTS-00001"'], ['ipts = "IPTS-7"']),
         (["# [experiment.source]"], ["[experiment.source]"]),
-        (
-            ['# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"'],
-            ['location = "/data/x"'],
-        ),
+        (['# location = "incoming"'], ['location = "/data/x"']),
     ]
 
 
@@ -302,10 +299,7 @@ def test_a_save_on_a_windows_file_keeps_its_line_endings(project: Path) -> None:
     assert changed_lines(windows.decode(), after.decode()) == [
         (['ipts = "IPTS-00001"'], ['ipts = "IPTS-7"']),
         (["# [experiment.source]"], ["[experiment.source]"]),
-        (
-            ['# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"'],
-            ['location = "/data/x"'],
-        ),
+        (['# location = "incoming"'], ['location = "/data/x"']),
     ]
     assert load_config(project).raw["experiment"]["source"] == {"location": "/data/x"}
 
@@ -538,7 +532,6 @@ def test_an_ipts_is_saved_in_one_form(project: Path, value, expected: str) -> No
         ("label", "x" * 101, "longer than"),
         ("label", "a\u2028b", "one line"),
         ("label", "a\u0085b", "one line"),
-        ("source.location", "data/new_reduction", "not a full path"),
         ("source.location", "~/data", "full path"),
         ("source.location", "/data/\x00x", "one line"),
         ("source.location", "/" + "d" * 1024, "longer than"),
@@ -595,13 +588,28 @@ def test_a_value_at_the_edge_of_what_is_allowed_is_saved_as_given(
 
 
 @pytest.mark.parametrize("inside", ["samples", ".nrw", "experiment"])
+@pytest.mark.parametrize("relative", [False, True])
 def test_a_data_location_inside_the_project_is_refused(
-    project: Path, inside: str
+    project: Path, inside: str, relative: bool
 ) -> None:
     from nr_workbench.project.settings import SettingsError, validate
 
+    location = f"{inside}/x" if relative else str(project / inside / "x")
     with pytest.raises(SettingsError, match=f"inside this project's {inside}/"):
-        validate(project, {"source.location": str(project / inside / "x")})
+        validate(project, {"source.location": location})
+
+
+def test_a_relative_data_location_is_saved_as_given_without_a_home_warning(
+    project: Path, monkeypatch
+) -> None:
+    """Read from the project folder, it is the same folder on every machine."""
+    from nr_workbench.project.settings import validate
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: project.parent))
+    edits, warnings = validate(project, {"source.location": "reduced/{ipts}"})
+
+    assert edits["experiment.source"]["location"].value == "reduced/{ipts}"
+    assert warnings == []
 
 
 def test_a_data_location_in_the_home_directory_is_allowed_with_a_warning(
@@ -639,11 +647,22 @@ def test_needs_setup_is_judged_without_the_data_mount(project: Path) -> None:
     from nr_workbench.experiment.config import experiment_config
     from nr_workbench.project.settings import save
 
-    save(project, {"ipts": ""})
+    save(project, {"ipts": "", "source.location": "/data/{ipts}/reduced"})
     assert experiment_config(load_config(project)).needs_setup
 
     save(project, {"source.location": "/data/without/ipts"})
     assert not experiment_config(load_config(project)).needs_setup
+
+
+def test_the_default_data_folder_needs_no_ipts(project: Path) -> None:
+    from nr_workbench.experiment.config import experiment_config
+    from nr_workbench.project.settings import save
+
+    save(project, {"ipts": "", "source.location": None})
+    config = experiment_config(load_config(project))
+
+    assert not config.needs_setup
+    assert config.source.path == project.resolve() / "incoming"
 
 
 def test_a_save_never_writes_an_edit_its_proof_rejects(
@@ -843,7 +862,10 @@ def test_an_older_commented_block_is_switched_on_where_it_stands(project: Path) 
 
     after = toml.read_text(encoding="utf-8")
     assert after.count("[experiment.source]") == 1
-    assert '\n[experiment.source]\n# kind = "local"\nlocation = "/data/x"\n' in after
+    source = after[
+        after.index("[experiment.source]") : after.index("[experiment.feed]")
+    ]
+    assert '\nlocation = "/data/x"\n' in source
     assert "\npoll_seconds = 10\n" in after
     assert load_config(project).raw["experiment"]["feed"] == {"poll_seconds": 10}
 

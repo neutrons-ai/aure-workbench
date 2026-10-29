@@ -1028,6 +1028,26 @@ def test_a_folder_nrw_cannot_write_is_refused(
     shown = pulled(project, tmp_path / "not-there")
 
     assert shown.exit_code == 1 and "not a folder nrw can write" in shown.output
+    assert "give --into another folder. Nothing was pulled." in shown.output
+
+
+def test_a_configured_folder_nrw_cannot_write_says_how_to_choose_another(
+    project: Path, tiled: FakeTiled, tmp_path: Path
+) -> None:
+    from nr_workbench.project.settings import save
+
+    tiled.context.kept = True
+    reduced(tiled, {SEGMENT: b"q"})
+    save(project, {"source.location": str(tmp_path / "SNS" / "{ipts}")})
+
+    shown = nrw("pull", "--data", "--root", str(project))
+
+    assert shown.exit_code == 1, shown.output
+    assert f"{tmp_path / 'SNS' / 'IPTS-00001'} is not a folder nrw can write" in (
+        shown.output
+    )
+    assert "nrw experiment settings --location DIR --write" in shown.output
+    assert "--into DIR" in shown.output
 
 
 def test_a_download_that_fails_names_what_was_copied_before_it(

@@ -100,8 +100,7 @@ CATALOG_KINDS = tuple(o.kind for o in CATALOG_OPTIONS if o.available)
 PLANNED_CATALOG_KINDS = tuple(o.kind for o in CATALOG_OPTIONS if not o.available)
 
 #: The experiment keys nrw writes, by table, each with nrw's default. A key
-#: left unset follows the default -- which matters because the default
-#: location is provisional and expected to move.
+#: left unset follows the default.
 EXPERIMENT_KEYS: dict[str, dict[str, Value]] = {
     "experiment.source": {
         "kind": DEFAULT_SOURCE_KIND,

@@ -103,6 +103,11 @@ def content_of(node: Any) -> bytes | None:
     return response.content
 
 
+def writable(folder: Path) -> bool:
+    """Whether *folder* is a directory this account can write files into."""
+    return folder.is_dir() and os.access(folder, os.W_OK | os.X_OK)
+
+
 def pull(missing: Iterable[Missing], folder: Path) -> list[Path]:
     """Copy each of *missing* into *folder*, whole.
 
@@ -116,7 +121,7 @@ def pull(missing: Iterable[Missing], folder: Path) -> list[Path]:
     """
     import httpx
 
-    if not folder.is_dir() or not os.access(folder, os.W_OK | os.X_OK):
+    if not writable(folder):
         raise TiledSyncError(
             f"{folder} is not a folder nrw can write: create it, or point "
             "[experiment.source] location at one of yours."

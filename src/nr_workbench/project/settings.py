@@ -270,27 +270,24 @@ def _location(root: Path, value: Any, warnings: list[str]) -> str:
         )
     if text.startswith("~"):
         raise SettingsError(
-            "source.location must be a full path; `~` is not expanded, and would "
-            "mean someone else's home directory to anyone who opens this project."
+            "source.location must be a full path, or one relative to the project; "
+            "`~` is not expanded, and would mean someone else's home directory to "
+            "anyone who opens this project."
         )
-    concrete = text.replace("{ipts}", "IPTS-0")
-    if not Path(concrete).is_absolute():
-        raise SettingsError(
-            f"source.location {text!r} is not a full path, so it would mean "
-            "something different from every directory nrw is started in."
-        )
-    # Lexical only: resolving a path on a dead mount blocks the request.
-    folder = os.path.normpath(concrete)
+    concrete = Path(text.replace("{ipts}", "IPTS-0"))
     layout = ProjectLayout(root=Path(root).absolute())
+    # Lexical only: resolving a path on a dead mount blocks the request. A
+    # relative location is read from the project root.
+    folder = os.path.normpath(layout.root / concrete)
     for area in (layout.samples_dir, layout.state_dir, layout.experiment_dir):
         inside = os.path.normpath(str(area))
         if folder == inside or folder.startswith(inside + os.sep):
             raise SettingsError(
                 f"source.location is inside this project's {area.name}/, which "
-                "nrw writes itself; point it at the facility's folder."
+                "nrw writes itself; choose another folder."
             )
     home = os.path.normpath(str(Path.home()))
-    if folder == home or folder.startswith(home + os.sep):
+    if concrete.is_absolute() and (folder == home or folder.startswith(home + os.sep)):
         warnings.append(
             "The data location is in your home directory. nrw.toml is committed "
             "with the project, so the path will be wrong for anyone else who "

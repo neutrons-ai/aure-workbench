@@ -268,10 +268,11 @@ neither a size nor a time tells a file reduced again from the same one, so
 deleting a file is how it is copied again. Each lands under a hidden name of
 its own first and is renamed whole; the folder watcher does the rest. Only
 names the reduction writes are copied. It copies into the data folder
-`nrw.toml` names, or `--into DIR`. `--run` narrows it to some runs, and
-`nrw tiled status` says which files a pull would copy, before it is run. A
-pulled run counts as complete once its files have settled, as any new file
-does (five minutes by default).
+`nrw.toml` names (the project's own `incoming/` by default), or `--into DIR`,
+and checks it can write there before anything is pulled. `--run` narrows it to
+some runs, and `nrw tiled status` says which files a pull would copy, before
+it is run. A pulled run counts as complete once its files have settled, as any
+new file does (five minutes by default).
 
 **Pulling the catalog.** `pull --context` writes Tiled's runs, samples and
 experiment context into this project's catalog: a record the catalog lacks is
@@ -335,16 +336,15 @@ without.
 of their own:
 
 1. `nrw init DIR --ipts IPTS-37740`, with the IPTS written in full:
-   `nrw tiled` looks the experiment up as written.
-2. A data folder of their own: `nrw experiment settings --location DIR
-   --write`.
-3. `nrw tiled login`.
-4. `nrw tiled pull --context --data --fits`, which pulls in that order.
-5. `nrw experiment apply --write`, once the pulled files have settled: it
+   `nrw tiled` looks the experiment up as written. It makes the project's
+   data folder, `incoming/`.
+2. `nrw tiled login`.
+3. `nrw tiled pull --context --data --fits`, which pulls in that order.
+4. `nrw experiment apply --write`, once the pulled files have settled: it
    writes each sample's `sample.md` and copies its data. It leaves the
    reduced files the fits pull wrote, and lists as a conflict each one the
    facility's reduction holds otherwise.
-6. Each fit on the Fits page, as it was recorded. `nrw fit run --from
+5. Each fit on the Fits page, as it was recorded. `nrw fit run --from
    <fit_id>`, the line the pull prints for it, runs one again.
 
 A push and a status run against a real Tiled 0.2.18, started with uvx apart
