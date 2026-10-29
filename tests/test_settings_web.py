@@ -56,6 +56,19 @@ def test_the_settings_say_what_is_set_what_is_default_and_what_is_coming(
     assert payload["effective"]["needs_setup"] is False
 
 
+def test_the_settings_show_the_default_folder_and_the_facility_example(
+    app, expt: Path
+) -> None:
+    from nr_workbench.project.config import FACILITY_REDUCTION_LOCATION
+
+    payload = app.test_client().get("/api/experiment/settings").get_json()
+    page = app.test_client().get("/settings").get_data(as_text=True)
+
+    assert payload["default_path"] == str(expt.resolve() / "incoming")
+    assert payload["facility_location"] == FACILITY_REDUCTION_LOCATION
+    assert f'placeholder="e.g. {FACILITY_REDUCTION_LOCATION}"' in page
+
+
 def test_the_catalog_is_kept_in_the_project_and_nothing_else_is_offered(
     app,
 ) -> None:
@@ -130,7 +143,6 @@ def test_an_ipts_in_the_projects_path_is_offered(tmp_path: Path, monkeypatch) ->
         app.config["NRW_EXPERIMENT"].reload()
 
     assert payload["suggested_ipts"] == "IPTS-34347"
-    assert payload["effective"]["needs_setup"] is True
 
 
 # --------------------------------------------------------------------------
@@ -536,7 +548,7 @@ def test_the_experiment_page_says_when_it_needs_setting_up(app, expt: Path) -> N
 
     assert app.test_client().get("/api/experiment").get_json()["needs_setup"] is False
 
-    save(expt, {"ipts": "", "source.location": None})
+    save(expt, {"ipts": "", "source.location": "/data/{ipts}/reduced"})
 
     assert app.test_client().get("/api/experiment").get_json()["needs_setup"] is True
 
@@ -549,7 +561,7 @@ def test_serve_names_the_settings_page_and_says_when_setup_is_needed(
     from .test_experiment_web import _serve
 
     ready = _serve(expt, monkeypatch=monkeypatch)
-    save(expt, {"ipts": "", "source.location": None})
+    save(expt, {"ipts": "", "source.location": "/data/{ipts}/reduced"})
     unready = _serve(expt, monkeypatch=monkeypatch)
 
     assert "/settings" in ready.output and "not set up yet" not in ready.output
@@ -569,7 +581,7 @@ def test_serve_says_which_folder_it_watches_and_why_it_is_the_default(
     toml = expt / "nrw.toml"
     toml.write_text(
         toml.read_text(encoding="utf-8").replace(
-            '# location = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"',
+            '# location = "incoming"',
             '# location = "/data/typed/here"',
         ),
         encoding="utf-8",
@@ -578,7 +590,7 @@ def test_serve_says_which_folder_it_watches_and_why_it_is_the_default(
 
     assert "Data folder  " in configured.output
     assert "(nrw's default)" not in configured.output
-    assert "Data folder  /SNS/REF_L/IPTS-00001/" in defaulted.output
+    assert f"Data folder  {expt.resolve() / 'incoming'}" in defaulted.output
     assert "(nrw's default)" in defaulted.output
     assert "gives `location` in a comment" in defaulted.output
 

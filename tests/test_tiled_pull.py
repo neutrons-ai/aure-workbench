@@ -652,6 +652,39 @@ def test_context_data_and_fits_are_pulled_in_that_order(
     assert (folder / SEGMENT).read_bytes() == b"q r"
 
 
+def test_a_colleagues_fresh_project_pulls_the_data_into_its_incoming_folder(
+    project: Path, colleague: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    """No data folder to set up first: `nrw init` made the project's own."""
+    catalogued(project)
+    pushed(project)
+    reduced = FakeNode(content=b"q r")
+    reduced.key = SEGMENT
+    experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
+
+    shown = pulled(colleague, "--context", "--data", "--fits")
+
+    assert shown.exit_code == 0, shown.output
+    assert (colleague / "incoming" / SEGMENT).read_bytes() == b"q r"
+
+
+def test_a_data_folder_nrw_cannot_write_stops_the_pull_before_the_catalog(
+    project: Path, colleague: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    """Not the catalog pulled, the data refused, and the fits never reached."""
+    import shutil
+
+    catalogued(project)
+    pushed(project)
+    shutil.rmtree(colleague / "incoming")
+
+    shown = pulled(colleague, "--context", "--data", "--fits")
+
+    assert shown.exit_code == 1
+    assert "`nrw init` creates it. Nothing was pulled." in shown.output
+    assert catalog_of(colleague).runs == {}
+
+
 # --------------------------------------------------------------------------
 # `nrw tiled status`
 # --------------------------------------------------------------------------

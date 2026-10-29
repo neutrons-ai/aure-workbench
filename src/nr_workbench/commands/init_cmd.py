@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import click
 
 from nr_workbench.harness import resolve
+from nr_workbench.project.config import DEFAULT_EXPERIMENT_LOCATION
 from nr_workbench.project.render import RenderContext, init_context, render_tree
 from nr_workbench.project.scaffold import (
     LockProblemError,
@@ -59,8 +60,9 @@ SEED_SKILLS = (
 
 #: Created empty so the layout is legible before any data arrives. Needs a
 #: .gitkeep because git cannot track an empty directory. `docs/` is not listed
-#: -- ground_truths.md already creates it.
-SEED_DIRS = ("samples",)
+#: -- ground_truths.md already creates it. `incoming/` is nrw's default data
+#: folder.
+SEED_DIRS = ("samples", DEFAULT_EXPERIMENT_LOCATION)
 
 #: Project templates installed as a marked block inside a file the user also
 #: owns, instead of as the whole file.

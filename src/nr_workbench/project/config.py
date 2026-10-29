@@ -20,15 +20,24 @@ CONFIG_FILENAME = "nrw.toml"
 #: Bumped when the on-disk contract changes in a way that needs migration.
 CONTRACT_VERSION = 1
 
-#: Where REF_L's ``new_reduction`` pipeline writes reduced runs: the default
-#: for ``[experiment.source] location``, with ``{ipts}`` from ``[beamtime]``.
+#: The default for ``[experiment.source] location``: ``incoming/``, in the
+#: project itself. A relative location is read from the project root, so this
+#: one names the same folder on every machine. ``nrw init`` creates it, and
+#: ``nrw tiled pull --data`` copies the experiment's reduced files into it.
+#:
+#: It lives here, beside the loader of ``nrw.toml``, so the scaffold can write
+#: it without importing the experiment package;
+#: :mod:`nr_workbench.experiment.config` reads it from here.
+DEFAULT_EXPERIMENT_LOCATION = "incoming"
+
+#: Where REF_L's ``new_reduction`` pipeline writes reduced runs, with ``{ipts}``
+#: from ``[beamtime]``: the location to give on a machine with the facility's
+#: ``/SNS`` mount.
 #:
 #: **Provisional.** This is where the pipeline writes today, and it is expected
 #: to move -- which is why it is one constant rather than a string repeated in
-#: the docs, the template and the code. It lives here, beside the loader of
-#: ``nrw.toml``, so the scaffold can write it without importing the experiment
-#: package; :mod:`nr_workbench.experiment.config` reads it from here.
-DEFAULT_EXPERIMENT_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
+#: the template and the code.
+FACILITY_REDUCTION_LOCATION = "/SNS/REF_L/{ipts}/shared/autoreduce/new_reduction"
 
 #: Seconds between polls of the experiment's feed and data source while
 #: someone is watching the page.

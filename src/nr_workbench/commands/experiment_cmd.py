@@ -665,10 +665,7 @@ def _echo_settings(view: dict[str, Any]) -> None:
     click.echo(f"  IPTS       {values['ipts'] or '(none)'}")
     click.echo(f"  label      {values['label'] or '(none)'}")
     click.echo(f"  source     {shown('source.kind')}")
-    location = shown("source.location")
-    if values["source.location"] is None:
-        location = location.replace("(nrw's default)", "(nrw's default; provisional)")
-    click.echo(f"  location   {location}")
+    click.echo(f"  location   {shown('source.location')}")
     effective = view["effective"]
     click.echo(f"             -> {effective['path'] or 'cannot be worked out yet'}")
     click.echo(f"  settle     {shown('source.settle_seconds', ' s')}")
@@ -689,7 +686,7 @@ def _echo_settings(view: dict[str, Any]) -> None:
         click.echo(f"  coming     {', '.join(coming)}")
     if effective["needs_setup"]:
         click.secho(
-            "\n  Not set up yet: give the IPTS (--ipts) or a full data folder (--location).",
+            "\n  Not set up yet: give the IPTS (--ipts) or another data folder (--location).",
             fg="yellow",
         )
     if view["problems"]:

@@ -10,6 +10,12 @@ samples/*/data/raw/
 *.nxs.h5
 *.h5
 
+# The reduced files as they arrive, in nrw's default data folder: copies of the
+# facility's, which `nrw tiled pull --data` fetches again. Each sample's own
+# copy, in its data/, IS tracked.
+incoming/*
+!incoming/.gitkeep
+
 # Fit payloads: DREAM chains and large bitmaps. The manifests, parameter
 # tables and SVG figures beside them ARE tracked.
 samples/*/results/*/fit/*.mc.gz

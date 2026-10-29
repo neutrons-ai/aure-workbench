@@ -21,7 +21,7 @@ from jinja2 import Environment, StrictUndefined
 from nr_workbench import __version__
 from nr_workbench.harness import DEFAULT_HARNESSES, agent_dirs, resolve
 from nr_workbench.project.audience import DEFAULTS as AUDIENCE_DEFAULTS
-from nr_workbench.project.config import CONTRACT_VERSION
+from nr_workbench.project.config import CONTRACT_VERSION, FACILITY_REDUCTION_LOCATION
 from nr_workbench.project.experiment_schema import experiment_block, written_experiment
 from nr_workbench.project.scaffold import PlannedFile
 from nr_workbench.project.tomlfile import Set, Value, edit, toml_value
@@ -182,10 +182,11 @@ class RenderContext:
             # file already says, so that a change made through nrw -- `nrw
             # audience`, the Settings page -- leaves `nrw init` nothing to do.
             # The experiment block documents nrw's defaults from the constants
-            # the code uses: the location is provisional and will move, and a
-            # documented default that differs from the real one misleads.
+            # the code uses: a documented default that differs from the real
+            # one misleads.
             "audience": {**AUDIENCE_DEFAULTS, "notes": "", **self.audience},
             "experiment_block": experiment_block(self.experiment),
+            "facility_location": FACILITY_REDUCTION_LOCATION,
             # Always defined, so StrictUndefined still catches a typo in a
             # template rather than rendering an empty section.
             "managed": self.prose.managed,

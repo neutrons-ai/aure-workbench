@@ -465,6 +465,7 @@ def _project_checks() -> list[Check]:
     checks.append(Check("instrument", _OK, f"{config.facility} {config.instrument}"))
     if config.beamtime:
         checks.append(Check("beamtime", _OK, config.beamtime))
+    checks.append(_data_folder_check(layout.root))
 
     samples = layout.list_samples()
     checks.append(
@@ -494,6 +495,58 @@ def _project_checks() -> list[Check]:
     checks.append(_spec_schema_check(layout))
 
     return checks
+
+
+def _data_folder_check(root: Path) -> Check:
+    """Report on the folder the experiment's reduced files are read from.
+
+    Probed as ``nrw experiment settings --check`` probes it, within the same
+    deadline: a data mount that stopped answering must not hang doctor.
+    """
+    from nr_workbench.bounded import Bounded, TimedOut
+    from nr_workbench.experiment.sources import SOURCE_TIMEOUT
+    from nr_workbench.experiment.workspace import check_source
+    from nr_workbench.project.config import (
+        DEFAULT_EXPERIMENT_LOCATION,
+        FACILITY_REDUCTION_LOCATION,
+    )
+    from nr_workbench.project.settings import SettingsError
+
+    once = Bounded(
+        slots=1, timeout=SOURCE_TIMEOUT, name="nrw-folder-check", what="The data folder"
+    )
+    try:
+        found = check_source(root, {}, run=once.run)
+    except (SettingsError, TimedOut) as exc:
+        return Check("data folder", "error", str(exc))
+
+    path = found["path"]
+    default = found["location"] == DEFAULT_EXPERIMENT_LOCATION
+    shown = f"{path} (nrw's default)" if default else path
+    if not found["reachable"]:
+        if default and not Path(path).exists():
+            return Check(
+                "data folder", "error", f"{path} is not there; `nrw init` creates it"
+            )
+        problems = found["problems"]
+        why = problems[0]["message"] if problems else f"{path} cannot be read."
+        return Check(
+            "data folder",
+            "error",
+            f"{why} `nrw experiment settings --location DIR --write` points at another.",
+        )
+    if not found["runs"]:
+        hint = "`nrw tiled pull --data` copies the experiment's from Tiled"
+        if default:
+            hint += (
+                "; on a computer with the /SNS mount, `nrw experiment settings "
+                f'--location "{FACILITY_REDUCTION_LOCATION}" --write` reads them '
+                "where the reduction writes them"
+            )
+        return Check("data folder", "warn", f"{shown}: no reduced files yet; {hint}")
+    runs = found["runs"]
+    span = f"{found['first']}-{found['last']}" if runs > 1 else str(found["first"])
+    return Check("data folder", _OK, f"{shown}: {runs} run(s), {span}")
 
 
 def _spec_schema_check(layout: Any) -> Check:

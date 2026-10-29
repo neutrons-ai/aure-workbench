@@ -121,9 +121,17 @@ dq_convention = "per-file, read from the header"
 # one of a table's settings is set, the table is written out. To set one by
 # hand, remove the `# ` from its line AND from its table's `[...]` line: a value
 # typed inside a comment is not read. Edit that table rather than adding a
-# second one: TOML allows each table once. The default
-# location is PROVISIONAL: it is where REF_L's new_reduction pipeline writes
-# today, and it is expected to move. `{ipts}` is filled from [beamtime] ipts.
+# second one: TOML allows each table once.
+#
+# The default location is incoming/, in this project: `nrw init` creates it,
+# and `nrw tiled pull --data` copies the experiment's reduced files into it.
+# A relative location is read from the project folder; `{ipts}` is filled from
+# [beamtime] ipts. On a computer with the facility's /SNS mount, read them
+# where REF_L's reduction writes them instead -- a location that is
+# provisional, and expected to move:
+#
+#   nrw experiment settings --location "{{ facility_location }}" --write
+#
 # The "directory" feed notices a run when its reduced files appear.
 #
 {{ experiment_block }}

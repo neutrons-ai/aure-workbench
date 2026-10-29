@@ -508,13 +508,34 @@ def _folder_of(project: Path) -> Path | None:
     return experiment_config_for(project).source.path
 
 
-def _data_folder(project: Path) -> Path:
-    """The data folder nrw.toml names."""
-    folder = _folder_of(project)
-    if folder is None:
+def _pull_folder(project: Path, into: str | None) -> Path:
+    """The folder ``pull --data`` copies into, checked before anything is
+    pulled: a pull of the catalog and the fits with it must not stop halfway."""
+    from nr_workbench.experiment.config import experiment_config_for
+    from nr_workbench.project.config import DEFAULT_EXPERIMENT_LOCATION
+    from nr_workbench.tiled.data import writable
+
+    if into:
+        folder = Path(into).resolve()
+        fix = "create it, or give --into another folder"
+    else:
+        source = experiment_config_for(project).source
+        if source.path is None:
+            raise click.ClickException(
+                "The data folder cannot be worked out from nrw.toml: give --into "
+                "DIR, or set [experiment.source] location."
+            )
+        folder = source.path
+        if source.location == DEFAULT_EXPERIMENT_LOCATION and not folder.exists():
+            fix = "`nrw init` creates it"
+        else:
+            fix = (
+                "point the data folder at one that is, with `nrw experiment "
+                "settings --location DIR --write`, or pull into one with --into DIR"
+            )
+    if not writable(folder):
         raise click.ClickException(
-            "The data folder cannot be worked out from nrw.toml: give --into DIR, "
-            "or set [experiment.source] location."
+            f"{folder} is not a folder nrw can write: {fix}. Nothing was pulled."
         )
     return folder
 
@@ -546,7 +567,7 @@ def run_pull(
         )
     project = _project(root)
     ipts = _ipts(project)
-    folder = (Path(into).resolve() if into else _data_folder(project)) if data else None
+    folder = _pull_folder(project, into) if data else None
     with _asking(project) as (chosen, _):
         experiment = experiment_node(connect(project, data_sources=data), ipts)
         place = f"{chosen.url}/{EXPERIMENT_PATH.format(ipts=ipts)}"

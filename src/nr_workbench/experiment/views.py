@@ -157,10 +157,14 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
     """
     import dataclasses
 
-    from nr_workbench.experiment.config import experiment_config
+    from nr_workbench.experiment.config import default_path, experiment_config
     from nr_workbench.problems import Problem
     from nr_workbench.project import experiment_schema as project
-    from nr_workbench.project.config import ProjectConfigError, load_config
+    from nr_workbench.project.config import (
+        FACILITY_REDUCTION_LOCATION,
+        ProjectConfigError,
+        load_config,
+    )
     from nr_workbench.project.settings import read as read_settings
     from nr_workbench.project.tomlfile import TomlEditError
 
@@ -173,7 +177,7 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
     try:
         config = experiment_config(load_config(root))
     except ProjectConfigError:
-        config = experiment_config(None)
+        config = experiment_config(None, root=Path(root).resolve())
     problems.extend(config.problems)
     if catalogued_runs is None:
         problems.append(
@@ -185,6 +189,7 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
         )
 
     chosen = current.experiment if current else {}
+    default_folder = default_path(Path(root).resolve(), config.ipts)
     values: dict[str, Any] = {
         "ipts": current.ipts if current else "",
         "label": current.label if current else "",
@@ -201,6 +206,8 @@ def settings_view(root: Path, *, catalogued_runs: int | None = 0) -> dict[str, A
         "editable": current is not None,
         "values": values,
         "defaults": defaults,
+        "default_path": str(default_folder) if default_folder else None,
+        "facility_location": FACILITY_REDUCTION_LOCATION,
         "effective": {
             "ipts": config.ipts,
             "location": config.source.location,

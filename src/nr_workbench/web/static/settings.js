@@ -31,15 +31,6 @@
     return isSet(shown.values[name]) ? shown.values[name] : shown.defaults[name];
   }
 
-  function normalizedIpts(text) {
-    const trimmed = text.trim();
-    return /^\d+$/.test(trimmed) ? "IPTS-" + trimmed : trimmed.toUpperCase();
-  }
-
-  function currentIpts() {
-    return normalizedIpts($("s-ipts").value) || shown.effective.ipts || "";
-  }
-
   function checked(name) {
     const input = document.querySelector('input[name="' + name + '"]:checked');
     return input ? input.value : null;
@@ -77,11 +68,8 @@
   }
 
   function renderDefaultPath() {
-    const template = shown.defaults["source.location"];
-    const ipts = currentIpts();
-    $("s-default-path").textContent = ipts
-      ? template.replace("{ipts}", ipts)
-      : template + "  -- needs the IPTS";
+    $("s-default-path").textContent =
+      shown.default_path || shown.defaults["source.location"];
   }
 
   function renderIptsHint() {
@@ -98,11 +86,11 @@
       use.addEventListener("click", function () {
         $("s-ipts").value = shown.suggested_ipts;
         renderIptsHint();
-        renderDefaultPath();
       });
       hint.append("This project's folder names " + shown.suggested_ipts + ": ", use);
     } else {
-      hint.textContent = "Needed to find the data at nrw's default location.";
+      hint.textContent =
+        "Needed to find the experiment on Tiled, and to fill in {ipts} in a data folder.";
     }
   }
 
@@ -349,10 +337,7 @@
 
   $("set-form").addEventListener("submit", save);
   $("s-check").addEventListener("click", check);
-  $("s-ipts").addEventListener("input", function () {
-    renderIptsHint();
-    renderDefaultPath();
-  });
+  $("s-ipts").addEventListener("input", renderIptsHint);
   $("s-location").addEventListener("input", function () {
     $("s-custom").checked = true;
   });

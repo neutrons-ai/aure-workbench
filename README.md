@@ -95,7 +95,7 @@ To share it with everyone on the experiment, `nrw tiled push` writes it, and
 the starred and final fits, to the experiment's node on tiled.ornl.gov, and
 `nrw tiled status` says what is there. A colleague starting fresh runs `nrw
 tiled pull --context --data --fits` to bring back the catalog, the reduced
-files, and each fit as it was recorded; `nrw fit run --from <fit_id>` runs
+files (into the project's `incoming/`), and each fit as it was recorded; `nrw fit run --from <fit_id>` runs
 one again. Each acts with your own Tiled login (`nrw tiled login`), and needs
 the installer's `NRW_EXTRAS=tiled`.
 
