@@ -263,8 +263,14 @@ def run_apply(
     confirm: tuple[str, ...] = (),
     root: str | None = None,
     as_json: bool = False,
+    fail_on_attention: bool = True,
 ) -> None:
-    """Show, and with --write carry out, what applying the catalog would do."""
+    """Show, and with --write carry out, what applying the catalog would do.
+
+    ``fail_on_attention`` False keeps a written apply's exit code at zero when
+    only something to look at remains, a conflict say: ``nrw tiled pull``
+    shows it, and has done what it was asked.
+    """
     from nr_workbench.experiment.apply import ApplyError, apply, plan_apply
     from nr_workbench.experiment.model import CatalogValidationError, RunKey
     from nr_workbench.experiment.render import SampleRenderError
@@ -333,7 +339,7 @@ def run_apply(
         click.echo(f"  done: {len(report.done)} file action(s)")
         for failed in report.failed:
             click.secho(f"  ! {failed.name}: {failed.detail}", fg="red")
-    if report.failed or needs_attention:
+    if report.failed or (needs_attention and fail_on_attention):
         raise SystemExit(1)
 
 

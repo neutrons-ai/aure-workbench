@@ -112,7 +112,10 @@ def test_a_record_that_differs_is_replaced_by_tileds_once_the_person_says_so(
     shown = pulled(colleague, "--context")
 
     assert declined.exit_code == 1
-    assert "Write Tiled's copy over this project's catalog?" in declined.output
+    assert (
+        "Write Tiled's copy over this project's catalog, and apply it to samples/?"
+        in declined.output
+    )
     assert "Nothing written (--dry-run)." in dry.output
     assert kept == "dry"
     assert shown.exit_code == 0, shown.output
@@ -666,6 +669,39 @@ def test_a_colleagues_fresh_project_pulls_the_data_into_its_incoming_folder(
 
     assert shown.exit_code == 0, shown.output
     assert (colleague / "incoming" / SEGMENT).read_bytes() == b"q r"
+
+
+def test_a_colleagues_pull_applies_the_catalog_to_samples_at_once(
+    project: Path,
+    colleague: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    tmp_path: Path,
+) -> None:
+    """Pulled files land settled: each complete run is copied in straight away."""
+    from .experiment_fixtures import write_autoreduced
+
+    catalogued(project)
+    pushed(project)
+    files = {}
+    for run in (234277, 234280, 234283):  # the last shows the others ended
+        for path in write_autoreduced(tmp_path / "reduced", run, [1, 2, 3]):
+            node = FakeNode(content=path.read_bytes())
+            node.key = path.name
+            files[path.name] = node
+    experiment.children["autoreduction"] = FakeNode(files)
+    sample = colleague / "samples" / "S1"
+
+    dry = pulled(colleague, "--context", "--data", "--dry-run")
+    dry_wrote = (sample / "sample.md").exists()
+    shown = pulled(colleague, "--context", "--data")
+
+    assert dry.exit_code == 0, dry.output
+    assert not dry_wrote
+    assert shown.exit_code == 0, shown.output
+    assert (sample / "sample.md").is_file()
+    copied = sorted(p.name for p in (sample / "data" / "steady").glob("REFL_*"))
+    assert copied == sorted(n for n in files if not n.startswith("REFL_234283"))
 
 
 def test_a_data_folder_nrw_cannot_write_stops_the_pull_before_the_catalog(

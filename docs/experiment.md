@@ -588,7 +588,8 @@ read them; `nrw tiled status` says what is there. Each fit goes as analysed
 data: its model with its parameters and the data it was fitted to, in the
 file refl1d loads, with its curves and its provenance. A colleague starting
 fresh runs `nrw tiled pull --context --data --fits`: the catalog, the reduced
-files, and each fit as it was recorded, on the Fits page.
+files, and each fit as it was recorded, on the Fits page, with the catalog
+applied to `samples/`.
 `nrw fit run --from <fit_id>` runs one again from its own problem file. The
 last writer wins, each way. See [experiment-sources.md](experiment-sources.md),
 "Tiled".

@@ -203,8 +203,8 @@ own command line, to an agent.
 | `nrw tiled login`, `logout` | Tiled's device-code login through Globus (tiled.ornl.gov first asks which login: choose `globus`); the client keeps the login, and renews it, in its own token cache |
 | `nrw tiled status` | whose the login is, whether the experiment is on Tiled, each record there, the experiment's context and each fit, against this project's, whether each fit there is here, and which reduced files there the data folder lacks |
 | `nrw tiled push` | writes the project's catalog to the experiment's `context/`, and its starred and final fits to `analysis/`; `--only context` or `--only fits` writes one |
-| `nrw tiled pull --context` | writes Tiled's runs, samples and experiment context into the catalog |
-| `nrw tiled pull --data` | copies the experiment's reduced files into the data folder |
+| `nrw tiled pull --context` | writes Tiled's runs, samples and experiment context into the catalog, then applies it to `samples/` |
+| `nrw tiled pull --data` | copies the experiment's reduced files into the data folder, then applies the catalog to `samples/` |
 | `nrw tiled pull --fits` | rebuilds each fit here as it was recorded, with the reduced files it read, and writes its spec and script into its sample's `models/` |
 
 The server is `TILED_URL` (tiled.ornl.gov by default), and `TILED_API_KEY`
@@ -271,8 +271,9 @@ names the reduction writes are copied. It copies into the data folder
 `nrw.toml` names (the project's own `incoming/` by default), or `--into DIR`,
 and checks it can write there before anything is pulled. `--run` narrows it to
 some runs, and `nrw tiled status` says which files a pull would copy, before
-it is run. A pulled run counts as complete once its files have settled, as any
-new file does (five minutes by default).
+it is run. A pulled file lands dated an hour back: it arrives whole, so its run
+is not held for its files to settle, as a file copied in by hand is. Whether
+the run is complete still needs a later run, as for any run.
 
 **Pulling the catalog.** `pull --context` writes Tiled's runs, samples and
 experiment context into this project's catalog: a record the catalog lacks is
@@ -281,6 +282,12 @@ one question (`--yes` skips it). A record only the catalog holds is left.
 Each edit is held to the catalog's own rules, and a record they refuse is
 named and nothing is written; a save made on the Experiment page meanwhile is
 not written over either: pull again.
+
+**Applying what was pulled.** After `--context` or `--data`, the pull applies
+the catalog to `samples/`, as `nrw experiment apply --write` does: each
+sample's `sample.md`, and the data of each complete run. The question the
+catalog pull asks covers it. What needs a person, a conflict say, is listed
+and left alone, and the pull still succeeds. `--dry-run` applies nothing.
 
 **Pulling fits.** `pull --fits` rebuilds each fit as Tiled records it, in
 `samples/<sample>/results/<fit_id>/`: its files, its curves at the thinned
@@ -339,12 +346,11 @@ of their own:
    `nrw tiled` looks the experiment up as written. It makes the project's
    data folder, `incoming/`.
 2. `nrw tiled login`.
-3. `nrw tiled pull --context --data --fits`, which pulls in that order.
-4. `nrw experiment apply --write`, once the pulled files have settled: it
-   writes each sample's `sample.md` and copies its data. It leaves the
-   reduced files the fits pull wrote, and lists as a conflict each one the
-   facility's reduction holds otherwise.
-5. Each fit on the Fits page, as it was recorded. `nrw fit run --from
+3. `nrw tiled pull --context --data --fits`, which pulls in that order, then
+   applies the catalog: it writes each sample's `sample.md` and copies its
+   data. It leaves the reduced files the fits pull wrote, and lists as a
+   conflict each one the facility's reduction holds otherwise.
+4. Each fit on the Fits page, as it was recorded. `nrw fit run --from
    <fit_id>`, the line the pull prints for it, runs one again.
 
 A push and a status run against a real Tiled 0.2.18, started with uvx apart

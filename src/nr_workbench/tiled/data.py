@@ -8,8 +8,10 @@ comes to hold while the pull runs, is left as it is, since a size or a time
 would not tell a re-reduction from the same file. The folder watcher does the rest, as for any file that appears.
 
 Only names the reduction writes are copied. Each is written under a hidden
-name and renamed whole, so the watcher never reads half of one. Nothing is
-written on Tiled.
+name and renamed whole, so the watcher never reads half of one, and is dated
+:data:`PULLED_AGE` back: a file that lands whole has nothing to settle, so its
+run is judged at once, as one that has stood an hour is. Whether the run is
+complete still needs a later run, as for any run. Nothing is written on Tiled.
 
 Each file is fetched by the route the client's own ``raw_export`` takes, but
 not through it: in tiled 0.2.18 that logs a failed download as a line of
@@ -19,15 +21,20 @@ output, rather than raising it, and draws a progress bar for every file.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nr_workbench.project.experiment_schema import SETTLE_RANGE
 from nr_workbench.tiled.server import TiledSyncError
 
 #: Where the reduced files are, in the experiment's own node.
 AUTOREDUCTION = "autoreduction"
+
+#: How far back a pulled file is dated: the longest settle time nrw allows.
+PULLED_AGE = SETTLE_RANGE[1]
 
 
 @dataclass(frozen=True)
@@ -138,6 +145,8 @@ def pull(missing: Iterable[Missing], folder: Path) -> list[Path]:
                     f"copied. {_before(written)}"
                 )
             partial.write_bytes(data)
+            landed = time.time() - PULLED_AGE
+            os.utime(partial, (landed, landed))
             if target.exists():
                 continue  # written meanwhile, by the reduction or a person
             os.replace(partial, target)

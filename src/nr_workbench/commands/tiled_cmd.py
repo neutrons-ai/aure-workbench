@@ -557,7 +557,9 @@ def run_pull(
     ``--context`` writes Tiled's records into the catalog, Tiled's copy
     winning, after one confirmation. ``--data`` copies each reduced file the
     data folder lacks. ``--fits`` rebuilds each fit as it was recorded
-    (:func:`nr_workbench.tiled.pull.pull_fits`). Nothing is written on Tiled.
+    (:func:`nr_workbench.tiled.pull.pull_fits`). After ``--context`` or
+    ``--data``, the catalog is applied to ``samples/``, as ``nrw experiment
+    apply --write`` applies it. Nothing is written on Tiled.
     """
     from nr_workbench.tiled.server import EXPERIMENT_PATH, connect, experiment_node
 
@@ -581,7 +583,14 @@ def run_pull(
         if data:
             _pull_data(experiment, folder, ipts, runs=runs, dry_run=dry_run)
         if fits:
-            _pull_fits(project, experiment, place, dry_run=dry_run)
+            _pull_fits(
+                project, experiment, place, dry_run=dry_run, applying=context or data
+            )
+    if (context or data) and not dry_run:
+        from nr_workbench.commands.experiment_cmd import run_apply
+
+        click.echo("\nApplying the catalog to samples/:")
+        run_apply(write=True, root=str(project), fail_on_attention=False)
 
 
 def _pull_context(
@@ -623,7 +632,10 @@ def _pull_context(
         click.echo("Nothing written (--dry-run).")
         return
     if not yes:
-        click.confirm("Write Tiled's copy over this project's catalog?", abort=True)
+        click.confirm(
+            "Write Tiled's copy over this project's catalog, and apply it to samples/?",
+            abort=True,
+        )
     try:
         ParquetCatalogStore.for_project(project).update(
             runs=plan.runs, samples=plan.samples, experiment=plan.experiment
@@ -636,10 +648,7 @@ def _pull_context(
         raise click.ClickException(
             f"Nothing was written: the catalog's rules refuse what Tiled holds: {exc}"
         ) from exc
-    click.echo(
-        f"Pulled {len(changes)} record(s) into the catalog. `nrw experiment apply "
-        "--write` writes each sample's sample.md and copies its data."
-    )
+    click.echo(f"Pulled {len(changes)} record(s) into the catalog.")
 
 
 def _pull_data(
@@ -678,8 +687,11 @@ def _pull_data(
     click.echo(f"Copied {len(written)} file(s) into {folder}.")
 
 
-def _pull_fits(project: Path, experiment: Any, place: str, *, dry_run: bool) -> None:
-    """Each fit, rebuilt here as Tiled records it."""
+def _pull_fits(
+    project: Path, experiment: Any, place: str, *, dry_run: bool, applying: bool
+) -> None:
+    """Each fit, rebuilt here as Tiled records it; *applying* when the
+    catalog is applied after it, which copies each sample's data in."""
     from nr_workbench.tiled.analysis import ANALYSIS, ANALYSIS_TREE
     from nr_workbench.tiled.context import read_remote
     from nr_workbench.tiled.pull import data_applied, fits_of, pull_fits
@@ -709,11 +721,10 @@ def _pull_fits(project: Path, experiment: Any, place: str, *, dry_run: bool) -> 
         if fit.command:
             click.echo(f"      {fit.command}")
     for sample in sorted({fit.sample for fit in pulled if fit.script and not fit.here}):
-        if not data_applied(project, sample):
+        if not applying and not data_applied(project, sample):
             click.echo(
-                f"  {sample}: its data is not applied yet, for its models to read. "
-                "`nrw experiment apply --write`, once the pulled files have "
-                "settled, copies it in."
+                f"  {sample}: its data is not applied yet, for its models to read: "
+                "`nrw tiled pull --data` copies it in."
             )
     if dry_run:
         click.echo("Nothing written (--dry-run).")

@@ -1058,7 +1058,9 @@ def tiled_pull_command(**kwargs: object) -> None:
     --data copies each reduced file the data folder lacks; the folder watcher
     does the rest. --fits rebuilds each fit as it was recorded, with the
     reduced files it read, and writes its spec and script into its sample's
-    models/; `nrw fit run --from` runs it again.
+    models/; `nrw fit run --from` runs it again. After --context or --data,
+    the catalog is applied to samples/, as `nrw experiment apply --write`
+    applies it.
     """
     from nr_workbench.commands.tiled_cmd import run_pull
 

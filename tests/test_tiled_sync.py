@@ -930,6 +930,22 @@ def test_a_pull_copies_what_the_folder_lacks_and_leaves_the_rest(
     assert [p.name for p in away.iterdir() if p.name.startswith(".")] == []
 
 
+def test_a_pulled_file_lands_settled(
+    project: Path, tiled: FakeTiled, away: Path
+) -> None:
+    """It arrives whole, so its run is not held for its files to settle."""
+    import time
+
+    from nr_workbench.project.experiment_schema import SETTLE_RANGE
+
+    reduced(tiled, {SEGMENT: b"q"})
+
+    shown = pulled(project, away)
+
+    assert shown.exit_code == 0, shown.output
+    assert time.time() - (away / SEGMENT).stat().st_mtime >= SETTLE_RANGE[1]
+
+
 def test_a_file_the_folder_holds_already_is_left_as_it_is(
     project: Path, tiled: FakeTiled, away: Path
 ) -> None:
