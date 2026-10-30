@@ -18,6 +18,7 @@ from nr_workbench.experiment.config import (
     normalize_ipts,
 )
 from nr_workbench.experiment.model import (
+    SERIES,
     Catalog,
     CatalogValidationError,
     ExperimentChange,
@@ -54,7 +55,7 @@ def test_run_key_parse_accepts_a_run_number(text) -> None:
 @pytest.mark.parametrize(
     "text",
     [
-        pytest.param("218386:series", id="reserved_kind"),
+        pytest.param("218386:bogus", id="unknown_kind"),
         pytest.param("２１８３８６", id="fullwidth_digits"),
         pytest.param("0", id="zero"),
         pytest.param("-5", id="negative"),
@@ -65,6 +66,20 @@ def test_run_key_parse_accepts_a_run_number(text) -> None:
 def test_run_key_parse_rejects_what_is_not_a_run(text) -> None:
     with pytest.raises(CatalogValidationError):
         RunKey.parse(text)
+
+
+def test_run_key_parses_a_series_key() -> None:
+    key = RunKey.parse("218389:series")
+
+    assert key == RunKey(218389, SERIES)
+    assert key.slug() == "218389:series"
+
+
+def test_apply_changes_refuses_an_edit_to_a_series() -> None:
+    change = RunChange(RunKey(218389, SERIES), 0, {"sample_id": "copper"})
+
+    with pytest.raises(CatalogValidationError, match="steady row, with the type tNR"):
+        apply_changes(Catalog(), runs=[change], now=NOW)
 
 
 def test_run_key_rejects_a_boolean() -> None:

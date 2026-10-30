@@ -165,11 +165,18 @@
     </div>
 
     <div class="panel">
-      <div class="panel-head"><span>Measurements</span></div>
+      <div class="panel-head">
+        <span>Measurements</span>
+        <span class="hint">tick a run to plot it</span>
+      </div>
       <table class="table table-sm mb-0">
         <tbody>
         {% for entry in sample.steady %}
           <tr>
+            <td class="pe-0">
+              <input class="form-check-input measurement-toggle" type="checkbox" checked
+                     data-run="{{ entry.run }}" aria-label="plot run {{ entry.run }}">
+            </td>
             <td class="mono">{{ entry.run }}</td>
             <td class="small text-secondary">
               steady, {{ entry.segments|length }} segment(s)
@@ -178,6 +185,7 @@
         {% endfor %}
         {% for entry in sample.series %}
           <tr>
+            <td></td>
             <td class="mono">{{ entry.run or entry.name }}</td>
             <td class="small text-secondary">
               series, {{ entry.n_slices }} slice(s), {{ entry.kind }}
@@ -215,6 +223,20 @@
   const sampleId = {{ sample.id|tojson }};
 
   const refl = NRW.reflPanel("plot-refl", curves, { toggleId: "rq4-toggle" });
+
+  /* The Measurements list: unticking a run takes its segments off the plot. */
+  const toggles = Array.from(document.querySelectorAll(".measurement-toggle"));
+  toggles.forEach(function (box) {
+    box.addEventListener("change", function () {
+      if (!refl) return;
+      refl.setHidden(toggles.filter(function (b) {
+        return !b.checked;
+      }).map(function (b) {
+        return b.dataset.run;
+      }));
+    });
+  });
+
   if (!series) return;
 
   /* The slice curves are fetched once, on first use of the cursor: the

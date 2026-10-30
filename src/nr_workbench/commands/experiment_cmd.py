@@ -64,9 +64,10 @@ def _echo_problems(problems: Any) -> None:
 
 def run_status(*, root: str | None = None, as_json: bool = False) -> None:
     """Report what the source holds, what the catalog says, and what is pending."""
+    from nr_workbench.experiment.held import HeaderCache, held_runs
     from nr_workbench.experiment.model import EXPERIMENT_FIELDS
     from nr_workbench.experiment.store import CatalogError
-    from nr_workbench.experiment.views import experiment_card, run_row, sample_card
+    from nr_workbench.experiment.views import experiment_card, run_rows, sample_card
 
     workspace = _workspace(root)
     snapshot, _, _ = _observed(workspace)
@@ -88,10 +89,9 @@ def run_status(*, root: str | None = None, as_json: bool = False) -> None:
         readable = False
         problems.append(Problem("catalog", str(exc)))
 
-    runs = [
-        run_row(key, snapshot.runs.get(key), catalog.runs.get(key))
-        for key in sorted(set(snapshot.runs) | set(catalog.runs))
-    ]
+    runs = run_rows(
+        snapshot.runs, catalog, held_runs(workspace.root, headers=HeaderCache())
+    )
 
     payload = {
         "schema": "nrw-experiment-status/1",
@@ -225,9 +225,12 @@ def run_assign(
             "--note, --exclude or --include."
         )
 
+    from nr_workbench.experiment.held import HeaderCache, held_runs
+
     workspace = _workspace(root)
     catalog = _catalog(workspace)
     snapshot, _, _ = _observed(workspace)
+    held = held_runs(workspace.root, headers=HeaderCache())
     changes = []
     for key in keys:
         current = catalog.runs.get(key)
@@ -238,6 +241,8 @@ def run_assign(
                 "title": view.source.title,
                 "start_time": view.source.start_time,
             }
+        elif key in held and held[key].title:
+            snapshot_fields = {"title": held[key].title}
         changes.append(
             RunChange(key, current.rev if current else 0, {**snapshot_fields, **fields})
         )
@@ -351,6 +356,7 @@ _SYMBOLS = {
     "move-out": "-",
     "deferred": "…",
     "not-managed": "?",
+    "in-place": "·",
 }
 
 

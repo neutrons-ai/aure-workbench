@@ -31,8 +31,10 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.bounded import Bounded, Busy, TimedOut
+from nr_workbench.experiment.held import HeaderCache, HeldRun, held_runs, held_version
 from nr_workbench.experiment.model import (
     MEASUREMENT_TYPES,
+    SERIES,
     Catalog,
     ExperimentChange,
     RunChange,
@@ -43,8 +45,10 @@ from nr_workbench.experiment.model import (
 from nr_workbench.experiment.sources import SOURCE_TIMEOUT
 from nr_workbench.experiment.status import STATES
 from nr_workbench.experiment.views import (
+    IN_SAMPLE,
     experiment_card,
     run_row,
+    run_rows,
     sample_card,
     unmanaged_card,
 )
@@ -187,6 +191,7 @@ class ExperimentData:
         self._wiring: _Wiring | None = None
         self._config_problem: Problem | None = None
         self._lock = threading.Lock()
+        self._headers = HeaderCache()
 
     # ------------------------------------------------------------------
     # Wiring, lazily: `nrw serve` must not touch the data mount at start-up
@@ -317,10 +322,8 @@ class ExperimentData:
         workspace = w.workspace
         changes = w.live.changes(None)
         catalog, catalog_problems, readable = self._catalog(w)
-        rows = {view.key: self._row(view.key, view, catalog) for view in changes.runs}
-        for key in catalog.runs:
-            if key not in rows:
-                rows[key] = self._row(key, None, catalog)
+        held = self._held()
+        views = {view.key: view for view in changes.runs}
         return {
             "schema": "nrw-experiment-page/1",
             "ipts": workspace.config.ipts,
@@ -336,12 +339,13 @@ class ExperimentData:
             # would replace every decision in it with the page's empty view.
             "writable": self.writable and readable,
             "read_only_reason": self.why_read_only,
-            "states": list(STATES),
+            "states": [*STATES, IN_SAMPLE],
             "measurement_types": list(MEASUREMENT_TYPES),
             "cursor": changes.cursor,
+            "held_version": held_version(held),
             "scan": _scan(changes),
-            "runs": [rows[k] for k in sorted(rows)],
-            "samples": self._samples(catalog),
+            "runs": run_rows(views, catalog, held),
+            "samples": self._samples(catalog, held),
             "experiment": experiment_card(catalog.experiment),
             "problems": [
                 p.as_dict()
@@ -366,12 +370,20 @@ class ExperimentData:
         w = self._wired()
         changes = w.live.changes(since)
         catalog, catalog_problems, _ = self._catalog(w)
+        held = self._held()
+        rows = [self._row(v.key, v, catalog, held) for v in changes.runs]
+        # A run gone from the source that a sample still holds stays listed,
+        # now as in its sample.
+        rows += [
+            self._row(k, None, catalog, held) for k in changes.removed if k in held
+        ]
         return {
             "cursor": changes.cursor,
             "resync": changes.resync,
-            "runs": [self._row(v.key, v, catalog) for v in changes.runs],
-            "removed": [k.slug() for k in changes.removed],
+            "runs": rows,
+            "removed": [k.slug() for k in changes.removed if k not in held],
             "catalog_version": self._catalog_version(w),
+            "held_version": held_version(held),
             "scan": _scan(changes),
             "problems": [
                 p.as_dict()
@@ -396,7 +408,12 @@ class ExperimentData:
         key = RunKey.parse(run)
         view = w.live.snapshot().runs.get(key)
         if view is None or view.source is None:
-            raise RunNotListedError(f"The data source does not list run {key.run}.")
+            held = self._held().get(key)
+            if held is None:
+                raise RunNotListedError(
+                    f"Neither the data source nor a sample lists run {key.run}."
+                )
+            return self._held_curves(held)
         curves = []
         problems = []
         source = w.source
@@ -431,6 +448,36 @@ class ExperimentData:
                 payload["theta"] = theta
             curves.append(payload)
         return {"run": key.run, "curves": curves, "problems": problems}
+
+    def _held_curves(self, held: HeldRun) -> dict[str, Any]:
+        """A run's reflectivity, read from the sample that holds it.
+
+        The segments, or the combined curve when there are none: the files a
+        fit of the sample reads, as for a run the source lists.
+        """
+        from nr_workbench.web.readers import DataFormatError, read_reduced
+
+        run = held.key.run
+        files = list(zip(held.files, held.thetas, strict=False))
+        if held.segments:
+            files = files[: len(held.segments)]
+        curves = []
+        problems = []
+        for index, (relative, theta) in enumerate(files):
+            label = (
+                f"{run}#{held.segments[index]}" if held.segments else f"{run} combined"
+            )
+            try:
+                curve = read_reduced(self.root / relative, label=label, root=self.root)
+            except (DataFormatError, OSError) as exc:
+                problems.append(Problem(f"curve:{label}", str(exc)).as_dict())
+                continue
+            payload = curve.as_dict()
+            payload["run"] = run
+            if theta is not None:
+                payload["theta"] = theta
+            curves.append(payload)
+        return {"run": run, "curves": curves, "problems": problems}
 
     def sample_preview(self, sample_id: str) -> dict[str, Any]:
         """The sample.md the catalog would write, and where the file stands.
@@ -538,6 +585,7 @@ class ExperimentData:
         if not isinstance(changes, list) or not changes:
             raise RequestError("expected a non-empty list of run changes")
         snapshot = w.live.snapshot()
+        held = self._held()
         run_changes = []
         for item in changes:
             if not isinstance(item, dict):
@@ -559,14 +607,17 @@ class ExperimentData:
                     "start_time": view.source.start_time,
                     **fields,
                 }
+            elif key in held and held[key].title:
+                fields = {"title": held[key].title, **fields}
             # base_rev is checked where the catalog changes, not here as well.
             run_changes.append(RunChange(key, item.get("base_rev", 0), fields))
         catalog = w.workspace.store.update(runs=run_changes)
         return {
             "runs": [
-                self._row(c.key, snapshot.runs.get(c.key), catalog) for c in run_changes
+                self._row(c.key, snapshot.runs.get(c.key), catalog, held)
+                for c in run_changes
             ],
-            "samples": self._samples(catalog),
+            "samples": self._samples(catalog, held),
             "catalog_version": self._catalog_version(w),
         }
 
@@ -595,17 +646,47 @@ class ExperimentData:
         fields = payload.get("fields", {})
         if not isinstance(fields, dict):
             raise RequestError("'fields' must be an object")
+        held = self._held()
         catalog = w.workspace.store.update(
+            runs=[] if delete else self._first_save_assigns(w, sample_id, held),
             samples=[
                 SampleChange(
                     sample_id, payload.get("base_rev", 0), fields, delete=delete
                 )
             ]
+            if fields or delete
+            else [],
         )
         return {
-            "samples": self._samples(catalog),
+            "samples": self._samples(catalog, held),
             "catalog_version": self._catalog_version(w),
         }
+
+    def _first_save_assigns(
+        self, w: _Wiring, sample_id: str, held: dict[RunKey, HeldRun]
+    ) -> list[RunChange]:
+        """The runs a sample's first save records as its own.
+
+        A sample on disk that the catalog does not manage yet holds its runs in
+        its ``data/`` folder. Saving its context records it, and the runs its
+        folder holds go with it: they are what its fits read. A run the catalog
+        already assigns, to this sample or another, is left as it is.
+        """
+        catalog = self._catalog_or_raise(w)
+        if catalog.manages(sample_id):
+            return []
+        changes = []
+        for key, run in sorted(held.items()):
+            if key.kind == SERIES or sample_id not in run.sample_ids:
+                continue
+            entry = catalog.runs.get(key)
+            if entry is not None and entry.sample_id is not None:
+                continue
+            fields: dict[str, Any] = {"sample_id": sample_id}
+            if run.title:
+                fields["title"] = run.title
+            changes.append(RunChange(key, entry.rev if entry else 0, fields))
+        return changes
 
     def update_experiment(self, payload: Any) -> dict[str, Any]:
         """Record edits to the experiment's own context.
@@ -745,14 +826,29 @@ class ExperimentData:
         runs = {k: v.source for k, v in snapshot.runs.items() if v.source is not None}
         return (runs, {k: v.status for k, v in snapshot.runs.items()})
 
-    def _row(self, key: RunKey, view: Any, catalog: Catalog) -> dict[str, Any]:
-        return run_row(key, view, catalog.runs.get(key))
+    def _held(self) -> dict[RunKey, HeldRun]:
+        """What the project's samples hold in their ``data/`` folders, now."""
+        return held_runs(self.root, headers=self._headers)
 
-    def _samples(self, catalog: Catalog) -> list[dict[str, Any]]:
+    def _row(
+        self,
+        key: RunKey,
+        view: Any,
+        catalog: Catalog,
+        held: dict[RunKey, HeldRun],
+    ) -> dict[str, Any]:
+        return run_row(key, view, catalog.runs.get(key), held.get(key))
+
+    def _samples(
+        self, catalog: Catalog, held: dict[RunKey, HeldRun]
+    ) -> list[dict[str, Any]]:
         managed = catalog.sample_ids()
         cards = [sample_card(self.root, catalog, sample_id) for sample_id in managed]
         cards.extend(
-            unmanaged_card(sample_id)
+            unmanaged_card(
+                sample_id,
+                [k.run for k, h in held.items() if sample_id in h.sample_ids],
+            )
             for sample_id in ProjectLayout(root=self.root).list_samples()
             if sample_id not in managed
         )

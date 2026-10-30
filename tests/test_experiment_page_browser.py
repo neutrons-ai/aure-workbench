@@ -362,6 +362,101 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
     assert store.load().runs[RunKey(234277)].measurement == "steady"
 
 
+def tick_row(page: Page, run: int, *, series: bool = False) -> None:
+    """Tick the checkbox of a run's row: its series row, or its other one."""
+    page.js(
+        "{ const r = Array.from(document.querySelectorAll('#expt-runs tbody tr'))"
+        f".find(r => r.children[1].textContent === '{run}' &&"
+        f" r.children[4].textContent.includes('slices') === {str(series).lower()});"
+        " const b = r.querySelector('input[type=checkbox]');"
+        " b.checked = true; b.dispatchEvent(new Event('change')); }"
+    )
+
+
+def test_runs_a_sample_holds_are_listed_and_only_steady_ones_assigned(
+    page: Page, site: Site, project: Path
+) -> None:
+    from . import tnr_fixture
+
+    held = project / "samples" / "Cu"
+    write_autoreduced(held / "data" / "steady", 999901, [1, 2])
+    tnr_fixture.build(held / "data" / "tnr")
+    (held / "sample.md").write_text("# Cu\n", encoding="utf-8")
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "Array.from(document.querySelectorAll('#expt-runs tbody td'))"
+        ".some(td => td.textContent === 'Cu (folder)')",
+        what="the held runs",
+    )
+    badges = page.js(
+        "Array.from(document.querySelectorAll('#expt-runs tbody .badge'))"
+        ".map(b => b.textContent)"
+    )
+    assert badges.count("in sample") == 2
+
+    tick_row(page, tnr_fixture.RUN_NUMBER, series=True)
+    assert "listed only" in page.text("expt-selected")
+    page.js(
+        "{ const s = document.getElementById('expt-sample'); s.value = 'S1';"
+        " s.dispatchEvent(new Event('change')); }"
+    )
+    page.click("expt-assign")
+    page.wait_for(
+        "document.getElementById('expt-message').textContent.startsWith('Only tNR')",
+        what="the refusal",
+    )
+
+    tick_row(page, 999901)
+    page.click("expt-assign")
+    page.wait_for(
+        "document.getElementById('expt-message').textContent.startsWith('Assigned 1')",
+        what="the assignment",
+    )
+    runs = ParquetCatalogStore.for_project(project).load().runs
+    assert runs[RunKey(999901)].sample_id == "S1"
+
+
+def test_a_sample_on_disk_is_edited_and_its_first_save_records_its_runs(
+    page: Page, site: Site, project: Path
+) -> None:
+    held = project / "samples" / "Cu"
+    write_autoreduced(held / "data" / "steady", 999901, [1, 2])
+    (held / "sample.md").write_text("# Cu\n", encoding="utf-8")
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".some(b => b.textContent.includes('Cu'))",
+        what="the sample list",
+    )
+    page.js(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".find(b => b.textContent.includes('Cu')).click()"
+    )
+    page.wait_for("!document.getElementById('f-description').disabled", what="editor")
+    assert "saving records it" in page.text("expt-form-status")
+    assert (
+        page.js("document.querySelectorAll('#f-measurements .expt-measurement').length")
+        == 1
+    )
+
+    page.type("f-description", "copper on silicon")
+    page.js(
+        "{ const c = document.querySelector('#f-measurements input[data-field=condition]');"
+        " c.value = 'OCV'; c.dispatchEvent(new Event('input')); }"
+    )
+    page.click("expt-save")
+    page.wait_for(
+        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
+        what="the save",
+    )
+
+    catalog = ParquetCatalogStore.for_project(project).load()
+    assert catalog.samples["Cu"].description == "copper on silicon"
+    entry = catalog.runs[RunKey(999901)]
+    assert (entry.sample_id, entry.condition) == ("Cu", "OCV")
+    assert entry.title.startswith("S1_air")
+
+
 def test_a_model_is_written_from_the_samples_data_once_it_has_some(
     page: Page, site: Site, project: Path, monkeypatch
 ) -> None:

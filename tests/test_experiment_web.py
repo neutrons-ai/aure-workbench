@@ -797,3 +797,257 @@ def test_experiment_data_refuses_writes_on_its_own(expt: Path, write) -> None:
 
     with pytest.raises(WritesDisabledError):
         write(data)
+
+
+# --------------------------------------------------------------------------
+# Runs a sample already holds in its own data/ folder
+# --------------------------------------------------------------------------
+
+#: A run copied into Sample1 by hand, which the data source does not list.
+HELD_RUN = 999901
+
+
+@pytest.fixture
+def held_app(expt: Path):
+    """The watched folder, and Sample1 filled by hand.
+
+    Sample1 holds a run the source does not list, a flat tNR series, and one
+    segment of 234277, which the source lists too.
+    """
+    from . import tnr_fixture
+
+    data = expt / "samples" / "Sample1" / "data"
+    write_autoreduced(data / "steady", HELD_RUN, [1, 2, 3])
+    write_autoreduced(data / "steady", 234277, [1])
+    tnr_fixture.build(data / "tnr")
+    app = make_app(expt)
+    yield app
+    app.config["NRW_EXPERIMENT"].reload()
+
+
+def rows_by_key(payload: dict) -> dict:
+    return {row["key"]: row for row in payload["runs"]}
+
+
+def test_overview_lists_a_run_only_a_sample_holds(held_app) -> None:
+    payload = held_app.test_client().get("/api/experiment").get_json()
+
+    row = rows_by_key(payload)[f"{HELD_RUN}:steady"]
+    assert row["state"] == "in sample"
+    assert "samples/Sample1/data/steady/" in row["reason"]
+    assert row["sample"] is None
+    assert row["held_by"] == ["Sample1"]
+    assert row["segments"] == [1, 2, 3]
+    assert row["thetas"] == [0.45, 1.251, 3.5]
+    assert row["title"].startswith("S1_air")
+    assert row["organizable"] is True
+    assert "in sample" in payload["states"]
+
+
+def test_overview_lists_a_series_a_sample_holds_as_listed_only(held_app) -> None:
+    from . import tnr_fixture
+
+    payload = held_app.test_client().get("/api/experiment").get_json()
+
+    row = rows_by_key(payload)[f"{tnr_fixture.RUN_NUMBER}:series"]
+    assert row["state"] == "in sample"
+    assert row["kind"] == "series"
+    assert row["n_slices"] > 1
+    assert row["organizable"] is False
+
+
+def test_a_run_the_source_lists_keeps_its_state_and_names_its_sample(
+    held_app,
+) -> None:
+    payload = held_app.test_client().get("/api/experiment").get_json()
+
+    row = rows_by_key(payload)["234277:steady"]
+    assert row["state"] == "complete"
+    assert row["held_by"] == ["Sample1"]
+    assert row["segments"] == [1, 2, 3]  # the source's
+
+
+def test_an_unmanaged_sample_card_lists_the_runs_it_holds(held_app) -> None:
+    from . import tnr_fixture
+
+    payload = held_app.test_client().get("/api/experiment").get_json()
+
+    card = next(c for c in payload["samples"] if c["id"] == "Sample1")
+    assert card["managed"] is False
+    assert card["runs"] == sorted([234277, HELD_RUN, tnr_fixture.RUN_NUMBER])
+
+
+def test_the_command_line_lists_held_runs_as_the_page_does(
+    held_app, expt: Path
+) -> None:
+    from click.testing import CliRunner
+
+    from nr_workbench.cli import main
+
+    page = held_app.test_client().get("/api/experiment").get_json()
+    result = CliRunner().invoke(
+        main, ["experiment", "status", "--root", str(expt), "--json"]
+    )
+
+    assert json.loads(result.output)["runs"] == page["runs"]
+
+
+def test_curves_of_a_held_run_come_from_its_sample(held_app) -> None:
+    payload = (
+        held_app.test_client().get(f"/api/experiment/runs/{HELD_RUN}/curves").get_json()
+    )
+
+    assert [c["label"] for c in payload["curves"]] == [
+        f"{HELD_RUN}#1",
+        f"{HELD_RUN}#2",
+        f"{HELD_RUN}#3",
+    ]
+    assert [c["theta"] for c in payload["curves"]] == [0.45, 1.251, 3.5]
+    assert payload["problems"] == []
+
+
+def test_curves_of_a_run_nobody_lists_is_404(held_app) -> None:
+    response = held_app.test_client().get("/api/experiment/runs/111111/curves")
+
+    assert response.status_code == 404
+
+
+def test_assigning_a_held_run_makes_its_sample_managed(held_app) -> None:
+    client = held_app.test_client()
+
+    response = client.put(
+        "/api/experiment/runs",
+        json={
+            "changes": [
+                {
+                    "run": f"{HELD_RUN}:steady",
+                    "base_rev": 0,
+                    "fields": {"sample_id": "Sample1", "condition": "OCV"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.get_json()
+    body = response.get_json()
+    row = body["runs"][0]
+    assert (row["sample"], row["condition"], row["state"]) == (
+        "Sample1",
+        "OCV",
+        "in sample",
+    )
+    card = next(c for c in body["samples"] if c["id"] == "Sample1")
+    assert card["managed"] is True
+    assert card["runs"] == [HELD_RUN]
+    record = client.get("/api/experiment").get_json()
+    assert rows_by_key(record)[f"{HELD_RUN}:steady"]["title"].startswith("S1_air")
+    models = client.get("/api/experiment/samples/Sample1/models").get_json()
+    assert models["has_data"] is True
+
+
+def test_assigning_a_series_is_refused_with_the_reason(held_app) -> None:
+    from . import tnr_fixture
+
+    response = held_app.test_client().put(
+        "/api/experiment/runs",
+        json={
+            "changes": [
+                {
+                    "run": f"{tnr_fixture.RUN_NUMBER}:series",
+                    "base_rev": 0,
+                    "fields": {"sample_id": "Sample1"},
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 400
+    assert "steady row" in response.get_json()["error"]
+
+
+def test_a_file_copied_into_a_sample_changes_the_held_version(
+    held_app, expt: Path
+) -> None:
+    client = held_app.test_client()
+    before = client.get("/api/experiment").get_json()
+
+    steady = expt / "samples" / "Sample1" / "data" / "steady"
+    write_autoreduced(steady, 999904, [1])
+    after = client.get("/api/experiment/changes?since=" + before["cursor"]).get_json()
+
+    assert after["held_version"] != before["held_version"]
+
+
+def test_a_run_gone_from_the_source_stays_listed_while_a_sample_holds_it(
+    held_app,
+) -> None:
+    data = held_app.config["NRW_EXPERIMENT"]
+    cursor = data.overview()["cursor"]
+    folder = Path(data.watching())
+    for path in folder.glob("REFL_234277_*"):
+        path.unlink()
+    data.live.scan_once()
+
+    changes = data.changes(cursor)
+
+    assert "234277:steady" not in changes["removed"]
+    row = rows_by_key(changes)["234277:steady"]
+    assert row["state"] == "in sample"
+    assert row["segments"] == [1]  # what the sample holds
+
+
+def test_saving_an_unmanaged_sample_records_it_with_the_runs_it_holds(
+    held_app,
+) -> None:
+    from . import tnr_fixture
+
+    client = held_app.test_client()
+
+    response = client.put(
+        "/api/experiment/samples/Sample1",
+        json={"base_rev": 0, "fields": {"description": "Cu on Si"}},
+    )
+
+    assert response.status_code == 200, response.get_json()
+    card = next(c for c in response.get_json()["samples"] if c["id"] == "Sample1")
+    assert card["managed"] is True
+    assert card["description"] == "Cu on Si"
+    assert card["runs"] == [234277, HELD_RUN]  # the series is listed, not assigned
+    rows = rows_by_key(client.get("/api/experiment").get_json())
+    assert rows[f"{HELD_RUN}:steady"]["sample"] == "Sample1"
+    assert rows[f"{HELD_RUN}:steady"]["title"].startswith("S1_air")
+    assert rows[f"{tnr_fixture.RUN_NUMBER}:series"]["sample"] is None
+
+
+def test_the_first_save_leaves_a_run_assigned_elsewhere_alone(held_app) -> None:
+    client = held_app.test_client()
+    assert assign(client, held_app, run=234277).status_code == 200  # to Sample6
+
+    response = client.put(
+        "/api/experiment/samples/Sample1", json={"base_rev": 0, "fields": {}}
+    )
+
+    assert response.status_code == 200, response.get_json()
+    cards = {c["id"]: c for c in response.get_json()["samples"]}
+    assert cards["Sample1"]["runs"] == [HELD_RUN]
+    assert cards["Sample6"]["runs"] == [234277]
+
+
+def test_saving_a_managed_sample_assigns_nothing_more(held_app) -> None:
+    client = held_app.test_client()
+    client.put("/api/experiment/samples/Sample1", json={"base_rev": 0, "fields": {}})
+    unassigned = client.put(
+        "/api/experiment/runs",
+        json={
+            "changes": [{"run": HELD_RUN, "base_rev": 1, "fields": {"sample_id": None}}]
+        },
+    )
+    assert unassigned.status_code == 200, unassigned.get_json()
+
+    response = client.put(
+        "/api/experiment/samples/Sample1",
+        json={"base_rev": 0, "fields": {"description": "later"}},
+    )
+
+    card = next(c for c in response.get_json()["samples"] if c["id"] == "Sample1")
+    assert card["runs"] == [234277]

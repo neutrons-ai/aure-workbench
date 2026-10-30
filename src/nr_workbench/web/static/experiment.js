@@ -25,6 +25,7 @@
     quarantined: "text-bg-danger",
     "clock-skew": "text-bg-danger",
     "not listed": "text-bg-light",
+    "in sample": "text-bg-primary",
   };
   /* sample.md is written by Apply, never by saving a sample: say when. */
   const MD_STATE = {
@@ -36,7 +37,7 @@
   };
   const SYMBOL = {
     copy: "+", restore: "+", record: "=", "move-out": "−", deferred: "…",
-    "not-managed": "?",
+    "not-managed": "?", "in-place": "·",
   };
 
   const state = {
@@ -93,6 +94,8 @@
     // can hold what someone else saved since the last poll, so the poll after
     // a save always reloads, and shows it.
     state.catalogVersion = payload.catalog.version;
+    // What the samples' data/ folders hold: a file copied into one changes it.
+    state.heldVersion = payload.held_version;
     state.writable = Boolean(payload.writable);
     for (const key of Array.from(state.selected)) {
       if (!state.rows.has(key)) state.selected.delete(key);
@@ -114,7 +117,8 @@
       const changes = await api(
         "GET", "/api/experiment/changes?since=" + encodeURIComponent(state.cursor)
       );
-      if (changes.resync || changes.catalog_version !== state.catalogVersion) {
+      if (changes.resync || changes.catalog_version !== state.catalogVersion ||
+          changes.held_version !== state.heldVersion) {
         await reload();
         return;
       }
@@ -212,6 +216,7 @@
   }
 
   function segmentsText(row) {
+    if (row.kind === "series") return row.n_slices + " tNR slices";
     const combined = (row.artifacts || []).some(function (a) {
       return a.role === "combined";
     });
@@ -254,7 +259,15 @@
         el("td", { className: "small expt-title", text: row.title || "", title: row.reason }),
         el("td", { className: "small mono", text: segmentsText(row) }),
         el("td", { className: "small mono", text: thetas || "—" }),
-        el("td", { className: "mono", text: row.sample || "—" }),
+        el("td", {
+          className: "mono" + (row.sample ? "" : " text-secondary"),
+          text: row.sample || (row.held_by && row.held_by.length
+            ? row.held_by.join(", ") + " (folder)"
+            : "—"),
+          title: row.sample ? "" : (row.held_by && row.held_by.length
+            ? "its files are in this sample's data/ folder; assign it to record it"
+            : ""),
+        }),
         el("td", { className: "small", text: row.measurement }),
         el("td", { className: "small", text: row.condition }),
         el("td", { className: "small" }, [row.include ? null : el("span", {
@@ -278,7 +291,13 @@
     const bar = $("expt-bulk");
     const count = state.selected.size;
     bar.classList.toggle("d-none", !(state.writable && count));
-    $("expt-selected").textContent = count + " selected";
+    const listedOnly = Array.from(state.selected).filter(function (key) {
+      const row = state.rows.get(key);
+      return row && row.organizable === false;
+    }).length;
+    $("expt-selected").textContent = count + " selected" + (listedOnly
+      ? " (" + listedOnly + " tNR series: listed only; organize its run's steady row)"
+      : "");
     const select = $("expt-sample");
     const current = select.value;
     select.replaceChildren(el("option", { value: "", text: "to sample…" }));
@@ -300,10 +319,18 @@
   }
 
   async function editRuns(fields, what) {
+    // A series row is listed, not organized: its run's steady row is.
     const changes = Array.from(state.selected).map(function (key) {
-      const row = state.rows.get(key);
-      return { run: row.run, base_rev: row.rev, fields: fields };
+      return state.rows.get(key);
+    }).filter(function (row) {
+      return row && row.organizable !== false;
+    }).map(function (row) {
+      return { run: row.key, base_rev: row.rev, fields: fields };
     });
+    if (!changes.length) {
+      message("Only tNR series are selected; select their runs' steady rows.", "warning");
+      return;
+    }
     try {
       const result = await api("PUT", "/api/experiment/runs", { changes: changes });
       result.runs.forEach(function (row) {
@@ -361,7 +388,7 @@
       return;
     }
     const ticket = ++quickRequest;
-    hint.textContent = "reading " + runs.length + " run(s) from the data source…";
+    hint.textContent = "reading " + runs.length + " run(s)…";
     const curves = [];
     const problems = [];
     for (const row of runs) {
@@ -496,7 +523,8 @@
       const detail = card.managed
         ? card.runs.length + " run(s)" +
           (card.excluded.length ? ", " + card.excluded.length + " excluded" : "")
-        : "on disk, not in the catalog";
+        : (card.runs.length ? card.runs.length + " run(s) on disk, " : "on disk, ") +
+          "not in the catalog";
       const item = el("button", {
         type: "button",
         className: "list-group-item list-group-item-action" +
@@ -577,9 +605,16 @@
   }
 
   /* The runs of one sample, in run order. */
+  /* A sample's runs: those assigned to it and, for a sample the catalog does
+   * not manage yet, those its data/ folder holds, which its first save
+   * records as its own. */
   function sampleRuns(id) {
+    const current = card(id);
+    const managed = Boolean(current && current.managed);
     return Array.from(state.rows.values()).filter(function (row) {
-      return row.sample === id;
+      if (row.sample === id) return true;
+      return !managed && !row.sample && row.organizable !== false &&
+        (row.held_by || []).indexOf(id) !== -1;
     }).sort(function (a, b) {
       return a.run - b.run;
     });
@@ -713,16 +748,14 @@
     renderSamples();
     const current = card(id);
     const fresh = shownValues(current);
+    // A sample on disk is edited whether or not the catalog manages it yet:
+    // its first save records it, with the runs its folder holds.
+    const editable = state.writable && Boolean(current && (current.managed || current.on_disk));
     $("expt-editor").classList.remove("d-none");
     $("expt-editor-title").textContent = "Sample " + id;
-    let typed = fillKeepingTyped(
-      FIELDS, fresh, same ? base.values : null,
-      !state.writable || !(current && current.managed)
-    );
-    $("expt-save").disabled = !state.writable || !(current && current.managed);
-    const measured = renderMeasurements(
-      id, base, same, state.writable && Boolean(current && current.managed)
-    );
+    let typed = fillKeepingTyped(FIELDS, fresh, same ? base.values : null, !editable);
+    $("expt-save").disabled = !editable;
+    const measured = renderMeasurements(id, base, same, editable);
     typed = typed || measured.kept;
     const runMoved = same && sampleRuns(id).some(function (row) {
       const was = base.runs && base.runs[row.key];
@@ -733,7 +766,9 @@
     $("expt-form-status").textContent = moved
       ? savedElsewhere("This sample")
       : current && !current.managed
-        ? "Adopt this sample to edit it here."
+        ? (editable
+          ? "Not in the catalog yet: saving records it, with the runs its folder holds."
+          : "Not in the catalog.")
         : same
           ? $("expt-form-status").textContent
           : "";
@@ -780,7 +815,7 @@
     const id = state.editing;
     const current = card(id);
     if (!id || !current) return;
-    const fields = changedFields(FIELDS, current);
+    let fields = changedFields(FIELDS, current);
     // Each run's type, condition and notes, sent only where they changed.
     const runChanges = [];
     Object.entries(typedRuns()).forEach(function ([key, values]) {
@@ -794,14 +829,30 @@
       if (values.note !== (row.note || "")) changed.note = values.note;
       if (values.include !== (row.include !== false)) changed.include = values.include;
       if (Object.keys(changed).length) {
-        runChanges.push({ run: row.run, base_rev: row.rev, fields: changed });
+        runChanges.push({ run: row.key, base_rev: row.rev, fields: changed });
       }
     });
-    if (!Object.keys(fields).length && !runChanges.length) {
+    const recording = !current.managed;
+    if (!recording && !Object.keys(fields).length && !runChanges.length) {
       $("expt-form-status").textContent = "Nothing changed.";
       return;
     }
     try {
+      if (recording) {
+        // The sample's record first: it takes the runs its folder holds with
+        // it, so the edits below find them assigned.
+        const result = await api(
+          "PUT", "/api/experiment/samples/" + encodeURIComponent(id),
+          { base_rev: 0, fields: fields }
+        );
+        state.samples = result.samples;
+        await reload();
+        runChanges.forEach(function (change) {
+          const row = state.rows.get(change.run);
+          if (row) change.base_rev = row.rev;
+        });
+        fields = {};
+      }
       if (runChanges.length) {
         const saved = await api("PUT", "/api/experiment/runs", { changes: runChanges });
         saved.runs.forEach(function (row) {

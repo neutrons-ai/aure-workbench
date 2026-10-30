@@ -982,11 +982,18 @@ class ProjectData:
         return list(curation_of(self.index.entries()).get(fit_id, NONE).labels)
 
     def _series_dir(self, sample_id: str, name: str) -> Path:
-        """Resolve a series directory."""
-        directory = self.layout.sample(sample_id) / "data" / "tnr" / name
-        if not directory.is_dir():
-            raise FileNotFoundError(f"No series {name!r} for {sample_id}")
-        return directory
+        """Resolve a series directory by the name :meth:`sample` gave it.
+
+        A series is named by its directory's last component, which for slices
+        lying directly in ``data/tnr/`` is ``tnr`` itself, so the name is
+        looked up among the series the scan found rather than joined onto
+        ``data/tnr/``.
+        """
+        scan = self._scan(sample_id)
+        for found in scan.series if scan else []:
+            if Path(found.directory).name == name:
+                return self.root / found.directory
+        raise FileNotFoundError(f"No series {name!r} for {sample_id}")
 
     def _scan(self, sample_id: str) -> Any:
         """Scan a sample's data directories, or ``None`` if it has none."""
