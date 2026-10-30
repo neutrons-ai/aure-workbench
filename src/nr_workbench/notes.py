@@ -504,7 +504,9 @@ def fit_note(root: Path, fit_dir: Path, fit_id: str, sample: str | None) -> Note
 _SUMMARY_TIERS = ("-si.md", "-plain.md")
 
 
-def notes_about(notes: list[Note], fit_id: str) -> list[Note]:
+def notes_about(
+    notes: list[Note], fit_id: str, *, every_tier: bool = False
+) -> list[Note]:
     """Filter to the notes that mention a fit.
 
     A report is written at three altitudes and all three cite the same fits, so
@@ -517,6 +519,9 @@ def notes_about(notes: list[Note], fit_id: str) -> list[Note]:
     Args:
         notes: Notes to search.
         fit_id: The fit id.
+        every_tier: Keep the summary tiers too. For a reader who receives the
+            documents rather than a list of evidence -- a bundle sent to a
+            collaborator -- each tier is its own document for its own reader.
 
     Returns:
         Those mentioning it, blank ones excluded --- an unfilled template
@@ -524,6 +529,8 @@ def notes_about(notes: list[Note], fit_id: str) -> list[Note]:
         thinking that did not happen.
     """
     matched = [n for n in notes if fit_id in n.fits and not n.blank]
+    if every_tier:
+        return matched
     stems = {
         Path(n.path).name[: -len("-technical.md")]
         for n in matched

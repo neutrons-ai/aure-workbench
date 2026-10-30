@@ -28,11 +28,18 @@ experiment.
 **It verifies itself.** ``verify.py`` recomputes chi-squared and compares it
 with the recorded value, so the first thing the recipient learns is whether
 their environment reproduces yours --- before they change anything.
+
+A fit made with ``nrw fit run --from`` ran an earlier fit's exported problem
+file, not a script. Its model is still the one a script built, further up the
+``regenerated_from`` chain, so the bundle carries *that* script's frozen copy
+with this fit's parameters --- and ``verify.py`` proves the pairing rather than
+the bundle asserting it.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -58,6 +65,15 @@ RUNTIME_PACKAGES = ("refl1d", "bumps", "numpy", "scipy")
 #: largest thing in a result directory by a wide margin, and it is evidence
 #: about the original fit rather than an input to reproducing it.
 CHAIN_SUFFIXES = (".mc.gz", ".mcmc", ".chain.gz")
+
+#: An image a report embeds: markdown ``![alt](path "title")`` or HTML
+#: ``<img src="path">``. A report that arrives without its figures is the
+#: argument with its evidence cut out.
+_IMAGE = re.compile(
+    r"!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)"
+    r"|<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']",
+    re.IGNORECASE,
+)
 
 
 def run_pack(
@@ -96,6 +112,9 @@ def run_pack(
     resolved = str(entry["fit_id"])
     manifest = FitDirectory(directory).read_manifest()
     inputs = FitDirectory(directory).read_inputs()
+    # Resolved before anything is written, so a fit that cannot be packed
+    # leaves no staging directory behind.
+    origin = _script_origin(layout, index, entry, manifest, inputs)
 
     statuses, freshness = check_inputs(directory, layout.root)
     drifted = [s for s in statuses if s.changed]
@@ -131,6 +150,7 @@ def run_pack(
             statuses=statuses,
             freshness=freshness,
             with_chain=with_chain,
+            origin=origin,
         )
         if archive:
             _zip(staging, destination)
@@ -153,6 +173,94 @@ def _destination(fit_id: str, out: str | None, archive: bool) -> Path:
     return (Path.cwd() / name).resolve()
 
 
+def _script_origin(
+    layout: ProjectLayout,
+    index: FitIndex,
+    entry: dict[str, Any],
+    manifest: dict[str, Any],
+    inputs: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Find the script behind a fit made with ``nrw fit run --from``.
+
+    ``--from`` runs a fit's exported problem file: the same model and data, at
+    that fit's values. The model was built by a script somewhere up the
+    ``regenerated_from`` chain, and that script's frozen copy is what a
+    collaborator can run. Applying this fit's ``.par`` to it gives this fit's
+    chi-squared, which ``verify.py`` checks.
+
+    Args:
+        layout: The project layout.
+        index: The fit index, to resolve each fit in the chain.
+        entry: The index entry of the fit being packed.
+        manifest: Its manifest.
+        inputs: Its recorded inputs.
+
+    Returns:
+        None for a fit that ran a script (or recorded neither a script nor a
+        problem file, which ``_build`` refuses). Otherwise the fit whose script
+        it is: ``fit_id``, ``directory``, its ``script`` input, its
+        ``script_sha256``, ``via``, the fits run from problem files on the
+        way there, the packed one first, and ``parent_directory``, the result
+        directory of the fit whose problem file the packed one ran.
+
+    Raises:
+        click.ClickException: If the chain breaks before reaching a script.
+    """
+    roles = {e.get("role") for e in inputs}
+    if "script" in roles or "problem" not in roles:
+        return None
+
+    via: list[str] = []
+    parent_directory: Path | None = None
+    current, current_manifest = entry, manifest
+    while True:
+        fit_id = str(current["fit_id"])
+        via.append(fit_id)
+        parent = (current.get("settings") or {}).get("regenerated_from") or (
+            current_manifest.get("params") or {}
+        ).get("regenerated_from")
+        if not parent:
+            raise click.ClickException(
+                f"{fit_id} ran a problem file (`nrw fit run --from`) but does not "
+                "record which fit it came from, so there is no script to pack."
+            )
+        if str(parent) in via:
+            raise click.ClickException(
+                f"The `--from` chain of {via[0]} loops back to {parent}, so it "
+                "never reaches a script."
+            )
+        try:
+            current, directory = resolve_fit(layout, index, str(parent))
+        except FitNotFoundError as exc:
+            raise click.ClickException(
+                f"{fit_id} was run from {parent}, which this project no longer "
+                "has, so the script that built its model cannot be packed."
+            ) from exc
+        parent_directory = parent_directory or directory
+        record = FitDirectory(directory)
+        current_manifest = record.read_manifest()
+        script = next(
+            (e for e in record.read_inputs() if e.get("role") == "script"), None
+        )
+        if script is None:
+            continue
+        if not (directory / "model.py").is_file():
+            raise click.ClickException(
+                f"{current['fit_id']} built the model {via[0]} fitted, but its "
+                "frozen script (model.py) is missing from its result directory."
+            )
+        return {
+            "fit_id": str(current["fit_id"]),
+            "directory": directory,
+            "script": script,
+            "script_sha256": (current_manifest.get("provenance") or {})
+            .get("identity", {})
+            .get("script_sha256"),
+            "via": via,
+            "parent_directory": parent_directory,
+        }
+
+
 def _build(
     *,
     staging: Path,
@@ -164,18 +272,21 @@ def _build(
     statuses: list[Any],
     freshness: Freshness,
     with_chain: bool,
+    origin: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Assemble the bundle directory and return what went into it."""
+    """Assemble the bundle directory and return what went into it.
+
+    ``origin`` is :func:`_script_origin`'s answer for a fit run from a problem
+    file: the script and its companions then come from that fit's directory,
+    and everything this fit produced still comes from its own.
+    """
     staging.mkdir(parents=True)
 
     provenance = manifest.get("provenance", {})
+    script_dir = fit_dir if origin is None else origin["directory"]
     script_entry = next((e for e in inputs if e.get("role") == "script"), None)
-    if script_entry is None and any(e.get("role") == "problem" for e in inputs):
-        raise click.ClickException(
-            "This fit ran another fit's problem file (`nrw fit run --from`), "
-            "not a script, and a bundle reproduces a script's run: pack the "
-            "fit it came from."
-        )
+    if origin is not None:
+        script_entry = origin["script"]
     if script_entry is None:
         raise click.ClickException(
             "This fit recorded no script, so there is nothing to reproduce. "
@@ -185,7 +296,7 @@ def _build(
     # 1. The script, byte-for-byte from the frozen copy, at the path it ran
     #    from -- which is what makes its own relative data paths resolve.
     script_rel = Path(str(script_entry["path"]))
-    _copy(fit_dir / "model.py", staging / script_rel)
+    _copy(script_dir / "model.py", staging / script_rel)
 
     # 2. Every measurement, at its recorded path.
     data_entries = [e for e in inputs if e.get("role") not in MODEL_ROLES]
@@ -218,12 +329,21 @@ def _build(
         ("spec.yaml", script_rel.with_suffix(".yaml")),
         ("model.md", script_rel.with_suffix(".md")),
     ):
-        if (fit_dir / name).is_file():
-            _copy(fit_dir / name, staging / target)
+        if (script_dir / name).is_file():
+            _copy(script_dir / name, staging / target)
 
     # 5. What the original run produced, to check against.
     results = staging / "original-results"
     skipped_chain = _copy_fit_outputs(fit_dir / "fit", results / "fit", with_chain)
+    # A fit run from a problem file started at the parent's result, not at
+    # the script's starting values; ship that point so a refit can too.
+    started_from = None
+    if origin is not None:
+        pars = sorted((origin["parent_directory"] / "fit").glob("*.par"))
+        if pars:
+            target = results / "started-from" / pars[0].name
+            _copy(pars[0], target)
+            started_from = target.relative_to(staging).as_posix()
     for name in ("manifest.json", "inputs.json", "NOTES.md"):
         if (fit_dir / name).is_file():
             _copy(fit_dir / name, results / name)
@@ -249,6 +369,14 @@ def _build(
         "versions": versions,
         "freshness": str(freshness),
         "notes": notes,
+        "script_from": None
+        if origin is None
+        else {
+            "fit_id": origin["fit_id"],
+            "script_sha256": origin["script_sha256"],
+            "via": origin["via"],
+            "started_from": started_from,
+        },
     }
 
     (staging / "MANIFEST.json").write_text(
@@ -320,17 +448,54 @@ def _copy_notes(
     own = fit_note(layout.root, fit_dir, fit_id, str(sample) if sample else None)
 
     reports: list[str] = []
+    figures: list[str] = []
     if sample:
-        for note in notes_about(sample_notes(layout.root, str(sample)), fit_id):
+        # Every tier: the recipient gets documents, not a fit page's evidence
+        # list, and the SI tier is often the one they were sent for.
+        for note in notes_about(
+            sample_notes(layout.root, str(sample)), fit_id, every_tier=True
+        ):
             source = layout.root / note.path
             if source.is_file():
                 _copy(source, staging / "notes" / Path(note.path).name)
                 reports.append(Path(note.path).name)
+                figures += [
+                    f
+                    for f in _copy_figures(staging / "notes", source)
+                    if f not in figures
+                ]
 
     return {
         "fit_note": bool(own and not own.blank),
         "reports": reports,
+        "figures": figures,
     }
+
+
+def _copy_figures(notes: Path, report: Path) -> list[str]:
+    """Copy the images *report* embeds into *notes*, at their relative paths.
+
+    The report is copied flat into ``notes/``, so an image beside it or below
+    it keeps working at the same relative path. One reached through ``..`` or
+    an absolute path would land outside the bundle's notes, and a URL needs no
+    copy, so those are left as they are.
+
+    Returns:
+        The relative paths copied.
+    """
+    copied = []
+    for match in _IMAGE.finditer(report.read_text(encoding="utf-8")):
+        reference = match.group(1) or match.group(2)
+        if "://" in reference or reference.startswith(("/", "#", "data:")):
+            continue
+        relative = Path(reference)
+        if relative.is_absolute() or ".." in relative.parts:
+            continue
+        image = report.parent / relative
+        if image.is_file():
+            _copy(image, notes / relative)
+            copied.append(relative.as_posix())
+    return copied
 
 
 def _par_file(fit_outputs: Path, staging: Path) -> str | None:
@@ -400,6 +565,10 @@ def _bundle_manifest(
         # but the recipient has to be able to see that it was forced.
         "input_drift_at_pack_time": drift,
         "omitted": {"chain_files": report["skipped_chain"]},
+        # Set only for a fit run from a problem file: the fit whose script is
+        # bundled, its hash (the packed fit's own identity hashes the problem
+        # file), and the chain of fits between them.
+        "script_from": report["script_from"],
     }
 
 
@@ -557,6 +726,35 @@ def _readme(
     if note:
         lines += [f"> {note}", ""]
 
+    origin = report["script_from"]
+    if origin:
+        chain = " → ".join(
+            f"`{fit}`" for fit in [origin["fit_id"], *reversed(origin["via"])]
+        )
+        lines += [
+            "This fit did not run a script. It was made with `nrw fit run --from`,",
+            "which re-runs an earlier fit's exported problem file: the same model",
+            f"and data, starting from that fit's result ({chain}). The script",
+            f"here is the one `{origin['fit_id']}` ran, byte-identical, and",
+            "`verify.py` applies this fit's parameters to it.",
+            "",
+        ]
+
+    refit = (
+        f"refl1d {report['script']} --fit={method}"
+        + "".join(
+            f" --{key}={params[key]}"
+            for key in ("steps", "samples", "burn")
+            if params.get(key)
+        )
+        + (
+            f" --pars={origin['started_from']}"
+            if origin and origin.get("started_from")
+            else ""
+        )
+        + " --store=my-refit"
+    )
+
     lines += [
         "## Run it",
         "",
@@ -573,9 +771,7 @@ def _readme(
         "To refit from here:",
         "",
         "```bash",
-        f"refl1d {report['script']} --fit={method}"
-        + (f" --steps={params['steps']}" if params.get("steps") else "")
-        + " --store=my-refit",
+        refit,
         "```",
         "",
         "## What it produced",
@@ -597,14 +793,32 @@ def _readme(
         "",
         "```",
         f"{report['script']}",
-        "    the model, byte-identical to the one that was fitted",
+        "    the model, byte-identical to the one that was fitted"
+        if not origin
+        else f"    the model, byte-identical to the script {origin['fit_id']} ran",
         "samples/*/data/",
         f"    the {len(report['data_files'])} measurement file(s) it reads",
         "original-results/",
         "    what the original run produced: fitted curves, SLD profiles,",
         "    parameter values and uncertainties, the full environment",
         *(
-            ["notes/", "    reports about this fit, written during the analysis"]
+            [
+                f"{origin['started_from']}",
+                "    the parameter values this fit started from",
+            ]
+            if origin and origin.get("started_from")
+            else []
+        ),
+        *(
+            [
+                "notes/",
+                "    reports about this fit, written during the analysis"
+                + (
+                    ", and the figures they show"
+                    if report["notes"].get("figures")
+                    else ""
+                ),
+            ]
             if report["notes"]["reports"]
             else []
         ),
@@ -633,11 +847,16 @@ def _readme(
             "",
         ]
 
+    script_hash = (
+        f"- script sha256: `{origin['script_sha256'] or '—'}` (recorded by `{origin['fit_id']}`)"
+        if origin
+        else f"- script sha256: `{(provenance.get('identity') or {}).get('script_sha256', '—')}`"
+    )
     lines += [
         "## Provenance",
         "",
         f"- fit id: `{report['fit_id']}`",
-        f"- script sha256: `{(provenance.get('identity') or {}).get('script_sha256', '—')}`",
+        script_hash,
         f"- produced with: {versions or 'see original-results/env/versions.json'}",
         f"- python {report['versions'].get('python', '—')}",
     ]
@@ -701,7 +920,15 @@ def _report(
     )
     click.echo(f"  bundle    {destination}")
     click.echo(f"  fit       {report['fit_id']}")
-    click.echo(f"  script    {report['script']}")
+    origin = report["script_from"]
+    click.echo(
+        f"  script    {report['script']}"
+        + (
+            f"  (as {origin['fit_id']} ran it; this fit ran its problem file)"
+            if origin
+            else ""
+        )
+    )
     click.echo(f"  data      {len(report['data_files'])} file(s)")
     if report["chisq"] is not None:
         click.echo(f"  chisq     {report['chisq']:.6g}  (verify.py checks this)")
@@ -713,6 +940,8 @@ def _report(
             parts.append("the fit's own note")
         if prose["reports"]:
             parts.append(f"{len(prose['reports'])} report(s)")
+        if prose.get("figures"):
+            parts.append(f"{len(prose['figures'])} figure(s)")
         click.echo(f"  notes     {' + '.join(parts)}")
     else:
         click.secho(

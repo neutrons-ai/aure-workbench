@@ -285,9 +285,141 @@ def test_the_readme_states_the_result_to_expect(
     assert "python verify.py" in readme
 
 
+def test_every_tier_of_a_report_travels_with_the_figures_it_shows(
+    fitted: tuple[Path, str], monkeypatch, tmp_path: Path
+) -> None:
+    """The fit page lists one tier of an analysis; a collaborator is sent the
+    documents, and an SI report without its figures is its argument with the
+    evidence cut out."""
+    root, fit_id = fitted
+    reports = root / "samples" / "S1" / "reports"
+    reports.mkdir(exist_ok=True)
+    for tier in ("technical", "si"):
+        (reports / f"a-{tier}.md").write_text(
+            f"# a\n\nFrom `{fit_id}`, which fits well.\n\n"
+            f"![R(Q)](a-{tier}.png)\n\n![outside](../outside.png)\n",
+            encoding="utf-8",
+        )
+        (reports / f"a-{tier}.png").write_bytes(b"png")
+    (reports.parent / "outside.png").write_bytes(b"png")
+    bundle = tmp_path / "b"
+
+    result = run(root, monkeypatch, "pack", fit_id, "--dir", "--out", str(bundle))
+
+    assert result.exit_code == 0, result.output
+    assert {p.name for p in (bundle / "notes").iterdir()} == {
+        "a-technical.md",
+        "a-si.md",
+        "a-technical.png",
+        "a-si.png",
+    }, "both tiers and their figures; nothing from outside the reports folder"
+    assert "2 figure(s)" in result.output
+
+
+# --------------------------------------------------------------------------
+# A fit run again from its problem file
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def rerun(fitted: tuple[Path, str], monkeypatch) -> tuple[Path, str, str]:
+    """`fitted`, run again with `nrw fit run --from`: (root, source, rerun)."""
+    root, source = fitted
+    result = run(
+        root,
+        monkeypatch,
+        "fit",
+        "run",
+        "--from",
+        source,
+        "--method",
+        "amoeba",
+        "--steps",
+        "10",
+        "--seed",
+        "2",
+        "--parallel",
+        "1",
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(run(root, monkeypatch, "ls", "--json").stdout)
+    (again,) = [row["fit_id"] for row in rows if row["fit_id"] != source]
+    return root, source, again
+
+
+def test_a_fit_run_from_a_problem_file_packs_with_the_script_behind_it(
+    rerun: tuple[Path, str, str], monkeypatch, tmp_path: Path
+) -> None:
+    """`--from` runs a fit's exported problem file, not a script -- the route
+    from a DE optimum to a DREAM posterior. Its model is the one the source
+    fit's script built, so the bundle carries that script with this fit's
+    parameters, and verify.py has to agree that the pairing holds."""
+    root, source, again = rerun
+    bundle = tmp_path / "b"
+
+    result = run(root, monkeypatch, "pack", again, "--dir", "--out", str(bundle))
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads((bundle / "MANIFEST.json").read_text())
+    assert payload["fit_id"] == again
+    assert payload["script_from"]["fit_id"] == source
+    assert payload["script_from"]["via"] == [again]
+    frozen = root / "samples" / "S1" / "results" / source / "model.py"
+    assert (
+        sha256_file(bundle / payload["script"])
+        == sha256_file(frozen)
+        == payload["script_from"]["script_sha256"]
+    )
+    manifest = root / "samples" / "S1" / "results" / again / "manifest.json"
+    assert (
+        payload["expected"]["chisq"]
+        == json.loads(manifest.read_text())["info"]["chisq"]
+    )
+
+    completed = _verify(bundle)
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "REPRODUCED" in completed.stdout, completed.stdout
+
+
+def test_the_point_a_rerun_started_from_ships_for_a_refit(
+    rerun: tuple[Path, str, str], monkeypatch, tmp_path: Path
+) -> None:
+    """A run from a problem file started at the source fit's result, not the
+    script's starting values; refitting from the script alone would be a
+    different run."""
+    root, source, again = rerun
+    bundle = tmp_path / "b"
+    run(root, monkeypatch, "pack", again, "--dir", "--out", str(bundle))
+
+    started = json.loads((bundle / "MANIFEST.json").read_text())["script_from"][
+        "started_from"
+    ]
+
+    source_par = next(
+        (root / "samples" / "S1" / "results" / source / "fit").glob("*.par")
+    )
+    assert sha256_file(bundle / started) == sha256_file(source_par)
+    assert f"--pars={started}" in (bundle / "README.md").read_text(encoding="utf-8")
+
+
 # --------------------------------------------------------------------------
 # Refusals
 # --------------------------------------------------------------------------
+
+
+def test_a_rerun_whose_source_lost_its_script_is_refused(
+    rerun: tuple[Path, str, str], monkeypatch, tmp_path: Path
+) -> None:
+    root, source, again = rerun
+    (root / "samples" / "S1" / "results" / source / "model.py").unlink()
+    bundle = tmp_path / "b"
+
+    result = run(root, monkeypatch, "pack", again, "--dir", "--out", str(bundle))
+
+    assert result.exit_code != 0
+    assert "frozen script (model.py) is missing" in result.output
+    assert not bundle.exists(), "and nothing is left behind"
 
 
 def test_packing_a_fit_whose_data_has_drifted_is_refused(

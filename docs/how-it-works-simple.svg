@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 520" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" xml:space="preserve">
+<desc>nr-workbench in one picture: five stages from an empty folder to a shared result, what you do and what nrw does at each, and the assistants and engines it drives.</desc>
+<rect width="1400" height="520" fill="#ffffff"/>
+<defs><style>text { white-space: pre; }</style><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/></marker></defs>
+<text x="700.0" y="46" font-size="28" font-weight="700" text-anchor="middle" fill="#0f172a">nr-workbench · how an analysis flows</text>
+<text x="700.0" y="74" font-size="15" text-anchor="middle" fill="#475569">A project workbench for neutron reflectometry at SNS REF_L. Five stages; at each, what you do and what nrw does.</text>
+<rect x="40" y="112" width="252" height="206" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="40" y="112" width="252" height="44" rx="12" fill="#0f172a"/>
+<rect x="40" y="142" width="252" height="14" fill="#0f172a"/>
+<text x="56" y="141" font-size="17" font-weight="700" fill="#ffffff">1  Set up</text>
+<text x="276" y="141" font-size="12" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#cbd5e1">nrw init</text>
+<text x="56" y="182" font-size="11" font-weight="700" fill="#b45309">YOU</text>
+<text x="56" y="200" font-size="12.5" fill="#334155">Make a project folder.</text>
+<text x="56" y="216" font-size="12.5" fill="#334155">Open it in VS Code.</text>
+<text x="56" y="254" font-size="11" font-weight="700" fill="#1d4ed8">NRW</text>
+<text x="56" y="272" font-size="12.5" fill="#334155">One layout for every sample,</text>
+<text x="56" y="288" font-size="12.5" fill="#334155">and skills your coding</text>
+<text x="56" y="304" font-size="12.5" fill="#334155">assistant reads.</text>
+<line x1="291" y1="134" x2="308" y2="134" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="307" y="112" width="252" height="206" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="307" y="112" width="252" height="44" rx="12" fill="#0f172a"/>
+<rect x="307" y="142" width="252" height="14" fill="#0f172a"/>
+<text x="323" y="141" font-size="17" font-weight="700" fill="#ffffff">2  Data</text>
+<text x="543" y="141" font-size="12" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#cbd5e1">nrw serve</text>
+<text x="323" y="182" font-size="11" font-weight="700" fill="#b45309">YOU</text>
+<text x="323" y="200" font-size="12.5" fill="#334155">Assign each run to a sample</text>
+<text x="323" y="216" font-size="12.5" fill="#334155">as the beamtime goes.</text>
+<text x="323" y="254" font-size="11" font-weight="700" fill="#1d4ed8">NRW</text>
+<text x="323" y="272" font-size="12.5" fill="#334155">Copies complete runs in,</text>
+<text x="323" y="288" font-size="12.5" fill="#334155">checks normalisation,</text>
+<text x="323" y="304" font-size="12.5" fill="#334155">assesses time-resolved runs.</text>
+<line x1="558" y1="134" x2="575" y2="134" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="574" y="112" width="252" height="206" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="574" y="112" width="252" height="44" rx="12" fill="#0f172a"/>
+<rect x="574" y="142" width="252" height="14" fill="#0f172a"/>
+<text x="590" y="141" font-size="17" font-weight="700" fill="#ffffff">3  Model</text>
+<text x="810" y="141" font-size="12" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#cbd5e1">nrw model new</text>
+<text x="590" y="182" font-size="11" font-weight="700" fill="#b45309">YOU</text>
+<text x="590" y="200" font-size="12.5" fill="#334155">Describe the sample.</text>
+<text x="590" y="216" font-size="12.5" fill="#334155">Review the proposed stack.</text>
+<text x="590" y="254" font-size="11" font-weight="700" fill="#1d4ed8">NRW</text>
+<text x="590" y="272" font-size="12.5" fill="#334155">Reads runs and angles from</text>
+<text x="590" y="288" font-size="12.5" fill="#334155">the files; writes a spec and</text>
+<text x="590" y="304" font-size="12.5" fill="#334155">a standalone refl1d script.</text>
+<line x1="825" y1="134" x2="842" y2="134" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="841" y="112" width="252" height="206" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="841" y="112" width="252" height="44" rx="12" fill="#0f172a"/>
+<rect x="841" y="142" width="252" height="14" fill="#0f172a"/>
+<text x="857" y="141" font-size="17" font-weight="700" fill="#ffffff">4  Fit</text>
+<text x="1077" y="141" font-size="12" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#cbd5e1">nrw fit run</text>
+<text x="857" y="182" font-size="11" font-weight="700" fill="#b45309">YOU</text>
+<text x="857" y="200" font-size="12.5" fill="#334155">Fit, try variants, compare.</text>
+<text x="857" y="216" font-size="12.5" fill="#334155">Write down what you learned.</text>
+<text x="857" y="254" font-size="11" font-weight="700" fill="#1d4ed8">NRW</text>
+<text x="857" y="272" font-size="12.5" fill="#334155">Runs refl1d on all cores and</text>
+<text x="857" y="288" font-size="12.5" fill="#334155">records script, data hashes</text>
+<text x="857" y="304" font-size="12.5" fill="#334155">and environment with the fit.</text>
+<line x1="1092" y1="134" x2="1109" y2="134" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1108" y="112" width="252" height="206" rx="12" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="1108" y="112" width="252" height="44" rx="12" fill="#0f172a"/>
+<rect x="1108" y="142" width="252" height="14" fill="#0f172a"/>
+<text x="1124" y="141" font-size="17" font-weight="700" fill="#ffffff">5  Share</text>
+<text x="1344" y="141" font-size="12" text-anchor="end" font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#cbd5e1">nrw promote</text>
+<text x="1124" y="182" font-size="11" font-weight="700" fill="#b45309">YOU</text>
+<text x="1124" y="200" font-size="12.5" fill="#334155">Finalize the fit you trust.</text>
+<text x="1124" y="216" font-size="12.5" fill="#334155">Send or publish it.</text>
+<text x="1124" y="254" font-size="11" font-weight="700" fill="#1d4ed8">NRW</text>
+<text x="1124" y="272" font-size="12.5" fill="#334155">Web pages to look at it, a</text>
+<text x="1124" y="288" font-size="12.5" fill="#334155">bundle anyone can verify,</text>
+<text x="1124" y="304" font-size="12.5" fill="#334155">push to ISAAC or Tiled.</text>
+<rect x="40" y="342" width="1320" height="92" rx="12" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5"/>
+<text x="56" y="366" font-size="11" font-weight="700" fill="#6d28d9">WORKING ALONGSIDE, DRIVEN BY NRW</text>
+<text x="56" y="392" font-size="13" font-weight="700" fill="#0f172a">Claude Code · Copilot · OpenCode</text>
+<text x="56" y="410" font-size="12" fill="#334155">work in the project, following the shipped skills; unattended during a beamtime</text>
+<text x="56" y="425" font-size="12" fill="#334155">if you ask</text>
+<text x="576" y="392" font-size="13" font-weight="700" fill="#0f172a">AuRE</text>
+<text x="576" y="410" font-size="12" fill="#334155">proposes a layer stack from your description</text>
+<text x="906" y="392" font-size="13" font-weight="700" fill="#0f172a">refl1d + bumps</text>
+<text x="906" y="410" font-size="12" fill="#334155">do the fitting</text>
+<text x="40" y="460" font-size="13" fill="#64748b"><tspan font-weight="700" fill="#0f172a">Never overwrites a file you edited</tspan>   ·   <tspan font-weight="700" fill="#0f172a">Every result traceable to its script, data and environment</tspan>   ·   <tspan font-weight="700" fill="#0f172a">Reproducible with only refl1d</tspan></text>
+</svg>

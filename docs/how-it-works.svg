@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 962" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" xml:space="preserve">
+<desc>nr-workbench: how a neutron reflectometry analysis flows from an empty folder to a published, reproducible result, and what the user, nrw, the project files and the assistants each do at every stage.</desc>
+<rect width="1680" height="962" fill="#ffffff"/>
+<defs><style>text { white-space: pre; }</style><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"/></marker><filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1.5" stdDeviation="2.5" flood-color="#0f172a" flood-opacity="0.10"/></filter></defs>
+<text x="840.0" y="48" font-size="30" text-anchor="middle" font-weight="700" fill="#0f172a">nr-workbench · from an empty folder to a published, reproducible result</text>
+<text x="840.0" y="78" font-size="16" text-anchor="middle" fill="#475569">A project workbench for neutron reflectometry at SNS REF_L. Read it left to right for the analysis, top to bottom for who does what.</text>
+<rect x="226" y="118" width="279" height="44" rx="10" fill="#0f172a"/>
+<text x="365.5" y="146" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">1  Set up a project</text>
+<line x1="503" y1="140.0" x2="518" y2="140.0" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="517" y="118" width="279" height="44" rx="10" fill="#0f172a"/>
+<text x="656.5" y="146" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">2  Bring the data in</text>
+<line x1="794" y1="140.0" x2="809" y2="140.0" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="808" y="118" width="279" height="44" rx="10" fill="#0f172a"/>
+<text x="947.5" y="146" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">3  Write the model</text>
+<line x1="1085" y1="140.0" x2="1100" y2="140.0" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1099" y="118" width="279" height="44" rx="10" fill="#0f172a"/>
+<text x="1238.5" y="146" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">4  Fit it</text>
+<line x1="1376" y1="140.0" x2="1391" y2="140.0" stroke="#334155" stroke-width="2" marker-end="url(#arrow)"/>
+<rect x="1390" y="118" width="279" height="44" rx="10" fill="#0f172a"/>
+<text x="1529.5" y="146" font-size="15" font-weight="700" text-anchor="middle" fill="#ffffff">5  Look, decide, share</text>
+<rect x="40" y="184" width="170" height="136" rx="10" fill="#b45309"/>
+<text x="125.0" y="248.0" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">You</text>
+<text x="125.0" y="270.0" font-size="10.5" text-anchor="middle" fill="#ffffff" opacity="0.85">what you do</text>
+<rect x="226" y="184" width="279" height="136" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="238" y="206" font-size="11" fill="#334155">Run <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw init</tspan> in an empty folder,</text>
+<text x="238" y="221" font-size="11" fill="#334155">or on top of a beamtime folder you</text>
+<text x="238" y="236" font-size="11" fill="#334155">already have. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw doctor</tspan> checks the</text>
+<text x="238" y="251" font-size="11" fill="#334155">install. Open the folder in VS Code.</text>
+<text x="238" y="281" font-size="11" fill="#334155"><tspan fill="#64748b">Choose your assistants: Claude Code,</tspan></text>
+<text x="238" y="296" font-size="11" fill="#334155"><tspan fill="#64748b">GitHub Copilot, OpenCode, or several.</tspan></text>
+<rect x="517" y="184" width="279" height="136" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="529" y="206" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Measuring now?</tspan> On the Experiment page,</text>
+<text x="529" y="221" font-size="11" fill="#334155">pick runs as they land, assign them to a</text>
+<text x="529" y="236" font-size="11" fill="#334155">sample with a condition, and <tspan font-weight="700" fill="#0f172a">apply</tspan>.</text>
+<text x="529" y="266" font-size="11" fill="#334155">Otherwise copy reduced files in, or</text>
+<text x="529" y="281" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw import</tspan> an older beamtime folder.</text>
+<text x="529" y="296" font-size="11" fill="#334155">Describe the sample in <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">sample.md</tspan>.</text>
+<rect x="808" y="184" width="279" height="136" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="820" y="206" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Say what the sample is made of.</tspan></text>
+<text x="820" y="221" font-size="11" fill="#334155">Write the stack by hand, or let AuRE or</text>
+<text x="820" y="236" font-size="11" fill="#334155">your coding assistant propose it from</text>
+<text x="820" y="251" font-size="11" fill="#334155">your notes. Review every layer.</text>
+<text x="820" y="281" font-size="11" fill="#334155"><tspan fill="#64748b">Everything else, runs, angles, states and</tspan></text>
+<text x="820" y="296" font-size="11" fill="#334155"><tspan fill="#64748b">time series, is read from the files.</tspan></text>
+<rect x="1099" y="184" width="279" height="136" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1111" y="206" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw fit run model.py</tspan></text>
+<text x="1111" y="221" font-size="11" fill="#334155">(<tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">--method dream</tspan> for uncertainties).</text>
+<text x="1111" y="251" font-size="11" fill="#334155">Try variants. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw ls</tspan> lists every</text>
+<text x="1111" y="266" font-size="11" fill="#334155">attempt with what changed; <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw diff</tspan></text>
+<text x="1111" y="281" font-size="11" fill="#334155">says whether chi-squared moved because</text>
+<text x="1111" y="296" font-size="11" fill="#334155">of the model, the data or the optimizer.</text>
+<rect x="1390" y="184" width="279" height="136" rx="10" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1402" y="206" font-size="11" fill="#334155">Open <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw serve</tspan>: the sample landscape,</text>
+<text x="1402" y="221" font-size="11" fill="#334155">each fit with SLD profiles and residuals.</text>
+<text x="1402" y="236" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Star, Finalize or Discard</tspan> a fit.</text>
+<text x="1402" y="266" font-size="11" fill="#334155">Write down why with <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw note</tspan>.</text>
+<text x="1402" y="281" font-size="11" fill="#334155">Ask <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw whence</tspan> where any figure</text>
+<text x="1402" y="296" font-size="11" fill="#334155">came from, even one emailed out.</text>
+<rect x="40" y="334" width="170" height="150" rx="10" fill="#1d4ed8"/>
+<text x="125.0" y="405.0" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">nrw</text>
+<text x="125.0" y="427.0" font-size="10.5" text-anchor="middle" fill="#ffffff" opacity="0.85">commands and web pages</text>
+<rect x="226" y="334" width="279" height="150" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="238" y="356" font-size="11" fill="#334155">Writes one layout for every sample, 19</text>
+<text x="238" y="371" font-size="11" fill="#334155">reflectometry skills, and the instructions</text>
+<text x="238" y="386" font-size="11" fill="#334155">and limits for each assistant.</text>
+<text x="238" y="416" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Safe to re-run: it never overwrites a</tspan></text>
+<text x="238" y="431" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">file you have edited.</tspan></text>
+<rect x="517" y="334" width="279" height="150" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="529" y="356" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw serve</tspan> watches the data folder and</text>
+<text x="529" y="371" font-size="11" fill="#334155">copies only runs that finished arriving.</text>
+<text x="529" y="401" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw data check</tspan> and <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw data overlap</tspan></text>
+<text x="529" y="416" font-size="11" fill="#334155">find normalisation errors before you</text>
+<text x="529" y="431" font-size="11" fill="#334155">model them. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw tnr assess</tspan> says if a</text>
+<text x="529" y="446" font-size="11" fill="#334155">time-resolved run changed, and how.</text>
+<rect x="808" y="334" width="279" height="150" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="820" y="356" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw model new</tspan> scaffolds a spec from the</text>
+<text x="820" y="371" font-size="11" fill="#334155">data. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw model validate</tspan> and</text>
+<text x="820" y="386" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">preview --build</tspan> catch mistakes in a</text>
+<text x="820" y="401" font-size="11" fill="#334155">second. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw model generate</tspan> writes</text>
+<text x="820" y="416" font-size="11" fill="#334155">a standalone refl1d script plus a</text>
+<text x="820" y="431" font-size="11" fill="#334155">plain-English account of what it assumes.</text>
+<rect x="1099" y="334" width="279" height="150" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1111" y="356" font-size="11" fill="#334155">Runs refl1d and bumps on all cores.</text>
+<text x="1111" y="371" font-size="11" fill="#334155">Records the frozen script, every input</text>
+<text x="1111" y="386" font-size="11" fill="#334155">hash, package versions and git state.</text>
+<text x="1111" y="416" font-size="11" fill="#334155">A result whose data changed is marked</text>
+<text x="1111" y="431" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">STALE</tspan> everywhere. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw assess</tspan> flags</text>
+<text x="1111" y="446" font-size="11" fill="#334155">parameters stuck on a bound. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw check</tspan></text>
+<text x="1111" y="461" font-size="11" fill="#334155">guards it all, in CI too.</text>
+<rect x="1390" y="334" width="279" height="150" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1402" y="356" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw promote --as final</tspan> names the</text>
+<text x="1402" y="371" font-size="11" fill="#334155">sample's answer, with your reason.</text>
+<text x="1402" y="401" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw pack</tspan> zips a fit with its data and a</text>
+<text x="1402" y="416" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">verify.py</tspan>. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw isaac push</tspan> publishes</text>
+<text x="1402" y="431" font-size="11" fill="#334155">the final fit. <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw tiled push</tspan> shares</text>
+<text x="1402" y="446" font-size="11" fill="#334155">the catalog and fits with your team.</text>
+<rect x="40" y="498" width="170" height="150" rx="10" fill="#475569"/>
+<text x="125.0" y="569.0" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">Your project</text>
+<text x="125.0" y="591.0" font-size="10.5" text-anchor="middle" fill="#ffffff" opacity="0.85">plain files, in git</text>
+<rect x="226" y="498" width="279" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="238" y="520" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw.toml</tspan><tspan fill="#64748b">   project settings</tspan></text>
+<text x="238" y="535" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/</tspan><tspan fill="#64748b">   one folder per sample</tspan></text>
+<text x="238" y="550" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">skills/reflectometry/</tspan><tspan fill="#64748b">   what the</tspan></text>
+<text x="238" y="565" font-size="11" fill="#334155"><tspan fill="#64748b">assistants read</tspan></text>
+<text x="238" y="580" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">.claude/  .github/  opencode.json</tspan></text>
+<text x="238" y="595" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">incoming/</tspan><tspan fill="#64748b">   where reduced runs land</tspan></text>
+<rect x="517" y="498" width="279" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="529" y="520" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/data/steady/</tspan></text>
+<text x="529" y="535" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/data/tnr/</tspan></text>
+<text x="529" y="550" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/sample.md</tspan><tspan fill="#64748b">   yours</tspan></text>
+<text x="529" y="565" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/sample.yaml</tspan><tspan fill="#64748b">   the register</tspan></text>
+<text x="529" y="580" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">experiment/*.parquet</tspan><tspan fill="#64748b">   the catalog</tspan></text>
+<rect x="808" y="498" width="279" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="820" y="520" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/models/</tspan></text>
+<text x="820" y="535" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">  &lt;name&gt;.yaml</tspan><tspan fill="#64748b">   the spec</tspan></text>
+<text x="820" y="550" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">  &lt;name&gt;.py</tspan><tspan fill="#64748b">   refl1d script, no nrw needed</tspan></text>
+<text x="820" y="565" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">  &lt;name&gt;.md</tspan><tspan fill="#64748b">   its assumptions, in English</tspan></text>
+<text x="820" y="595" font-size="11" fill="#334155"><tspan fill="#64748b">The spec ties angle segments, steady states</tspan></text>
+<text x="820" y="610" font-size="11" fill="#334155"><tspan fill="#64748b">and time slices together without hand-</tspan></text>
+<text x="820" y="625" font-size="11" fill="#334155"><tspan fill="#64748b">written parameter aliasing.</tspan></text>
+<rect x="1099" y="498" width="279" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1111" y="520" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/results/&lt;fit_id&gt;/</tspan></text>
+<text x="1111" y="535" font-size="11" fill="#334155"><tspan fill="#64748b">  immutable: script, manifest, hashes,</tspan></text>
+<text x="1111" y="550" font-size="11" fill="#334155"><tspan fill="#64748b">  bumps output, </tspan><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">NOTES.md</tspan><tspan fill="#64748b"> for you</tspan></text>
+<text x="1111" y="580" font-size="11" fill="#334155"><tspan fill="#64748b">Figures the fit writes carry its id, so</tspan></text>
+<text x="1111" y="595" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw whence</tspan><tspan fill="#64748b"> recognises a copy later.</tspan></text>
+<rect x="1390" y="498" width="279" height="150" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1402" y="520" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">samples/&lt;id&gt;/reports/</tspan><tspan fill="#64748b">   your findings</tspan></text>
+<text x="1402" y="535" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">&lt;fit_id&gt;.zip</tspan><tspan fill="#64748b">   bundle for a collaborator</tspan></text>
+<text x="1402" y="550" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">results/&lt;fit_id&gt;/isaac/</tspan><tspan fill="#64748b">   records sent</tspan></text>
+<text x="1402" y="580" font-size="11" fill="#334155"><tspan fill="#64748b">A collaborator needs only refl1d, bumps</tspan></text>
+<text x="1402" y="595" font-size="11" fill="#334155"><tspan fill="#64748b">and numpy to reproduce the result.</tspan></text>
+<rect x="40" y="662" width="170" height="136" rx="10" fill="#6d28d9"/>
+<text x="125.0" y="716.0" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">Assistants,</text>
+<text x="125.0" y="736.0" font-size="16" font-weight="700" text-anchor="middle" fill="#ffffff">engines, services</text>
+<text x="125.0" y="758.0" font-size="10.5" text-anchor="middle" fill="#ffffff" opacity="0.85">what nrw drives for you</text>
+<rect x="226" y="662" width="279" height="136" rx="10" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="238" y="684" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Claude Code, Copilot or OpenCode</tspan> opened</text>
+<text x="238" y="699" font-size="11" fill="#334155">in the folder already know REF_L: the</text>
+<text x="238" y="714" font-size="11" fill="#334155">skills, the layout and the nrw commands.</text>
+<text x="238" y="744" font-size="11" fill="#334155"><tspan fill="#64748b">No language-model key is needed for</tspan></text>
+<text x="238" y="759" font-size="11" fill="#334155"><tspan fill="#64748b">anything on this diagram except where</tspan></text>
+<text x="238" y="774" font-size="11" fill="#334155"><tspan fill="#64748b">AuRE or an endpoint is named.</tspan></text>
+<rect x="517" y="662" width="279" height="136" rx="10" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="529" y="684" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">tiled.ornl.gov</tspan>: <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw tiled pull</tspan> brings a</text>
+<text x="529" y="699" font-size="11" fill="#334155">colleague's catalog, data and fits into</text>
+<text x="529" y="714" font-size="11" fill="#334155">a fresh project.</text>
+<text x="529" y="744" font-size="11" fill="#334155"><tspan fill="#64748b">The reduction writes runs to the data</tspan></text>
+<text x="529" y="759" font-size="11" fill="#334155"><tspan fill="#64748b">folder; nrw never touches raw NeXus.</tspan></text>
+<rect x="808" y="662" width="279" height="136" rx="10" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="820" y="684" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">AuRE</tspan> proposes a layer stack from your</text>
+<text x="820" y="699" font-size="11" fill="#334155">description and iterates it against the</text>
+<text x="820" y="714" font-size="11" fill="#334155">data (<tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw aure new / run / import</tspan>).</text>
+<text x="820" y="744" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Your coding assistant</tspan> gets the same job</text>
+<text x="820" y="759" font-size="11" fill="#334155">from <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw model new --print-prompt</tspan>;</text>
+<text x="820" y="774" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">--from-notes</tspan> asks an LLM endpoint.</text>
+<rect x="1099" y="662" width="279" height="136" rx="10" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1111" y="684" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">refl1d + bumps</tspan> do the fitting.</text>
+<text x="1111" y="714" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">Unattended, during a beamtime:</tspan></text>
+<text x="1111" y="729" font-size="11" fill="#334155"><tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">nrw agent watch</tspan> hands each settled</text>
+<text x="1111" y="744" font-size="11" fill="#334155">measurement to Claude Code or OpenCode,</text>
+<text x="1111" y="759" font-size="11" fill="#334155">held by limits it cannot talk past. It</text>
+<text x="1111" y="774" font-size="11" fill="#334155">fits only what your notes ask for.</text>
+<rect x="1390" y="662" width="279" height="136" rx="10" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+<text x="1402" y="684" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">ISAAC Portal</tspan> receives the final fit as</text>
+<text x="1402" y="699" font-size="11" fill="#334155">linked records, one per condition, after</text>
+<text x="1402" y="714" font-size="11" fill="#334155">the portal validates them and you confirm.</text>
+<text x="1402" y="744" font-size="11" fill="#334155"><tspan font-weight="700" fill="#0f172a">A collaborator</tspan> runs <tspan font-family="ui-monospace, 'SF Mono', Menlo, monospace" fill="#0f172a">verify.py</tspan> and</text>
+<text x="1402" y="759" font-size="11" fill="#334155">learns in one line whether their refl1d</text>
+<text x="1402" y="774" font-size="11" fill="#334155">gives your answer.</text>
+<text x="40" y="840" font-size="13" font-weight="700" fill="#0f172a">What holds throughout</text>
+<rect x="40.0" y="852" width="398.25" height="86" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="40.0" y="852" width="6" height="86" rx="3" fill="#0f766e"/>
+<text x="58.0" y="878" font-size="13" font-weight="700" fill="#0f172a">Nothing you edited is overwritten.</text>
+<text x="58.0" y="898" font-size="11" fill="#334155">nrw init and the Experiment page add; they never replace</text>
+<text x="58.0" y="913" font-size="11" fill="#334155">your files.</text>
+<rect x="450.25" y="852" width="398.25" height="86" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="450.25" y="852" width="6" height="86" rx="3" fill="#0f766e"/>
+<text x="468.25" y="878" font-size="13" font-weight="700" fill="#0f172a">Every result is traceable.</text>
+<text x="468.25" y="898" font-size="11" fill="#334155">Script, data hashes, environment and reason, kept with</text>
+<text x="468.25" y="913" font-size="11" fill="#334155">the fit, queried with nrw whence.</text>
+<rect x="860.5" y="852" width="398.25" height="86" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="860.5" y="852" width="6" height="86" rx="3" fill="#0f766e"/>
+<text x="878.5" y="878" font-size="13" font-weight="700" fill="#0f172a">Every result is reproducible.</text>
+<text x="878.5" y="898" font-size="11" fill="#334155">A bundle runs with only refl1d, and verify.py says</text>
+<text x="878.5" y="913" font-size="11" fill="#334155">whether it gives the recorded number.</text>
+<rect x="1270.75" y="852" width="398.25" height="86" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+<rect x="1270.75" y="852" width="6" height="86" rx="3" fill="#0f766e"/>
+<text x="1288.75" y="878" font-size="13" font-weight="700" fill="#0f172a">Assistants help; you decide.</text>
+<text x="1288.75" y="898" font-size="11" fill="#334155">Proposed stacks are labelled and checked; promoting a</text>
+<text x="1288.75" y="913" font-size="11" fill="#334155">fit is never automated.</text>
+</svg>
