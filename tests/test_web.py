@@ -60,6 +60,13 @@ def populated(project: Path) -> Path:
     return project
 
 
+@pytest.fixture
+def flat_series(project: Path) -> Path:
+    """The scaffolded project, with a tNR series lying directly in data/tnr/."""
+    tnr_fixture.build(project / "samples" / "Sample1" / "data" / "tnr")
+    return project
+
+
 # --------------------------------------------------------------------------
 # ProjectData works with no web framework
 # --------------------------------------------------------------------------
@@ -1499,3 +1506,57 @@ def test_a_summary_failure_does_not_fail_the_fit(
     assert result.exit_code == 0, result.output
     assert "could not summarise" in result.output
     assert ProjectData(root).fits("Sample1"), "the fit is still recorded"
+
+
+# --------------------------------------------------------------------------
+# A series whose slices lie directly in data/tnr/
+# --------------------------------------------------------------------------
+
+
+def test_sample_names_a_flat_series_after_its_folder(flat_series: Path) -> None:
+    detail = ProjectData(flat_series).sample("Sample1")
+
+    assert [entry["name"] for entry in detail["series"]] == ["tnr"]
+    assert detail["series"][0]["plottable"] is True
+
+
+def test_series_data_loads_a_flat_series(flat_series: Path) -> None:
+    data = ProjectData(flat_series)
+
+    residual = data.series_data("Sample1", "tnr")
+    curves = data.series_curves("Sample1", "tnr")
+
+    assert residual["n_intervals"] == len(curves["curves"]) > 1
+
+
+def test_sample_page_plots_a_flat_series_without_a_problem(flat_series: Path) -> None:
+    from nr_workbench.web.app import create_app
+
+    client = create_app(flat_series).test_client()
+
+    page = client.get("/s/Sample1")
+    api = client.get("/api/samples/Sample1/series/tnr")
+
+    assert page.status_code == 200
+    assert b"No series" not in page.data
+    assert api.status_code == 200
+
+
+def test_series_data_still_refuses_a_series_that_is_not_there(
+    flat_series: Path,
+) -> None:
+    with pytest.raises(FileNotFoundError, match="No series 'nope'"):
+        ProjectData(flat_series).series_data("Sample1", "nope")
+
+
+def test_sample_page_offers_a_plot_checkbox_per_steady_run(client) -> None:
+    """Each steady run can be taken off the R(Q) plot; a series cannot, it is the heatmap."""
+    import re
+
+    html = client.get("/s/Sample1").get_data(as_text=True)
+
+    runs = re.findall(
+        r'class="form-check-input measurement-toggle"[^>]*data-run="(\d+)"', html
+    )
+    assert runs == ["100001", "100002"]
+    assert html.count('measurement-toggle" type="checkbox" checked') == 2

@@ -116,6 +116,7 @@ class Action(StrEnum):
     CONFLICT = "conflict"
     SOURCE_MISSING = "source-missing"
     NOT_MANAGED = "not-managed"
+    IN_PLACE = "in-place"
 
 
 #: Actions that change the working tree.
@@ -446,24 +447,25 @@ def _plan_sample(
 
     # Files nrw did not copy, for runs this sample does not use: say so.
     if steady.is_dir():
-        from nr_workbench.instrument.reduced import (
-            parse_combined_name,
-            parse_segment_name,
-        )
-
         for path in sorted(steady.iterdir()):
             if path.name in record or not path.is_file():
                 continue
-            segment = parse_segment_name(path.name)
-            run = segment.run if segment else parse_combined_name(path.name)
+            run = _run_of(path.name)
             if run is None or RunKey(run) in wanted:
                 continue
+            entry = catalog.runs.get(RunKey(run))
+            excluded = entry is not None and entry.sample_id == sample_id
             actions.append(
                 FileAction(
                     run,
                     path.name,
                     Action.NOT_MANAGED,
-                    "not copied by nrw, and its run is not assigned here; left alone",
+                    f"run {run} is excluded, but nrw did not copy this file, so it "
+                    f"stays: move it out of data/{STEADY_DIR}/ to keep it out of "
+                    "fits"
+                    if excluded
+                    else "not copied by nrw, and its run is not assigned here; "
+                    "left alone",
                 )
             )
 
@@ -512,13 +514,22 @@ def _plan_run(
         for name, entry in sorted(recorded.items()):
             actions.append(_already_copied(run, name, entry, None, steady, source))
         if not recorded:
+            in_place = _in_place(run, steady)
+            if in_place:
+                return in_place
+            elsewhere = _held_elsewhere(run, steady)
             actions.append(
                 FileAction(
                     run,
                     f"run {run}",
                     Action.SOURCE_MISSING,
                     "assigned here, but the data source does not list it -- not "
-                    "reduced yet, or the source cannot be reached",
+                    "reduced yet, or the source cannot be reached"
+                    + (
+                        f"; its files are in {', '.join(elsewhere)}"
+                        if elsewhere
+                        else ""
+                    ),
                 )
             )
         return actions
@@ -567,6 +578,47 @@ def _plan_run(
             continue
         actions.append(FileAction(run, name, Action.COPY, "", source_file))
     return actions
+
+
+def _run_of(name: str) -> int | None:
+    """The run a reduced file's name belongs to, or ``None``."""
+    from nr_workbench.instrument.reduced import parse_combined_name, parse_segment_name
+
+    segment = parse_segment_name(name)
+    return segment.run if segment else parse_combined_name(name)
+
+
+def _in_place(run: int, steady: Path) -> list[FileAction]:
+    """A run's files already in the sample's ``data/steady/``, placed there by hand.
+
+    They are where a fit of the sample reads them, so there is nothing to copy.
+    """
+    if not steady.is_dir():
+        return []
+    return [
+        FileAction(
+            run,
+            path.name,
+            Action.IN_PLACE,
+            f"already in data/{STEADY_DIR}/, not copied by nrw; left as it is",
+        )
+        for path in sorted(steady.iterdir())
+        if path.is_file() and _run_of(path.name) == run
+    ]
+
+
+def _held_elsewhere(run: int, steady: Path) -> list[str]:
+    """Other samples' ``data/steady/`` folders that hold a run's files."""
+    samples_dir = steady.parent.parent.parent
+    here = steady.parent.parent.name
+    found = []
+    for other in sorted(samples_dir.iterdir()) if samples_dir.is_dir() else []:
+        folder = other / "data" / STEADY_DIR
+        if other.name == here or not folder.is_dir():
+            continue
+        if any(p.is_file() and _run_of(p.name) == run for p in folder.iterdir()):
+            found.append(f"samples/{other.name}/data/{STEADY_DIR}/")
+    return found
 
 
 def _may_copy(

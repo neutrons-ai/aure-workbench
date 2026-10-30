@@ -367,7 +367,8 @@ Sliced time-resolved series are not handled yet. The unsliced tNR run arrives
 in the same folder as an ordinary reduced file and is treated as one. Adding
 series means:
 
-- `RunKey.kind = "series"`, reserved already.
+- `RunKey.kind = "series"`, which the page already lists for a series a
+  sample holds, and which an edit of the catalog refuses.
 - The source listing slices (`r<run>_*.txt`) and their `*_eis_reduction.json`
   sidecar. The sidecar's interval labels define the slice names; validate them
   as strictly as segment names.

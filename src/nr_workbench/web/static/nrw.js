@@ -106,6 +106,10 @@ const NRW = (function () {
     const opts = options || {};
     let mode = "r";
     let overlay = null;
+    /* Runs taken off the plot. Their traces are built all the same, so the
+     * colours of the runs that stay do not shift when one is hidden, and the
+     * legend still names what is hidden. */
+    let hidden = new Set();
 
     function layout() {
       return {
@@ -134,6 +138,9 @@ const NRW = (function () {
 
     function traces() {
       const base = reflTraces(curves, mode);
+      base.forEach(function (trace) {
+        if (hidden.has(trace.legendgroup)) trace.visible = "legendonly";
+      });
       if (overlay) {
         const y =
           mode === "rq4"
@@ -173,6 +180,11 @@ const NRW = (function () {
        * add another toggle listener each time, each holding stale curves. */
       setCurves: function (next) {
         curves = next;
+        Plotly.react(divId, traces(), layout(), CONFIG);
+      },
+      /* Take runs off the plot, by run number, and put the others back. */
+      setHidden: function (runs) {
+        hidden = new Set(runs.map(String));
         Plotly.react(divId, traces(), layout(), CONFIG);
       },
     };

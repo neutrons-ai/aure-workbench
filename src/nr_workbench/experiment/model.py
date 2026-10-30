@@ -30,10 +30,14 @@ from typing import Any
 #: A steady-state measurement: a set of angle segments reduced from one run.
 STEADY = "steady"
 
-#: The kinds of measurement the catalog knows. Time-resolved (``series``) is
-#: reserved: the unsliced tNR run arrives as an ordinary steady-state file and
-#: is treated as one until sliced series are supported.
-KINDS = (STEADY,)
+#: A time-resolved series: the slices of one run and their reduction sidecar.
+#: Listed on the Experiment page, never organized there: its run's metadata is
+#: recorded on the run's steady key, whose summed dataset gives the series its
+#: angle. :func:`apply_changes` refuses an edit to a series key.
+SERIES = "series"
+
+#: The kinds of measurement the catalog knows.
+KINDS = (STEADY, SERIES)
 
 #: What a measurement was, as the *Type* column of ``sample.md`` says it: the
 #: choices the page offers first. Any other type a person adds is kept too --
@@ -639,6 +643,12 @@ def apply_changes(
     # Runs first: unassigning a sample's runs and removing the sample in one
     # request must work, and the removal checks that nothing is assigned.
     for change in runs:
+        if change.key.kind == SERIES:
+            raise CatalogValidationError(
+                f"run {change.key.run}'s time-resolved series is listed on the "
+                "Experiment page, not organized by it yet; assign its run's "
+                "steady row, with the type tNR"
+            )
         current = run_records.get(change.key)
         if _rev(change.base_rev) != (current.rev if current else 0):
             stale.append(f"run {change.key.run}")

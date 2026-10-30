@@ -895,3 +895,59 @@ def test_a_combined_curve_copied_before_stays_managed(
     plan = applier.plan(catalog_for(234277))
 
     assert actions(plan)[name] is Action.LOCAL_EDITED
+
+
+# --------------------------------------------------------------------------
+# Runs whose files a sample already holds
+# --------------------------------------------------------------------------
+
+#: A run the data source does not list: its files were copied into the
+#: sample by hand.
+HELD_RUN = 999901
+
+
+def test_a_run_already_in_its_sample_is_in_place_and_sample_md_is_written(
+    applier: Applier, project: Path
+) -> None:
+    placed = write_autoreduced(steady(project, "Sample1"), HELD_RUN, [1, 2, 3])
+    before = {p.name: p.read_bytes() for p in placed}
+    catalog = catalog_for(HELD_RUN, sample="Sample1")
+
+    plan, report = applier.apply(catalog)
+
+    sample = next(s for s in plan.samples if s.sample_id == "Sample1")
+    assert {f.name: f.action for f in sample.files} == dict.fromkeys(
+        before, Action.IN_PLACE
+    )
+    assert not sample.needs_attention
+    assert not report.failed
+    assert {p.name: p.read_bytes() for p in placed} == before
+    assert read_sources(project / "samples" / "Sample1") == {}
+    text = (project / "samples" / "Sample1" / "sample.md").read_text(encoding="utf-8")
+    assert f"| {HELD_RUN} |" in text
+
+
+def test_a_run_held_by_another_sample_is_missing_and_names_where_it_is(
+    applier: Applier, project: Path
+) -> None:
+    write_autoreduced(steady(project, "Sample1"), HELD_RUN, [1])
+
+    plan = applier.plan(catalog_for(HELD_RUN, sample="Sample6"))
+
+    missing = next(f for f in plan.samples[0].files if f.run == HELD_RUN)
+    assert missing.action is Action.SOURCE_MISSING
+    assert "samples/Sample1/data/steady/" in missing.detail
+
+
+def test_an_excluded_run_placed_by_hand_says_it_stays_in_the_fit(
+    applier: Applier, project: Path
+) -> None:
+    placed = write_autoreduced(steady(project, "Sample1"), HELD_RUN, [1])
+    catalog = edit(catalog_for(HELD_RUN, sample="Sample1"), HELD_RUN, include=False)
+
+    plan = applier.plan(catalog)
+
+    sample = next(s for s in plan.samples if s.sample_id == "Sample1")
+    action = next(f for f in sample.files if f.name == placed[0].name)
+    assert action.action is Action.NOT_MANAGED
+    assert "is excluded, but nrw did not copy this file" in action.detail

@@ -162,6 +162,18 @@ command until one is removed.
 key in `[experiment]` it does not recognise rather than ignoring it. `nrw
 doctor` names the folder and how many runs it holds.
 
+**Runs already in a sample.** Reduced files copied straight into a sample's
+`samples/<id>/data/steady/` are listed too, as **in sample**, with the sample
+whose folder holds them, their segments and angles. They are organized like
+any other run: assign them, give them a type and a condition, fill in their
+sample's context, and apply. Their quick look reads the sample's own files.
+Until a run is assigned, its sample column names the folder, as `Cu (folder)`.
+Click the sample to fill in its context: it opens for editing although the
+catalog does not hold it yet, and its first save records it, with the runs its
+folder holds as its own. Assigning a run to it from the table does the same. A tNR series in `data/tnr/` is
+listed with its slices, but it is not assigned: its run's steady row is,
+with the type tNR.
+
 The folder is re-read every 30 seconds while the page is open, and not at all
 once nobody has looked for ten minutes. If the data mount stops answering, the
 page keeps showing what it last saw and says so, rather than hanging.
@@ -176,6 +188,7 @@ page keeps showing what it last saw and says so, rather than hanging.
 | **awaiting** | A run feed announced it, but no reduced files exist yet. | Not yet |
 | **quarantined** | Its files do not look like one measurement. The page says why. | No |
 | **clock skew** | Its files are dated in the future by the file server's clock. | No |
+| **in sample** | The data folder does not list it, but a sample's `data/` folder holds its files. | Nothing to copy: they are in place |
 
 **Why "stopped changing" is not enough.** A run's angle segments are reduced as
 each angle finishes measuring. In the reference experiment, run 218386's three
@@ -272,6 +285,9 @@ run, where no reader takes one for a heading.
 - **− move-out**: copies of runs you have since excluded, or moved to another
   sample, go to `samples/<id>/data/excluded/<run>/`. They are moved back if you
   include the run again. They are never deleted.
+- **· in-place**: files a sample's `data/steady/` already holds, put there by
+  hand, for a run assigned to it that the data folder does not list. They are
+  where a fit reads them, so nothing is copied, and they are left as they are.
 - **sample.md**: created, updated, or left alone, with the reason.
 
 Nothing is ever overwritten. Each case below is shown and left alone for you to
@@ -608,8 +624,13 @@ is told to write its proposal in `ESCALATIONS.md`.
 ## Not yet
 
 - **Sliced time-resolved (tNR) series.** The unsliced tNR run arrives in the same
-  folder as an ordinary reduced run and is treated as one. Series support comes
-  later: slices plus their reduction sidecar, tied to the unsliced run, which
-  gives the angle and must never be co-refined with its own slices.
+  folder as an ordinary reduced run and is treated as one. A series a sample
+  holds in `data/tnr/` is listed, but not assigned or copied; its own
+  organization comes later: slices plus their reduction sidecar, tied to the
+  unsliced run, which gives the angle and must never be co-refined with its
+  own slices.
+- **Excluding a run placed by hand.** Apply moves out only the copies it made.
+  A file you put in `data/steady/` yourself stays there when its run is
+  excluded, and the review says to move it out.
 - **Other sources of runs.** The SNS web monitor, or Tiled. See
   [experiment-sources.md](experiment-sources.md).
