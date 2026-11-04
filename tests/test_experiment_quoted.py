@@ -20,8 +20,7 @@ def test_each_written_field_is_quoted_under_its_heading() -> None:
 
 def test_each_field_is_quoted_as_it_is_saved() -> None:
     record = ExperimentContext(
-        summary="Li plating.",
-        hypotheses="## SEI\nIt thickens.",
+        summary="Li plating.\n## SEI\nIt thickens.",
         notes="```\nQ R dR",
         rev=1,
     )
@@ -29,8 +28,7 @@ def test_each_field_is_quoted_as_it_is_saved() -> None:
     quoted = quotable_record(record)
 
     assert quoted.fields == {
-        "summary": "Li plating.",
-        "hypotheses": "## SEI\nIt thickens.",
+        "summary": "Li plating.\n## SEI\nIt thickens.",
         "notes": "```\nQ R dR",
     }
 

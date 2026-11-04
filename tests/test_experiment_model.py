@@ -378,7 +378,7 @@ def test_apply_changes_an_edit_on_a_stale_experiment_is_refused() -> None:
 
 
 def test_apply_changes_the_experiment_survives_edits_to_runs_and_samples() -> None:
-    catalog = describe(Catalog(), hypotheses="The SEI thickens.")
+    catalog = describe(Catalog(), notes="The SEI thickens.")
 
     catalog = apply_changes(
         assign(catalog, 218386, sample_id="Sample6"),
@@ -386,7 +386,7 @@ def test_apply_changes_the_experiment_survives_edits_to_runs_and_samples() -> No
         now=NOW,
     )
 
-    assert (catalog.experiment.hypotheses, catalog.experiment.rev) == (
+    assert (catalog.experiment.notes, catalog.experiment.rev) == (
         "The SEI thickens.",
         1,
     )

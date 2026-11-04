@@ -372,8 +372,6 @@ class SampleContext:
         title: The first heading of ``sample.md``.
         description: One or two sentences: what it is, in what, and what is
             expected.
-        details: Composition, electrolyte, environment -- anything that
-            constrains the model.
         mounting: One of :data:`MOUNTINGS`.
         measurement_conditions: Alignment, flatness, background, normalization.
         fits_to_perform: What to fit and what is expected to change. An
@@ -386,7 +384,6 @@ class SampleContext:
     sample_id: str
     title: str = ""
     description: str = ""
-    details: str = ""
     mounting: str = "unknown"
     measurement_conditions: str = ""
     fits_to_perform: str = ""
@@ -399,7 +396,6 @@ class SampleContext:
         return (
             self.title,
             self.description,
-            self.details,
             self.mounting,
             self.measurement_conditions,
             self.fits_to_perform,
@@ -416,7 +412,6 @@ class ExperimentContext:
 
     Attributes:
         summary: What the proposal sets out to learn.
-        hypotheses: What the measurements should confirm or rule out.
         notes: Anything else every measurement needs.
         rev: Revision of this record; ``0`` until it is first written.
         updated_at: When the record last changed, ISO-8601 UTC.
@@ -424,7 +419,6 @@ class ExperimentContext:
     """
 
     summary: str = ""
-    hypotheses: str = ""
     notes: str = ""
     rev: int = 0
     updated_at: str = ""
@@ -432,11 +426,11 @@ class ExperimentContext:
 
     def content(self) -> tuple[Any, ...]:
         """Everything a person decided, for telling an edit from a no-op."""
-        return (self.summary, self.hypotheses, self.notes)
+        return (self.summary, self.notes)
 
 
 #: The experiment's fields a person may change.
-EXPERIMENT_FIELDS = ("summary", "hypotheses", "notes")
+EXPERIMENT_FIELDS = ("summary", "notes")
 
 
 def clean_experiment_field(name: str, value: Any) -> str:
@@ -470,14 +464,13 @@ RUN_SNAPSHOT_FIELDS = ("title", "start_time")
 SAMPLE_FIELDS = (
     "title",
     "description",
-    "details",
     "mounting",
     "measurement_conditions",
     "fits_to_perform",
 )
 
 #: Which sample fields are prose rendered into sample.md.
-_PROSE_FIELDS = ("description", "details", "measurement_conditions", "fits_to_perform")
+_PROSE_FIELDS = ("description", "measurement_conditions", "fits_to_perform")
 
 
 def _clean_run_field(name: str, value: Any) -> Any:

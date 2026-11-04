@@ -47,8 +47,6 @@ HAND_WRITTEN = """\
 
 About 30 nm Cu on Pt, in 1 M LiBF4 in d8-THF.
 
-## Details
-
 - Cu 20 nm, Pt 5 nm
 - Ti adhesion layer
 
@@ -120,8 +118,8 @@ def write_sample(project: Path, text: str, sample: str = "Sample6") -> Path:
         pytest.param(
             {
                 "title": "Cu/Pt in d8-THF",
-                "description": "First paragraph.\n\nSecond paragraph, *emphasis*.",
-                "details": "- bullet one\n- bullet two\n\n| Layer | nm |\n|---|---|\n| Cu | 20 |",
+                "description": "First paragraph.\n\nSecond paragraph, *emphasis*.\n\n"
+                "- bullet one\n- bullet two\n\n| Layer | nm |\n|---|---|\n| Cu | 20 |",
                 "mounting": "once",
                 "measurement_conditions": "Background flat.\n\n```\nQ R dR\n```",
                 "fits_to_perform": "Co-refine both.\n\n1. first\n2. second",
@@ -152,7 +150,6 @@ def test_parse_of_a_rendering_is_the_catalog_again(context) -> None:
     record = catalog.context_for("Sample6")
     for name in (
         "description",
-        "details",
         "mounting",
         "measurement_conditions",
         "fits_to_perform",
@@ -183,7 +180,10 @@ def test_a_hand_written_sample_md_parses_as_a_person_would_read_it() -> None:
     parsed = parse_sample_md(HAND_WRITTEN)
 
     assert parsed.title == "Cu/Pt in d8-THF (expt 11)"
-    assert parsed.fields["details"] == "- Cu 20 nm, Pt 5 nm\n- Ti adhesion layer"
+    assert parsed.fields["description"] == (
+        "About 30 nm Cu on Pt, in 1 M LiBF4 in d8-THF.\n\n"
+        "- Cu 20 nm, Pt 5 nm\n- Ti adhesion layer"
+    )
     assert [(r.run, r.condition) for r in parsed.rows] == [
         (218386, "OCV"),
         (218393, "CA -0.5 V"),
@@ -198,7 +198,13 @@ def test_a_hand_written_sample_md_parses_as_a_person_would_read_it() -> None:
             "\n## Notes\n\nKeep for later.\n", "'## Notes' section", id="own_section"
         ),
         pytest.param(
-            "\n## Details\n\nagain\n", "second '## Details'", id="duplicate_section"
+            "\n## Description\n\nagain\n",
+            "second '## Description'",
+            id="duplicate_section",
+        ),
+        # The catalog has no Details field: the section is said, not dropped.
+        pytest.param(
+            "\n## Details\n\nIn D2O.\n", "'## Details' section", id="details_section"
         ),
     ],
 )
@@ -243,7 +249,7 @@ def test_a_heading_inside_a_section_is_a_leftover_with_the_reason() -> None:
     parsed = parse_sample_md(text)
 
     assert any("heading" in leftover for leftover in parsed.leftovers)
-    assert "details" not in parsed.fields
+    assert "description" not in parsed.fields
 
 
 # --------------------------------------------------------------------------

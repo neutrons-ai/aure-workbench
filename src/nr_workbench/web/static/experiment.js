@@ -270,9 +270,12 @@
         }),
         el("td", { className: "small", text: row.measurement }),
         el("td", { className: "small", text: row.condition }),
-        el("td", { className: "small" }, [row.include ? null : el("span", {
-          className: "badge text-bg-secondary", text: "excluded",
-        })]),
+        el("td", { className: "small text-nowrap" }, [
+          row.include ? null : el("span", {
+            className: "badge text-bg-secondary me-1", text: "excluded",
+          }),
+          row.organizable === false ? null : editButton(row),
+        ]),
       ]);
       tbody.append(tr);
     });
@@ -291,6 +294,7 @@
     const bar = $("expt-bulk");
     const count = state.selected.size;
     bar.classList.toggle("d-none", !(state.writable && count));
+    if (!count) state.sampleChosen = "";
     const listedOnly = Array.from(state.selected).filter(function (key) {
       const row = state.rows.get(key);
       return row && row.organizable === false;
@@ -307,7 +311,8 @@
       select.append(el("option", { value: card.id, text: card.id }));
     });
     select.append(el("option", { value: "__new__", text: "new sample…" }));
-    if (current) select.value = current;
+    // The sample every selected run is in, unless one was chosen here.
+    select.value = state.sampleChosen || sharedSample() || current;
     $("expt-new-sample").classList.toggle("d-none", select.value !== "__new__");
     // Rebuilt with the types now in use, keeping whatever was chosen. It
     // starts at "unchanged": a type never set is steady anyway, and choosing
@@ -316,6 +321,14 @@
     const field = slot.querySelector(".expt-type-field");
     const chosen = field ? field.typeValue() : "";
     slot.replaceChildren(typeField(chosen, "measurement type", "type (unchanged)"));
+  }
+
+  /* The one sample every selected run is in, or "". */
+  function sharedSample() {
+    const samples = new Set(Array.from(state.selected).map(function (key) {
+      return (state.rows.get(key) || {}).sample || "";
+    }));
+    return samples.size === 1 ? Array.from(samples)[0] : "";
   }
 
   async function editRuns(fields, what) {
@@ -454,7 +467,7 @@
   /* ---------------------------------------------------------------- */
 
   const CONTEXT_FIELDS = {
-    summary: "c-summary", hypotheses: "c-hypotheses", notes: "c-notes",
+    summary: "c-summary", notes: "c-notes",
   };
 
   function renderContext() {
@@ -546,7 +559,6 @@
   const FIELDS = {
     title: "f-title",
     description: "f-description",
-    details: "f-details",
     mounting: "f-mounting",
     measurement_conditions: "f-conditions",
     fits_to_perform: "f-fits",
@@ -604,132 +616,6 @@
     return field;
   }
 
-  /* The runs of one sample, in run order. */
-  /* A sample's runs: those assigned to it and, for a sample the catalog does
-   * not manage yet, those its data/ folder holds, which its first save
-   * records as its own. */
-  function sampleRuns(id) {
-    const current = card(id);
-    const managed = Boolean(current && current.managed);
-    return Array.from(state.rows.values()).filter(function (row) {
-      if (row.sample === id) return true;
-      return !managed && !row.sample && row.organizable !== false &&
-        (row.held_by || []).indexOf(id) !== -1;
-    }).sort(function (a, b) {
-      return a.run - b.run;
-    });
-  }
-
-  /* What one run's row in the editor shows, as the server has it. */
-  function runValues(row) {
-    return {
-      measurement: row.measurement || "",
-      condition: row.condition || "",
-      note: row.note || "",
-      include: row.include !== false,
-    };
-  }
-
-  /* What is in each run's row of the editor now, by run key. */
-  function typedRuns() {
-    const out = {};
-    document.querySelectorAll("#f-measurements .expt-measurement").forEach(function (item) {
-      out[item.dataset.key] = {
-        measurement: item.querySelector(".expt-type-field").typeValue(),
-        condition: item.querySelector("[data-field=condition]").value,
-        note: item.querySelector("[data-field=note]").value,
-        include: item.querySelector("[data-field=include]").checked,
-      };
-    });
-    return out;
-  }
-
-  /* The sample's measurements, one per run: its type and condition, which
-   * sample.md's table writes, and the notes on it, which go under
-   * Measurement conditions with the run named. What was typed and not saved
-   * is kept, as the fields above are. Returns what each run showed fresh. */
-  function renderMeasurements(id, base, same, editable) {
-    const typed = same ? typedRuns() : {};
-    const box = $("f-measurements");
-    box.replaceChildren();
-    const rows = sampleRuns(id);
-    if (!rows.length) {
-      box.append(el("p", {
-        className: "text-secondary mb-0",
-        text: "No runs yet: select runs above and assign them to this sample.",
-      }));
-    }
-    const fresh = {};
-    let kept = false;
-    rows.forEach(function (row) {
-      fresh[row.key] = runValues(row);
-      const shown = (base && base.runs && base.runs[row.key]) || null;
-      const mine = typed[row.key] || {};
-      function value(name) {
-        if (same && shown && mine[name] !== undefined && mine[name] !== shown[name]) {
-          kept = true;
-          return mine[name];
-        }
-        return fresh[row.key][name];
-      }
-      const type = typeField(value("measurement"), "type of run " + row.run);
-      const condition = el("input", {
-        className: "form-control form-control-sm mb-1",
-        placeholder: "condition",
-        "aria-label": "condition of run " + row.run,
-        "data-field": "condition",
-      });
-      condition.value = value("condition");
-      const note = el("textarea", {
-        className: "form-control form-control-sm",
-        rows: 1,
-        placeholder: "notes on this measurement",
-        "aria-label": "notes on run " + row.run,
-        "data-field": "note",
-      });
-      note.value = value("note");
-      // Good (used) by default. A bad run slid off is excluded: left out of
-      // sample.md's table, and moved out of data/steady by the next apply.
-      const good = el("input", {
-        className: "form-check-input",
-        type: "checkbox",
-        role: "switch",
-        id: "f-good-" + row.run,
-        "aria-label": "run " + row.run + " is good",
-        "data-field": "include",
-      });
-      good.checked = value("include");
-      const said = el("label", {
-        className: "form-check-label small",
-        htmlFor: "f-good-" + row.run,
-      });
-      function describe() {
-        said.textContent = good.checked ? "good" : "bad: not used";
-        item.classList.toggle("expt-measurement-bad", !good.checked);
-      }
-      good.addEventListener("change", describe);
-      type.disable(!editable);
-      condition.disabled = !editable;
-      note.disabled = !editable;
-      good.disabled = !editable;
-      // The condition on a line of its own: in the rail's width it is the
-      // field that needs the room ("-0.5 mA/cm2 after 2 h").
-      const item = el("div", { className: "expt-measurement" }, [
-        el("div", { className: "d-flex gap-2 align-items-center mb-1" }, [
-          el("span", { className: "mono", text: String(row.run) }),
-          type,
-          el("div", { className: "form-check form-switch mb-0 ms-auto" }, [good, said]),
-        ]),
-        condition,
-        note,
-      ]);
-      item.dataset.key = row.key;
-      describe();
-      box.append(item);
-    });
-    return { fresh: fresh, kept: kept };
-  }
-
   /* What the editor showed when it was filled: a field that differs from it
    * has been typed in, and is not the server's to replace. */
   function shownValues(current) {
@@ -753,16 +639,9 @@
     const editable = state.writable && Boolean(current && (current.managed || current.on_disk));
     $("expt-editor").classList.remove("d-none");
     $("expt-editor-title").textContent = "Sample " + id;
-    let typed = fillKeepingTyped(FIELDS, fresh, same ? base.values : null, !editable);
+    const typed = fillKeepingTyped(FIELDS, fresh, same ? base.values : null, !editable);
     $("expt-save").disabled = !editable;
-    const measured = renderMeasurements(id, base, same, editable);
-    typed = typed || measured.kept;
-    const runMoved = same && sampleRuns(id).some(function (row) {
-      const was = base.runs && base.runs[row.key];
-      return was && was.rev !== row.rev;
-    });
-    const moved = same && typed && current &&
-      ((current.rev || 0) !== base.rev || runMoved);
+    const moved = same && typed && current && (current.rev || 0) !== base.rev;
     $("expt-form-status").textContent = moved
       ? savedElsewhere("This sample")
       : current && !current.managed
@@ -772,13 +651,7 @@
         : same
           ? $("expt-form-status").textContent
           : "";
-    const runs = {};
-    sampleRuns(id).forEach(function (row) {
-      runs[row.key] = Object.assign({ rev: row.rev }, measured.fresh[row.key]);
-    });
-    state.editorBase = {
-      id: id, rev: current ? current.rev || 0 : 0, values: fresh, runs: runs,
-    };
+    state.editorBase = { id: id, rev: current ? current.rev || 0 : 0, values: fresh };
     $("expt-adopt-plan").classList.add("d-none");
     // models.js shows this sample's specs; it listens rather than being called,
     // so the two files share nothing but this event.
@@ -816,51 +689,21 @@
     const current = card(id);
     if (!id || !current) return;
     let fields = changedFields(FIELDS, current);
-    // Each run's type, condition and notes, sent only where they changed.
-    const runChanges = [];
-    Object.entries(typedRuns()).forEach(function ([key, values]) {
-      const row = state.rows.get(key);
-      if (!row) return;
-      const changed = {};
-      if (values.measurement && values.measurement !== (row.measurement || "")) {
-        changed.measurement = values.measurement;
-      }
-      if (values.condition !== (row.condition || "")) changed.condition = values.condition;
-      if (values.note !== (row.note || "")) changed.note = values.note;
-      if (values.include !== (row.include !== false)) changed.include = values.include;
-      if (Object.keys(changed).length) {
-        runChanges.push({ run: row.key, base_rev: row.rev, fields: changed });
-      }
-    });
     const recording = !current.managed;
-    if (!recording && !Object.keys(fields).length && !runChanges.length) {
+    if (!recording && !Object.keys(fields).length) {
       $("expt-form-status").textContent = "Nothing changed.";
       return;
     }
     try {
       if (recording) {
-        // The sample's record first: it takes the runs its folder holds with
-        // it, so the edits below find them assigned.
+        // The sample's record: it takes the runs its folder holds with it.
         const result = await api(
           "PUT", "/api/experiment/samples/" + encodeURIComponent(id),
           { base_rev: 0, fields: fields }
         );
         state.samples = result.samples;
         await reload();
-        runChanges.forEach(function (change) {
-          const row = state.rows.get(change.run);
-          if (row) change.base_rev = row.rev;
-        });
         fields = {};
-      }
-      if (runChanges.length) {
-        const saved = await api("PUT", "/api/experiment/runs", { changes: runChanges });
-        saved.runs.forEach(function (row) {
-          state.rows.set(row.key, row);
-        });
-        state.samples = saved.samples;
-        renderRuns();
-        renderBulk();  // a type added here is a choice there now
       }
       if (Object.keys(fields).length) {
         const result = await api(
@@ -1084,6 +927,239 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* One run, edited from its row                                       */
+  /* ---------------------------------------------------------------- */
+
+  /* The button at the end of a run's row: filled when the run has notes,
+   * which its tooltip shows. */
+  function editButton(row) {
+    const button = el("button", {
+      type: "button",
+      className: "btn btn-sm py-0 " + (row.note ? "btn-secondary" : "btn-outline-secondary"),
+      text: "edit",
+      title: row.note || "edit this measurement",
+      "aria-label": "edit run " + row.run,
+    });
+    button.addEventListener("click", function () {
+      openRunDialog(row.key);
+    });
+    return button;
+  }
+
+  /* The run the dialog shows, the revision its Save is made against, and
+   * the values it was filled with: a field still at them was not touched. */
+  const runDialog = { key: null, rev: 0, shown: {} };
+
+  /* A type never set is the first choice, which is what the chooser shows. */
+  function defaultType() {
+    return (state.payload.measurement_types || [])[0] || "steady";
+  }
+
+  /* A run's record, in the dialog's terms. */
+  function rowValues(row) {
+    return {
+      sample_id: row.sample || "",
+      measurement: row.measurement || defaultType(),
+      condition: row.condition || "",
+      include: row.include !== false,
+      note: row.note || "",
+    };
+  }
+
+  /* What the dialog holds now. */
+  function runDialogValues() {
+    const select = $("expt-run-sample");
+    return {
+      sample_id: select.value === "__new__"
+        ? $("expt-run-new-sample").value.trim()
+        : select.value,
+      measurement: $("expt-run-type-slot").querySelector(".expt-type-field").typeValue(),
+      condition: $("expt-run-condition").value.trim(),
+      include: $("expt-run-used").checked,
+      note: $("expt-run-note").value,
+    };
+  }
+
+  function setRunDialogField(name, value) {
+    if (name === "sample_id") {
+      const select = $("expt-run-sample");
+      select.replaceChildren(el("option", { value: "", text: "unassigned" }));
+      state.samples.filter(function (card) {
+        return card.managed;
+      }).forEach(function (card) {
+        select.append(el("option", { value: card.id, text: card.id }));
+      });
+      select.append(el("option", { value: "__new__", text: "new sample…" }));
+      select.value = value;
+      $("expt-run-new-sample").classList.add("d-none");
+    } else if (name === "measurement") {
+      $("expt-run-type-slot").replaceChildren(typeField(value, "measurement type"));
+    } else if (name === "condition") {
+      $("expt-run-condition").value = value;
+    } else if (name === "include") {
+      $("expt-run-used").checked = value;
+      describeUsed();
+    } else {
+      $("expt-run-note").value = value;
+    }
+  }
+
+  function describeUsed() {
+    $("expt-run-used-label").textContent = $("expt-run-used").checked ? "used" : "excluded";
+  }
+
+  function openRunDialog(key) {
+    const row = state.rows.get(key);
+    if (!row) return;
+    runDialog.key = key;
+    runDialog.rev = row.rev;
+    runDialog.shown = rowValues(row);
+    $("expt-run-dialog-title").textContent = "Run " + row.run;
+    $("expt-run-dialog-about").textContent = row.title || "";
+    Object.entries(runDialog.shown).forEach(function ([name, value]) {
+      setRunDialogField(name, value);
+    });
+    const off = !state.writable;
+    [
+      "expt-run-sample", "expt-run-new-sample", "expt-run-condition",
+      "expt-run-used", "expt-run-note", "expt-run-save",
+    ].forEach(function (id) {
+      $(id).disabled = off;
+    });
+    $("expt-run-type-slot").querySelector(".expt-type-field").disable(off);
+    $("expt-run-status").textContent = off ? "View only." : "";
+    const dialog = $("expt-run-dialog");
+    if (!dialog.open) dialog.showModal();
+  }
+
+  async function saveRunDialog(event) {
+    event.preventDefault();
+    const dialog = $("expt-run-dialog");
+    const status = $("expt-run-status");
+    const row = state.rows.get(runDialog.key);
+    if (!row) {
+      status.textContent =
+        "This run is no longer listed, so it cannot be saved. Copy your notes before closing.";
+      return;
+    }
+    const values = runDialogValues();
+    if ($("expt-run-sample").value === "__new__" && !values.sample_id) {
+      status.textContent = "Type the new sample's id.";
+      return;
+    }
+    const was = rowValues(row);
+    const changed = {};
+    Object.keys(values).forEach(function (name) {
+      if (values[name] !== was[name]) changed[name] = values[name];
+    });
+    if ("sample_id" in changed && !changed.sample_id) changed.sample_id = null;
+    if (!Object.keys(changed).length) {
+      dialog.close();
+      return;
+    }
+    try {
+      const saved = await api("PUT", "/api/experiment/runs", {
+        changes: [{ run: row.key, base_rev: runDialog.rev, fields: changed }],
+      });
+      saved.runs.forEach(function (r) {
+        state.rows.set(r.key, r);
+      });
+      state.samples = saved.samples;
+      renderRuns();
+      renderBulk();  // a type or a sample added here is a choice there now
+      renderSamples();
+      // sample.md carries the run's notes, and leaves out an excluded run.
+      if (state.editing) await refreshPreview(state.editing);
+      dialog.close();
+      message("Saved run " + row.run + ". Apply writes it into sample.md.", "success");
+    } catch (error) {
+      if (error.status === 409) {
+        // Saved elsewhere meanwhile: the page reloads behind the dialog. A
+        // field not touched here follows that save; one typed in stays, and
+        // the next Save puts it over what they saved.
+        await reload();
+        const now = state.rows.get(runDialog.key);
+        if (now) {
+          const theirs = rowValues(now);
+          const typed = runDialogValues();
+          Object.keys(theirs).forEach(function (name) {
+            if (typed[name] === runDialog.shown[name]) setRunDialogField(name, theirs[name]);
+          });
+          runDialog.shown = theirs;
+          runDialog.rev = now.rev;
+        }
+        status.textContent = savedElsewhere("This run");
+      } else {
+        status.textContent = error.message;
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* The rail's width                                                   */
+  /* ---------------------------------------------------------------- */
+
+  /* Dragging the splitter sets the rail's width on the landscape, where the
+   * grid reads it; the width is kept in this browser. */
+  const RAIL_WIDTH_KEY = "nrw.experiment.rail-width";
+
+  function setRailWidth(px) {
+    const landscape = $("expt-landscape");
+    if (px === null) landscape.style.removeProperty("--rail-width");
+    else landscape.style.setProperty("--rail-width", px + "px");
+    try {
+      if (px === null) window.localStorage.removeItem(RAIL_WIDTH_KEY);
+      else window.localStorage.setItem(RAIL_WIDTH_KEY, String(px));
+    } catch (error) {
+      /* storage refused: the width lasts for this page */
+    }
+  }
+
+  function clampRailWidth(px) {
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return Math.round(Math.min(Math.max(px, 16 * rem), window.innerWidth * 0.6));
+  }
+
+  function wireSplitter() {
+    const splitter = $("expt-splitter");
+    const rail = $("expt-landscape").querySelector(".rail");
+    let stored = null;
+    try {
+      stored = parseFloat(window.localStorage.getItem(RAIL_WIDTH_KEY));
+    } catch (error) {
+      /* storage refused */
+    }
+    if (stored > 0) setRailWidth(clampRailWidth(stored));
+    splitter.addEventListener("pointerdown", function (event) {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const from = event.clientX;
+      const width = rail.getBoundingClientRect().width;
+      function move(e) {
+        setRailWidth(clampRailWidth(width + (from - e.clientX)));
+      }
+      function stop() {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointercancel", stop);
+        document.body.classList.remove("expt-resizing");
+      }
+      document.body.classList.add("expt-resizing");
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", stop, { once: true });
+      window.addEventListener("pointercancel", stop);
+    });
+    splitter.addEventListener("dblclick", function () {
+      setRailWidth(null);
+    });
+    splitter.addEventListener("keydown", function (event) {
+      const step = { ArrowLeft: 32, ArrowRight: -32 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      setRailWidth(clampRailWidth(rail.getBoundingClientRect().width + step));
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Wiring                                                             */
   /* ---------------------------------------------------------------- */
 
@@ -1118,7 +1194,10 @@
     renderBulk();
     scheduleQuickLook();
   });
-  $("expt-sample").addEventListener("change", renderBulk);
+  $("expt-sample").addEventListener("change", function () {
+    state.sampleChosen = $("expt-sample").value;
+    renderBulk();
+  });
   $("expt-assign").addEventListener("click", assign);
   $("expt-unassign").addEventListener("click", function () {
     editRuns({ sample_id: null }, "Unassigned");
@@ -1133,6 +1212,17 @@
   $("expt-context-form").addEventListener("submit", saveContext);
   $("expt-adopt").addEventListener("click", showAdoptPlan);
   $("expt-review").addEventListener("click", review);
+  $("expt-run-form").addEventListener("submit", saveRunDialog);
+  $("expt-run-cancel").addEventListener("click", function () {
+    $("expt-run-dialog").close();
+  });
+  $("expt-run-used").addEventListener("change", describeUsed);
+  $("expt-run-sample").addEventListener("change", function () {
+    const fresh = $("expt-run-sample").value === "__new__";
+    $("expt-run-new-sample").classList.toggle("d-none", !fresh);
+    if (fresh) $("expt-run-new-sample").focus();
+  });
+  wireSplitter();
 
   load(initial);
   firstLook(initial.scan);

@@ -84,14 +84,17 @@ _SAMPLE_COLUMNS = (
     "sample_id",
     "title",
     "description",
-    "details",
     "mounting",
     "measurement_conditions",
     "fits_to_perform",
     "rev",
     "updated_at",
 )
-_EXPERIMENT_COLUMNS = ("summary", "hypotheses", "notes", "rev", "updated_at")
+_EXPERIMENT_COLUMNS = ("summary", "notes", "rev", "updated_at")
+
+#: Columns an earlier nrw wrote that this one neither reads nor keeps: a
+#: table holding one loses it at the next save.
+_RETIRED_COLUMNS = ("details", "hypotheses")
 
 
 class CatalogError(Exception):
@@ -380,7 +383,6 @@ def sample_fields(entry: SampleContext) -> dict[str, Any]:
         "sample_id": entry.sample_id,
         "title": entry.title,
         "description": entry.description,
-        "details": entry.details,
         "mounting": entry.mounting,
         "measurement_conditions": entry.measurement_conditions,
         "fits_to_perform": entry.fits_to_perform,
@@ -416,13 +418,12 @@ def _sample_from_row(row: dict[str, Any]) -> SampleContext:
             sample_id=_text(row, "sample_id"),
             title=_text(row, "title"),
             description=_text(row, "description"),
-            details=_text(row, "details"),
             mounting=_text(row, "mounting") or "unknown",
             measurement_conditions=_text(row, "measurement_conditions"),
             fits_to_perform=_text(row, "fits_to_perform"),
             rev=_int(row, "rev"),
             updated_at=_text(row, "updated_at"),
-            extra=_extra(row, _SAMPLE_COLUMNS),
+            extra=_extra(row, _SAMPLE_COLUMNS + _RETIRED_COLUMNS),
         )
     except (TypeError, ValueError) as exc:
         raise CatalogCorruptError(
@@ -434,7 +435,6 @@ def _experiment_row(entry: ExperimentContext) -> dict[str, Any]:
     return {
         **entry.extra,
         "summary": entry.summary,
-        "hypotheses": entry.hypotheses,
         "notes": entry.notes,
         "rev": entry.rev,
         "updated_at": entry.updated_at,
@@ -453,11 +453,10 @@ def _experiment_from_rows(rows: list[dict[str, Any]]) -> ExperimentContext:
     try:
         return ExperimentContext(
             summary=_text(row, "summary"),
-            hypotheses=_text(row, "hypotheses"),
             notes=_text(row, "notes"),
             rev=_int(row, "rev"),
             updated_at=_text(row, "updated_at"),
-            extra=_extra(row, _EXPERIMENT_COLUMNS),
+            extra=_extra(row, _EXPERIMENT_COLUMNS + _RETIRED_COLUMNS),
         )
     except (TypeError, ValueError) as exc:
         raise CatalogCorruptError(

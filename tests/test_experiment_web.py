@@ -214,6 +214,15 @@ def test_the_page_renders_and_its_payload_parses(app) -> None:
     assert {row["run"] for row in payload["runs"]} == {234277, 234280, 234283}
 
 
+def test_the_sample_editor_has_two_description_boxes_and_no_hypotheses(app) -> None:
+    html = app.test_client().get("/experiment").get_data(as_text=True)
+
+    assert 'for="f-description">Sample description</label>' in html
+    assert 'for="f-conditions">Measurement description</label>' in html
+    assert 'id="f-details"' not in html
+    assert 'id="c-hypotheses"' not in html
+
+
 # --------------------------------------------------------------------------
 # Who may write
 # --------------------------------------------------------------------------
@@ -597,7 +606,6 @@ def test_the_experiments_context_is_saved_and_on_the_page_once_loaded(
 ) -> None:
     assert writer.get("/api/experiment").get_json()["experiment"] == {
         "summary": "",
-        "hypotheses": "",
         "notes": "",
         "rev": 0,
     }

@@ -183,7 +183,6 @@ def sample_card(root: Path, catalog: Catalog, sample_id: str) -> dict[str, Any]:
         "on_disk": (Path(root) / sample_md_relpath(sample_id)).is_file(),
         "title": context.title,
         "description": context.description,
-        "details": context.details,
         "mounting": context.mounting,
         "measurement_conditions": context.measurement_conditions,
         "fits_to_perform": context.fits_to_perform,
@@ -206,7 +205,6 @@ def experiment_card(record: ExperimentContext) -> dict[str, Any]:
     """
     return {
         "summary": record.summary,
-        "hypotheses": record.hypotheses,
         "notes": record.notes,
         "rev": record.rev,
     }

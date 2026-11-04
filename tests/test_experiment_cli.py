@@ -69,7 +69,6 @@ def test_status_reports_the_experiments_own_context(expt: Path) -> None:
     payload = status(expt)
     assert payload["experiment"] == {
         "summary": "Li plating.",
-        "hypotheses": "",
         "notes": "Cu/Pt.",
         "rev": 1,
     }

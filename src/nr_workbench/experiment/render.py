@@ -78,7 +78,6 @@ def prose_for(catalog: Catalog, sample_id: str) -> SampleProse:
     return SampleProse(
         managed=True,
         description=context.description,
-        details=context.details,
         measurement_conditions=conditions,
         fits_to_perform=context.fits_to_perform,
         measurements=rows,

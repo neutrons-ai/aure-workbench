@@ -62,7 +62,6 @@ from nr_workbench.sample_md import RUN_NOTE_INDENT, RUN_NOTE_RE
 #: The sections of the scaffolded sample.md, and the catalog field for each.
 _PROSE_SECTIONS = {
     "Description": "description",
-    "Details": "details",
     "Measurement conditions": "measurement_conditions",
     "Fits to perform": "fits_to_perform",
 }

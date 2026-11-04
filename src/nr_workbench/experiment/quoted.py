@@ -11,7 +11,7 @@ from pathlib import Path
 from nr_workbench.experiment.model import EXPERIMENT_FIELDS, ExperimentContext
 
 #: How each field is headed where it is quoted.
-HEADINGS = {"summary": "Summary", "hypotheses": "Hypotheses", "notes": "Notes"}
+HEADINGS = {"summary": "Summary", "notes": "Notes"}
 
 
 @dataclass(frozen=True)

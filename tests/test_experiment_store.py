@@ -178,6 +178,25 @@ def test_a_catalog_from_a_newer_nrw_is_refused(store) -> None:
         assign(store, 218393, sample_id="Sample6")
 
 
+def test_a_details_column_an_earlier_nrw_wrote_is_dropped_at_the_next_save(
+    store,
+) -> None:
+    """The field is gone; its column does not ride along as a newer nrw's."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    populated(store)
+    path = store.directory / SAMPLES_FILE
+    table = pq.read_table(path).append_column("details", pa.array(["In d8-THF."]))
+    pq.write_table(table.replace_schema_metadata(pq.read_schema(path).metadata), path)
+
+    loaded = store.load().samples["Sample6"]
+    assign(store, 218393, sample_id="Sample6")
+
+    assert "details" not in loaded.extra
+    assert "details" not in pq.read_table(path).column_names
+
+
 def test_columns_this_version_does_not_know_survive_a_save(store) -> None:
     """A column added by a newer nrw must not vanish when an older one saves."""
     import pyarrow as pa
@@ -208,11 +227,11 @@ def describe(store: ParquetCatalogStore, base_rev: int = 0, **changes):
 
 def test_the_experiments_context_survives_a_save_and_a_reload(store) -> None:
     populated(store)
-    describe(store, summary="How Li plates on Cu.", hypotheses="It thickens.")
+    describe(store, summary="How Li plates on Cu.", notes="It thickens.")
 
     catalog = ParquetCatalogStore(store.directory, store.cache_dir).load()
 
-    assert (catalog.experiment.summary, catalog.experiment.hypotheses) == (
+    assert (catalog.experiment.summary, catalog.experiment.notes) == (
         "How Li plates on Cu.",
         "It thickens.",
     )

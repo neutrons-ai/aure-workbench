@@ -5,11 +5,6 @@
 <!-- One or two sentences: what the sample is, what it is in, what you expect.
      e.g. "~30 nm ionomer deposited on 20 nm copper with a Cr adhesion layer in D2O" -->
 
-## Details
-
-<!-- Composition, electrolyte, environment, anything that constrains the model.
-     e.g. "20 nm Cu, ionomer (piperION), 0.1 M KHCO3, sparged with CO2, D2O, pH 6.8" -->
-
 ## Measurements
 
 <!-- One line per run. Keep the run number first so `nrw sample scan` can match

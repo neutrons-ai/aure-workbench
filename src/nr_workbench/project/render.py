@@ -98,7 +98,6 @@ class SampleProse:
     Attributes:
         managed: Whether the catalog owns this file; adds a note saying so.
         description: The *Description* section.
-        details: The *Details* section.
         measurement_conditions: The *Measurement conditions* section.
         fits_to_perform: The *Fits to perform* section.
         measurements: Rows of the measurement table, in run order.
@@ -106,7 +105,6 @@ class SampleProse:
 
     managed: bool = False
     description: str = ""
-    details: str = ""
     measurement_conditions: str = ""
     fits_to_perform: str = ""
     measurements: tuple[MeasurementRow, ...] = ()
@@ -191,7 +189,6 @@ class RenderContext:
             # template rather than rendering an empty section.
             "managed": self.prose.managed,
             "description": self.prose.description,
-            "details": self.prose.details,
             "measurement_conditions": self.prose.measurement_conditions,
             "fits_to_perform": self.prose.fits_to_perform,
             "measurements": list(self.prose.measurements),
