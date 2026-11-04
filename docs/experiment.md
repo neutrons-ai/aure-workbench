@@ -271,8 +271,6 @@ of the table and moves its copy out of `data/steady/`. Say why in its notes.
 They stay in the catalog and on the page, but are not written into
 `sample.md`, whose readers would otherwise look for the run's data.
 
-The preview shows the `sample.md` that will be written.
-
 Some text is refused, with the reason, because a reader of `sample.md` would
 misread it:
 

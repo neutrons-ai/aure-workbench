@@ -669,8 +669,6 @@
       const [label, cls] = MD_STATE[preview.state] || [preview.state || "", "text-bg-light"];
       badge.className = "badge ms-auto " + cls;
       badge.textContent = "sample.md " + label;
-      /* Rendered by the server, as on the sample page. */
-      $("expt-preview").innerHTML = preview.html || "";
       const adoptable = state.writable &&
         (preview.state === "drifted" || preview.state === "untracked" || !preview.managed);
       const button = $("expt-adopt");
@@ -679,7 +677,7 @@
     } catch (error) {
       badge.className = "badge ms-auto text-bg-light";
       badge.textContent = "";
-      $("expt-preview").textContent = error.message;
+      $("expt-form-status").textContent = error.message;
     }
   }
 

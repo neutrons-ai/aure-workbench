@@ -150,21 +150,6 @@
   <!-- Right rail: the human record, kept beside the data it describes -->
   <aside class="rail">
     <div class="panel">
-      <div class="panel-head"><span>sample.md</span></div>
-      <div class="p-3 markdown" id="sample-md">
-        {%- set rendered = sample.markdown|markdown -%}
-        {%- if rendered -%}
-        {{ rendered }}
-        {%- else -%}
-        <p class="text-secondary small mb-0">
-          No notes yet. <code>sample.md</code> is where the conditions,
-          composition, and intent live.
-        </p>
-        {%- endif -%}
-      </div>
-    </div>
-
-    <div class="panel">
       <div class="panel-head">
         <span>Measurements</span>
         <span class="hint">tick a run to plot it</span>
@@ -178,8 +163,9 @@
                      data-run="{{ entry.run }}" aria-label="plot run {{ entry.run }}">
             </td>
             <td class="mono">{{ entry.run }}</td>
+            <td class="small">{{ entry.condition }}</td>
             <td class="small text-secondary">
-              steady, {{ entry.segments|length }} segment(s)
+              {{ entry.type }}, {{ entry.segments|length }} segment(s)
             </td>
           </tr>
         {% endfor %}
@@ -187,6 +173,7 @@
           <tr>
             <td></td>
             <td class="mono">{{ entry.run or entry.name }}</td>
+            <td class="small">{{ entry.condition }}</td>
             <td class="small text-secondary">
               series, {{ entry.n_slices }} slice(s), {{ entry.kind }}
               {%- if not entry.plottable %} <span class="badge text-bg-warning">no JSON</span>{% endif %}
@@ -197,19 +184,20 @@
       </table>
     </div>
 
-    {% if sample.models or sample.scripts %}
     <div class="panel">
-      <div class="panel-head"><span>Models</span></div>
-      <div class="p-3 small">
-        {% for name in sample.models %}
-        <div class="mono">{{ name }}</div>
-        {% endfor %}
-        {% for name in sample.scripts %}
-        <div class="mono text-secondary">{{ name }}</div>
-        {% endfor %}
+      <div class="panel-head"><span>Sample description</span></div>
+      <div class="p-3 markdown" id="sample-description">
+        {%- set rendered = sample.description|markdown -%}
+        {%- if rendered -%}
+        {{ rendered }}
+        {%- else -%}
+        <p class="text-secondary small mb-0">
+          No description yet. Write it on the Experiment page, or under
+          <code>## Description</code> in <code>sample.md</code>.
+        </p>
+        {%- endif -%}
       </div>
     </div>
-    {% endif %}
   </aside>
 </div>
 {% endblock %}
