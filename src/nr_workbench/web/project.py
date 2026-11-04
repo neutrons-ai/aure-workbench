@@ -67,6 +67,31 @@ def _trim(text: str) -> str:
 MAX_HEATMAP_CELLS = 400_000
 
 
+_DESCRIPTION_RE = re.compile(
+    r"^##[ \t]+Description[ \t]*$(.*?)(?=^##[ \t]|\Z)", re.MULTILINE | re.DOTALL
+)
+
+
+def _description(markdown: str) -> str:
+    """The ``## Description`` section of a sample.md, the template's own
+    comments removed; ``""`` without one."""
+    from nr_workbench.notes import strip_comments
+
+    match = _DESCRIPTION_RE.search(markdown)
+    return strip_comments(match.group(1)).strip() if match else ""
+
+
+def _table_rows(markdown: str) -> dict[int, Any]:
+    """Each run's row of the Measurements table, by run, read with the
+    catalog's parser; nothing when the file cannot be read as one."""
+    from nr_workbench.experiment.adopt import parse_sample_md
+
+    try:
+        return {row.run: row for row in parse_sample_md(markdown).rows}
+    except Exception:  # noqa: BLE001 - the page still shows the data
+        return {}
+
+
 class ProjectData:
     """Read-only access to a workbench project, shaped for plotting.
 
@@ -159,11 +184,14 @@ class ProjectData:
 
         scan = self._scan(sample_id)
         problems: list[Problem] = []
+        markdown = self._read_text(directory / "sample.md")
+        rows = _table_rows(markdown)
 
         steady = []
         if scan:
             for run in sorted(scan.steady):
                 measurement = scan.steady[run]
+                row = rows.get(run)
                 steady.append(
                     {
                         "run": run,
@@ -172,6 +200,8 @@ class ProjectData:
                             measurement.partials[k]
                             for k in sorted(measurement.partials)
                         ],
+                        "type": (row.type if row else "") or "steady",
+                        "condition": row.condition if row else "",
                     }
                 )
 
@@ -181,6 +211,8 @@ class ProjectData:
                 entry = found.as_dict()
                 entry["name"] = Path(found.directory).name
                 entry["plottable"] = found.reduction_json is not None
+                row = rows.get(entry.get("run"))
+                entry["condition"] = row.condition if row else ""
                 if found.reduction_json is None:
                     problems.append(
                         Problem(
@@ -199,7 +231,8 @@ class ProjectData:
         return {
             "id": sample_id,
             "title": self._sample_title(sample_id),
-            "markdown": self._read_text(directory / "sample.md"),
+            "markdown": markdown,
+            "description": _description(markdown),
             "steady": steady,
             "series": series,
             "assessments": self.assessment_labels(sample_id),

@@ -1549,6 +1549,29 @@ def test_series_data_still_refuses_a_series_that_is_not_there(
         ProjectData(flat_series).series_data("Sample1", "nope")
 
 
+def test_sample_page_rail_lists_measurements_then_the_description_alone(
+    client, populated: Path
+) -> None:
+    """The rail: each run with its condition from sample.md's table, then the
+    description; the file's other sections and the models are not shown."""
+    (populated / "samples" / "Sample1" / "sample.md").write_text(
+        "# Sample1\n\n## Description\n\n50 nm Cu on Si, in D2O.\n\n"
+        "## Measurements\n\n| Run | Type | Condition |\n|---|---|---|\n"
+        "| 100001 | steady | OCV |\n| 100002 | steady | -0.5 mA/cm2 |\n\n"
+        "## Measurement conditions\n\nMounted once.\n\n"
+        "## Fits to perform\n\nCo-refine both.\n",
+        encoding="utf-8",
+    )
+
+    html = client.get("/s/Sample1").get_data(as_text=True)
+
+    assert html.index("Measurements</span>") < html.index("Sample description</span>")
+    assert "50 nm Cu on Si, in D2O." in html
+    assert "Mounted once." not in html and "Co-refine both." not in html
+    assert "<span>Models</span>" not in html
+    assert ">OCV<" in html and ">-0.5 mA/cm2<" in html
+
+
 def test_sample_page_offers_a_plot_checkbox_per_steady_run(client) -> None:
     """Each steady run can be taken off the R(Q) plot; a series cannot, it is the heatmap."""
     import re

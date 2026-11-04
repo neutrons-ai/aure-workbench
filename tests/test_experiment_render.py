@@ -43,8 +43,10 @@ GOLDEN = Path(__file__).parent / "data" / "experiment"
 NOW = "2026-09-25T12:00:00Z"
 
 FITS = "Co-refine 218386 and 218393. The oxide should thicken between them."
-DESCRIPTION = "About 30 nm Cu on Pt, in 1 M LiBF4 in d8-THF."
-DETAILS = "Cu 20 nm, Pt 5 nm, Ti adhesion layer, Si substrate."
+DESCRIPTION = (
+    "About 30 nm Cu on Pt, in 1 M LiBF4 in d8-THF.\n\n"
+    "Cu 20 nm, Pt 5 nm, Ti adhesion layer, Si substrate."
+)
 
 
 def reference_catalog(**overrides) -> Catalog:
@@ -68,7 +70,6 @@ def reference_catalog(**overrides) -> Catalog:
     context = {
         "title": "Cu/Pt in d8-THF (expt 11)",
         "description": DESCRIPTION,
-        "details": DETAILS,
         "mounting": "once",
         "measurement_conditions": "Background looked flat at high Q.",
         "fits_to_perform": FITS,
@@ -142,7 +143,7 @@ def test_applied_reference_sample_md_every_reader_agrees(
     # The unattended agent's task, the section as written, and AuRE's description.
     assert declared_task(text) == FITS
     assert read_section(text, "Fits to perform").strip() == FITS
-    assert describe_sample(text) == f"{DESCRIPTION}\n\n{DETAILS}"
+    assert describe_sample(text) == DESCRIPTION
     # ISAAC export's conditions, and reconcile's table.
     assert from_table(text, "218386") == "OCV"
     assert from_table(text, "218393") == "OCV"

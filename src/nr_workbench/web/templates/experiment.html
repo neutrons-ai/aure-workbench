@@ -25,7 +25,7 @@
   <ul class="mb-0 mt-1"></ul>
 </div>
 
-<div class="landscape">
+<div class="landscape split" id="expt-landscape">
   <div>
     <div class="panel">
       <div class="panel-head flex-wrap">
@@ -186,6 +186,9 @@
     </div>
   </div>
 
+  <div class="splitter" id="expt-splitter" role="separator" aria-orientation="vertical"
+       aria-label="width of the side column: drag, or double-click to reset" tabindex="0"></div>
+
   <aside class="rail">
     <details class="panel" id="expt-context">
       <summary class="panel-head">
@@ -200,9 +203,6 @@
         <label class="form-label mb-1" for="c-summary">Summary</label>
         <textarea class="form-control form-control-sm mb-2" id="c-summary" name="summary" rows="3"
                   placeholder="What the proposal sets out to learn."></textarea>
-        <label class="form-label mb-1" for="c-hypotheses">Hypotheses</label>
-        <textarea class="form-control form-control-sm mb-2" id="c-hypotheses" name="hypotheses" rows="2"
-                  placeholder="What the measurements should confirm or rule out."></textarea>
         <label class="form-label mb-1" for="c-notes">Notes</label>
         <textarea class="form-control form-control-sm mb-2" id="c-notes" name="notes" rows="2"
                   placeholder="Anything every measurement needs: the cell, the electrolyte, the plan."></textarea>
@@ -226,28 +226,28 @@
       <form id="expt-form" class="p-3 small" novalidate>
         <label class="form-label mb-1" for="f-title">Title</label>
         <input class="form-control form-control-sm mb-2" id="f-title" name="title">
-        <label class="form-label mb-1" for="f-description">Description</label>
-        <textarea class="form-control form-control-sm mb-2" id="f-description" name="description" rows="2"
-                  placeholder="What the sample is, what it is in, what you expect."></textarea>
-        <label class="form-label mb-1" for="f-details">Details</label>
-        <textarea class="form-control form-control-sm mb-2" id="f-details" name="details" rows="3"
-                  placeholder="Composition, electrolyte, environment -- anything that constrains the model."></textarea>
+        <label class="form-label mb-1" for="f-description">Sample description</label>
+        <textarea class="form-control form-control-sm" id="f-description" name="description" rows="3"
+                  aria-describedby="f-description-hint"
+                  placeholder="The layers from the substrate up, with rough thicknesses, and what the sample sits in."></textarea>
+        <div class="form-text mb-2" id="f-description-hint">
+          What the sample is. AuRE builds its model from this and refuses a
+          quick fit without it; New model and the agent read it too.
+        </div>
         <label class="form-label mb-1" for="f-mounting">Was the sample moved between measurements?</label>
         <select class="form-select form-select-sm mb-2" id="f-mounting" name="mounting">
           <option value="unknown">not recorded</option>
           <option value="once">no -- mounted once for all of them</option>
           <option value="remounted">yes -- remounted or realigned between them</option>
         </select>
-        <label class="form-label mb-1" for="f-conditions">Measurement conditions</label>
-        <textarea class="form-control form-control-sm mb-2" id="f-conditions" name="measurement_conditions"
-                  rows="2" placeholder="Alignment, flatness, background, normalization."></textarea>
-        <div class="form-label mb-1">Measurements</div>
-        <div id="f-measurements" class="expt-measurements mb-1"></div>
-        <div class="form-text mb-2">
-          Each run's type and condition go into sample.md's table; the notes on
-          it go under Measurement conditions, with the run named -- so nothing
-          said about one measurement is read as said about another. Slide a bad
-          run off to leave it out, and say why in its notes.
+        <label class="form-label mb-1" for="f-conditions">Measurement description</label>
+        <textarea class="form-control form-control-sm" id="f-conditions" name="measurement_conditions"
+                  rows="3" aria-describedby="f-conditions-hint"
+                  placeholder="Which side the beam enters, the cell and setup, alignment, flatness, background, what you expect to see."></textarea>
+        <div class="form-text mb-2" id="f-conditions-hint">
+          How it was measured. Sent to AuRE with the fitted run's condition and
+          notes; New model turns alignment, flatness and background into fit
+          parameters.
         </div>
         <label class="form-label mb-1" for="f-fits">Fits to perform</label>
         <textarea class="form-control form-control-sm mb-2" id="f-fits" name="fits_to_perform" rows="3"
@@ -259,10 +259,42 @@
         <p id="expt-form-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
       </form>
       <div id="expt-adopt-plan" class="px-3 pb-2 small d-none"></div>
-      <div class="p-3 markdown small border-top" id="expt-preview"></div>
     </div>
   </aside>
 </div>
+
+<dialog id="expt-run-dialog" class="expt-run-dialog" aria-labelledby="expt-run-dialog-title">
+  <form id="expt-run-form" class="small" novalidate>
+    <h2 class="h6 mb-1" id="expt-run-dialog-title">Run</h2>
+    <p class="text-secondary mb-2" id="expt-run-dialog-about"></p>
+    <label class="form-label mb-1" for="expt-run-sample">Sample</label>
+    <select class="form-select form-select-sm mb-2" id="expt-run-sample"></select>
+    <input class="form-control form-control-sm mb-2 d-none" id="expt-run-new-sample"
+           placeholder="new sample id" aria-label="New sample id">
+    <div class="form-label mb-1">Type</div>
+    <div id="expt-run-type-slot" class="mb-2"></div>
+    <label class="form-label mb-1" for="expt-run-condition">Condition</label>
+    <input class="form-control form-control-sm mb-2" id="expt-run-condition"
+           placeholder="e.g. OCV, -0.5 mA/cm2, air">
+    <div class="form-check form-switch mb-0">
+      <input class="form-check-input" type="checkbox" role="switch" id="expt-run-used"
+             aria-describedby="expt-run-used-hint">
+      <label class="form-check-label" for="expt-run-used" id="expt-run-used-label">used</label>
+    </div>
+    <div class="form-text mt-0 mb-2" id="expt-run-used-hint">
+      An excluded run is left out of sample.md and moved out of data/steady at
+      the next Apply. Its notes stay here.
+    </div>
+    <label class="form-label mb-1" for="expt-run-note">Notes on this measurement</label>
+    <textarea class="form-control form-control-sm mb-2" id="expt-run-note" rows="4"
+              placeholder="What is particular to this run: realigned, the potentiostat failed, a segment that looks high."></textarea>
+    <div class="d-flex gap-2 align-items-center">
+      <button type="submit" class="btn btn-sm btn-primary" id="expt-run-save">Save</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="expt-run-cancel">Cancel</button>
+    </div>
+    <p id="expt-run-status" class="small text-secondary mt-2 mb-0" aria-live="polite"></p>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block scripts %}

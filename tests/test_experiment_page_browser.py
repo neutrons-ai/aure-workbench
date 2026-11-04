@@ -245,41 +245,47 @@ def open_s1(page: Page, site: Site) -> None:
         ".find(b => b.textContent.includes('S1')).click()"
     )
     page.wait_for(
-        "document.querySelector('#f-measurements .expt-measurement') !== null"
-        " && !document.querySelector('#f-measurements select').disabled",
-        what="the sample's measurements",
+        "!document.getElementById('f-description').disabled", what="the editor"
     )
 
 
-def in_row(selector: str) -> str:
-    return f"document.querySelector('#f-measurements .expt-measurement {selector}')"
+def edit_button(run: int) -> str:
+    return f"document.querySelector('#expt-runs button[aria-label=\"edit run {run}\"]')"
 
 
-def test_each_runs_type_condition_notes_and_good_switch_are_saved(
-    page: Page, site: Site, project: Path
-) -> None:
-    open_s1(page, site)
-    assert page.js(in_row("select") + ".value") == "steady"  # never set: steady
-    assert page.js(in_row("[data-field=include]") + ".checked") is True
+def open_edit(page: Page, run: int) -> None:
+    """Open a run's editor from its row in the table."""
+    page.wait_for(f"{edit_button(run)} !== null", what=f"the row of run {run}")
+    page.js(f"{edit_button(run)}.click()")
+    page.wait_for("document.getElementById('expt-run-dialog').open", what="the dialog")
+
+
+DIALOG_TYPE = "document.querySelector('#expt-run-type-slot select')"
+
+
+def test_a_run_is_edited_from_its_row(page: Page, site: Site, project: Path) -> None:
+    page.goto(f"{site.url}/experiment")
+    open_edit(page, 234277)
+    assert page.text("expt-run-dialog-title") == "Run 234277"
+    assert page.js("document.getElementById('expt-run-sample').value") == "S1"
+    assert page.js(f"{DIALOG_TYPE}.value") == "steady"  # never set: steady
+    assert page.js("document.getElementById('expt-run-used').checked") is True
 
     page.js(
-        f"{{ const s = {in_row('select')}; s.value = '__new__';"
-        " s.dispatchEvent(new Event('change')); }"
+        f"{{ const t = {DIALOG_TYPE}; t.value = '__new__';"
+        " t.dispatchEvent(new Event('change'));"
+        " document.querySelector('#expt-run-type-slot input').value = 'grazing'; }"
     )
-    page.js(f"{in_row('.expt-type-field input')}.value = 'grazing'")
-    page.js(f"{in_row('[data-field=condition]')}.value = 'OCV'")
-    page.js(f"{in_row('[data-field=note]')}.value = 'Beam dropped halfway.'")
+    page.js("document.getElementById('expt-run-condition').value = 'OCV'")
+    page.js("document.getElementById('expt-run-note').value = 'Beam dropped halfway.'")
     page.js(
-        f"{{ const g = {in_row('[data-field=include]')}; g.checked = false;"
-        " g.dispatchEvent(new Event('change')); }"
+        "{ const u = document.getElementById('expt-run-used'); u.checked = false;"
+        " u.dispatchEvent(new Event('change')); }"
     )
-    assert "bad" in page.js(in_row(".form-check-label") + ".textContent")
-    page.click("expt-save")
+    assert page.text("expt-run-used-label") == "excluded"
+    page.click("expt-run-save")
 
-    page.wait_for(
-        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
-        what="the save",
-    )
+    page.wait_for("!document.getElementById('expt-run-dialog').open", what="the save")
     entry = ParquetCatalogStore.for_project(project).load().runs[RunKey(234277)]
     assert (entry.measurement, entry.condition, entry.note, entry.include) == (
         "grazing",
@@ -287,39 +293,82 @@ def test_each_runs_type_condition_notes_and_good_switch_are_saved(
         "Beam dropped halfway.",
         False,
     )
-    # The type added is a choice from now on, in the bulk bar too.
+    # The row says so: its button is filled and shows the notes. The type
+    # added is a choice in the bar from now on.
+    assert "btn-secondary" in page.js(f"{edit_button(234277)}.className")
+    assert page.js(f"{edit_button(234277)}.title") == "Beam dropped halfway."
     assert page.js(
         "Array.from(document.querySelectorAll('#expt-type-slot option'))"
         ".some(o => o.value === 'grazing')"
     )
 
 
-def test_a_run_changed_elsewhere_keeps_the_notes_being_typed(
+def test_a_run_is_moved_to_a_new_sample_from_its_row(
     page: Page, site: Site, project: Path
 ) -> None:
-    open_s1(page, site)
-    page.js(f"{in_row('[data-field=note]')}.value = 'realigned after mounting'")
+    page.goto(f"{site.url}/experiment")
+    open_edit(page, 234277)
+    page.js(
+        "{ const s = document.getElementById('expt-run-sample'); s.value = '__new__';"
+        " s.dispatchEvent(new Event('change')); }"
+    )
+    page.click("expt-run-save")  # nothing typed for the new sample yet
+    assert "new sample's id" in page.text("expt-run-status")
+
+    page.js("document.getElementById('expt-run-new-sample').value = 'S2'")
+    page.click("expt-run-save")
+
+    page.wait_for("!document.getElementById('expt-run-dialog').open", what="the save")
+    assert (
+        ParquetCatalogStore.for_project(project).load().runs[RunKey(234277)].sample_id
+        == "S2"
+    )
+    page.wait_for(
+        "Array.from(document.querySelectorAll('#expt-samples button'))"
+        ".some(b => b.textContent.includes('S2'))",
+        what="the new sample, listed",
+    )
+
+
+def test_a_run_changed_elsewhere_keeps_what_was_typed_and_takes_the_rest(
+    page: Page, site: Site, project: Path
+) -> None:
+    page.goto(f"{site.url}/experiment")
+    open_edit(page, 234277)
+    page.js(
+        "document.getElementById('expt-run-note').value = 'realigned after mounting'"
+    )
     store = ParquetCatalogStore.for_project(project)
     entry = store.load().runs[RunKey(234277)]
-    store.update(runs=[RunChange(entry.key, entry.rev, {"condition": "CA"})])
+    store.update(
+        runs=[RunChange(entry.key, entry.rev, {"condition": "CA", "include": False})]
+    )
 
-    page.click("expt-save")  # meets the conflict, and the page reloads
+    page.click("expt-run-save")  # meets the conflict; the page reloads behind
 
     page.wait_for(
-        in_row("[data-field=condition]") + ".value === 'CA'",
-        what="the reload with the condition saved elsewhere",
+        "document.getElementById('expt-run-status').textContent"
+        ".includes('saved somewhere else')",
+        what="the conflict, said in the dialog",
     )
-    assert page.js(in_row("[data-field=note]") + ".value") == "realigned after mounting"
-    assert "saved somewhere else" in page.js(
-        "document.getElementById('expt-form-status').textContent"
+    assert page.js("document.getElementById('expt-run-dialog').open") is True
+    # What was typed stays; what was not touched now shows their save.
+    assert (
+        page.js("document.getElementById('expt-run-note').value")
+        == "realigned after mounting"
     )
-    page.click("expt-save")
+    assert page.js("document.getElementById('expt-run-condition').value") == "CA"
+    assert page.js("document.getElementById('expt-run-used').checked") is False
+    page.click("expt-run-save")
     page.wait_for(
-        "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
-        what="the second save",
+        "!document.getElementById('expt-run-dialog').open", what="the second save"
     )
-    saved = ParquetCatalogStore.for_project(project).load().runs[RunKey(234277)]
-    assert (saved.condition, saved.note) == ("CA", "realigned after mounting")
+    saved = store.load().runs[RunKey(234277)]
+    assert (saved.condition, saved.include, saved.note) == (
+        "CA",
+        False,
+        "realigned after mounting",
+    )
 
 
 def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
@@ -360,6 +409,78 @@ def test_the_bulk_bar_leaves_each_runs_type_unless_one_is_chosen(
     )
     assign_selected()
     assert store.load().runs[RunKey(234277)].measurement == "steady"
+
+    page.js(
+        "{ const b = document.querySelector('#expt-runs tbody input[type=checkbox]');"
+        " b.checked = true; b.dispatchEvent(new Event('change'));"
+        " const t = document.querySelector('#expt-type-slot select'); t.value = '__new__';"
+        " t.dispatchEvent(new Event('change'));"
+        " document.querySelector('#expt-type-slot input').value = 'grazing'; }"
+    )
+    assign_selected()
+    assert store.load().runs[RunKey(234277)].measurement == "grazing"
+    # The type added is a choice from now on.
+    assert page.js(
+        "Array.from(document.querySelectorAll('#expt-type-slot option'))"
+        ".some(o => o.value === 'grazing')"
+    )
+
+
+def test_the_bar_preselects_the_sample_the_selected_runs_share(
+    page: Page, served, project: Path
+) -> None:
+    site, app = served
+    facility = project.parent / "facility"
+    write_autoreduced(facility, 234280, [1, 2, 3], mtime=time.time() - 3600)
+    app.config["NRW_EXPERIMENT"].live.scan_once()
+    page.goto(f"{site.url}/experiment")
+    page.wait_for(
+        "document.querySelector('#expt-runs tbody input[type=checkbox]') !== null",
+        what="the runs",
+    )
+    tick_row(page, 234277)
+
+    assert page.js("document.getElementById('expt-sample').value") == "S1"
+    # A sample chosen in the bar is kept while the selection changes.
+    page.js(
+        "{ const s = document.getElementById('expt-sample'); s.value = '__new__';"
+        " s.dispatchEvent(new Event('change')); }"
+    )
+    tick_row(page, 234280)
+    assert page.js("document.getElementById('expt-sample').value") == "__new__"
+
+
+def rail_width(page: Page) -> float:
+    return page.js(
+        "document.querySelector('#expt-landscape .rail').getBoundingClientRect().width"
+    )
+
+
+def test_the_rail_is_resized_by_its_splitter_and_the_width_is_kept(
+    page: Page, site: Site
+) -> None:
+    page.goto(f"{site.url}/experiment")
+    page.wait_for("document.getElementById('expt-splitter') !== null", what="the page")
+    before = rail_width(page)
+
+    page.js(
+        "{ const s = document.getElementById('expt-splitter');"
+        " const x = s.getBoundingClientRect().left;"
+        " const at = (cx) => ({ bubbles: true, button: 0, clientX: cx, pointerId: 1 });"
+        " s.dispatchEvent(new PointerEvent('pointerdown', at(x)));"
+        " window.dispatchEvent(new PointerEvent('pointermove', at(x - 150)));"
+        " window.dispatchEvent(new PointerEvent('pointerup', at(x - 150))); }"
+    )
+
+    assert rail_width(page) == pytest.approx(before + 150, abs=2)
+    page.goto(f"{site.url}/experiment")  # the width is remembered
+    page.wait_for("document.getElementById('expt-splitter') !== null", what="the page")
+    assert rail_width(page) == pytest.approx(before + 150, abs=2)
+    page.js(
+        "document.getElementById('expt-splitter')"
+        ".dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))"
+    )
+    assert rail_width(page) == pytest.approx(before, abs=2)
 
 
 def tick_row(page: Page, run: int, *, series: bool = False) -> None:
@@ -434,16 +555,8 @@ def test_a_sample_on_disk_is_edited_and_its_first_save_records_its_runs(
     )
     page.wait_for("!document.getElementById('f-description').disabled", what="editor")
     assert "saving records it" in page.text("expt-form-status")
-    assert (
-        page.js("document.querySelectorAll('#f-measurements .expt-measurement').length")
-        == 1
-    )
 
     page.type("f-description", "copper on silicon")
-    page.js(
-        "{ const c = document.querySelector('#f-measurements input[data-field=condition]');"
-        " c.value = 'OCV'; c.dispatchEvent(new Event('input')); }"
-    )
     page.click("expt-save")
     page.wait_for(
         "document.getElementById('expt-form-status').textContent.startsWith('Saved')",
@@ -453,7 +566,7 @@ def test_a_sample_on_disk_is_edited_and_its_first_save_records_its_runs(
     catalog = ParquetCatalogStore.for_project(project).load()
     assert catalog.samples["Cu"].description == "copper on silicon"
     entry = catalog.runs[RunKey(999901)]
-    assert (entry.sample_id, entry.condition) == ("Cu", "OCV")
+    assert entry.sample_id == "Cu"
     assert entry.title.startswith("S1_air")
 
 
@@ -735,8 +848,21 @@ def test_a_view_only_page_offers_no_writes_and_no_cancel(
             assert page.js(f"document.getElementById('{button}').disabled") is True
         # Nothing written, but nothing to write it with: left folded away.
         assert page.js("document.getElementById('expt-context').open") is False
-        for box in ("c-summary", "c-hypotheses", "c-notes", "expt-context-save"):
+        for box in ("c-summary", "c-notes", "expt-context-save"):
             assert page.js(f"document.getElementById('{box}').disabled") is True
+        # A run can be read from its row, not written.
+        open_edit(page, 234277)
+        assert page.text("expt-run-status") == "View only."
+        for box in (
+            "expt-run-sample",
+            "expt-run-condition",
+            "expt-run-used",
+            "expt-run-note",
+            "expt-run-save",
+        ):
+            assert page.js(f"document.getElementById('{box}').disabled") is True
+        assert page.js(f"{DIALOG_TYPE}.disabled") is True
+        page.click("expt-run-cancel")
     assert page.js(
         "document.querySelector('#expt-models-list .expt-model-fit').disabled"
     )

@@ -220,7 +220,9 @@ over, or was stopped early, tick "use run N as it is" when you review apply
 
 Select runs in the table, choose a sample (or type a new id), optionally a
 **type** and a **condition** (`OCV`, `-0.5 mA/cm2`, …), and **Assign**.
-**Exclude** keeps a run in the sample but out of its data.
+When every selected run is in one sample, the bar starts at that sample.
+**Exclude** keeps a run in the sample but out of its data; **Include** puts it
+back.
 
 The type is **steady** or **tNR**, or one you add with **Add a type…**; a type
 added once is offered from then on. A run whose type was never set is steady.
@@ -228,9 +230,9 @@ In the bar above the table the type starts at *unchanged*, so assigning runs
 leaves the type each one already has.
 
 **The experiment**, the panel above the samples, is what every sample here
-is part of: a **Summary** of what the proposal sets out to learn, the
-**Hypotheses** the measurements should confirm or rule out, and **Notes** for
-anything else every measurement needs. It opens by itself until something is
+is part of: a **Summary** of what the proposal sets out to learn, and
+**Notes** for anything else every measurement needs. It opens by itself until
+something is
 written in it, and then folds away, showing its first line. It is kept in the
 catalog and written to no file, so this panel is the one place to change it;
 `nrw experiment status --json` shows it. It is written into no `sample.md`,
@@ -239,27 +241,35 @@ quote it ahead of each sample's task, **New model** sends it beside the
 sample's notes, and `nrw tiled push` writes it to the experiment's `context/`
 on Tiled.
 
-Click a sample to fill in its context. Each box becomes the section of
-`sample.md` it is named after:
+Click a sample to fill in its context. Each box becomes a section of
+`sample.md`:
 
-- **Description** and **Details**: what the sample is.
+- **Sample description**: what the sample is -- its layers from the substrate
+  up, with rough thicknesses, and what it sits in. AuRE builds its model from
+  it. Written under `## Description`.
 - **Was the sample moved between measurements?** This decides whether alignment
   is fitted once or once per state, and it cannot be read from the data.
-- **Measurement conditions**: what holds for every measurement.
-- **Measurements**: one line per run, with its type, its condition, a
-  **good** switch, and notes on that measurement alone: realigned, bowed, a
-  segment that looks high. Type and condition go into the measurement table.
-  Each run's notes go under *Measurement conditions*, with the run named first
-  (`- Run 218386: realigned after mounting`), so nobody has to guess later
-  which measurement a note is about.
+- **Measurement description**: what holds for every measurement -- which side
+  the beam enters, the cell and setup, alignment, flatness, background, what
+  the measurements should show. Written under `## Measurement conditions`.
 - **Fits to perform**: an unattended agent session will not start without it.
 
-A bad run is slid to **bad: not used**, which excludes it: the next apply
-leaves it out of the table and moves its copy out of `data/steady/`. Say why in
-its notes. They stay in the catalog and on the page, but are not written into
-`sample.md`, whose readers would otherwise look for the run's data.
+The side column can be made wider: drag the handle between it and the table,
+and double-click the handle to put it back.
 
-The preview shows the `sample.md` that will be written.
+One run is edited from its row in the Runs table. The **edit** button at the
+end of the row opens that measurement: its sample, type and condition, whether
+it is **used**, and the notes on it -- realigned, the potentiostat failed, a
+segment that looks high. **Save** writes the run at once. Each run's notes go
+under *Measurement conditions*, with the run named first (`- Run 218386:
+realigned after mounting`), so nobody has to guess later which measurement a
+note is about.
+
+A run switched to **excluded** (the bar's **Exclude** does the same for several
+at once) stays in its sample but out of its data: the next apply leaves it out
+of the table and moves its copy out of `data/steady/`. Say why in its notes.
+They stay in the catalog and on the page, but are not written into
+`sample.md`, whose readers would otherwise look for the run's data.
 
 Some text is refused, with the reason, because a reader of `sample.md` would
 misread it:
@@ -314,8 +324,8 @@ for it: give the model a name and click **New model**. The spec is exactly what
 - **Its states come from the data** in `samples/<id>/data/`: one per run, each
   segment's angle read from its own file.
 - **Its stack is proposed by the language model** from `sample.md`: the
-  *Description* and *Details*, each run's condition in the Measurements table
-  and its notes, and the sample's *Measurement conditions*. Each state is sent
+  *Description*, each run's condition in the Measurements table and its
+  notes, and the sample's *Measurement conditions*. Each state is sent
   with its own condition, and the model is told to take the ambient from the
   notes, never to assume air, and to fit a contrast that differs between runs
   (D2O for one, H2O for another) as the ambient's SLD per state. It is told,
@@ -343,8 +353,8 @@ a placeholder. AuRE fits one run on its quick budget; choose the run when the
 sample has more than one. The spec it proposes models that one run: to
 co-refine several, write one with **New model**. From `sample.md` it reads:
 
-- the sample's *Description* and *Details*. A sample with nothing under
-  *Description* is refused, because AuRE builds the whole model from it. Say
+- the sample's *Description*. A sample with nothing under it is refused,
+  because AuRE builds the whole model from it. Say
   which side the beam enters in words AuRE's setup looks for, such as "measured
   through the silicon substrate" or "back reflection": without them, or with
   them negated ("not through the substrate"), the setup takes the beam to
@@ -584,7 +594,7 @@ nrw experiment release Sample6
 |---|---|---|
 | `experiment/runs.parquet` | One row per run: its sample, type, condition, good or not, its notes | Yes |
 | `experiment/samples.parquet` | One row per sample: its context | Yes |
-| `experiment/experiment.parquet` | One row, once written: the experiment's own context, its summary, hypotheses and notes | Yes |
+| `experiment/experiment.parquet` | One row, once written: the experiment's own context, its summary and notes | Yes |
 | `samples/<id>/data/sources.json` | What apply copied | Yes |
 | `nrw.toml` (`[beamtime]`, `[experiment.*]`) | The IPTS, where the data is, and how new runs are noticed | Yes |
 

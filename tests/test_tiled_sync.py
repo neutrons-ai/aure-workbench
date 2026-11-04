@@ -601,14 +601,13 @@ def test_a_push_writes_the_experiments_context_into_contexts_metadata(
     shown = pushed(project)
 
     assert shown.exit_code == 0, shown.output
-    assert "+ the experiment's context: summary, hypotheses, notes" in shown.output
+    assert "+ the experiment's context: summary, notes" in shown.output
     assert "Pushed 3 record(s) and the experiment's context." in shown.output
     assert ready["context"].metadata == {
         "ipts": "IPTS-00001",
         "written_by": "nr-workbench",
         "experiment": {
             "summary": "Does Li plate on Cu?",
-            "hypotheses": "",
             "notes": "",
         },
     }
@@ -634,7 +633,6 @@ def test_a_changed_context_replaces_tileds_and_keeps_others_keys(
     assert context.metadata["beamline"] == "BL-4B"
     assert context.metadata["experiment"] == {
         "summary": "Second.",
-        "hypotheses": "",
         "notes": "",
         "proposal": "IPTS-00001 abstract",
     }
@@ -670,7 +668,7 @@ def test_a_first_context_onto_a_catalog_pushed_before_is_new_there(
     shown = pushed(project)
 
     assert "the experiment's context not there yet" in before.output
-    assert "+ the experiment's context: summary, hypotheses, notes" in shown.output
+    assert "+ the experiment's context: summary, notes" in shown.output
     assert tiled.root.log[-1] == ("replace", "context")
 
 
