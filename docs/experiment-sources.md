@@ -245,7 +245,8 @@ data, in four parts, each file as text with its sha256:
   thinned to at most 400 points.
 - **The provenance**: the reduced files as the fit read them, with the
   headers that name their reduction, by their paths in `inputs.json`; the
-  fit's index line, `inputs.json`, `manifest.json` and `env/versions.json`;
+  fit's index line, `inputs.json`, `manifest.json` (without the keys of its
+  `ndip-tool-result/1` envelope) and `env/versions.json`;
   the fitter, its settings and the seed; the curation, with each promotion's
   reason, who and when; and who pushed it, when. A reduced file changed since
   the fit read it is named, with why, and not carried.

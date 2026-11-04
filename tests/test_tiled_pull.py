@@ -23,6 +23,7 @@ from nr_workbench.cli import main
 from nr_workbench.experiment.model import RunChange, RunKey
 from nr_workbench.experiment.store import ParquetCatalogStore
 from nr_workbench.provenance.whence import Freshness
+from nr_workbench.tiled.analysis import ENVELOPE
 
 from .test_tiled_analysis import (  # noqa: F401 - fixtures
     DATA,
@@ -250,10 +251,15 @@ def test_a_fits_pull_rebuilds_each_fit_as_it_was_recorded(
         "fit/film-1-slabs.dat",
     ):
         assert (theirs / name).read_bytes() == (ours / name).read_bytes(), name
-    for name in ("manifest.json", "inputs.json", "env/versions.json"):
+    for name in ("inputs.json", "env/versions.json"):
         assert json.loads((theirs / name).read_text()) == json.loads(
             (ours / name).read_text()
         ), name
+    # The manifest as the record carries it: without its envelope's keys.
+    manifest = json.loads((ours / "manifest.json").read_text())
+    assert json.loads((theirs / "manifest.json").read_text()) == {
+        key: value for key, value in manifest.items() if key not in ENVELOPE
+    }
     profile = (theirs / "fit" / "film-1-profile.dat").read_text().splitlines()
     assert profile[0].startswith("#") and len(profile) <= 401
     assert (colleague / STEADY).read_bytes() == DATA

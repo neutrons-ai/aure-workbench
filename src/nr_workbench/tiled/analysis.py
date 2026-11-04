@@ -14,8 +14,8 @@ fit is one container whose metadata is its record, the fit as analysed data:
   statistics, each segment's R(q) with the data, its slabs, and the SLD
   profile thinned for a plot;
 * the provenance: the reduced files as the fit read them, with their
-  headers; the fit's index line, ``inputs.json``, ``manifest.json`` and
-  ``env/versions.json``; the curation, each promotion's reason included; and
+  headers; the fit's index line, ``inputs.json``, ``manifest.json`` (without
+  the keys of its ``ndip-tool-result/1`` envelope) and ``env/versions.json``; the curation, each promotion's reason included; and
   who pushed it, when;
 * the links: its sample's record and its runs' records in ``context/``, and
   for each reduced file the ``autoreduction/`` node of that name, beside
@@ -80,6 +80,12 @@ JSON_FILES = {
     "env": "env/versions.json",
     "assessment": "assessment.json",
 }
+
+#: The keys that make a fit's ``manifest.json`` an ``ndip-tool-result/1``
+#: envelope, for an orchestrator that runs the fit. The record leaves them
+#: out: what they say -- the tool, its version, its exit code -- the record
+#: says in its own fields.
+ENVELOPE = ("schema", "tool", "tool_version", "exit_code")
 
 #: Each segment's curves a record carries: each one's part of the segment,
 #: and the end of its file's name, after ``<model>-<n>``.
@@ -243,6 +249,12 @@ def record_of(
     record["index"] = {key: value for key, value in entry.items() if key != "event"}
     record["curation"] = curation
     record.update({part: _json(directory / name) for part, name in JSON_FILES.items()})
+    if isinstance(record["manifest"], dict):
+        record["manifest"] = {
+            key: value
+            for key, value in record["manifest"].items()
+            if key not in ENVELOPE
+        }
     record["n_points"] = ((record["manifest"] or {}).get("info") or {}).get("n_points")
     record["parameters"] = parameters(directory)
     record["files"] = {

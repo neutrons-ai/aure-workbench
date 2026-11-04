@@ -21,6 +21,7 @@ import pytest
 from nr_workbench.project.layout import ProjectLayout
 from nr_workbench.provenance import curation
 from nr_workbench.provenance.index import FitIndex
+from nr_workbench.tiled.analysis import ENVELOPE
 
 from .test_tiled_sync import (  # noqa: F401 - fixtures
     FakeNode,
@@ -72,7 +73,14 @@ def fitted(
     data.write_bytes(DATA)
     script = own / "models" / "film.py"
     script.write_bytes(SCRIPT)
+    # As `nrw fit run` writes it: the ndip-tool-result/1 envelope's keys, then
+    # nrw's own.
     manifest = {
+        "tool": "nrw-fit-run",
+        "tool_version": "0.2.1",
+        "schema": "ndip-tool-result/1",
+        "status": "ok",
+        "exit_code": 0,
         "params": {"method": "dream", "samples": 1000, "burn": 50, "seed": 7},
         "info": {"chisq": chisq, "n_free": 1, "n_points": 30},
     }
@@ -178,7 +186,14 @@ def test_a_starred_fit_is_written_whole_where_everyone_on_it_can_read_it(
         "bytes": len(SCRIPT),
     }
     assert record["files"]["spec.yaml"]["text"] == SPEC
-    assert record["manifest"] == json.loads((directory / "manifest.json").read_text())
+    manifest = json.loads((directory / "manifest.json").read_text())
+    assert manifest["schema"] == "ndip-tool-result/1", "the fit's own file keeps it"
+    assert record["manifest"] == {
+        key: value for key, value in manifest.items() if key not in ENVELOPE
+    }
+    assert {"schema", "tool", "tool_version", "exit_code"}.isdisjoint(
+        record["manifest"]
+    )
     assert record["curation"]["starred"] is True
     assert (record["model"], record["chisq"], record["n_points"]) == ("film", 1.2, 30)
     assert record["parameters"] == [
