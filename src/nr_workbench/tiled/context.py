@@ -12,22 +12,33 @@ keeps on a record stay. Nothing else is touched: a record only Tiled holds,
 another program's node, anything outside the tree. Whatever is made takes its
 parent's access tags, because a node made without them is its maker's alone,
 unseen by everyone else on the experiment; a parent with none is refused.
+
+Each record names what it is joined to, so a reader without nrw follows paths
+rather than guessing the join: a run its sample and its reduced files, a
+sample its fits, a fit its sample, its runs and each file it read. Every link
+is a path on the server, under the tree's ``server``; the tree's ``guide``
+says what each field is and which query answers which question.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from nr_workbench.experiment.model import Catalog, RunKey
 from nr_workbench.tiled import server as server_module
-from nr_workbench.tiled.server import TiledSyncError, tags_of
+from nr_workbench.tiled.server import EXPERIMENT_PATH, TiledSyncError, tags_of
 
 #: The containers a push writes, in the experiment's own node.
 CONTEXT = "context"
 RUNS = "runs"
 SAMPLES = "samples"
+ANALYSIS = "analysis"
+
+#: The facility's reduced files, in the experiment's own node: read, never
+#: written, by nrw.
+AUTOREDUCTION = "autoreduction"
 
 #: Where in ``context/``'s own metadata the experiment's context is kept:
 #: one key, so nrw's three fields sit apart from what other programs write
@@ -36,8 +47,51 @@ EXPERIMENT = "experiment"
 
 #: What each node says it is: a spec's name, and its fields' version.
 CONTEXT_SPEC = ("context-experiment", "1")
-RUN_SPEC = ("context-run", "1")
-SAMPLE_SPEC = ("context-sample", "1")
+RUN_SPEC = ("context-run", "2")
+SAMPLE_SPEC = ("context-sample", "2")
+
+#: What a reader finds in a tree's header, beside ``server`` and
+#: ``experiment``: each tree, its spec, its fields and its links, and the
+#: query that answers each usual question, in the Tiled client's own terms.
+GUIDE: dict[str, Any] = {
+    "about": (
+        "Written by nr-workbench. Every link is a path on `server`, under "
+        "`node`, the experiment's own node. Search keys are top-level fields."
+    ),
+    "trees": {
+        "context/runs/<run>-<kind>": (
+            "one measurement (spec context-run 2): run, kind, sample_id, "
+            "measurement, condition, include, note, title, start_time, ipts; "
+            "links.sample, links.data (its reduced files)"
+        ),
+        "context/samples/<sample_id>": (
+            "one sample (spec context-sample 2): title, description, mounting, "
+            "measurement_conditions, fits_to_perform, ipts; links.fits"
+        ),
+        "analysis/<sample_id>/<fit_id>": (
+            "one fit as analysed data (spec analysis-fit 3): sample_id, runs, "
+            "labels, starred, chisq, parameters, problem (bumps' file of the "
+            "fitted problem), data (each reduced file as the fit read it, with "
+            "its sha256 and its `tiled` node); links.sample, links.runs"
+        ),
+        "autoreduction/<file>": (
+            "one reduced file, as the facility's reduction wrote it; not "
+            "written by nr-workbench"
+        ),
+    },
+    "queries": {
+        "the runs of a sample": "context/runs: Key('sample_id') == <sample_id>",
+        "a run": "context/runs/<run>-steady, or context/runs: Key('run') == <run>",
+        "the reduced files of a run": "the run's links.data",
+        "the fits of a sample": "the children of analysis/<sample_id>",
+        "the fits that used a run": (
+            "analysis/<sample_id>: Contains('runs', <run>); the sample is the "
+            "run's sample_id"
+        ),
+        "a sample's final fit": "analysis/<sample_id>: Contains('labels', 'final')",
+        "the starred fits of a sample": "analysis/<sample_id>: Key('starred') == True",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -133,9 +187,23 @@ def run_key(key: RunKey) -> str:
     return f"{key.run}-{key.kind}"
 
 
-def header(ipts: str) -> dict[str, Any]:
-    """A tree's own metadata: whose it is, and who writes it."""
-    return {"ipts": ipts, "written_by": "nr-workbench"}
+def path_in(ipts: str, *parts: str) -> str:
+    """A path in the experiment's node, as a link names it."""
+    return "/".join((EXPERIMENT_PATH.format(ipts=ipts), *parts))
+
+
+def header(ipts: str, url: str = "") -> dict[str, Any]:
+    """A tree's own metadata: whose it is, who writes it, where its links
+    lead, and the guide to reading it. ``node`` is the experiment's path:
+    not ``experiment``, which is where ``context/`` keeps the experiment's
+    own context."""
+    return {
+        "ipts": ipts,
+        "written_by": "nr-workbench",
+        "server": url,
+        "node": EXPERIMENT_PATH.format(ipts=ipts),
+        "guide": GUIDE,
+    }
 
 
 @dataclass(frozen=True)
@@ -176,19 +244,57 @@ def plan_experiment(catalog: Catalog, remote: Remote) -> ExperimentPlan:
     return ExperimentPlan("replace" if changed else "same", fields, changed)
 
 
-def records_of(catalog: Catalog) -> list[Record]:
+def records_of(
+    catalog: Catalog, *, ipts: str, reduced: Mapping[int, Sequence[str]]
+) -> list[Record]:
     """The catalog's records as a push writes them: samples, then runs, so a
-    reader never meets a run whose sample is not there yet."""
+    reader never meets a run whose sample is not there yet.
+
+    Args:
+        catalog: The project's catalog.
+        ipts: The experiment, which every link is under.
+        reduced: The reduced files in ``autoreduction/``, by run
+            (:func:`~nr_workbench.tiled.data.reduced_by_run`): a run's record
+            links each of its own.
+    """
     from nr_workbench.experiment.store import run_fields, sample_fields
 
     # nrw's own fields alone: a column a newer nrw wrote is that nrw's to
     # send, and its type is not known to be JSON's.
     samples = [
-        Record(SAMPLES, sample_id, sample_fields(entry), SAMPLE_SPEC)
+        Record(
+            SAMPLES,
+            sample_id,
+            {
+                **sample_fields(entry),
+                "ipts": ipts,
+                "links": {"fits": path_in(ipts, ANALYSIS, sample_id)},
+            },
+            SAMPLE_SPEC,
+        )
         for sample_id, entry in sorted(catalog.samples.items())
     ]
     runs = [
-        Record(RUNS, run_key(key), run_fields(entry), RUN_SPEC)
+        Record(
+            RUNS,
+            run_key(key),
+            {
+                **run_fields(entry),
+                "ipts": ipts,
+                "links": {
+                    "sample": (
+                        path_in(ipts, CONTEXT, SAMPLES, entry.sample_id)
+                        if entry.sample_id
+                        else None
+                    ),
+                    "data": [
+                        path_in(ipts, AUTOREDUCTION, name)
+                        for name in reduced.get(key.run, ())
+                    ],
+                },
+            },
+            RUN_SPEC,
+        )
         for key, entry in sorted(catalog.runs.items())
     ]
     return samples + runs
@@ -242,20 +348,23 @@ def push(
     planned: list[Planned],
     *,
     ipts: str,
+    url: str = "",
     tree: Tree = CONTEXT_TREE,
     context_plan: ExperimentPlan | None = None,
 ) -> list[Planned]:
     """Write what *planned* changes, in its order; make what it is written in.
 
-    The experiment's own context is written first, into ``context/``'s own
-    metadata: with the header when ``context/`` is made, or merged over what
-    is there, so another program's keys stay.
+    The tree's header, and the experiment's own context for ``context/``, are
+    written first, into the tree's own metadata: with the header when the
+    tree is made, or merged over what is there, so another program's keys
+    stay.
 
     Args:
         experiment: The experiment's own node.
         remote: *tree* as it was read for *planned*.
         planned: From :func:`plan_push`.
         ipts: The experiment's IPTS, for the tree's header.
+        url: The server, which the header names.
         tree: The tree written.
         context_plan: From :func:`plan_experiment`, for ``context/`` alone;
             nothing is written for the experiment's context without one.
@@ -281,16 +390,21 @@ def push(
             node_tags = _given(experiment, "The experiment's own node")
             node = experiment.create_container(
                 tree.name,
-                metadata={**header(ipts), **({EXPERIMENT: own} if writes else {})},
+                metadata={**header(ipts, url), **({EXPERIMENT: own} if writes else {})},
                 specs=[Spec(*tree.spec)],
                 access_tags=node_tags,
             )
-        elif writes:
+        else:
             metadata = dict(node.metadata)
-            there = metadata.get(EXPERIMENT)
-            there = dict(there) if isinstance(there, Mapping) else {}
-            # nrw's fields over Tiled's; a key another program keeps there stays.
-            node.replace_metadata(metadata={**metadata, EXPERIMENT: {**there, **own}})
+            wanted = {**metadata, **header(ipts, url)}
+            if writes:
+                there = metadata.get(EXPERIMENT)
+                there = dict(there) if isinstance(there, Mapping) else {}
+                # nrw's fields over Tiled's; a key another program keeps there
+                # stays.
+                wanted[EXPERIMENT] = {**there, **own}
+            if wanted != metadata:
+                node.replace_metadata(metadata=wanted)
         containers: dict[str, tuple[Any, list[str] | None]] = {
             name: (container, None) for name, container in remote.containers.items()
         }

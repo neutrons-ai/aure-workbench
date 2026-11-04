@@ -116,6 +116,7 @@ def status(project: Path) -> dict[str, Any]:
         read_remote,
         records_of,
     )
+    from nr_workbench.tiled.data import reduced_by_run
     from nr_workbench.tiled.server import (
         EXPERIMENT_PATH,
         connect,
@@ -131,7 +132,12 @@ def status(project: Path) -> dict[str, Any]:
     client = connect(project)
     node = experiment_node(client, ipts)
     remote = read_remote(node) if node is not None else None
-    planned = plan_push(records_of(catalog), remote) if remote is not None else []
+    reduced = reduced_by_run(node) if node is not None else {}
+    planned = (
+        plan_push(records_of(catalog, ipts=ipts, reduced=reduced), remote)
+        if remote is not None
+        else []
+    )
     context_plan = plan_experiment(catalog, remote) if remote is not None else None
     records, only_on_tiled = _compared(planned, remote)
     return {
@@ -164,7 +170,11 @@ def status(project: Path) -> dict[str, Any]:
         ),
         # The fits there against this project's: what a push writes, and
         # what a pull would bring.
-        "analysis": _analysis_status(node, project) if node is not None else None,
+        "analysis": (
+            _analysis_status(node, project, ipts=ipts, reduced=reduced)
+            if node is not None
+            else None
+        ),
         # The reduced files there against the data folder: what a pull copies.
         "data": _data_status(node, project) if node is not None else None,
     }
@@ -185,7 +195,9 @@ def _compared(
     return by_action, alone
 
 
-def _analysis_status(experiment: Any, project: Path) -> dict[str, Any]:
+def _analysis_status(
+    experiment: Any, project: Path, *, ipts: str, reduced: dict[int, list[str]]
+) -> dict[str, Any]:
     """``analysis/`` on Tiled against this project's fits."""
     from nr_workbench.project.layout import ProjectLayout
     from nr_workbench.provenance.index import FitIndex
@@ -194,7 +206,7 @@ def _analysis_status(experiment: Any, project: Path) -> dict[str, Any]:
     from nr_workbench.tiled.pull import fits_of
 
     remote = read_remote(experiment, ANALYSIS_TREE)
-    fits, left = fit_records(project, remote)
+    fits, left = fit_records(project, remote, ipts=ipts, reduced=reduced)
     records, only_on_tiled = _compared(plan_push(fits, remote, ANALYSIS_TREE), remote)
     index = FitIndex(ProjectLayout(root=project).index_file)
     known = {str(entry.get("fit_id")) for entry in index.fits()}
@@ -382,6 +394,7 @@ def run_push(
         read_remote,
         records_of,
     )
+    from nr_workbench.tiled.data import reduced_by_run
     from nr_workbench.tiled.server import (
         EXPERIMENT_PATH,
         TiledSyncError,
@@ -411,17 +424,18 @@ def run_push(
                 "not shared with this login: nothing was pushed."
             )
         place = f"{chosen.url}/{EXPERIMENT_PATH.format(ipts=ipts)}"
+        reduced = reduced_by_run(experiment)
         remote = remote_fits = context_plan = None
         planned: list[Any] = []
         planned_fits: list[Any] = []
         if with_catalog:
             remote = read_remote(experiment)
-            planned = plan_push(records_of(catalog), remote)
+            planned = plan_push(records_of(catalog, ipts=ipts, reduced=reduced), remote)
             context_plan = plan_experiment(catalog, remote)
             _echo_context_push(f"{place}/{CONTEXT}", planned, context_plan)
         if with_fits:
             remote_fits = read_remote(experiment, ANALYSIS_TREE)
-            fits, left = fit_records(project, remote_fits)
+            fits, left = fit_records(project, remote_fits, ipts=ipts, reduced=reduced)
             planned_fits = plan_push(fits, remote_fits, ANALYSIS_TREE)
             if planned_fits or left:
                 _echo_fits_push(f"{place}/{ANALYSIS}", planned_fits, left)
@@ -450,13 +464,23 @@ def run_push(
             )
         if writes_context and context_plan is not None:
             written = push(
-                experiment, remote, planned, ipts=ipts, context_plan=context_plan
+                experiment,
+                remote,
+                planned,
+                ipts=ipts,
+                url=chosen.url,
+                context_plan=context_plan,
             )
             also = " and the experiment's context" if context_plan.writes else ""
             click.echo(f"Pushed {len(written)} record(s){also}.")
         if writes_fits:
             written = push(
-                experiment, remote_fits, planned_fits, ipts=ipts, tree=ANALYSIS_TREE
+                experiment,
+                remote_fits,
+                planned_fits,
+                ipts=ipts,
+                url=chosen.url,
+                tree=ANALYSIS_TREE,
             )
             click.echo(f"Pushed {len(written)} fit(s) to {ANALYSIS}/.")
 

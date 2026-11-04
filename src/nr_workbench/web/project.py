@@ -72,12 +72,12 @@ _DESCRIPTION_RE = re.compile(
 )
 
 
-def _description(markdown: str) -> str:
+def _description(markdown: str | None) -> str:
     """The ``## Description`` section of a sample.md, the template's own
     comments removed; ``""`` without one."""
     from nr_workbench.notes import strip_comments
 
-    match = _DESCRIPTION_RE.search(markdown)
+    match = _DESCRIPTION_RE.search(markdown or "")
     return strip_comments(match.group(1)).strip() if match else ""
 
 

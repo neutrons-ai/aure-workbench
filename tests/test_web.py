@@ -1572,6 +1572,13 @@ def test_sample_page_rail_lists_measurements_then_the_description_alone(
     assert ">OCV<" in html and ">-0.5 mA/cm2<" in html
 
 
+def test_sample_page_without_a_sample_md_still_renders(client, populated: Path) -> None:
+    (populated / "samples" / "Sample1" / "sample.md").unlink()
+
+    assert client.get("/s/Sample1").status_code == 200
+    assert client.get("/api/samples/Sample1").get_json()["description"] == ""
+
+
 def test_sample_page_offers_a_plot_checkbox_per_steady_run(client) -> None:
     """Each steady run can be taken off the R(Q) plot; a series cannot, it is the heatmap."""
     import re

@@ -20,6 +20,7 @@ from nr_workbench import env as env_module
 from nr_workbench.agent.guard import judge
 from nr_workbench.cli import main
 from nr_workbench.tiled import server as server_module
+from nr_workbench.tiled.context import header
 from nr_workbench.tiled.server import TiledSyncError, connect, server
 
 KEY = "K" * 32
@@ -575,10 +576,10 @@ def test_a_first_push_makes_the_catalog_with_the_experiments_tags(
         ("create", "234280-steady", *tags),
     ]
     context = ready["context"]
-    assert context.metadata == {"ipts": "IPTS-00001", "written_by": "nr-workbench"}
+    assert context.metadata == header("IPTS-00001", server(project).url)
     assert context.specs == [FakeSpec("context-experiment", "1")]
     run = ready["context/runs/234277-steady"]
-    assert run.specs == [FakeSpec("context-run", "1")]
+    assert run.specs == [FakeSpec("context-run", "2")]
     assert (run.metadata["run"], run.metadata["sample_id"]) == (234277, "S1")
     assert ready["context/samples/S1"].metadata["title"] == "Cu/Pt"
 
@@ -604,13 +605,37 @@ def test_a_push_writes_the_experiments_context_into_contexts_metadata(
     assert "+ the experiment's context: summary, notes" in shown.output
     assert "Pushed 3 record(s) and the experiment's context." in shown.output
     assert ready["context"].metadata == {
-        "ipts": "IPTS-00001",
-        "written_by": "nr-workbench",
+        **header("IPTS-00001", server(project).url),
         "experiment": {
             "summary": "Does Li plate on Cu?",
             "notes": "",
         },
     }
+
+
+def test_a_push_that_changes_no_context_leaves_the_context_in_place(
+    project: Path, tiled: FakeTiled, ready: FakeNode
+) -> None:
+    """The header is merged over context/'s metadata on every push; the
+    experiment's own context there is not the header's to touch."""
+    described(project, summary="Does Li plate on Cu?")
+    pushed(project)
+    from nr_workbench.experiment.model import RunChange, RunKey
+    from nr_workbench.experiment.store import ParquetCatalogStore
+
+    ParquetCatalogStore.for_project(project).update(
+        runs=[RunChange(RunKey(234277), 1, {"note": "realigned"})], now=NOW
+    )
+
+    shown = pushed(project)
+
+    assert shown.exit_code == 0, shown.output
+    assert ready["context"].metadata["experiment"] == {
+        "summary": "Does Li plate on Cu?",
+        "notes": "",
+    }
+    status = json.loads(nrw("status", "--root", str(project), "--json").output)
+    assert status["experiment_context"]["state"] == "same"
 
 
 def test_a_changed_context_replaces_tileds_and_keeps_others_keys(
@@ -724,7 +749,7 @@ def test_the_last_writer_wins_and_another_programs_fields_stay(
     assert sample.metadata["title"] == "Cu/Pt, annealed"
     assert sample.metadata["beamline_note"] == "kept by another program"
     assert sample.specs == [
-        FakeSpec("context-sample", "1"),
+        FakeSpec("context-sample", "2"),
         FakeSpec("beamline-note", "2"),
     ]
     assert sample.tags == ["isaac", "ipts-1"]
@@ -873,9 +898,46 @@ def test_a_field_a_newer_nrw_wrote_is_left_for_it_to_push(project: Path) -> None
         samples={"S1": SampleContext("S1", title="Cu", extra={"future": object()})}
     )
 
-    (record,) = records_of(catalog)
+    (record,) = records_of(catalog, ipts="IPTS-00001", reduced={})
 
     assert "future" not in record.fields and record.fields["title"] == "Cu"
+
+
+def test_a_push_links_each_run_to_its_sample_and_its_reduced_files(
+    project: Path, tiled: FakeTiled
+) -> None:
+    """A reader without nrw follows paths: a run to its sample and to its
+    files in autoreduction/, a sample to its fits, and the header to all of
+    it."""
+    tiled.context.kept = True
+    catalogued(project)
+    experiment = reduced(tiled, {SEGMENT: b"1", COMBINED: b"2", OTHER_RUN: b"3"})
+
+    shown = pushed(project)
+
+    assert shown.exit_code == 0, shown.output
+    place = "projects/isaac/IPTS-00001"
+    run = experiment["context/runs/234277-steady"].metadata
+    assert run["ipts"] == "IPTS-00001"
+    assert run["links"] == {
+        "sample": f"{place}/context/samples/S1",
+        "data": [
+            f"{place}/autoreduction/{SEGMENT}",
+            f"{place}/autoreduction/{COMBINED}",
+        ],
+    }
+    assert experiment["context/runs/234280-steady"].metadata["links"]["data"] == [
+        f"{place}/autoreduction/{OTHER_RUN}"
+    ]
+    assert experiment["context/samples/S1"].metadata["links"] == {
+        "fits": f"{place}/analysis/S1"
+    }
+    head = experiment["context"].metadata
+    assert (head["server"], head["node"]) == (server(project).url, place)
+    assert "the fits that used a run" in head["guide"]["queries"]
+    # Status compares what a push would write: the same links.
+    status = json.loads(nrw("status", "--root", str(project), "--json").output)
+    assert len(status["records"]["same"]) == 3
 
 
 # --------------------------------------------------------------------------

@@ -16,7 +16,11 @@ fit is one container whose metadata is its record, the fit as analysed data:
 * the provenance: the reduced files as the fit read them, with their
   headers; the fit's index line, ``inputs.json``, ``manifest.json`` and
   ``env/versions.json``; the curation, each promotion's reason included; and
-  who pushed it, when.
+  who pushed it, when;
+* the links: its sample's record and its runs' records in ``context/``, and
+  for each reduced file the ``autoreduction/`` node of that name, beside
+  the sha256 of what the fit read; with ``sample_id``, ``runs``, ``labels``
+  and ``starred`` at the top, for search.
 
 The chains stay here: :mod:`nr_workbench.tiled.pull` rebuilds the fit from
 its record, and ``nrw fit run --from`` runs it again for the posterior.
@@ -31,19 +35,30 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from nr_workbench.tiled.context import Record, Remote, Tree
-
-ANALYSIS = "analysis"
+from nr_workbench.experiment.model import RunKey
+from nr_workbench.tiled.context import (
+    ANALYSIS,
+    AUTOREDUCTION,
+    CONTEXT,
+    RUNS,
+    SAMPLES,
+    Record,
+    Remote,
+    Tree,
+    path_in,
+    run_key,
+)
 
 #: What each node says it is: a spec's name, and its fields' version.
 ANALYSIS_SPEC = ("analysis-experiment", "1")
 ANALYSIS_SAMPLE_SPEC = ("analysis-sample", "1")
-FIT_SPEC = ("analysis-fit", "2")
+FIT_SPEC = ("analysis-fit", "3")
 
 #: ``analysis/``: a container per sample, and a fit's record in it.
 ANALYSIS_TREE = Tree(
@@ -111,7 +126,9 @@ class Left:
     why: str
 
 
-def fit_records(root: Path, remote: Remote) -> tuple[list[Record], list[Left]]:
+def fit_records(
+    root: Path, remote: Remote, *, ipts: str, reduced: Mapping[int, Sequence[str]]
+) -> tuple[list[Record], list[Left]]:
     """The project's fits as a push writes them over *remote*.
 
     A starred fit, or a sample's ``final``, neither discarded nor deleted, is
@@ -121,6 +138,9 @@ def fit_records(root: Path, remote: Remote) -> tuple[list[Record], list[Left]]:
     Args:
         root: Project root.
         remote: ``analysis/`` as it was read.
+        ipts: The experiment, which every link is under.
+        reduced: The reduced files in ``autoreduction/``, by run
+            (:func:`~nr_workbench.tiled.data.reduced_by_run`).
 
     Returns:
         The records, and the fits left out, each with why.
@@ -150,11 +170,20 @@ def fit_records(root: Path, remote: Remote) -> tuple[list[Record], list[Left]]:
         directory = fit_dir(layout, entry) if wanted and sample else None
         if directory is not None:
             fields = record_of(
-                entry, kept, directory, root=layout.root, pushed_at=stamp, pushed_by=who
+                entry,
+                kept,
+                directory,
+                root=layout.root,
+                pushed_at=stamp,
+                pushed_by=who,
+                ipts=ipts,
+                reduced=reduced,
             )
             records.append(Record(sample, fit_id, fields, FIT_SPEC))
         elif on_tiled:
-            records.append(Record(sample, fit_id, {"curation": kept}, FIT_SPEC))
+            # Its curation alone, and the two search keys that follow it.
+            fields = {"curation": kept, **_search_keys(kept)}
+            records.append(Record(sample, fit_id, fields, FIT_SPEC))
         elif wanted:
             why = "it has no sample" if not sample else "its files are not here"
             left.append(Left(fit_id, why))
@@ -174,6 +203,14 @@ def curation_fields(curation: Any) -> dict[str, Any]:
     return fields
 
 
+def _search_keys(curation: dict[str, Any]) -> dict[str, Any]:
+    """A fit's curation as the top-level fields a search reads."""
+    return {
+        "labels": list(curation.get("labels") or []),
+        "starred": bool(curation.get("starred")),
+    }
+
+
 def record_of(
     entry: dict[str, Any],
     curation: dict[str, Any],
@@ -182,6 +219,8 @@ def record_of(
     root: Path,
     pushed_at: str,
     pushed_by: str,
+    ipts: str,
+    reduced: Mapping[int, Sequence[str]],
 ) -> dict[str, Any]:
     """One fit's record, as Tiled holds it.
 
@@ -192,6 +231,8 @@ def record_of(
         root: Project root, where its data files are.
         pushed_at: When the push runs, ISO-8601 UTC.
         pushed_by: Who runs it.
+        ipts: The experiment, which every link is under.
+        reduced: The reduced files in ``autoreduction/``, by run.
 
     Returns:
         The record described in the module's docstring.
@@ -213,6 +254,20 @@ def record_of(
     record["fit"] = fit_files(directory)
     record["curves"] = curves(directory)
     record["data"] = data_files(root, directory, record["inputs"])
+    on_tiled = {name for names in reduced.values() for name in names}
+    for recorded, item in record["data"].items():
+        name = PurePosixPath(recorded).name
+        item["tiled"] = path_in(ipts, AUTOREDUCTION, name) if name in on_tiled else None
+    sample = str(entry.get("sample") or "")
+    runs = runs_read(record["data"])
+    record.update(_search_keys(curation))
+    record["ipts"] = ipts
+    record["sample_id"] = sample
+    record["runs"] = runs
+    record["links"] = {
+        "sample": path_in(ipts, CONTEXT, SAMPLES, sample),
+        "runs": [path_in(ipts, CONTEXT, RUNS, run_key(RunKey(run))) for run in runs],
+    }
     record["nr_workbench"] = __version__
     record["written_by"] = "nr-workbench"
     record["pushed_by"] = pushed_by
@@ -303,6 +358,14 @@ def thinned(profile: Path) -> dict[str, Any]:
         "bytes": len(text.encode("utf-8")),
         "points": len(kept),
     }
+
+
+def runs_read(data: Mapping[str, Any]) -> list[int]:
+    """The runs whose reduced files a fit read, from the files' names."""
+    from nr_workbench.tiled.data import run_of
+
+    runs = {run_of(PurePosixPath(recorded).name) for recorded in data}
+    return sorted(run for run in runs if run is not None)
 
 
 def data_files(root: Path, directory: Path, inputs: Any) -> dict[str, Any]:

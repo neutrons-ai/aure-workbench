@@ -213,17 +213,23 @@ from the shell, the project's `.env`, `~/.nrw`, then `~/.aure`.
 
 **What a push writes.** In the experiment's node, `context/` holds `runs/`
 and `samples/`, with one container per record: nrw's fields are its metadata,
-and one spec names it (`context-run` or `context-sample`, version 1).
-`context/` itself carries a header (`ipts`, `written_by`) and the spec
-`context-experiment`, and, once it is written on the Experiment page, the
-experiment's own context under `experiment`: its summary, hypotheses and
-notes, written first and merged over what is there. Samples are written
-before their runs. Other programs may read and write there too.
+and one spec names it (`context-run` or `context-sample`, version 2). Each
+record links what it is joined to, as paths on the server: a run its sample
+and its files in `autoreduction/`, a sample its fits, a fit its sample, its
+runs and each reduced file it read; `ipts`, `sample_id`, `run`, `runs`,
+`labels` and `starred` are top-level fields, for search. `context/` and
+`analysis/` each carry a header (`ipts`, `written_by`, `server`, `node`,
+and a `guide` naming each tree, its fields and the query that answers each
+usual question) and their spec, and `context/`, once it is
+written on the Experiment page, the experiment's own context under
+`experiment`: its summary and notes, written first and merged over what is
+there. Samples are written before their runs. Other programs may read and
+write there too.
 
 **Fits.** `analysis/` holds a container per sample, and one per fit in it:
 `analysis/<sample>/<fit_id>/`, for each starred fit and each sample's final
 one. Tiled 0.2.18 takes no file from a project member, so a fit's record is
-its metadata (spec `analysis-fit`, version 2). It is the fit as analysed
+its metadata (spec `analysis-fit`, version 3). It is the fit as analysed
 data, in four parts, each file as text with its sha256:
 
 - **The model**: bumps' own file of the fitted problem, `fit/<model>.json`.

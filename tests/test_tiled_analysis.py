@@ -170,7 +170,7 @@ def test_a_starred_fit_is_written_whole_where_everyone_on_it_can_read_it(
     assert experiment["analysis"].specs == [FakeSpec("analysis-experiment", "1")]
     assert experiment["analysis/S1"].metadata == {"sample_id": "S1"}
     fit = experiment[f"analysis/S1/{A}"]
-    assert fit.specs == [FakeSpec("analysis-fit", "2")]
+    assert fit.specs == [FakeSpec("analysis-fit", "3")]
     record = fit.metadata
     assert record["files"]["model.py"] == {
         "text": SCRIPT.decode(),
@@ -224,6 +224,35 @@ def test_a_record_is_the_fit_as_analysed_data(
     promotion = record["curation"]["promotions"]["final"]
     assert promotion["reason"] == "the dry reference, settled" and promotion["who"]
     assert "chains" not in json.dumps(record)
+    # Its links, and its search keys: a reader without nrw follows the paths.
+    place = "projects/isaac/IPTS-00001"
+    assert (record["ipts"], record["sample_id"], record["runs"]) == (
+        "IPTS-00001",
+        "S1",
+        [234277],
+    )
+    assert (record["labels"], record["starred"]) == (["final"], False)
+    assert record["links"] == {
+        "sample": f"{place}/context/samples/S1",
+        "runs": [f"{place}/context/runs/234277-steady"],
+    }
+    assert data["tiled"] is None, "autoreduction/ holds no such file"
+
+
+def test_a_fits_data_links_the_reduced_file_of_its_name_on_tiled(
+    project: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    fitted(project)
+    starred(project)
+    name = Path(STEADY).name
+    experiment.children["autoreduction"] = FakeNode({name: FakeNode(content=DATA)})
+
+    pushed(project)
+
+    record = experiment[f"analysis/S1/{A}"].metadata
+    assert record["data"][STEADY]["tiled"] == (
+        f"projects/isaac/IPTS-00001/autoreduction/{name}"
+    )
 
 
 def test_a_data_file_changed_since_the_fit_is_named_not_carried(
@@ -281,7 +310,7 @@ def test_a_record_replaced_says_what_it_is_now_and_keeps_others_specs(
 
     pushed(project)
 
-    assert fit.specs == [FakeSpec("analysis-fit", "2"), FakeSpec("their-spec", "3")]
+    assert fit.specs == [FakeSpec("analysis-fit", "3"), FakeSpec("their-spec", "3")]
 
 
 def test_a_second_push_writes_nothing_and_a_dry_run_writes_nothing(
@@ -329,9 +358,10 @@ def test_a_fit_unstarred_here_has_its_curation_written_and_nothing_else(
     shown = pushed(project)
 
     assert shown.exit_code == 0, shown.output
-    assert f"~ S1/{A}  (unstarred; curation)" in shown.output
+    assert f"~ S1/{A}  (unstarred; curation, starred)" in shown.output
     record = experiment[f"analysis/S1/{A}"].metadata
     assert record["curation"]["starred"] is False
+    assert record["starred"] is False, "the search key follows"
     assert "model.py" in record["files"], "the rest of the record stays"
 
 

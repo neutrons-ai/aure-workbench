@@ -56,6 +56,19 @@ def run_of(name: str) -> int | None:
     return parsed
 
 
+def reduced_by_run(experiment: Any) -> dict[int, list[str]]:
+    """The reduced files in the experiment's ``autoreduction/``, by run, in
+    name order: what a run's record and a fit's link to. Nothing when the
+    experiment has none, or none shared with this login."""
+    autoreduction = autoreduction_of(experiment)
+    by_run: dict[int, list[str]] = {}
+    for name in autoreduction or ():
+        run = run_of(name)
+        if run is not None:
+            by_run.setdefault(run, []).append(name)
+    return {run: sorted(names) for run, names in by_run.items()}
+
+
 def autoreduction_of(experiment: Any) -> Any | None:
     """The experiment node's ``autoreduction/``; ``None`` when it has none, or
     none shared with this login: the server says the same for both."""

@@ -193,7 +193,7 @@ def test_a_push_writes_the_records_and_reads_them_back(
     assert [(s.name, s.version) for s in context.specs] == [("context-experiment", "1")]
     run = context["runs/234277-steady"]
     assert (run.metadata["run"], run.metadata["condition"]) == (234277, "OCV")
-    assert [(s.name, s.version) for s in run.specs] == [("context-run", "1")]
+    assert [(s.name, s.version) for s in run.specs] == [("context-run", "2")]
     assert context["samples/S1"].metadata["title"] == "Cu/Pt"
     assert len(status["records"]["same"]) == 3 and status["only_on_tiled"] == []
 
@@ -260,11 +260,50 @@ def test_a_record_of_a_real_fits_size_is_kept_as_it_was_written(
     again = nrw(project, "push", "--only", "fits", "--dry-run")
 
     assert pushed.exit_code == 0, pushed.output
+    from nr_workbench.project.config import load_config
+
     kept = dict(on_local_tiled[f"analysis/S1/{A}"].metadata)
-    (record,), _ = fit_records(project, Remote())
+    (record,), _ = fit_records(
+        project, Remote(), ipts=load_config(project).ipts, reduced={}
+    )
     assert len(json.dumps(kept)) > 250_000
     assert kept == {**record.fields, "pushed_at": kept["pushed_at"]}
     assert "0 new, 0 changed, 1 the same" in again.output, again.output
+
+
+def test_the_guides_queries_answer_on_the_server(project: Path, on_local_tiled) -> None:
+    """What the header promises a reader without nrw: the search keys and the
+    links, through the Tiled client's own queries."""
+    from tiled.queries import Contains, Key
+
+    from nr_workbench.project.layout import ProjectLayout
+    from nr_workbench.provenance import curation
+
+    from .test_tiled_analysis import A
+
+    catalogued(project)
+    real_fit(project)
+    curation.promote(ProjectLayout(root=project), A, reason="the reference")
+    shown = nrw(project, "push", "--yes")
+
+    assert shown.exit_code == 0, shown.output
+    runs = on_local_tiled["context/runs"]
+    assert list(runs.search(Key("sample_id") == "S1")) == [
+        "234277-steady",
+        "234280-steady",
+    ]
+    assert list(runs.search(Key("run") == 234277)) == ["234277-steady"]
+    run = on_local_tiled["context/runs/234277-steady"].metadata
+    assert run["links"]["sample"].endswith("/context/samples/S1")
+    fits = on_local_tiled["analysis/S1"]
+    assert list(fits.search(Key("sample_id") == "S1")) == [A]
+    assert list(fits.search(Contains("labels", "final"))) == [A]
+    assert list(fits.search(Key("starred") == True)) == [A]  # noqa: E712 - the query
+    # Tiled 0.2.18 on SQLite has no Contains over a list of numbers; the
+    # record carries the runs for the servers that do, and for a reader.
+    assert fits[A].metadata["runs"] == [218386]
+    assert fits[A].metadata["links"]["runs"][0].endswith("/context/runs/218386-steady")
+    assert "queries" in on_local_tiled["context"].metadata["guide"]
 
 
 def test_a_fit_pushed_is_pulled_into_a_colleagues_project_as_it_was_recorded(
