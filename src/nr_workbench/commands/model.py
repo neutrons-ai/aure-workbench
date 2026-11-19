@@ -122,6 +122,7 @@ def run_preview(*, spec: str, as_json: bool = False, build: bool = False) -> Non
     Raises:
         click.ClickException: If the spec cannot be resolved.
     """
+    from nr_workbench.provenance.stack import format_layers
     from nr_workbench.spec.models import SpecError
     from nr_workbench.spec.resolve import build_table, discover_measurements
 
@@ -131,6 +132,16 @@ def run_preview(*, spec: str, as_json: bool = False, build: bool = False) -> Non
     except SpecError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    # Every distinct stack, top-level first, with the groups built from it --
+    # incident medium last, as in the spec.
+    stacks = [
+        {
+            "layers": [layer.name for layer in layers],
+            "groups": groups,
+            "top_level": index == 0,
+        }
+        for index, (layers, groups) in enumerate(model.stacks())
+    ]
     payload: dict[str, Any] = {
         "spec": str(path),
         "model": model.name,
@@ -144,6 +155,7 @@ def run_preview(*, spec: str, as_json: bool = False, build: bool = False) -> Non
             ]
             for group, measurements in table.measurements.items()
         },
+        "stacks": stacks,
         "parameters": [
             {
                 "key": p.key,
@@ -172,6 +184,14 @@ def run_preview(*, spec: str, as_json: bool = False, build: bool = False) -> Non
         times = [m.time for m in measurements if m.time is not None]
         span = f", t = {min(times):g}..{max(times):g} s" if times else ""
         click.echo(f"    {group:<12} {len(measurements):>3} measurement(s){span}")
+
+    if any(state.stack is not None for state in model.states):
+        shown = [format_layers(entry["layers"]) for entry in stacks]
+        click.echo("\n  stacks (incident medium last):")
+        width = max(len(text) for text in shown)
+        for text, entry in zip(shown, stacks, strict=True):
+            groups = ", ".join(entry["groups"]) or "(no state or series)"
+            click.echo(f"    {text:<{width}}  {groups}")
 
     click.echo(
         f"\n  {table.n_free} free parameter(s), {len(table.expressions)} constrained"

@@ -333,6 +333,7 @@ def run_aure_run(
     (setup_path.parent / RUN_ENV_FILE).write_text(
         json.dumps(overrides, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    _record_aure_commit(output)
 
     click.echo()
     code = _invoke(setup_path, output, overrides)
@@ -439,6 +440,26 @@ def _invoke(setup_path: Path, output: Path, overrides: dict[str, str]) -> int:
         raise click.ClickException(f"Could not run {binary}: {exc}") from exc
 
 
+def _record_aure_commit(output: Path) -> None:
+    """Write which AuRE commit this run uses, and which one nrw pins.
+
+    AuRE records ``git describe`` only when it runs from a checkout, and an
+    install from the pin reports a version that does not identify the commit;
+    `nrw aure import` reads this to place the run.
+    """
+    from nr_workbench.aure_adapter import pinned_commit, resolved_commit
+    from nr_workbench.aure_import import AURE_COMMIT_FILE
+
+    (output / AURE_COMMIT_FILE).write_text(
+        json.dumps(
+            {"aure_commit": resolved_commit(), "pinned_commit": pinned_commit()},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _aure_binary() -> str | None:
     """Locate the `aure` console script, preferring this interpreter's own.
 
@@ -500,6 +521,10 @@ def run_aure_import(
 ) -> None:
     """Turn a finished AuRE run into an nrw model spec.
 
+    A co-refinement of several states is imported for one of them: the state
+    holding the run, with its own structure, its own values and its own
+    probe. The other states are named as not carried over.
+
     Args:
         output_dir: The AuRE output directory.
         sample: Sample the spec belongs to.
@@ -515,13 +540,19 @@ def run_aure_import(
     """
     from nr_workbench.aure_import import (
         ImportError_,
+        aure_states,
         fitted_model,
         is_unedited_proposal,
         layer_names,
         read_final_state,
         reported_chisq,
         reported_fit,
-        run_of,
+        run_files,
+        runs_of,
+        state_fit,
+        state_holding,
+        state_model,
+        state_naming,
         to_spec,
         untranslatable,
     )
@@ -551,7 +582,17 @@ def run_aure_import(
     # The setup beside the output names the files AuRE was actually given, so
     # prefer it over asking again -- an explicit --run still wins, for the case
     # where somebody knows better than the file.
-    inferred = run if run is not None else run_of(Path(output_dir), found)
+    matches = runs_of(Path(output_dir), found) if run is None else {run}
+    if len(matches) > 1:
+        # A co-refinement of several runs: the spec holds one of its states,
+        # and which one is the person's to say.
+        listed = ", ".join(str(number) for number in sorted(matches))
+        raise click.ClickException(
+            f"The run in {output_dir} was fitted to {len(matches)} runs of "
+            f"{sample!r} ({listed}). A spec imported from it holds one of them: "
+            "pass --run to say which."
+        )
+    inferred = next(iter(matches), None)
     if run is None and inferred is None and _names_files(Path(output_dir)):
         # The setup is readable and names files, but none of them belongs to
         # this sample. Pairing AuRE's stack with another sample's states would
@@ -568,6 +609,32 @@ def run_aure_import(
         block, _, blank = state_for_run(layout.root, found.steady[chosen])
     except (SetupError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
+
+    # What the model has no field for -- each segment's intensity, the sample
+    # broadening, ranges AuRE filled in from its defaults -- is in the fit.
+    fit = reported_fit(state)
+    states = aure_states(model)
+    try:
+        holding = state_holding(model, run_files(found.steady[chosen]))
+        placed, recorded = state_naming(Path(output_dir)) if holding else (True, None)
+        if placed is False:
+            raise ImportError_(
+                f"This run co-refined {len(states)} states with AuRE {recorded}, "
+                "older than 94710c8: a layer absent from its first state was "
+                "neither tied nor named apart there, and its fitted values never "
+                "reached the states' own stacks, so one state's numbers cannot "
+                "be told from another's. Run it again with AuRE at 94710c8 or later."
+            )
+        view = state_model(model, holding, fit)
+    except ImportError_ as exc:
+        raise click.ClickException(str(exc)) from exc
+    # A single state's name prefixes nothing today, but a run stored before
+    # AuRE stopped prefixing reads the same once it is stripped.
+    named = holding or (str(states[0].get("name")) if len(states) == 1 else None)
+    fit = state_fit(fit, model, named)
+    others = [
+        str(s.get("name")) for s in states if holding and s.get("name") != holding
+    ]
 
     target = layout.sample(sample) / "models" / f"{name}.yaml"
     if target.exists() and not force:
@@ -587,11 +654,8 @@ def run_aure_import(
                 "another --name, or --force to overwrite it anyway."
             )
 
-    # What the model has no field for -- each segment's intensity, the sample
-    # broadening, ranges AuRE filled in from its defaults -- is in the fit.
-    fit = reported_fit(state)
     document = to_spec(
-        model=model,
+        model=view,
         sample=sample,
         name=name,
         states=[block],
@@ -601,7 +665,7 @@ def run_aure_import(
 
     # AuRE names layers in prose; a spec's names are identifiers. The file
     # keeps AuRE's, so the stack can still be read against AuRE's report.
-    renamed = [(aure, spec) for aure, spec in layer_names(model) if aure != spec]
+    renamed = [(aure, spec) for aure, spec in layer_names(view) if aure != spec]
     target.parent.mkdir(parents=True, exist_ok=True)
     from nr_workbench.codegen.generator import stamp_self_hash
 
@@ -621,9 +685,21 @@ def run_aure_import(
             click.echo(f"    {spec}  {aure!r}")
     warn_blank_angles(blank)
 
+    if placed is None:
+        said = f" (it records {recorded})" if recorded else ""
+        click.secho(
+            "  !  This run does not say which AuRE commit it used"
+            f"{said}, so whether it is 94710c8 or later cannot be told. Before "
+            "that commit a layer absent from a co-refinement's first state "
+            "shared one parameter name across the states, and its fitted values "
+            "never reached the states' own stacks. Check the imported values "
+            "against AuRE's own report.",
+            fg="yellow",
+        )
+
     # Anything AuRE's fit had that this spec does not. Silence here would mean
     # an unconstrained spec quoting the chi-squared of a constrained fit.
-    dropped = untranslatable(model, fit)
+    dropped = untranslatable(view, fit, state=holding, others=others)
     if dropped:
         click.secho(
             "  !  AuRE's fit carried things this spec does not express:", fg="yellow"

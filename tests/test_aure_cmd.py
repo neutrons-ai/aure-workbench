@@ -9,6 +9,7 @@ writing anything -- is exactly the part that does not.
 
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from pathlib import Path
@@ -1067,3 +1068,201 @@ def test_aure_run_refusal_omits_it_on_an_older_aure(sample: Path, monkeypatch) -
     assert result.exit_code != 0
     assert "claude_code" not in result.output
     assert "nrw check-llm" in result.output
+
+
+# --------------------------------------------------------------------------
+# A co-refinement of several states
+# --------------------------------------------------------------------------
+
+
+def _coref_run(project: Path, **run_info) -> Path:
+    """A finished two-state AuRE run over 218386 and 218393, shaped as 94710c8
+    writes it: the second state declares its own layers, without the oxide."""
+    steady = project / "samples" / "Sample1" / "data" / "steady"
+    for source in sorted(REFERENCE.glob("REFL_218393_*_partial.txt")):
+        shutil.copy(source, steady / source.name)
+
+    def files(run: int) -> list[dict]:
+        return [
+            {"file": f"/beam/{path.name}"}
+            for path in sorted(REFERENCE.glob(f"REFL_{run}_*_partial.txt"))
+        ]
+
+    model = copy.deepcopy(FITTED)
+    model["layers"].append(
+        {
+            "name": "CuOx",
+            "sld": 5.5,
+            "thickness": 30.0,
+            "roughness": 6.0,
+            "thickness_min": 10.0,
+            "thickness_max": 60.0,
+        }
+    )
+    reduced = copy.deepcopy(FITTED["layers"])
+    reduced[1]["thickness"] = 520.0
+    model["states"] = [
+        {"name": "ocv1", "data_files": files(218386)},
+        {"name": "ocv2", "data_files": files(218393), "layers": reduced},
+    ]
+    output = _finished_run(project, model)
+    (output.parent / "setup.yaml").write_text(
+        json.dumps(
+            {
+                "states": [
+                    {"name": s["name"], "data_files": s["data_files"]}
+                    for s in model["states"]
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    if run_info:
+        (output / "run_info.json").write_text(json.dumps(run_info), encoding="utf-8")
+    return output
+
+
+def _import(*extra: str):
+    return _run(
+        "aure",
+        "import",
+        "samples/Sample1/aure/Sample1-218386/output",
+        "--sample",
+        "Sample1",
+        "--name",
+        "coref",
+        *extra,
+    )
+
+
+def test_import_of_a_setup_over_several_runs_names_them(sample: Path) -> None:
+    """Not "was not fitted to any of Sample1's data files": it was fitted to two."""
+    _coref_run(sample)
+
+    result = _import()
+
+    assert result.exit_code != 0
+    assert "fitted to 2 runs of 'Sample1' (218386, 218393)" in result.output
+    assert "--run" in result.output
+    assert not (sample / "samples/Sample1/models/coref.yaml").exists()
+
+
+def test_import_takes_the_state_holding_the_run(sample: Path) -> None:
+    import yaml
+
+    _coref_run(sample)
+
+    result = _import("--run", "218393")
+
+    assert result.exit_code == 0, result.output
+    document = yaml.safe_load(
+        (sample / "samples/Sample1/models/coref.yaml").read_text(encoding="utf-8")
+    )
+    stack = {layer["name"]: layer for layer in document["stack"]}
+    assert list(stack) == ["dTHF", "Cu", "Ti", "Si"]
+    assert stack["Cu"]["thickness"] == 520.0
+    assert document["states"][0]["run"] == 218393
+    assert "state 'ocv1' not carried over" in result.output
+
+    other = _import("--run", "218386", "--force")
+    assert other.exit_code == 0, other.output
+    document = yaml.safe_load(
+        (sample / "samples/Sample1/models/coref.yaml").read_text(encoding="utf-8")
+    )
+    assert [layer["name"] for layer in document["stack"]] == [
+        "dTHF",
+        "CuOx",
+        "Cu",
+        "Ti",
+        "Si",
+    ]
+
+
+def test_import_refuses_a_co_refinement_from_an_older_aure(sample: Path) -> None:
+    _coref_run(sample, git_describe="v1.0.2-12-g4f15783", aure_version="1.0.2")
+
+    result = _import("--run", "218393")
+
+    assert result.exit_code != 0
+    assert "v1.0.2-12-g4f15783, older than 94710c8" in result.output
+    assert not (sample / "samples/Sample1/models/coref.yaml").exists()
+
+
+def test_a_single_state_run_from_an_older_aure_still_imports(sample: Path) -> None:
+    """The version only matters where states are told apart."""
+    _run("aure", "new", "Sample1")
+    output = _finished_run(sample)
+    (output / "run_info.json").write_text(
+        json.dumps({"git_describe": "v1.0.2-12-g4f15783"}), encoding="utf-8"
+    )
+
+    assert _import().exit_code == 0
+
+
+def test_run_records_which_aure_commit_it_used(
+    sample: Path, fake_aure, monkeypatch
+) -> None:
+    """AuRE records `git describe` only from a checkout; installed from the
+    pin, its version says nothing about the commit."""
+    from nr_workbench.aure_adapter import pinned_commit
+    from nr_workbench.aure_import import AURE_COMMIT_FILE
+
+    monkeypatch.setattr(
+        "nr_workbench.aure_adapter.resolved_commit", lambda: "c0ffee" + "0" * 34
+    )
+    _run("aure", "new", "Sample1")
+
+    _run("aure", "run", "samples/Sample1/aure/Sample1-218386/setup.yaml")
+
+    recorded = json.loads(
+        (
+            sample / "samples/Sample1/aure/Sample1-218386/output" / AURE_COMMIT_FILE
+        ).read_text(encoding="utf-8")
+    )
+    assert recorded == {
+        "aure_commit": "c0ffee" + "0" * 34,
+        "pinned_commit": pinned_commit(),
+    }
+
+
+def test_a_dry_run_records_no_commit(sample: Path) -> None:
+    from nr_workbench.aure_import import AURE_COMMIT_FILE
+
+    _run("aure", "new", "Sample1")
+    _run("aure", "run", "samples/Sample1/aure/Sample1-218386/setup.yaml", "--dry-run")
+
+    assert not list(sample.glob(f"samples/Sample1/aure/*/output/{AURE_COMMIT_FILE}"))
+
+
+def test_a_co_refinement_that_cannot_be_placed_is_imported_with_a_warning(
+    sample: Path,
+) -> None:
+    _coref_run(sample, aure_version="1.0.2")
+
+    result = _import("--run", "218393")
+
+    assert result.exit_code == 0, result.output
+    assert "does not say which AuRE commit it used (it records 1.0.2)" in result.output
+
+
+def test_a_co_refinement_nrw_ran_at_the_pin_imports_without_a_warning(
+    sample: Path,
+) -> None:
+    from nr_workbench.aure_import import AURE_COMMIT_FILE, STATE_NAMING_COMMIT
+
+    output = _coref_run(sample, aure_version="1.0.2")
+    (output / AURE_COMMIT_FILE).write_text(
+        json.dumps({"aure_commit": STATE_NAMING_COMMIT}), encoding="utf-8"
+    )
+
+    result = _import("--run", "218393")
+
+    assert result.exit_code == 0, result.output
+    assert "does not say which AuRE commit" not in result.output
+
+
+def test_a_single_state_run_is_never_warned_about(sample: Path) -> None:
+    _run("aure", "new", "Sample1")
+    _finished_run(sample)
+
+    assert "does not say which AuRE commit" not in _import().output

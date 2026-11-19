@@ -9,6 +9,7 @@ encode the same mistake twice.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -700,18 +701,90 @@ def test_the_reported_fit_is_the_round_behind_the_model() -> None:
         {"parameters": {"x": float(n)}, "bounds": {"x": [0, 9]}} for n in range(3)
     ]
 
-    chosen = _with_fits(MODEL, rounds, final_selection={"index": 1})
+    selected = {"selected": True, "index": 1}
+    chosen = _with_fits(MODEL, rounds, final_selection=selected)
     assert reported_fit(chosen)["parameters"] == {"x": 1.0}
     polished = _with_fits(
-        MODEL, rounds, final_selection={"index": 1}, final_fit={"adopted": True}
+        MODEL,
+        rounds,
+        final_selection=selected,
+        final_fit={"ran": True, "adopted": True},
     )
     assert reported_fit(polished)["parameters"] == {"x": 2.0}
     rejected = _with_fits(
-        MODEL, rounds, final_selection={"index": 1}, final_fit={"adopted": False}
+        MODEL,
+        rounds,
+        final_selection=selected,
+        final_fit={"ran": True, "adopted": False},
     )
     assert reported_fit(rejected)["parameters"] == {"x": 1.0}
     assert reported_fit(_with_fits(MODEL, rounds))["parameters"] == {"x": 2.0}
     assert reported_fit(_final_state(MODEL)) == {"parameters": {}, "bounds": {}}
+
+
+def test_the_reported_fit_follows_aures_own_rule() -> None:
+    """Where `aure.state.reported_fit` and a looser reading would differ."""
+    rounds = [
+        {"parameters": {"x": float(n)}, "bounds": {"x": [0, 9]}} for n in range(3)
+    ]
+    # A selection that selected nothing names no fit: the last one stands.
+    unselected = _with_fits(
+        MODEL, rounds, final_selection={"selected": False, "index": 0}
+    )
+    assert reported_fit(unselected)["parameters"] == {"x": 2.0}
+    # A polish that never ran adopted nothing, whatever its flag says.
+    never_ran = _with_fits(
+        MODEL,
+        rounds,
+        final_selection={"selected": True, "index": 1},
+        final_fit={"ran": False, "adopted": True},
+    )
+    assert reported_fit(never_ran)["parameters"] == {"x": 1.0}
+    # A restarted run appended a fit after the stamped polish, which then
+    # describes an earlier answer: the selection is reported.
+    restarted = [
+        *rounds[:2],
+        {**rounds[2], "final_fit": True},
+        {"parameters": {"x": 7.0}},
+    ]
+    later = _with_fits(
+        MODEL,
+        restarted,
+        final_selection={"selected": True, "index": 1},
+        final_fit={"ran": True, "adopted": True},
+    )
+    assert reported_fit(later)["parameters"] == {"x": 1.0}
+
+
+def test_the_reported_fit_matches_aures_on_the_same_record() -> None:
+    """The copy kept here and AuRE's own pick the same fit, case by case."""
+    state_module = pytest.importorskip("aure.state")
+    rounds = [
+        {"parameters": {"x": float(n)}, "bounds": {"x": [0, 9]}} for n in range(3)
+    ]
+    stamped = [*rounds[:2], {**rounds[2], "final_fit": True}]
+    cases = [
+        {},
+        {"final_selection": {"selected": True, "index": 1}},
+        {"final_selection": {"selected": False, "index": 0}},
+        {
+            "final_selection": {"selected": True, "index": 0},
+            "final_fit": {"ran": True, "adopted": True},
+        },
+        {
+            "final_selection": {"selected": True, "index": 0},
+            "final_fit": {"ran": True, "adopted": False},
+        },
+        {
+            "fit_results": [*stamped, {"parameters": {"x": 7.0}}],
+            "final_selection": {"selected": True, "index": 1},
+            "final_fit": {"ran": True, "adopted": True},
+        },
+    ]
+    for extra in cases:
+        payload = _with_fits(MODEL, rounds, **extra)
+        theirs, _ = state_module.reported_fit(payload["state"])
+        assert reported_fit(payload)["parameters"] == theirs["parameters"], extra
 
 
 def test_a_bound_that_is_no_range_is_not_reported() -> None:
@@ -848,3 +921,469 @@ def test_a_value_aure_held_is_held_not_freed() -> None:
     assert ranges["Cu.thickness"] == [600.0, 3200.0]
     for entry in spec["parameters"]:
         ParameterSpec(**entry)  # each one a parameter a spec takes
+
+
+# --------------------------------------------------------------------------
+# One state of a co-refinement, as AuRE 94710c8 writes it
+# --------------------------------------------------------------------------
+
+#: Copper with its oxide at OCV, the oxide reduced away under potential, in
+#: the shape AuRE 94710c8's finalize leaves it: the template holds the
+#: layers, the reduced state declares its own without the oxide, and Cu's
+#: thickness is untied so each state fits its own.
+COREF: dict = {
+    "substrate": {"name": "Si", "sld": 2.07, "roughness": 3.0},
+    "layers": [
+        {
+            "name": "Ti",
+            "sld": -1.9,
+            "thickness": 30.0,
+            "roughness": 5.0,
+            "thickness_min": 20.0,
+            "thickness_max": 40.0,
+        },
+        {
+            "name": "Cu",
+            "sld": 6.5,
+            "thickness": 350.0,
+            "roughness": 6.0,
+            "thickness_min": 300.0,
+            "thickness_max": 420.0,
+        },
+        {
+            "name": "CuOx",
+            "sld": 5.8,
+            "thickness": 50.0,
+            "roughness": 10.0,
+            "thickness_min": 10.0,
+            "thickness_max": 100.0,
+        },
+    ],
+    "ambient": {"name": "D2O", "sld": 6.3},
+    "back_reflection": True,
+    "dq_is_fwhm": True,
+    "intensity": {"value": 1.0, "min": 0.7, "max": 1.1},
+    "unshared_parameters": ["Cu.thickness"],
+    "states": [
+        {
+            "name": "ocv",
+            "data_files": [
+                {"file": "/beam/REFL_230539_1_230539_partial.txt", "label": "s1"},
+                {"file": "/beam/REFL_230539_2_230540_partial.txt", "label": "s2"},
+            ],
+        },
+        {
+            "name": "reduced",
+            "data_files": [
+                {"file": "/beam/REFL_230546_1_230546_partial.txt", "label": "s1"}
+            ],
+            "layers": [
+                {
+                    "name": "Ti",
+                    "sld": -1.9,
+                    "thickness": 31.0,
+                    "roughness": 5.0,
+                    "thickness_min": 20.0,
+                    "thickness_max": 40.0,
+                    "thickness_fixed": True,
+                },
+                {"name": "Cu", "sld": 6.5, "thickness": 358.0, "roughness": 6.0},
+            ],
+            "ambient": {"sld": 6.25},
+        },
+    ],
+}
+
+#: Its reported fit: tied parameters under `<layer> <attr>`, untied ones and
+#: the probes' under `<state> ...`. Ti's thickness is held, so not fitted.
+COREF_FIT: dict = {
+    "parameters": {
+        "Ti rho": -1.85,
+        "Ti interface": 5.5,
+        "Cu rho": 6.45,
+        "Cu interface": 7.0,
+        "Si interface": 3.0,
+        "ocv Cu thickness": 352.0,
+        "reduced Cu thickness": 361.5,
+        "ocv CuOx thickness": 48.0,
+        "ocv CuOx rho": 5.6,
+        "ocv CuOx interface": 12.0,
+        "ocv D2O rho": 6.31,
+        "reduced D2O rho": 6.27,
+        "ocv D2O interface": 4.0,
+        "reduced D2O interface": 4.5,
+        "ocv s1 intensity": 0.95,
+        "ocv s2 intensity": 1.02,
+        "reduced intensity": 0.98,
+        "ocv sample_broadening": 0.02,
+        "reduced sample_broadening": 0.03,
+    },
+    "bounds": {
+        "Ti rho": [-2.5, -1.0],
+        "Ti interface": [1.0, 15.0],
+        "Cu rho": [6.0, 6.6],
+        "Cu interface": [1.0, 20.0],
+        "ocv Cu thickness": [300.0, 420.0],
+        "reduced Cu thickness": [310.0, 430.0],
+        "ocv CuOx thickness": [10.0, 100.0],
+        "ocv CuOx rho": [4.0, 6.5],
+        "ocv CuOx interface": [3.0, 30.0],
+        "ocv D2O rho": [5.9, 6.4],
+        "reduced D2O rho": [5.8, 6.4],
+        "ocv D2O interface": [1.0, 20.0],
+        "reduced D2O interface": [1.0, 25.0],
+        "ocv s1 intensity": [0.7, 1.1],
+        "ocv s2 intensity": [0.7, 1.2],
+        "reduced intensity": [0.8, 1.1],
+        "ocv sample_broadening": [0.0, 0.05],
+        "reduced sample_broadening": [0.0, 0.06],
+    },
+}
+
+
+def import_state(state: str, model: dict | None = None, fit: dict | None = None):
+    """Translate one state of a co-refinement, as `nrw aure import` does."""
+    from nr_workbench.aure_import import state_fit, state_model
+
+    model = copy.deepcopy(model or COREF)
+    fit = copy.deepcopy(fit if fit is not None else COREF_FIT)
+    view = state_model(model, state, fit)
+    return to_spec(
+        model=view,
+        sample="S",
+        name="n",
+        states=STATES,
+        fit=state_fit(fit, model, state),
+    )
+
+
+def entries(spec: dict) -> dict[str, dict]:
+    """A spec's parameter declarations by path."""
+    return {p["path"]: p for p in spec["parameters"]}
+
+
+def stack_of(spec: dict) -> dict[str, dict]:
+    """A spec's stack entries by name."""
+    return {layer["name"]: layer for layer in spec["stack"]}
+
+
+def test_a_state_is_imported_with_its_own_structure() -> None:
+    spec = import_state("reduced")
+
+    assert [layer["name"] for layer in spec["stack"]] == ["D2O", "Cu", "Ti", "Si"]
+
+
+def test_the_state_with_the_template_keeps_its_oxide() -> None:
+    spec = import_state("ocv")
+
+    assert [layer["name"] for layer in spec["stack"]] == [
+        "D2O",
+        "CuOx",
+        "Cu",
+        "Ti",
+        "Si",
+    ]
+    assert stack_of(spec)["CuOx"]["thickness"] == 48.0
+    assert spec["materials"]["CuOx"]["rho"] == 5.6
+
+
+def test_values_are_the_states_own_then_the_shared_then_the_stored() -> None:
+    spec = import_state("reduced")
+
+    layers = stack_of(spec)
+    assert layers["Cu"]["thickness"] == 361.5  # `reduced Cu thickness`
+    assert spec["materials"]["Cu"]["rho"] == 6.45  # tied: `Cu rho`
+    assert spec["materials"]["D2O"]["rho"] == 6.27  # `reduced D2O rho`
+    assert layers["D2O"]["roughness"] == 4.5  # the ambient's own interface
+    assert layers["Ti"]["thickness"] == 31.0  # held, so not fitted: stored
+
+    fit = copy.deepcopy(COREF_FIT)
+    fit["parameters"]["reduced Cu rho"] = 6.40
+    assert import_state("reduced", fit=fit)["materials"]["Cu"]["rho"] == 6.40
+
+
+def test_a_bound_under_the_states_name_makes_a_free_parameter() -> None:
+    """The reduced state's own Cu declares no window; its fit has one, under
+    the state's name -- where a lookup of `Cu thickness` alone missed it."""
+    parameters = entries(import_state("reduced"))
+
+    assert parameters["Cu.thickness"]["range"] == [310.0, 430.0]
+    assert parameters["D2O.rho"]["range"] == [5.8, 6.4]
+    assert parameters["D2O.roughness"]["range"] == [1.0, 25.0]
+    assert parameters["Cu.rho"]["range"] == [6.0, 6.6]
+    assert "CuOx.thickness" not in parameters
+
+
+def test_only_the_states_own_probe_is_imported() -> None:
+    reduced = entries(import_state("reduced"))
+    assert reduced["probe.intensity"] == {
+        "path": "probe.intensity",
+        "value": 0.98,
+        "per": "state",
+        "range": [0.8, 1.1],
+    }
+    assert reduced["probe.sample_broadening"]["value"] == 0.03
+    assert reduced["probe.sample_broadening"]["range"] == [0.0, 0.06]
+
+    ocv = entries(import_state("ocv"))
+    assert ocv["probe.intensity"]["per"] == "measurement"
+    assert ocv["probe.intensity"]["value"] == 1.02  # the median of ocv's two
+    assert ocv["probe.intensity"]["range"] == [0.7, 1.2]
+    assert ocv["probe.sample_broadening"]["value"] == 0.02
+
+
+def test_a_value_the_state_holds_is_not_freed() -> None:
+    """The reported failure: a Ti thickness AuRE held (`thickness_fixed`) was
+    imported free over its window."""
+    spec = import_state("reduced")
+
+    assert "Ti.thickness" not in entries(spec)
+    assert stack_of(spec)["Ti"]["thickness"] == 31.0
+
+
+def test_a_tied_value_another_state_holds_is_held_here_at_its_value() -> None:
+    """AuRE holds a tied parameter in every state when any one holds it. The
+    OCV state's template Ti has a window, and would be freed by it."""
+    spec = import_state("ocv")
+
+    assert "Ti.thickness" not in entries(spec)
+    assert stack_of(spec)["Ti"]["thickness"] == 31.0
+
+
+def test_an_untied_value_another_state_holds_stays_free_here() -> None:
+    model = copy.deepcopy(COREF)
+    model["states"][1]["layers"][1]["thickness_fixed"] = True
+
+    assert entries(import_state("ocv", model=model))["Cu.thickness"]["range"] == [
+        300.0,
+        420.0,
+    ]
+
+
+def test_a_held_substrate_roughness_holds_the_layer_touching_it() -> None:
+    """In back reflection the substrate boundary is the touching layer's
+    interface, and AuRE holds that one in its place."""
+    layer = {**MODEL["layers"][0], "roughness_min": 1.0, "roughness_max": 9.0}
+    model = {
+        **MODEL,
+        "layers": [layer, MODEL["layers"][1]],
+        "substrate": {**MODEL["substrate"], "roughness_fixed": True},
+    }
+
+    spec = to_spec(model=model, sample="S", name="n", states=STATES)
+
+    assert "Ti.roughness" not in entries(spec)
+
+
+@pytest.mark.parametrize("key", ["sld", "thickness", "roughness"])
+def test_every_held_key_is_honoured(key: str) -> None:
+    window = {f"{key}_min": 0.5, f"{key}_max": 900.0, f"{key}_fixed": True}
+    layer = {**MODEL["layers"][1], **window}
+    model = {**MODEL, "layers": [MODEL["layers"][0], layer]}
+
+    spec = to_spec(model=model, sample="S", name="n", states=STATES)
+
+    attribute = {"sld": "rho"}.get(key, key)
+    assert f"Cu.{attribute}" not in entries(spec)
+
+
+def test_the_states_not_carried_are_listed() -> None:
+    from nr_workbench.aure_import import state_fit, state_model
+
+    view = state_model(copy.deepcopy(COREF), "reduced", COREF_FIT)
+    notes = untranslatable(
+        view, state_fit(COREF_FIT, COREF, "reduced"), state="reduced", others=["ocv"]
+    )
+
+    assert any(note.startswith("state 'ocv' not carried over") for note in notes)
+
+
+def test_the_state_holding_a_run_is_found_by_its_files() -> None:
+    from nr_workbench.aure_import import state_holding
+
+    files = {"REFL_230546_1_230546_partial.txt", "REFL_230546_2_230547_partial.txt"}
+    assert state_holding(COREF, files) == "reduced"
+    assert state_holding(MODEL, files) is None  # one state: nothing to choose
+
+
+def test_a_run_no_state_holds_or_several_hold_is_refused() -> None:
+    from nr_workbench.aure_import import state_holding
+
+    with pytest.raises(ImportError_, match="none of them holds"):
+        state_holding(COREF, {"REFL_999999_1_999999_partial.txt"})
+
+    shared = copy.deepcopy(COREF)
+    shared["states"][1]["data_files"].append(shared["states"][0]["data_files"][0])
+    with pytest.raises(ImportError_, match="'ocv', 'reduced' of this AuRE run"):
+        state_holding(shared, {"REFL_230539_1_230539_partial.txt"})
+
+
+def test_a_per_file_intensity_reads_as_one_states() -> None:
+    from nr_workbench.aure_import import state_fit
+
+    scoped = state_fit(COREF_FIT, COREF, "ocv")["parameters"]
+
+    assert scoped["intensity s1"] == 0.95
+    assert "reduced intensity" not in scoped and "intensity" not in scoped
+    assert "Cu thickness" in scoped and scoped["Cu thickness"] == 352.0
+
+
+def test_a_legacy_single_states_prefix_is_read_through() -> None:
+    """Before AuRE stopped prefixing a single state's names, a run with a
+    nuisance parameter stored `state0 Cu thickness`."""
+    from nr_workbench.aure_import import state_fit
+
+    model = {**MODEL, "states": [{"name": "state0"}]}
+    fit = {
+        "parameters": {"state0 Cu thickness": 510.0, "state0 intensity": 0.97},
+        "bounds": {"state0 Cu thickness": [400.0, 600.0]},
+    }
+
+    scoped = state_fit(fit, model, "state0")
+
+    assert scoped["parameters"] == {"Cu thickness": 510.0, "intensity": 0.97}
+
+
+@pytest.mark.parametrize(
+    ("info", "placed"),
+    [
+        ({"git_describe": "v1.0.2-12-g4f15783", "aure_version": "1.0.2"}, False),
+        ({"git_describe": "v1.0.2", "aure_version": "1.0.2"}, False),
+        ({"git_describe": "v1.0.1-40-gabcdef0"}, False),
+        ({"git_describe": "v1.0.2-31-g94710c8"}, True),
+        ({"git_describe": "v1.0.2-33-g1234567-dirty"}, True),
+        ({"git_describe": "v1.0.3"}, True),
+        ({"aure_version": "1.0.1"}, False),
+        ({"aure_version": "0.1.0"}, False),
+        ({"aure_version": "1.1.0"}, True),
+        # 1.0.2 is reported on both sides of the commit: it cannot be placed.
+        ({"aure_version": "1.0.2"}, None),
+        ({}, None),
+    ],
+)
+def test_where_a_run_stands_from_what_aure_records(
+    tmp_path: Path, info: dict, placed: bool | None
+) -> None:
+    from nr_workbench.aure_import import state_naming
+
+    (tmp_path / "run_info.json").write_text(json.dumps(info), encoding="utf-8")
+
+    assert state_naming(tmp_path)[0] is placed
+
+
+def test_a_run_recording_nothing_cannot_be_placed(tmp_path: Path) -> None:
+    from nr_workbench.aure_import import state_naming
+
+    assert state_naming(tmp_path) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("ran", "placed"),
+    [
+        # The commit itself, as an install from the pin records it.
+        ({"aure_commit": "94710c8e6667c53febc582e5fc87a895c7338c54"}, True),
+        # The commit nrw pinned when it ran: never older, for an nrw that
+        # records this file.
+        ({"aure_commit": "aa" * 20, "pinned_commit": "aa" * 20}, True),
+        # A commit nrw does not know, on a 1.0.2 install: no telling.
+        ({"aure_commit": "bb" * 20, "pinned_commit": "aa" * 20}, None),
+        ({"aure_commit": None, "pinned_commit": "aa" * 20}, None),
+    ],
+)
+def test_the_commit_nrw_recorded_places_an_installed_aure(
+    tmp_path: Path, ran: dict, placed: bool | None
+) -> None:
+    """An install from the pin records no `git describe`, and reports 1.0.2."""
+    from nr_workbench.aure_import import AURE_COMMIT_FILE, state_naming
+
+    (tmp_path / "run_info.json").write_text(
+        json.dumps({"aure_version": "1.0.2"}), encoding="utf-8"
+    )
+    (tmp_path / AURE_COMMIT_FILE).write_text(json.dumps(ran), encoding="utf-8")
+
+    verdict, recorded = state_naming(tmp_path)
+
+    assert verdict is placed
+    assert recorded == (ran["aure_commit"] or "1.0.2")
+
+
+def test_an_unknown_commit_falls_back_to_what_aure_records(tmp_path: Path) -> None:
+    from nr_workbench.aure_import import AURE_COMMIT_FILE, state_naming
+
+    (tmp_path / "run_info.json").write_text(
+        json.dumps({"git_describe": "v1.0.2-12-g4f15783"}), encoding="utf-8"
+    )
+    (tmp_path / AURE_COMMIT_FILE).write_text(
+        json.dumps({"aure_commit": "4f15783" + "0" * 33}), encoding="utf-8"
+    )
+
+    assert state_naming(tmp_path) == (False, "v1.0.2-12-g4f15783")
+
+
+def test_the_pinned_commit_is_the_one_nrw_requires() -> None:
+    import tomllib
+
+    from nr_workbench.aure_adapter import pinned_commit
+
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    dependencies = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+        "dependencies"
+    ]
+    [aure] = [d for d in dependencies if d.startswith("aure")]
+
+    assert pinned_commit() == aure.rsplit("@", 1)[1]
+
+
+def _renamed(model: dict, fit: dict, names: dict[str, str]) -> tuple[dict, dict]:
+    """*model* and *fit* with states renamed, their fitted names with them."""
+    model = copy.deepcopy(model)
+    for state in model["states"]:
+        state["name"] = names.get(state["name"], state["name"])
+
+    def rename(values: dict) -> dict:
+        out = {}
+        for name, value in values.items():
+            for old, new in names.items():
+                if name.startswith(f"{old} "):
+                    name = f"{new} {name[len(old) + 1 :]}"
+                    break
+            out[name] = value
+        return out
+
+    return model, {key: rename(values) for key, values in fit.items()}
+
+
+def test_a_state_whose_name_begins_anothers_keeps_its_own_values() -> None:
+    """`ocv 2 Cu thickness` starts with `ocv `: read by prefix, importing
+    `ocv 2` dropped its own values, and importing `ocv` took `ocv 2`'s
+    intensity for a third segment of its own."""
+    model, fit = _renamed(COREF, COREF_FIT, {"reduced": "ocv 2"})
+
+    second = import_state("ocv 2", model=model, fit=fit)
+    first = import_state("ocv", model=model, fit=fit)
+
+    assert stack_of(second)["Cu"]["thickness"] == 361.5
+    assert second["materials"]["D2O"]["rho"] == 6.27
+    assert entries(second)["Cu.thickness"]["range"] == [310.0, 430.0]
+    assert entries(second)["probe.intensity"]["value"] == 0.98
+    assert entries(second)["probe.sample_broadening"]["value"] == 0.03
+
+    assert stack_of(first)["Cu"]["thickness"] == 352.0
+    assert entries(first)["probe.intensity"]["value"] == 1.02
+    assert entries(first)["probe.intensity"]["range"] == [0.7, 1.2]
+    assert entries(first)["probe.sample_broadening"]["value"] == 0.02
+
+
+def test_a_state_named_like_a_layer_keeps_the_shared_name() -> None:
+    """A state `Cu` must not read the shared `Cu rho` as its own `rho`."""
+    from nr_workbench.aure_import import state_fit
+
+    model, fit = _renamed(COREF, COREF_FIT, {"ocv": "Cu"})
+
+    scoped = state_fit(fit, model, "Cu")["parameters"]
+    spec = import_state("Cu", model=model, fit=fit)
+
+    assert scoped["Cu rho"] == 6.45 and scoped["Cu thickness"] == 352.0
+    assert "rho" not in scoped and "thickness" not in scoped
+    assert spec["materials"]["Cu"]["rho"] == 6.45
+    assert stack_of(spec)["Cu"]["thickness"] == 352.0

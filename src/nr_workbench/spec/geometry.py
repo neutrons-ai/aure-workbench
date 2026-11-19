@@ -21,6 +21,10 @@ So the rule here is: **ordering is the mechanism, and ``back_reflection`` is an
 assertion about it.** Declaring it does not change the model; it makes a
 contradiction between what you said and how you ordered the stack fail before
 the fit rather than after two of them.
+
+A state that declares its own stack has its own ordering, so each stack is
+read on its own -- and checked against its own states' data. A hand-written
+state stack is the likeliest one to be written upside down.
 """
 
 from __future__ import annotations
@@ -99,16 +103,17 @@ def _kind(layer: Any) -> str:
     return "unknown"
 
 
-def read_geometry(spec: Any) -> Geometry | None:
+def read_geometry(spec: Any, stack: list[Any] | None = None) -> Geometry | None:
     """Infer the measurement geometry from the stack's own order.
 
     Args:
         spec: A parsed ``ModelSpec``.
+        stack: The stack to read; ``None`` reads the top-level one.
 
     Returns:
         The geometry, or ``None`` for a stack too short to have two ends.
     """
-    layers = list(getattr(spec, "stack", None) or [])
+    layers = list(stack if stack is not None else getattr(spec, "stack", None) or [])
     if len(layers) < 2:
         return None
 
@@ -136,7 +141,13 @@ def read_geometry(spec: Any) -> Geometry | None:
     )
 
 
-def critical_edge_side(spec: Any, table: Any, root: Path) -> str | None:
+def critical_edge_side(
+    spec: Any,
+    table: Any,
+    root: Path,
+    stack: list[Any] | None = None,
+    groups: list[str] | None = None,
+) -> str | None:
     """Which ordering the measured critical edge supports, if it can tell.
 
     Total reflection happens only when the beam goes from low SLD to high, so
@@ -146,13 +157,18 @@ def critical_edge_side(spec: Any, table: Any, root: Path) -> str | None:
     did by hand --- "Qc = 0.01515 implies a backing SLD of 6.6, i.e. the Cu" ---
     after the two wasted fits rather than before them.
 
-    Deliberately reads only the first data file with numpy, so validation gains
-    no dependency on AuRE's feature extraction for a question this simple.
+    Deliberately reads only one data file with numpy -- the first of the
+    groups built from the stack -- so validation gains no dependency on
+    AuRE's feature extraction for a question this simple.
 
     Args:
         spec: A parsed ``ModelSpec``.
         table: The resolved parameter table, for a measurement to read.
         root: Project root.
+        stack: The stack to check; ``None`` checks the top-level one.
+        groups: The states and series built from *stack*, whose data says
+            which ordering is right. ``None`` reads the first measurement of
+            the whole problem.
 
     Returns:
         ``"as ordered"``, ``"reversed"``, or ``None`` when the data cannot say
@@ -161,12 +177,13 @@ def critical_edge_side(spec: Any, table: Any, root: Path) -> str | None:
     """
     import numpy as np
 
-    geometry = read_geometry(spec)
+    geometry = read_geometry(spec, stack)
     if geometry is None:
         return None
 
+    layers = stack if stack is not None else getattr(spec, "stack", None) or []
     rho = {}
-    for layer in getattr(spec, "stack", None) or []:
+    for layer in layers:
         material = (getattr(spec, "materials", None) or {}).get(
             getattr(layer, "material_key", "")
         )
@@ -191,7 +208,13 @@ def critical_edge_side(spec: Any, table: Any, root: Path) -> str | None:
     reverse_qc = predicted_qc(geometry.backing)
 
     measurement = next(
-        (m for group in table.measurements.values() for m in group), None
+        (
+            m
+            for group, members in table.measurements.items()
+            if groups is None or group in groups
+            for m in members
+        ),
+        None,
     )
     if measurement is None:
         return None

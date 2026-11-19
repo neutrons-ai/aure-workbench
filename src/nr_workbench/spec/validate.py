@@ -77,6 +77,7 @@ def validate_spec(spec: ModelSpec, root: Path) -> ValidationReport:
         return report
 
     report.warnings.extend(table.warnings)
+    _note_stacks(spec, report)
     _check_materials(spec, report)
     _check_files_exist(table, root, report)
     _check_degrees_of_freedom(table, root, report)
@@ -105,13 +106,54 @@ def _note_unread_fit_block(spec: ModelSpec, report: ValidationReport) -> None:
         )
 
 
+def _note_stacks(spec: ModelSpec, report: ValidationReport) -> None:
+    """Say which states declare their own stack and which inherit the top level.
+
+    Silent when no state declares one: then there is one stack, and nothing
+    to tell apart.
+    """
+    declaring = [state.name for state in spec.states if state.stack is not None]
+    if not declaring:
+        return
+    inheriting = [group for group in spec.group_names if group not in declaring]
+    report.info.append(
+        f"stacks: {', '.join(declaring)} "
+        f"{'declares its' if len(declaring) == 1 else 'declare their'} own; "
+        + (
+            f"{', '.join(inheriting)} "
+            f"{'inherits' if len(inheriting) == 1 else 'inherit'} the top-level stack"
+            if inheriting
+            else "none inherits the top-level stack"
+        )
+    )
+    if not spec.stacks()[0][1]:
+        report.warnings.append(
+            "no state or series is built from the top-level `stack:` -- every "
+            "state declares its own. A reader takes the top-level stack for the "
+            "model's structure, so make it the stack one of the states uses, and "
+            "drop that state's own."
+        )
+
+
+def _built_from(groups: list[str]) -> str:
+    """The groups a stack is built for, as a phrase."""
+    return f"the stack of {', '.join(groups)}"
+
+
 def _check_materials(spec: ModelSpec, report: ValidationReport) -> None:
-    """Every layer must name a material that exists."""
-    for layer in spec.stack:
-        if layer.material_key not in spec.materials:
+    """Every layer of every stack must name a material that exists."""
+    known = ", ".join(sorted(spec.materials)) or "(none)"
+    reported: set[tuple[str, str]] = set()
+    for index, (layers, groups) in enumerate(spec.stacks()):
+        where = f" in {_built_from(groups)}" if index else ""
+        for layer in layers:
+            missing = (layer.name, layer.material_key)
+            if layer.material_key in spec.materials or missing in reported:
+                continue
+            reported.add(missing)
             report.errors.append(
-                f"layer {layer.name!r} uses material {layer.material_key!r}, which is "
-                f"not defined. Known: {', '.join(sorted(spec.materials)) or '(none)'}."
+                f"layer {layer.name!r}{where} uses material {layer.material_key!r}, "
+                f"which is not defined. Known: {known}."
             )
 
 
@@ -209,29 +251,42 @@ def _check_unfitted(
 
     Reported at info, with the value, because fixing an attribute is normal
     and deliberate --- what is not normal is not knowing you did.
+
+    One line per stack in use: an attribute is held where no state or series
+    built from that stack fits it, and a state's own stack starts it at its
+    own value.
     """
-    touched = {(slot.path.owner, slot.path.attr) for slot in table.slots}
+    stacks = [(layers, groups) for layers, groups in spec.stacks() if groups]
+    for layers, groups in stacks:
+        touched = {
+            (slot.path.owner, slot.path.attr)
+            for slot in table.slots
+            if slot.measurement.group in groups
+        }
 
-    held: list[str] = []
-    for index, layer in enumerate(spec.stack):
-        # The substrate is conventionally fixed; the ambient has no thickness.
-        if index == len(spec.stack) - 1:
-            continue
-        attributes = (
-            ["roughness", "rho"] if index == 0 else ["thickness", "roughness", "rho"]
-        )
-        for attr in attributes:
-            if (layer.name, attr) in touched:
+        held: list[str] = []
+        for index, layer in enumerate(layers):
+            # The substrate is conventionally fixed; the ambient has no thickness.
+            if index == len(layers) - 1:
                 continue
-            value = _starting_value(spec, layer, attr)
-            held.append(
-                f"{layer.name}.{attr}={value:g}"
-                if value is not None
-                else f"{layer.name}.{attr}"
+            attributes = (
+                ["roughness", "rho"]
+                if index == 0
+                else ["thickness", "roughness", "rho"]
             )
+            for attr in attributes:
+                if (layer.name, attr) in touched:
+                    continue
+                value = _starting_value(spec, layer, attr)
+                held.append(
+                    f"{layer.name}.{attr}={value:g}"
+                    if value is not None
+                    else f"{layer.name}.{attr}"
+                )
 
-    if held:
-        report.info.append(HELD_AT_DEFAULTS + ", ".join(held))
+        if held:
+            where = f" (in {_built_from(groups)})" if len(stacks) > 1 else ""
+            report.info.append(HELD_AT_DEFAULTS + ", ".join(held) + where)
 
 
 def _starting_value(spec: ModelSpec, layer: Layer, attr: str) -> float | None:
@@ -305,43 +360,67 @@ def _check_geometry(spec, table, root: Path, report: ValidationReport) -> None:
 
     Stated as info even when correct. A geometry nobody mentioned is the state
     the mistake hides in, so the report always says which end the beam enters.
+
+    Each stack in use is checked on its own, against the data of the states
+    built from it: a state's own stack can be the one written upside down.
+    And the stacks must agree with each other -- one cell is measured from
+    one side.
     """
     from nr_workbench.spec.geometry import critical_edge_side, read_geometry
 
-    geometry = read_geometry(spec)
-    if geometry is None:
-        return
-
+    stacks = [(layers, groups) for layers, groups in spec.stacks() if groups]
     declared = getattr(spec.probe, "back_reflection", None)
-    implied = geometry.back_reflection
-    entering = (
-        "through the substrate (back reflection)"
-        if implied
-        else "from the ambient side"
-        if implied is False
-        else "from an end this cannot classify"
-    )
-    report.info.append(
-        f"beam enters {geometry.incident} last in the stack, i.e. {entering}; "
-        f"{geometry.backing} is the backing"
-    )
-
-    if declared is not None and implied is not None and declared != implied:
-        report.errors.append(
-            f"probe.back_reflection is {str(declared).lower()}, but the stack is "
-            f"ordered with {geometry.incident} last -- and refl1d takes the last "
-            f"entry as the medium the beam is incident from, so this stack says "
-            f"{str(implied).lower()}. Reorder the stack, or correct the flag. "
-            "back_reflection does not reorder anything for you: the order IS the "
-            "geometry, and this flag only asserts what you meant by it."
+    sides: dict[bool, list[str]] = {}
+    for layers, groups in stacks:
+        geometry = read_geometry(spec, layers)
+        if geometry is None:
+            continue
+        which = f" ({_built_from(groups)})" if len(stacks) > 1 else ""
+        implied = geometry.back_reflection
+        entering = (
+            "through the substrate (back reflection)"
+            if implied
+            else "from the ambient side"
+            if implied is False
+            else "from an end this cannot classify"
         )
-        return
+        report.info.append(
+            f"beam enters {geometry.incident} last in the stack, i.e. {entering}; "
+            f"{geometry.backing} is the backing{which}"
+        )
+        if implied is not None:
+            sides.setdefault(implied, []).append(
+                f"{_built_from(groups)} puts {geometry.incident} last"
+            )
 
-    verdict = critical_edge_side(spec, table, root)
-    if verdict == "reversed":
+        if declared is not None and implied is not None and declared != implied:
+            report.errors.append(
+                f"probe.back_reflection is {str(declared).lower()}, but the stack"
+                f"{which} is ordered with {geometry.incident} last -- and refl1d "
+                "takes the last entry as the medium the beam is incident from, so "
+                f"this stack says {str(implied).lower()}. Reorder the stack, or "
+                "correct the flag. back_reflection does not reorder anything for "
+                "you: the order IS the geometry, and this flag only asserts what "
+                "you meant by it."
+            )
+            continue
+
+        verdict = critical_edge_side(spec, table, root, layers, groups)
+        if verdict == "reversed":
+            report.errors.append(
+                f"the data contradict the stack order{which}. With "
+                f"{geometry.incident} last the model predicts the opposite of the "
+                "total-reflection plateau the measurement actually shows. Reverse "
+                "the stack: refl1d takes the last entry as the medium the beam "
+                "enters from."
+            )
+
+    if len(sides) > 1:
         report.errors.append(
-            f"the data contradict the stack order. With {geometry.incident} last "
-            "the model predicts the opposite of the total-reflection plateau the "
-            "measurement actually shows. Reverse the stack: refl1d takes the last "
-            "entry as the medium the beam enters from."
+            "the stacks disagree about which side the beam enters: "
+            f"{'; '.join(sides[True])} (through the substrate), while "
+            f"{'; '.join(sides[False])} (from the ambient side). One cell is "
+            "measured from one side, so one of these stacks is upside down. "
+            "Reverse it: refl1d takes the last entry as the medium the beam "
+            "enters from."
         )

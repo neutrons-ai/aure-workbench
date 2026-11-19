@@ -185,6 +185,43 @@ def test_the_frozen_spec_answers_when_there_is_no_export(tmp_path: Path) -> None
     assert stack.from_fit_dir(tmp_path) == "D2O|Cu|Si"
 
 
+def test_the_frozen_spec_reports_every_stack_its_states_are_built_from(
+    tmp_path: Path,
+) -> None:
+    """A state that declares its own stack fits a second structure; the
+    label must not report only the top-level one."""
+    pytest.importorskip("yaml")
+    (tmp_path / "spec.yaml").write_text(
+        "schema: nrw-model/1\nname: m\nstack:\n"
+        "  - {name: D2O}\n  - {name: CuOx}\n  - {name: Cu}\n  - {name: Si}\n"
+        "states:\n"
+        "  - {name: ocv}\n"
+        "  - name: reduced\n"
+        "    stack: [{name: D2O}, {name: Cu}, {name: Si}]\n"
+        "  - name: again\n"
+        "    stack: [{name: D2O}, {name: Cu}, {name: Si}]\n"
+        "series:\n"
+        "  - {name: tnr}\n",
+        encoding="utf-8",
+    )
+
+    assert stack.from_fit_dir(tmp_path) == "D2O|CuOx|Cu|Si / D2O|Cu|Si"
+
+
+def test_the_frozen_spec_omits_a_top_level_stack_no_state_uses(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("yaml")
+    (tmp_path / "spec.yaml").write_text(
+        "stack: [{name: D2O}, {name: CuOx}, {name: Si}]\n"
+        "states:\n"
+        "  - {name: a, stack: [{name: D2O}, {name: Si}]}\n",
+        encoding="utf-8",
+    )
+
+    assert stack.from_fit_dir(tmp_path) == "D2O|Si"
+
+
 def test_a_directory_with_neither_source_says_nothing(tmp_path: Path) -> None:
     assert stack.from_fit_dir(tmp_path) == ""
 

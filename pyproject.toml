@@ -45,11 +45,26 @@ classifiers = [
 # that way: the PyPI name `aure` is taken by an unrelated project, so there is
 # no version of this that ends in `pip install nr-workbench`.
 #
-# Currently 487a31d, which is the v1.0.2 release (reports 1.0.2). A SHA
-# rather than the tag, for the reason above -- main moves between releases
-# and we track it, so a tag would only be accurate until the next commit.
-# Moved from d6e38e4 on 2026-09-21 because
-# AuRE now READS `_autoreduction.dat` ITSELF. Until this bump, nrw and AuRE
+# Currently 94710c8, 31 commits past the v1.0.2 release (it still reports
+# 1.0.2, which is why the SHA is what identifies it). What nrw relies on there:
+#
+# * A state may declare its own `layers` / `substrate`. A tied parameter --
+#   including one of a layer only some states have -- is named
+#   `<layer> <attr>`; an untied one `<state> <layer> <attr>`; `finalize`
+#   writes untied state-only values back into `current_model.states[]`.
+#   `aure_import.py` reads exactly that shape.
+# * A single-state run prefixes no parameter name: `Cu thickness`,
+#   `intensity <file>`, `sample_broadening`.
+# * `<key>_fixed` (`sld_fixed`, `thickness_fixed`, `roughness_fixed`), or a
+#   window with `<key>_min == <key>_max`, holds a parameter out of the fit.
+# * Two layers of one stack with the same name are refused when the problem
+#   is built, so a fitted name never means two parameters.
+# * `aure.state.reported_fit` picks the fit a run reports; `aure_import.py`
+#   keeps its own copy of that rule, because it reads final_state.json
+#   without importing AuRE.
+#
+# The pin before it, 487a31d (v1.0.2 itself), is where
+# AuRE READS `_autoreduction.dat` ITSELF. Until that bump, nrw and AuRE
 # disagreed about the same files: nrw's `PARTIAL_RE` matches both reduction
 # dialects, so `nrw sample scan` called them per-angle segments, while AuRE saw
 # no instrument claiming them and read each as a complete curve with dQ as FWHM
@@ -98,7 +113,7 @@ dependencies = [
   "refl1d>=1.0,<2",
   "bumps>=1.0,<2",
   "periodictable>=2.0",
-  "aure @ git+https://github.com/neutrons-ai/aure.git@487a31dcc3d3c65580b6c6c880c1c47a195055a0",
+  "aure @ git+https://github.com/neutrons-ai/aure.git@94710c8e6667c53febc582e5fc87a895c7338c54",
 ]
 
 [project.optional-dependencies]

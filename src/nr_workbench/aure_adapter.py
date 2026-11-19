@@ -196,6 +196,29 @@ def resolved_commit() -> str | None:
     return str(commit) if commit else None
 
 
+def pinned_commit() -> str | None:
+    """Return the AuRE commit this nr-workbench requires, if it pins one.
+
+    Read from nr-workbench's own installed metadata -- the ``aure @ git+...@<sha>``
+    requirement -- so nothing of AuRE is imported.
+
+    Returns:
+        The commit, or ``None`` if the requirement names none.
+    """
+    import re
+    from importlib.metadata import PackageNotFoundError, requires
+
+    try:
+        requirements = requires("nr-workbench") or []
+    except PackageNotFoundError:
+        return None
+    for requirement in requirements:
+        match = re.match(r"^aure\s*@\s*\S+@([0-9a-f]{7,40})\s*(?:;|$)", requirement)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
 def contract() -> dict[str, list[str]]:
     """Check that every AuRE function this package calls still exists.
 

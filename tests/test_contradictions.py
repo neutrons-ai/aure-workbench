@@ -415,3 +415,70 @@ def test_an_unknown_implied_change_is_no_opinion(tmp_path, value) -> None:
     found = check(spec, tnr=assessment(implied=value)).contradictions
 
     assert [c for c in found if "template" in c.kind] == []
+
+
+#: A second state with the oxide reduced away, declared as its own stack.
+REDUCED_STATE = """\
+  - name: s2
+    run: 100002
+    segments: auto
+    thetas: [0.45]
+    stack:
+      - {name: dTHF, thickness: 0, roughness: 5}
+      - {name: Cu, thickness: 520, roughness: 20}
+      - {name: Si}
+"""
+
+
+def spec_with_reduced_state(parameters: str, tmp_path: Any) -> Any:
+    """The template spec, plus a state built without the oxide."""
+    text = (
+        SPEC.replace("@PARAMETERS@", parameters)
+        .replace("@CONSTRAINTS@", "")
+        .replace(
+            "  - {name: s1, run: 100001, segments: auto, thetas: [0.45]}\n",
+            "  - {name: s1, run: 100001, segments: auto, thetas: [0.45]}\n"
+            + REDUCED_STATE,
+        )
+    )
+    path = tmp_path / "m.yaml"
+    path.write_text(text, encoding="utf-8")
+    return load_spec(path)
+
+
+def test_a_pin_in_one_state_is_compared_with_that_states_own_stack(tmp_path) -> None:
+    """A pin on the reduced state's copper is measured against the 520 A its
+    own stack declares, never the top-level 500 A it was not built from."""
+    parameters = (
+        DEFAULT_PARAMETERS + "  - {path: Cu.thickness, fixed: 1500, in: [s2]}\n"
+    )
+    spec = spec_with_reduced_state(parameters, tmp_path)
+
+    found = [c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"]
+
+    assert [c.evidence for c in found] == ["pinned 1500 vs stack 520"]
+    assert "while the stack of s2 declares 520" in found[0].message
+
+
+def test_a_pin_is_compared_with_every_stack_it_applies_in(tmp_path) -> None:
+    parameters = DEFAULT_PARAMETERS + "  - {path: Cu.thickness, fixed: 1500}\n"
+    spec = spec_with_reduced_state(parameters, tmp_path)
+
+    found = [c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"]
+
+    assert sorted(c.evidence for c in found) == [
+        "pinned 1500 vs stack 500",
+        "pinned 1500 vs stack 520",
+    ]
+
+
+def test_a_pin_agreeing_with_its_own_state_stack_is_silent(tmp_path) -> None:
+    """The reduced state's bare copper roughness is 20 A in its own stack and
+    5 A in the top-level one: a pin at 20 agrees with the stack it is fitted
+    in, and four times the other is no disagreement."""
+    parameters = DEFAULT_PARAMETERS + "  - {path: Cu.roughness, fixed: 20, in: [s2]}\n"
+    spec = spec_with_reduced_state(parameters, tmp_path)
+
+    assert [
+        c for c in check(spec).contradictions if c.kind == "pin-contradicts-stack"
+    ] == []

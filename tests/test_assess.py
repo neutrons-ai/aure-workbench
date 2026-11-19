@@ -622,6 +622,52 @@ def test_a_layer_thicker_than_its_interfaces_is_not_flagged(tmp_path: Path) -> N
     ] == []
 
 
+def test_a_states_own_stack_names_its_rows(tmp_path: Path) -> None:
+    """A state built without the oxide has its copper in the oxide's row of the
+    top-level stack; naming the rows from that stack would report its copper
+    as "CuOx"."""
+    spec = SPEC_YAML.replace(
+        "states: [{name: s1, run: 100001, segments: auto, thetas: [0.45]}]",
+        "states:\n"
+        "  - {name: s1, run: 100001, segments: auto, thetas: [0.45]}\n"
+        "  - name: s2\n"
+        "    run: 100002\n"
+        "    segments: auto\n"
+        "    thetas: [0.45]\n"
+        "    stack:\n"
+        "      - {name: A, thickness: 0, roughness: 20}\n"
+        "      - {name: Cu, thickness: 15, roughness: 13}\n"
+        "      - {name: Si}",
+    )
+    write_fit(tmp_path, par={}, bounds={})
+    (tmp_path / "spec.yaml").write_text(spec, encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "info": {
+                    "models": [
+                        {"index": 1, "name": "s1#0"},
+                        {"index": 2, "name": "s2#0"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_slabs(
+        tmp_path,
+        "m-1-slabs.dat",
+        [(0, 8, 5.88), (48.3, 14.1, 4.0), (486.5, 5.05, 6.30), (0, 0, 2.07)],
+    )
+    write_slabs(tmp_path, "m-2-slabs.dat", [(0, 20, 6.0), (15, 13, 6.3), (0, 0, 2.07)])
+
+    findings = check(tmp_path, manifest()).findings
+
+    flagged = [f for f in findings if f.kind == "layer-swallowed"]
+    assert [f.parameter for f in flagged] == ["s2 Cu"]
+    assert flagged[0].message.startswith("Cu fitted to 15 A")
+
+
 def test_correlated_parameters_are_reported_with_the_strongest_first(
     tmp_path: Path,
 ) -> None:

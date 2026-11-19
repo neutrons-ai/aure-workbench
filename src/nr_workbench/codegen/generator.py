@@ -22,6 +22,7 @@ import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 
+from nr_workbench.spec.models import Layer, ModelSpec
 from nr_workbench.spec.resolve import ParameterTable, trim_for
 
 #: Written into the header so `nrw check` can tell a hand-edited script from a
@@ -288,7 +289,14 @@ def _instrument_helpers(table: ParameterTable) -> str:
 
 
 def _stack(table: ParameterTable) -> str:
-    """The sample factory: one stack definition, instantiated per measurement."""
+    """The sample factories, each instantiated once per measurement.
+
+    ``create_sample()`` builds the top-level stack. Each further distinct
+    stack -- a state's own ``stack:`` -- gets a factory named after the first
+    state declaring it, ``create_sample_<state>()``; states declaring the same
+    stack share it. A layer that appears in several stacks is the same layer:
+    PASS 3 assigns its parameters by name, whichever factory built it.
+    """
     spec = table.spec
     lines = [
         "# --- stack " + "-" * 64,
@@ -302,10 +310,46 @@ def _stack(table: ParameterTable) -> str:
         "    measurement geometry, not a presentation choice. For a solid/liquid",
         "    cell measured through the wafer, the substrate belongs last.",
         '    """',
+        *_factory_body(spec, spec.stack),
     ]
 
-    for name in spec.layer_names:
-        layer = spec.layer(name)
+    for name, layers, groups in _factories(spec)[1:]:
+        states = ", ".join(repr(group) for group in groups)
+        lines += [
+            "",
+            "",
+            f"def {name}():",
+            f'    """Build the stack state{"s" if len(groups) > 1 else ""} '
+            f"{states} declare{'' if len(groups) > 1 else 's'} "
+            "under `stack:`.",
+            "",
+            "    The same order rule: the LAST entry is the medium the neutron is",
+            "    incident from. A layer named as in another stack is the same",
+            "    layer, and shares its parameters by name.",
+            '    """',
+            *_factory_body(spec, layers),
+        ]
+
+    # `probe.back_reflection` deliberately emits nothing. It used to write a
+    # comment here, which read as though declaring it did something -- it did
+    # not, and an inverted stack with the flag set still fit upside down. It is
+    # now an assertion checked in `spec/validate.py` against the ordering and
+    # against the measured critical edge, and the ordering above is the whole
+    # of the mechanism.
+    return "\n".join(lines)
+
+
+def _factory_body(spec: ModelSpec, layers: list[Layer]) -> list[str]:
+    """The lines of one sample factory after its docstring.
+
+    Each layer is bound to its own identifier, none of them ``SLD``, which the
+    factory calls: two layers sharing one would build both slabs from the
+    second's material.
+    """
+    idents = _unique_idents([layer.name for layer in layers], {"SLD"})
+    lines = []
+    for layer, ident in zip(layers, idents, strict=True):
+        name = layer.name
         material = spec.materials.get(layer.material_key)
         if material is None:
             raise ValueError(
@@ -317,25 +361,36 @@ def _stack(table: ParameterTable) -> str:
         # `nrw aure import` was chosen by a language model, and repr is correct
         # whatever `_NAME_RE` happens to allow rather than only while it stays
         # strict.
-        lines.append(f"    {_ident(name)} = SLD({name!r}, rho={material.rho!r}{irho})")
+        lines.append(f"    {ident} = SLD({name!r}, rho={material.rho!r}{irho})")
 
     lines.append("")
     parts = []
-    for i, name in enumerate(spec.layer_names):
-        layer = spec.layer(name)
-        if i == len(spec.layer_names) - 1:
-            parts.append(_ident(name))  # substrate is semi-infinite
+    for i, (layer, ident) in enumerate(zip(layers, idents, strict=True)):
+        if i == len(layers) - 1:
+            parts.append(ident)  # substrate is semi-infinite
         else:
-            parts.append(f"{_ident(name)}({layer.thickness!r}, {layer.roughness!r})")
+            parts.append(f"{ident}({layer.thickness!r}, {layer.roughness!r})")
     lines.append("    return " + " | ".join(parts))
+    return lines
 
-    # `probe.back_reflection` deliberately emits nothing. It used to write a
-    # comment here, which read as though declaring it did something -- it did
-    # not, and an inverted stack with the flag set still fit upside down. It is
-    # now an assertion checked in `spec/validate.py` against the ordering and
-    # against the measured critical edge, and the ordering above is the whole
-    # of the mechanism.
-    return "\n".join(lines)
+
+def _factories(spec: ModelSpec) -> list[tuple[str, list[Layer], list[str]]]:
+    """Each sample factory: its name, its stack, and the groups built from it.
+
+    The first is always ``create_sample``, for the top-level stack. Two state
+    names can map to one identifier (``ocv-1`` and ``ocv_1``); a suffix keeps
+    the second factory from silently replacing the first.
+    """
+    stacks = spec.stacks()
+    names = _unique_idents(
+        [f"create_sample_{groups[0]}" for _, groups in stacks[1:]], {"create_sample"}
+    )
+    return [
+        (name, layers, groups)
+        for name, (layers, groups) in zip(
+            ["create_sample", *names], stacks, strict=True
+        )
+    ]
 
 
 def _experiments(table: ParameterTable) -> str:
@@ -347,6 +402,9 @@ def _experiments(table: ParameterTable) -> str:
     it -- and position is a fragile thing to rely on. The name also becomes the
     title of bumps' own plots.
     """
+    factory = {
+        group: name for name, _, groups in _factories(table.spec) for group in groups
+    }
     lines = [
         "# --- experiments " + "-" * 58,
         "",
@@ -362,7 +420,7 @@ def _experiments(table: ParameterTable) -> str:
             lines += [
                 f"_probe = create_probe("
                 f"PROJECT_ROOT / {m.file!r}, {m.theta!r}{cuts}){comment}",
-                "_sample = create_sample()",
+                f"_sample = {factory.get(group, 'create_sample')}()",
                 f"EXP[{group!r}].append("
                 f"Experiment(sample=_sample, probe=_probe, name={m.key!r}))",
                 f"SAMPLES[{group!r}].append(_sample)",
@@ -570,9 +628,37 @@ def _main_guard() -> str:
 
 
 def _ident(name: str) -> str:
-    """Turn a layer name into a valid Python identifier."""
-    cleaned = "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+    """Turn a name into an ASCII Python identifier.
+
+    ASCII only, because Python's rule for the rest is uneven: it takes ``é``,
+    refuses ``₂`` (``D₂O`` is a SyntaxError), and binds an identifier after
+    NFKC normalisation, so ``xⅡ`` and ``xII`` would be one name. Every
+    character but an ASCII letter, digit or underscore becomes ``_``, so the
+    identifier written is the one Python binds.
+    """
+    cleaned = "".join(
+        c if c.isascii() and (c.isalnum() or c == "_") else "_" for c in name
+    )
     return cleaned if not cleaned[0].isdigit() else f"_{cleaned}"
+
+
+def _unique_idents(names: list[str], taken: set[str]) -> list[str]:
+    """One identifier per name, none equal to another or to one in *taken*.
+
+    Two names can become one identifier (``Cu-1`` and ``Cu_1``); the later is
+    suffixed ``_2``, ``_3`` and so on, rather than replacing the earlier.
+    """
+    used = set(taken)
+    found = []
+    for name in names:
+        base = _ident(name)
+        ident, count = base, 1
+        while ident in used:
+            count += 1
+            ident = f"{base}_{count}"
+        used.add(ident)
+        found.append(ident)
+    return found
 
 
 def stamp_self_hash(source: str) -> str:

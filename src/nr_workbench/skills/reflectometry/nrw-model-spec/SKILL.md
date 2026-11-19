@@ -1,9 +1,9 @@
 ---
 name: nrw-model-spec
 description: >
-  Write an nrw-model/1 spec: one layer stack, any number of steady-state
-  states and time-resolved series, with the parameter sharing stated rather
-  than hand-coded.
+  Write an nrw-model/1 spec: one layer stack, which a state may replace with
+  its own, any number of steady-state states and time-resolved series, with
+  the parameter sharing stated rather than hand-coded.
   USE FOR: creating or editing a model, deciding how a parameter should be
   shared, expressing multi-angle co-refinement, debugging a validation error.
   DO NOT USE FOR: choosing a constraint form for a time series (see
@@ -33,6 +33,9 @@ The equivalent spec is 62 lines and produces a numerically identical problem.
 Three ideas carry the design.
 
 **One stack, many states.** Declare the layers once; states instantiate them.
+A state whose structure differs -- a layer gone, a layer formed -- declares its
+own complete `stack`; every other state, and every series, uses the top-level
+one. Parameters are shared by layer name across stacks.
 
 **Parameter identity is the primitive.** Every slot — `(state, measurement,
 attribute)` — declares *which parameter object* it reads, with `per`:
@@ -87,6 +90,57 @@ against the measured critical edge.
 
 The thickness and roughness here are the **starting values**. `range` says
 where a parameter may go; the stack says where it starts.
+
+### 2b. A layer present in only some states gets that state's own stack
+
+An oxide reduced away under potential, an SEI that forms only after cycling, a
+swollen layer with no dry counterpart: the states do not share one structure.
+Give the state that differs its own complete `stack`, under the same order rule
+-- incident medium last:
+
+```yaml
+stack:                       # the top-level stack; ocv is built from it
+  - {name: D2O,  material: D2O,  thickness: 0,   roughness: 5}
+  - {name: CuOx, material: CuOx, thickness: 50,  roughness: 10}
+  - {name: Cu,   material: Cu,   thickness: 350, roughness: 5}
+  - {name: Si,   material: Si}
+states:
+  - {name: ocv, run: 230539, segments: auto, data_dir: samples/S1/data/steady}
+  - name: reduced
+    run: 230546
+    segments: auto
+    data_dir: samples/S1/data/steady
+    stack:                   # complete, and without the oxide
+      - {name: D2O, material: D2O, thickness: 0,   roughness: 5}
+      - {name: Cu,  material: Cu,  thickness: 358, roughness: 5}
+      - {name: Si,  material: Si}
+```
+
+- **Never fake an absent layer** by pinning its thickness at zero and its SLD at
+  its neighbour's. It is the same structure only while every pin holds, every
+  reader has to be told the layer is not really there, `nrw check` reports the
+  pins as contradicting the stack, and model.md tables a layer that does not
+  exist.
+- **A layer keeps its name in every stack, because sharing is by name.** `Cu`
+  in both stacks is one copper: `Cu.rho` `per: model` is one SLD for both
+  states. Renamed in one stack (`Cu_bare`), it is a different layer, and
+  nothing is shared with it.
+- **A layer path reaches only the states built with it.** `CuOx.thickness`
+  `per: state` with no `in:` is a parameter of `ocv` alone. An `in:` naming
+  `reduced` for it is an error rather than a skip, and so is a constraint
+  anchored at a state without the layer.
+- **Each stack gives its own starting values.** `Cu.thickness` `per: state`
+  starts at 350 in `ocv` and 358 in `reduced`. A `per: model` or `per: angle`
+  parameter is one number, so when its stacks start it differently it needs a
+  `value:`; validation will not pick one.
+- **A series has no stack of its own**: it always uses the top-level one. Put
+  the structure the series measures at the top level, and give the steady
+  states that differ their own.
+- **Each stack is checked on its own.** `nrw model validate` reads every stack's
+  geometry against its own states' data, and refuses two stacks entering from
+  opposite sides -- one cell is measured from one side. It warns when no state
+  is built from the top-level stack, because that is the one a reader takes for
+  the model.
 
 ### 3. Set the probe convention
 
@@ -346,6 +400,8 @@ is a reason, not by default.
 | "The validator complains a constraint anchors on a constant — I'll just fix the bounds." | Read it again: it means the endpoint state has no free parameter for that path, so the interpolation would run between two fixed numbers and freeze every slice. That looks like a working fit and is not one. |
 | "`post_build` is easier than working out the schema." | It is supported, but every use is flagged, and it is a report that the schema is missing something real. Say what you needed. |
 | "I'll copy the spec and change a number for the variant." | Good — that is the intended workflow. Two files, two hashes, two sets of results. |
+| "Pinning the oxide at zero thickness and the copper SLD in that state is the same as removing it." | Numerically, while every pin holds. But the stack still shows the oxide, `nrw check` flags the pins, and every reader has to be told. A state `stack` without the layer says what you mean. |
+| "I'll call the copper `Cu_bare` in the state without the oxide, to keep them apart." | Then it is a different layer: its SLD, thickness and roughness share nothing with `Cu`. Sharing is by name, so the same layer keeps the same name in every stack. |
 
 ## Red Flags
 
@@ -366,6 +422,10 @@ is a reason, not by default.
 - A band-edge cut expressed in `q_min`/`q_max` across several angles — the same
   physical cut is a different Q in each, so at most one of them is right.
 - `dq_scale` moved to improve χ² rather than to match a measured resolution.
+- A layer faked away in one state -- thickness pinned at zero, SLD pinned at a
+  neighbour's -- instead of a state `stack` without it.
+- One layer under two names in two stacks.
+- A state `stack` written in the other order from the top-level one.
 
 ## Verification
 
@@ -376,3 +436,8 @@ is a reason, not by default.
 - [ ] The generated script's `_check_links()` passes: `python <model>.py`.
 - [ ] `resolution` and `dq_is_fwhm` match the convention used for earlier fits.
 - [ ] Any constraint's `from`/`to` states have that path free.
+- [ ] When a state declares its own stack, `nrw model validate` names which
+      states declare one and which inherit the top-level stack --
+      `stacks: reduced declares its own; ocv inherits the top-level stack` --
+      and that is the split you intended; `nrw model preview` lists each stack
+      with the states built from it.

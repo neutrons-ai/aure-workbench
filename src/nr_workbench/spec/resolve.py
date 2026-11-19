@@ -759,8 +759,10 @@ def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
     for parameter in spec.parameters:
         path = parameter.parsed
         _check_owner_exists(spec, path, parameter.path)
+        targets = _targets_for(spec, table, parameter)
+        _check_one_start(spec, parameter, path, [group for group, _ in targets])
 
-        for group, index in _targets_for(spec, table, parameter):
+        for group, index in targets:
             measurements = table.measurements.get(group, [])
             if index is not None:
                 selected = [m for m in measurements if m.index == index]
@@ -799,7 +801,9 @@ def _add_free_parameters(spec: ModelSpec, table: ParameterTable) -> None:
                         continue
 
                 claims[identity] = (rank, key, measurement, path)
-                _create_free(table, key, path, parameter, spec, label=label)
+                _create_free(
+                    table, key, path, parameter, spec, label=label, group=group
+                )
 
     for _, key, measurement, path in claims.values():
         table.slots.append(Slot(measurement, path, key, "P"))
@@ -911,6 +915,63 @@ def _add_free_per_slice(
     )
 
 
+def _starting_value(
+    spec: ModelSpec, parameter: ParameterSpec, path: ParameterPath, group: str
+) -> float:
+    """Where a declaration starts in *group*: its ``value``, else the group's stack.
+
+    The stack declares the starting guess; ``range`` declares where it may go.
+    So an unspecified value comes from the stack the group is built from, and
+    the range midpoint is only a fallback for when that value lies outside the
+    bounds (which bumps would reject).
+    """
+    if parameter.value is not None:
+        return parameter.value
+    value = _stack_default(spec, path, group)
+    if parameter.range is not None and not (
+        parameter.range[0] <= value <= parameter.range[1]
+    ):
+        value = _midpoint(parameter)
+    return value
+
+
+def _check_one_start(
+    spec: ModelSpec, parameter: ParameterSpec, path: ParameterPath, groups: list[str]
+) -> None:
+    """Refuse a shared parameter whose stacks disagree about where it starts.
+
+    A ``per: model`` or ``per: angle`` parameter is one number in every group it
+    reaches. When those groups are built from different stacks that give the
+    layer different starting values, there is no single start to take, and
+    taking the first would make the result depend on the order the states are
+    listed in.
+
+    Raises:
+        SpecError: If the starts differ and the declaration gives no ``value``.
+    """
+    if parameter.per not in ("model", "angle") or path.is_probe:
+        return
+    if parameter.value is not None or (
+        parameter.is_fixed and not isinstance(parameter.fixed, bool)
+    ):
+        return
+    starts: dict[float, list[str]] = {}
+    for group in dict.fromkeys(groups):
+        starts.setdefault(_starting_value(spec, parameter, path, group), []).append(
+            group
+        )
+    if len(starts) < 2:
+        return
+    listed = "; ".join(
+        f"{value:g} in {', '.join(members)}" for value, members in starts.items()
+    )
+    raise SpecError(
+        f"{parameter.path} is `per: {parameter.per}`, one parameter, but the "
+        f"stacks it reaches start it at different values ({listed}). Give it "
+        "a `value:`, or make the stacks agree."
+    )
+
+
 def _create_free(
     table: ParameterTable,
     key: str,
@@ -919,23 +980,13 @@ def _create_free(
     spec: ModelSpec,
     *,
     label: str,
+    group: str,
 ) -> None:
     """Create one free (or fixed) parameter if it does not already exist."""
     if table.free_by_key(key) is not None:
         return
 
-    # The stack declares the starting guess; `range` declares where it may go.
-    # So an unspecified value comes from the stack, and the range midpoint is
-    # only a fallback for when the stack value lies outside the bounds (which
-    # bumps would reject).
-    value = parameter.value
-    if value is None:
-        value = _stack_default(spec, path)
-        if (
-            parameter.range is not None
-            and not parameter.range[0] <= value <= parameter.range[1]
-        ):
-            value = _midpoint(parameter)
+    value = _starting_value(spec, parameter, path, group)
 
     if parameter.is_fixed:
         # `fixed: 31.2` pins to that number; `fixed: true` pins to `value` (or the
@@ -1049,6 +1100,7 @@ def _resolve_endpoint(
     if not endpoint:
         return None
     if endpoint != FREE_ENDPOINT:
+        _check_endpoint_has_layer(spec, path, endpoint, constraint)
         return _endpoint_key(table, path, endpoint, constraint)
 
     key = f"{path.render()}@{constraint.series}:{role}"
@@ -1088,7 +1140,7 @@ def _free_endpoint_bounds(
     """
     if constraint.endpoint_range is not None:
         low, high = constraint.endpoint_range
-        return _stack_default(spec, path), (float(low), float(high))
+        return _stack_default(spec, path, constraint.series), (float(low), float(high))
 
     rendered = path.render()
     for parameter in table.free:
@@ -1098,7 +1150,10 @@ def _free_endpoint_bounds(
     for declared in spec.parameters:
         if declared.path == rendered and declared.range is not None:
             low, high = declared.range
-            return _stack_default(spec, path), (float(low), float(high))
+            return _stack_default(spec, path, constraint.series), (
+                float(low),
+                float(high),
+            )
 
     raise SpecError(
         f"constraint on {rendered} across {constraint.series!r} fits a free "
@@ -1116,8 +1171,28 @@ def _anchor_bounds(
         anchor = table.free_by_key(f"{path.render()}@{constraint.from_}")
         if anchor is not None:
             return anchor.value, anchor.bounds
-    value = _stack_default(spec, path)
+    value = _stack_default(spec, path, constraint.series)
     return value, None
+
+
+def _check_endpoint_has_layer(
+    spec: ModelSpec, path: ParameterPath, group: str, constraint: Constraint
+) -> None:
+    """Refuse an endpoint state whose own stack has no such layer.
+
+    Raises:
+        SpecError: If *group* is a state built without the path's layer.
+    """
+    if path.is_probe or group not in spec.group_names:
+        return
+    if spec.layer(path.owner, group) is not None:
+        return
+    raise SpecError(
+        f"constraint on {path.render()} across {constraint.series!r} anchors at "
+        f"state {group!r}, whose stack has no layer {path.owner!r} "
+        f"({', '.join(layer.name for layer in spec.stack_for(group))}). Anchor "
+        "that end at a state whose stack has the layer, or write `free` to fit it."
+    )
 
 
 def _endpoint_key(
@@ -1152,14 +1227,17 @@ def _endpoint_key(
 
 
 def _expand_paths(spec: ModelSpec, constraint: Constraint) -> list[ParameterPath]:
-    """Expand a constraint's path globs against the stack."""
+    """Expand a constraint's path globs against the stack.
+
+    That is the top-level stack: the one every series is built from.
+    """
     resolved: list[ParameterPath] = []
     seen: set[str] = set()
 
     for pattern in constraint.paths:
         if "*" not in pattern and "?" not in pattern:
             path = ParameterPath.parse(pattern)
-            _check_owner_exists(spec, path, pattern)
+            _check_owner_exists(spec, path, pattern, group=constraint.series)
             if path.render() not in seen:
                 seen.add(path.render())
                 resolved.append(path)
@@ -1192,6 +1270,11 @@ def _targets_for(
     (``ocv1#2``). The second form is what expresses "this segment differs",
     and it outranks the group form.
 
+    A layer path with no ``in`` reaches only the groups whose stack has the
+    layer, whatever its ``per``: a layer a state was built without is not a
+    parameter of that state. One whose ``in`` names such a group is a mistake
+    rather than a restriction, and is refused.
+
     Args:
         spec: The model spec.
         table: The table being built, for measurement counts.
@@ -1201,10 +1284,16 @@ def _targets_for(
         Pairs of (group name, index or None for the whole group).
 
     Raises:
-        SpecError: If a target names an unknown group or an out-of-range index.
+        SpecError: If a target names an unknown group, an out-of-range index,
+            or a group whose stack has no such layer.
     """
+    path = parameter.parsed
     if parameter.in_ is None:
-        return [(group, None) for group in spec.group_names]
+        return [
+            (group, None)
+            for group in spec.group_names
+            if path.is_probe or spec.layer(path.owner, group) is not None
+        ]
 
     targets: list[tuple[str, int | None]] = []
     for entry in parameter.in_:
@@ -1213,6 +1302,16 @@ def _targets_for(
             raise SpecError(
                 f"{parameter.path}: `in` names unknown state/series {group!r}. "
                 f"Known: {', '.join(spec.group_names)}."
+            )
+        if not path.is_probe and spec.layer(path.owner, group) is None:
+            kind = "series" if spec.series_by_name(group) is not None else "state"
+            raise SpecError(
+                f"{parameter.path}: `in` names {kind} {group!r}, whose stack has no "
+                f"layer {path.owner!r} "
+                f"({', '.join(layer.name for layer in spec.stack_for(group))}). "
+                f"Leave {group!r} out: a layer is a parameter only of the groups "
+                "built with it, and with no `in:` at all the parameter reaches "
+                "exactly those."
             )
         if not suffix:
             targets.append((group, None))
@@ -1237,16 +1336,35 @@ def _targets_for(
     return targets
 
 
-def _check_owner_exists(spec: ModelSpec, path: ParameterPath, original: str) -> None:
-    """Fail clearly when a path names a layer that is not in the stack."""
+def _check_owner_exists(
+    spec: ModelSpec, path: ParameterPath, original: str, *, group: str | None = None
+) -> None:
+    """Fail clearly when a path names a layer that is not in the stack.
+
+    Args:
+        spec: The model spec.
+        path: The parsed path.
+        original: The path as written, for the message.
+        group: The state or series whose stack must have the layer. ``None``
+            accepts a layer any state or series is built with.
+
+    Raises:
+        SpecError: If no such stack has the layer.
+    """
     if path.is_probe:
         return
-    if spec.layer(path.owner) is None:
-        suggestion = _closest(path.owner, spec.layer_names)
+    if group is not None:
+        names = [layer.name for layer in spec.stack_for(group)]
+        where = f"the stack {group!r} is built from"
+    else:
+        names = spec.layers_in_use()
+        where = "the stack" if len(spec.stacks()) == 1 else "any state's stack"
+    if path.owner not in names:
+        suggestion = _closest(path.owner, names)
         hint = f" Did you mean {suggestion!r}?" if suggestion else ""
         raise SpecError(
-            f"{original!r} names layer {path.owner!r}, which is not in the stack "
-            f"({', '.join(spec.layer_names)}).{hint}"
+            f"{original!r} names layer {path.owner!r}, which is not in {where} "
+            f"({', '.join(names)}).{hint}"
         )
 
 
@@ -1305,18 +1423,42 @@ def _double_assignment_message(
         f"parameter and once by a constraint:\n\n{listed}\n"
     )
 
-    if in_series and state_names:
-        scoped = ", ".join(state_names)
-        example = sorted(in_series)[0]
-        return (
-            head + "\nEach is declared `per: state` with no `in:`, which scopes it to "
+    # Scoped to the states whose stack has each layer: naming one built
+    # without it in `in:` is refused, so the advice must not suggest it.
+    scopes = {
+        rendered: [
+            state
+            for state in state_names
+            if slot.path.is_probe or spec.layer(slot.path.owner, state) is not None
+        ]
+        for rendered, slot in sorted(in_series.items())
+    }
+    if in_series and all(scopes.values()):
+        why = (
+            "\nEach is declared `per: state` with no `in:`, which scopes it to "
             "every group -- including the series the constraint already owns.\n\n"
-            f"Add `in: [{scoped}]` to {'each' if len(in_series) > 1 else 'it'}:\n\n"
-            f"    - {{path: {example}, ..., per: state, in: [{scoped}]}}\n\n"
+        )
+        tail = (
             "The constraint then supplies the series' values. Deleting the "
             "declarations instead would lose their ranges -- which the "
             "constraint borrows for a `free` endpoint -- and removing them from "
             "the constraint's `paths` would leave the series unconstrained."
+        )
+        if len({tuple(scope) for scope in scopes.values()}) == 1:
+            scoped = ", ".join(next(iter(scopes.values())))
+            example = next(iter(scopes))
+            return (
+                head + why + f"Add `in: [{scoped}]` to "
+                f"{'each' if len(in_series) > 1 else 'it'}:\n\n"
+                f"    - {{path: {example}, ..., per: state, in: [{scoped}]}}\n\n" + tail
+            )
+        lines = "\n".join(
+            f"    - {{path: {rendered}, ..., per: state, in: [{', '.join(scope)}]}}"
+            for rendered, scope in scopes.items()
+        )
+        return (
+            head + why + "Scope each to the states whose stack has its layer:\n\n"
+            f"{lines}\n\n" + tail
         )
 
     return (
@@ -1326,8 +1468,17 @@ def _double_assignment_message(
     )
 
 
-def _stack_default(spec: ModelSpec, path: ParameterPath) -> float:
-    """The starting value a path takes from the stack definition."""
+def _stack_default(
+    spec: ModelSpec, path: ParameterPath, group: str | None = None
+) -> float:
+    """The starting value a path takes from the stack definition.
+
+    Args:
+        spec: The model spec.
+        path: The parameter path.
+        group: The state or series whose stack to read; ``None`` reads the
+            top-level stack.
+    """
     if path.is_probe:
         return {
             "intensity": 1.0,
@@ -1335,7 +1486,7 @@ def _stack_default(spec: ModelSpec, path: ParameterPath) -> float:
             "theta_offset": 0.0,
             "sample_broadening": 0.0,
         }.get(path.attr, 0.0)
-    layer = spec.layer(path.owner)
+    layer = spec.layer(path.owner, group)
     if layer is None:
         return 0.0
     if path.attr == "thickness":

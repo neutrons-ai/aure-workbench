@@ -50,9 +50,9 @@ def build_schema() -> dict[str, Any]:
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     schema["title"] = SCHEMA_VERSION
     schema["description"] = (
-        "A neutron reflectometry model: one layer stack, any number of "
-        "steady-state states and time-resolved series, with functional "
-        "constraints across a series."
+        "A neutron reflectometry model: one layer stack, which a state may "
+        "replace with its own, any number of steady-state states and "
+        "time-resolved series, with functional constraints across a series."
     )
     return schema
 

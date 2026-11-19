@@ -488,7 +488,13 @@ def aure_run_command(**kwargs: object) -> None:
 @click.argument("output_dir", type=click.Path(exists=True, file_okay=False))
 @click.option("--sample", required=True, help="Sample the spec belongs to.")
 @click.option("--name", required=True, help="Model name; also the filename.")
-@click.option("--run", type=int, default=None, help="Which steady run it fitted.")
+@click.option(
+    "--run",
+    type=int,
+    default=None,
+    help="Which steady run it fitted; for a co-refinement of several, the run "
+    "whose state to import.",
+)
 @click.option("--force", is_flag=True, help="Overwrite an existing spec.")
 @click.option(
     "--replace-unedited",
@@ -502,6 +508,9 @@ def aure_import_command(**kwargs: object) -> None:
     This is where an AuRE run stops being reconnaissance: everything after it
     -- generate, fit run, assess, promote -- is the normal path, and the fit
     that counts is the one `nrw fit run` records.
+
+    A co-refinement of several states is imported for one of them: the state
+    holding the run, with its own layers, values and probe.
     """
     from nr_workbench.commands.aure_cmd import run_aure_import
 

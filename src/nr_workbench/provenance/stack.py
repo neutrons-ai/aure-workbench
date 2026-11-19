@@ -37,8 +37,8 @@ from typing import Any
 SEPARATOR = "|"
 
 #: Distinct stacks in one co-refinement, when a problem genuinely fits more
-#: than one structure. Rare --- a spec declares one stack and instantiates it
-#: per state --- but a real co-refinement of two structures must not silently
+#: than one structure --- a state that declares its own stack, say, because a
+#: layer is gone in it. A co-refinement of two structures must not silently
 #: report only the first.
 BETWEEN_MODELS = " / "
 
@@ -171,6 +171,10 @@ def _from_spec(directory: Path) -> str:
     The fallback's fallback, and the only one available for a fit that failed
     before bumps exported anything --- which is exactly the fit somebody is
     trying to tell apart from the one before it.
+
+    Every stack the spec builds, in the order its states and then its series
+    first use each: a state's own ``stack`` when it declares one, the
+    top-level stack otherwise.
     """
     path = directory / "spec.yaml"
     if not path.is_file():
@@ -186,13 +190,29 @@ def _from_spec(directory: Path) -> str:
     stack = payload.get("stack")
     if not isinstance(stack, list):
         return ""
-    return format_layers(
-        [
-            str(layer.get("name") or layer.get("material") or "")
-            for layer in stack
-            if isinstance(layer, dict)
-        ]
-    )
+    groups = [
+        entry
+        for key in ("states", "series")
+        for entry in payload.get(key) or []
+        if isinstance(entry, dict)
+    ]
+    stacks = [
+        entry["stack"] if isinstance(entry.get("stack"), list) else stack
+        for entry in groups
+    ] or [stack]
+
+    seen: dict[str, None] = {}
+    for layers in stacks:
+        text = format_layers(
+            [
+                str(layer.get("name") or layer.get("material") or "")
+                for layer in layers
+                if isinstance(layer, dict)
+            ]
+        )
+        if text:
+            seen.setdefault(text, None)
+    return BETWEEN_MODELS.join(seen)
 
 
 def _dig(payload: Any, *keys: str) -> Any:

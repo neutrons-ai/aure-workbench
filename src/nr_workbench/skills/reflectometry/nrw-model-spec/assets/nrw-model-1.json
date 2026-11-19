@@ -638,7 +638,7 @@
     },
     "State": {
       "additionalProperties": false,
-      "description": "A steady-state measurement of the sample under one condition.\n\nAttributes:\n    name: Identifier used in paths and ``in`` lists.\n    condition: Free text, e.g. \"OCV before EIS\". Carried into the record.\n    run: Run number, used to resolve ``segments: auto``.\n    kind: ``partials`` (one file per angle) or ``combined``.\n    segments: Explicit segment list, or ``auto`` to resolve from ``run``:\n        every segment of the run in ``data_dir``.\n    thetas: Angles for ``segments: auto``, in degrees, one per segment.\n        Left out -- or ``null`` in a place -- each is read from its file's\n        header; one given is checked against it. There is no default: an\n        angle assumed from habit sets the fit's wavelength axis, and a\n        wrong one is absorbed into the fit rather than reported.\n    data_dir: Directory holding the files, relative to the project root.",
+      "description": "A steady-state measurement of the sample under one condition.\n\nAttributes:\n    name: Identifier used in paths and ``in`` lists.\n    condition: Free text, e.g. \"OCV before EIS\". Carried into the record.\n    run: Run number, used to resolve ``segments: auto``.\n    kind: ``partials`` (one file per angle) or ``combined``.\n    segments: Explicit segment list, or ``auto`` to resolve from ``run``:\n        every segment of the run in ``data_dir``.\n    thetas: Angles for ``segments: auto``, in degrees, one per segment.\n        Left out -- or ``null`` in a place -- each is read from its file's\n        header; one given is checked against it. There is no default: an\n        angle assumed from habit sets the fit's wavelength axis, and a\n        wrong one is absorbed into the fit rather than reported.\n    data_dir: Directory holding the files, relative to the project root.\n    stack: This state's own complete stack, in the same order as the\n        top-level one: incident medium last. ``None`` uses the top-level\n        stack. A layer in both is the same layer -- parameters are shared\n        by name -- so a layer keeps its name in every stack it is in.",
       "properties": {
         "name": {
           "title": "Name",
@@ -719,6 +719,21 @@
           ],
           "default": null,
           "title": "Data Dir"
+        },
+        "stack": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/Layer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stack"
         }
       },
       "required": [
@@ -807,7 +822,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "A neutron reflectometry model: one layer stack, any number of steady-state states and time-resolved series, with functional constraints across a series.",
+  "description": "A neutron reflectometry model: one layer stack, which a state may replace with its own, any number of steady-state states and time-resolved series, with functional constraints across a series.",
   "properties": {
     "schema": {
       "const": "nrw-model/1",

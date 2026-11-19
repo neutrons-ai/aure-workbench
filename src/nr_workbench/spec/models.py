@@ -5,6 +5,10 @@ Three ideas carry the whole design.
 **One stack, many states.** The hand-written scripts call ``create_sample()``
 once per experiment and then spend two hundred lines re-linking parameters.
 Inverted here: the layer stack is declared once and states instantiate it.
+A state whose structure differs -- an oxide reduced away under potential, a
+layer that forms only after cycling -- declares its own complete ``stack``;
+every other state, and every series, uses the top-level one. Parameters are
+shared by layer *name* across stacks, so a layer keeps its name in each.
 
 **Parameter identity is the primitive, not parameter value.** Every bug and
 every line of boilerplate in those scripts is about *which Parameter object* a
@@ -414,6 +418,10 @@ class State(_Base):
             angle assumed from habit sets the fit's wavelength axis, and a
             wrong one is absorbed into the fit rather than reported.
         data_dir: Directory holding the files, relative to the project root.
+        stack: This state's own complete stack, in the same order as the
+            top-level one: incident medium last. ``None`` uses the top-level
+            stack. A layer in both is the same layer -- parameters are shared
+            by name -- so a layer keeps its name in every stack it is in.
     """
 
     name: str
@@ -423,6 +431,7 @@ class State(_Base):
     segments: list[Segment] | Literal["auto"] = "auto"
     thetas: list[float | None] | None = None
     data_dir: str | None = None
+    stack: list[Layer] | None = None
 
     @field_validator("name")
     @classmethod
@@ -510,6 +519,18 @@ class Series(_Base):
     theta: float | None = None
     select: SeriesSelect = Field(default_factory=SeriesSelect)
     time_from: Literal["filename", "reduction_json"] = "filename"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _uses_the_top_level_stack(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "stack" in data:
+            raise SpecError(
+                f"series {data.get('name', '?')!r}: a series has no `stack` of its "
+                "own; it always uses the top-level `stack:`. Put the structure "
+                "the series measures at the top level, and give the states that "
+                "differ their own `stack`."
+            )
+        return data
 
     @field_validator("theta")
     @classmethod
@@ -684,7 +705,8 @@ class ModelSpec(_Base):
         materials: Material definitions by name.
         stack: Layers in beam order, ending with the medium the neutron is
             incident from. refl1d takes the LAST entry as the incident
-            medium, so this order IS the measurement geometry.
+            medium, so this order IS the measurement geometry. Used by every
+            series and by every state that declares no ``stack`` of its own.
         probe: Probe construction settings.
         states: Steady-state measurements.
         series: Time-resolved measurements.
@@ -716,13 +738,10 @@ class ModelSpec(_Base):
 
     @model_validator(mode="after")
     def _structurally_coherent(self) -> ModelSpec:
-        if len(self.stack) < 2:
-            raise SpecError("a stack needs at least an ambient and a substrate")
-
-        names = [layer.name for layer in self.stack]
-        if len(set(names)) != len(names):
-            duplicates = sorted({n for n in names if names.count(n) > 1})
-            raise SpecError(f"duplicate layer name(s) in the stack: {duplicates}")
+        _check_stack(self.stack, "the stack")
+        for state in self.states:
+            if state.stack is not None:
+                _check_stack(state.stack, f"state {state.name!r}'s stack")
 
         groups = [*(s.name for s in self.states), *(s.name for s in self.series)]
         if len(set(groups)) != len(groups):
@@ -740,19 +759,83 @@ class ModelSpec(_Base):
 
     @property
     def layer_names(self) -> list[str]:
-        """Every layer name, backing first and incident medium last."""
+        """Every layer name of the top-level stack, backing first and incident
+        medium last."""
         return [layer.name for layer in self.stack]
 
-    def layer(self, name: str) -> Layer | None:
+    def stack_for(self, group: str) -> list[Layer]:
+        """The stack a state or series is built from.
+
+        Args:
+            group: A state or series name.
+
+        Returns:
+            The state's own ``stack`` when it declares one, otherwise the
+            top-level stack -- which every series uses.
+
+        Raises:
+            SpecError: If *group* is neither a state nor a series.
+        """
+        for state in self.states:
+            if state.name == group:
+                return state.stack if state.stack is not None else self.stack
+        if self.series_by_name(group) is not None:
+            return self.stack
+        raise SpecError(
+            f"no state or series named {group!r}. Known: {', '.join(self.group_names)}."
+        )
+
+    def layer(self, name: str, group: str | None = None) -> Layer | None:
         """Look up a layer by name.
 
         Args:
             name: The layer name.
+            group: The state or series whose stack to look in. ``None`` looks
+                in the top-level stack.
 
         Returns:
-            The layer, or ``None`` if absent.
+            The layer, or ``None`` if that stack has no layer of that name.
         """
-        return next((layer for layer in self.stack if layer.name == name), None)
+        stack = self.stack if group is None else self.stack_for(group)
+        return next((layer for layer in stack if layer.name == name), None)
+
+    def stacks(self) -> list[tuple[list[Layer], list[str]]]:
+        """Every distinct stack, and the states and series built from it.
+
+        Two stacks with the same layers, in the same order with the same
+        starting values, are one stack: a state declaring a copy of the
+        top-level stack is built from it.
+
+        Returns:
+            ``(layers, groups)`` pairs. The top-level stack comes first, even
+            when no group uses it (its group list is then empty); the others
+            follow in the order of the first state declaring each. Groups are
+            in declaration order.
+        """
+        found: list[tuple[list[Layer], list[str]]] = [(self.stack, [])]
+        for group in self.group_names:
+            stack = self.stack_for(group)
+            for layers, groups in found:
+                if layers == stack:
+                    groups.append(group)
+                    break
+            else:
+                found.append((stack, [group]))
+        return found
+
+    def layers_in_use(self) -> list[str]:
+        """Every layer name some state or series is built with.
+
+        Returns:
+            Names in the order they first appear: the top-level stack's when a
+            group uses it, then each further stack's in turn.
+        """
+        names: list[str] = []
+        for layers, groups in self.stacks():
+            if not groups:
+                continue
+            names += [layer.name for layer in layers if layer.name not in names]
+        return names
 
     def series_by_name(self, name: str) -> Series | None:
         """Look up a series by name.
@@ -768,6 +851,25 @@ class ModelSpec(_Base):
     def to_yaml_dict(self) -> dict[str, Any]:
         """Return the round-trippable mapping form."""
         return self.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+
+def _check_stack(layers: list[Layer], where: str) -> None:
+    """Refuse a stack too short to have two ends, or one naming a layer twice.
+
+    Args:
+        layers: The stack.
+        where: Which stack it is, for the message.
+
+    Raises:
+        SpecError: If either is wrong.
+    """
+    if len(layers) < 2:
+        raise SpecError(f"{where} needs at least an ambient and a substrate")
+
+    names = [layer.name for layer in layers]
+    if len(set(names)) != len(names):
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        raise SpecError(f"duplicate layer name(s) in {where}: {duplicates}")
 
 
 def load_spec(path: Any) -> ModelSpec:

@@ -932,11 +932,12 @@ def _attainment_findings(fit_dir: Path) -> list[Finding]:
 
     Per state, because that is how it presented: OCV1's oxide was swallowed
     (21.3 A of layer between interfaces summing to 33.0) while OCV2's, at
-    48.3 A, was fine.
+    48.3 A, was fine. Each state's rows are named from the stack that state
+    was built from, which is its own when it declares one.
     """
     from nr_workbench.web.trajectory import read_slabs
 
-    layers = _stack_layers(fit_dir)
+    spec = _frozen_spec(fit_dir)
     by_index = _model_names(fit_dir)
 
     findings: list[Finding] = []
@@ -951,6 +952,7 @@ def _attainment_findings(fit_dir: Path) -> list[Finding]:
         if len(slabs) < 3:
             continue
 
+        layers = _stack_layers(spec, state)
         for row, slab in enumerate(slabs):
             # Row 0 is the ambient and the last is the substrate; neither has
             # a thickness to be swallowed.
@@ -991,9 +993,23 @@ def _attainment_findings(fit_dir: Path) -> list[Finding]:
     return findings
 
 
-def _stack_layers(fit_dir: Path) -> list[str]:
-    """The named layers between the ambient and the substrate."""
-    stack = _frozen_spec(fit_dir).get("stack") or []
+def _stack_layers(spec: dict[str, Any], state: str) -> list[str]:
+    """The named layers between the ambient and the substrate.
+
+    Args:
+        spec: The frozen spec, as a mapping.
+        state: The state whose stack to read: its own ``stack`` when the spec
+            gives it one, otherwise the top-level stack.
+    """
+    stack = spec.get("stack") or []
+    for entry in spec.get("states") or []:
+        if (
+            isinstance(entry, dict)
+            and entry.get("name") == state
+            and isinstance(entry.get("stack"), list)
+        ):
+            stack = entry["stack"]
+            break
     return [
         str(layer.get("name"))
         for index, layer in enumerate(stack)

@@ -439,12 +439,13 @@ def _pins_against_the_stack(spec: Any) -> list[Contradiction]:
     :data:`PIN_DRIFT_FACTOR` for a length, past :data:`SLD_SLACK` for an SLD.
     Silence on absence --- a pin on a path the stack does not describe claims
     nothing.
+
+    A pin is compared with the stack of each state it applies in: a state's
+    own stack when it declares one. A pin agreeing with the stack it is fitted
+    in is not contradicted by another stack that state was never built from.
     """
-    layers = {
-        str(getattr(layer, "name", "")): layer
-        for layer in (getattr(spec, "stack", None) or [])
-    }
     materials = getattr(spec, "materials", None) or {}
+    several = sum(1 for _, groups in spec.stacks() if groups) > 1
 
     found = []
     for parameter in getattr(spec, "parameters", None) or []:
@@ -455,44 +456,62 @@ def _pins_against_the_stack(spec: Any) -> list[Contradiction]:
         if "." not in path:
             continue
         owner, attr = path.rsplit(".", 1)
-        layer = layers.get(owner)
-        if layer is None:
-            continue
 
-        if attr in {"thickness", "roughness"}:
-            declared = getattr(layer, attr, None)
-            if not declared or not pinned:
+        for layer, groups in _layers_pinned(spec, parameter, owner):
+            if attr in {"thickness", "roughness"}:
+                declared = getattr(layer, attr, None)
+                if not declared or not pinned:
+                    continue
+                ratio = max(pinned / declared, declared / pinned)
+                if ratio <= PIN_DRIFT_FACTOR:
+                    continue
+                unit, what = "A", attr
+            elif attr == "rho":
+                material = materials.get(getattr(layer, "material_key", owner))
+                declared = getattr(material, "rho", None) if material else None
+                if declared is None or abs(pinned - declared) <= SLD_SLACK:
+                    continue
+                unit, what = "1e-6/A2", "SLD"
+            else:
                 continue
-            ratio = max(pinned / declared, declared / pinned)
-            if ratio <= PIN_DRIFT_FACTOR:
-                continue
-            unit, what = "A", attr
-        elif attr == "rho":
-            material = materials.get(getattr(layer, "material_key", owner))
-            declared = getattr(material, "rho", None) if material else None
-            if declared is None or abs(pinned - declared) <= SLD_SLACK:
-                continue
-            unit, what = "1e-6/A2", "SLD"
-        else:
-            continue
 
-        found.append(
-            Contradiction(
-                kind="pin-contradicts-stack",
-                severity="warn",
-                subject=path,
-                message=(
-                    f"{path} is pinned at {pinned:g} {unit} while the stack "
-                    f"declares {declared:g}. The fit will use the pin and every "
-                    f"table a reader sees will show the stack, so the {what} "
-                    "being modelled is not the one being described. If the pin "
-                    "is the value you mean -- a result carried forward from an "
-                    "earlier fit, say -- put it in the stack too, so the "
-                    "structure on the page is the structure being fitted."
-                ),
-                evidence=f"pinned {pinned:g} vs stack {declared:g}",
+            stack = f"the stack of {', '.join(groups)}" if several else "the stack"
+            found.append(
+                Contradiction(
+                    kind="pin-contradicts-stack",
+                    severity="warn",
+                    subject=path,
+                    message=(
+                        f"{path} is pinned at {pinned:g} {unit} while {stack} "
+                        f"declares {declared:g}. The fit will use the pin and every "
+                        f"table a reader sees will show the stack, so the {what} "
+                        "being modelled is not the one being described. If the pin "
+                        "is the value you mean -- a result carried forward from an "
+                        "earlier fit, say -- put it in the stack too, so the "
+                        "structure on the page is the structure being fitted."
+                    ),
+                    evidence=f"pinned {pinned:g} vs stack {declared:g}",
+                )
             )
-        )
+    return found
+
+
+def _layers_pinned(
+    spec: Any, parameter: Any, owner: str
+) -> list[tuple[Any, list[str]]]:
+    """The layer a pin sets in each stack it applies in, and the groups there.
+
+    A pin with no ``in`` applies wherever the layer is; one with ``in`` only in
+    the groups it names.
+    """
+    targets = getattr(parameter, "in_", None)
+    named = {entry.partition("#")[0] for entry in targets} if targets else None
+    found = []
+    for layers, groups in spec.stacks():
+        reached = [g for g in groups if named is None or g in named]
+        layer = next((x for x in layers if getattr(x, "name", "") == owner), None)
+        if layer is not None and reached:
+            found.append((layer, reached))
     return found
 
 

@@ -8,6 +8,7 @@ not about its exact formatting.
 from __future__ import annotations
 
 import ast
+import copy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -483,3 +484,285 @@ def test_a_name_with_a_line_break_stays_inside_its_comment() -> None:
         a.name for n in module.body if isinstance(n, ast.Import) for a in n.names
     ]
     assert "os" not in imported
+
+
+# --------------------------------------------------------------------------
+# One stack per state
+# --------------------------------------------------------------------------
+
+#: A one-stack spec's script, byte for byte. A generated script's hash is its
+#: fit identity and `nrw model generate` leaves an unchanged script alone, so a
+#: change to any of these re-keys every fit already made from such a spec.
+ONE_STACK_GOLDEN = {
+    "base": "7630e74bace18df2b2c9f24e1f79829b9dfe7d9c6378e55690df86282a073207",
+    "series": "c68475179bddce790884ca442d48a0b03b195b1f5f4be99d786f540a9dc4ab59",
+    "trimmed": "d5a16f19a0aac423b256cfb422369fae727ae7a773971b2f5763b768b64a125c",
+}
+
+#: The specs those hashes are of: the plain base, a series under a
+#: constraint that needs `pmath`, and every optional block of the probe.
+ONE_STACK_SPECS: dict[str, tuple[dict[str, Any], dict[str, int]]] = {
+    "base": (BASE, {"a": 2, "b": 1}),
+    "series": (
+        {
+            **BASE,
+            "parameters": [
+                {
+                    "path": "Film.thickness",
+                    "range": [50, 200],
+                    "per": "state",
+                    "in": ["a", "b"],
+                },
+                {"path": "probe.intensity", "pm": 0.1, "per": "measurement"},
+            ],
+            "series": [{"name": "t", "reduced_dir": "d"}],
+            "constraints": [
+                {
+                    "series": "t",
+                    "form": "logistic",
+                    "from": "a",
+                    "to": "b",
+                    "paths": ["Film.thickness"],
+                }
+            ],
+        },
+        {"a": 2, "b": 1, "t": 4},
+    ),
+    "trimmed": (
+        {
+            **BASE,
+            "probe": {"dq_is_fwhm": False, "dq_scale": 1.5},
+            "trim": [{"in": ["a#0"], "lambda_min": 3.5, "reason": "edge"}],
+            "description": "A film.\nTwo lines.",
+            "post_build": "x = 1\n",
+        },
+        {"a": 2, "b": 1},
+    ),
+}
+
+
+@pytest.mark.parametrize("label", sorted(ONE_STACK_GOLDEN))
+def test_a_one_stack_script_is_byte_for_byte_what_it_was(label: str) -> None:
+    import hashlib
+
+    payload, counts = ONE_STACK_SPECS[label]
+    source = generate(table_from(payload, counts), now=FIXED_TIME)
+
+    assert (
+        hashlib.sha256(source.encode("utf-8")).hexdigest() == (ONE_STACK_GOLDEN[label])
+    )
+
+
+def _with_state_stacks(*stacks: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """BASE with one state per entry of *stacks*, each declaring it (or not)."""
+    states = []
+    for index, stack in enumerate(stacks):
+        state: dict[str, Any] = {
+            "name": f"s{index}",
+            "segments": [{"file": f"d/s{index}.txt", "theta": 0.45}],
+        }
+        if stack is not None:
+            state["stack"] = copy.deepcopy(stack)
+        states.append(state)
+    return {
+        **BASE,
+        "states": states,
+        "parameters": [{"path": "Film.rho", "range": [2, 6], "per": "model"}],
+    }
+
+
+#: A film with a second layer on it, for a state where one formed.
+CAPPED = [
+    {"name": "Air", "thickness": 0, "roughness": 5},
+    {"name": "Cap", "material": "Film", "thickness": 20, "roughness": 3},
+    {"name": "Film", "thickness": 100, "roughness": 5},
+    {"name": "Si"},
+]
+
+
+def _factory_calls(source: str) -> dict[str, str]:
+    """Each experiment's group, and the factory its sample came from."""
+    calls: dict[str, str] = {}
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("_sample = "):
+            group = lines[index + 1].split("'")[1]
+            calls[group] = line.removeprefix("_sample = ").removesuffix("()")
+    return calls
+
+
+def test_a_state_with_its_own_stack_gets_a_factory_of_its_own() -> None:
+    payload = _with_state_stacks(None, CAPPED)
+
+    source = generate(table_from(payload, {"s0": 1, "s1": 1}), now=FIXED_TIME)
+
+    module = ast.parse(source)
+    factories = [
+        node.name
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("create_sample")
+    ]
+    assert factories == ["create_sample", "create_sample_s1"]
+    assert _factory_calls(source) == {"s0": "create_sample", "s1": "create_sample_s1"}
+    assert "Cap(20.0, 3.0) | Film(100.0, 5.0)" in source
+    # The shared SLD reaches both stacks by name.
+    assert "SAMPLES['s1'][0]['Film'].material.rho = P['Film.rho@model']" in source
+
+
+def test_states_declaring_one_stack_share_one_factory() -> None:
+    payload = _with_state_stacks(None, CAPPED, CAPPED)
+
+    source = generate(table_from(payload, {"s0": 1, "s1": 1, "s2": 1}), now=FIXED_TIME)
+
+    assert source.count("def create_sample") == 2
+    assert _factory_calls(source) == {
+        "s0": "create_sample",
+        "s1": "create_sample_s1",
+        "s2": "create_sample_s1",
+    }
+
+
+def test_a_state_declaring_the_top_level_stack_is_built_by_create_sample() -> None:
+    payload = _with_state_stacks(None, BASE["stack"])
+
+    source = generate(table_from(payload, {"s0": 1, "s1": 1}), now=FIXED_TIME)
+
+    assert source.count("def create_sample") == 1
+    assert set(_factory_calls(source).values()) == {"create_sample"}
+
+
+def test_two_state_names_one_identifier_do_not_share_a_factory_name() -> None:
+    """`s-1` and `s_1` are both `create_sample_s_1`; the second must not
+    replace the first and build its stack for both."""
+    other = [dict(layer) for layer in CAPPED]
+    other[1] = {**other[1], "thickness": 40}
+    payload = _with_state_stacks(None, CAPPED, other)
+    payload["states"][1]["name"] = "s-1"
+    payload["states"][2]["name"] = "s_1"
+
+    source = generate(
+        table_from(payload, {"s0": 1, "s-1": 1, "s_1": 1}), now=FIXED_TIME
+    )
+
+    assert _factory_calls(source) == {
+        "s0": "create_sample",
+        "s-1": "create_sample_s_1",
+        "s_1": "create_sample_s_1_2",
+    }
+    ast.parse(source)
+
+
+def test_a_state_stack_is_part_of_the_spec_identity(tmp_path: Path) -> None:
+    """The hash a generated script records changes with a state's stack."""
+    import yaml
+
+    from nr_workbench.spec.deprecation import identity_hash
+
+    spec = tmp_path / "m.yaml"
+    spec.write_text(yaml.safe_dump(_with_state_stacks(None, CAPPED)), "utf-8")
+    before = identity_hash(spec)
+
+    changed = _with_state_stacks(None, CAPPED)
+    changed["states"][1]["stack"][1]["thickness"] = 25
+    spec.write_text(yaml.safe_dump(changed), "utf-8")
+
+    assert identity_hash(spec) != before
+
+
+# --------------------------------------------------------------------------
+# Names Python would not take, or would take as one
+# --------------------------------------------------------------------------
+
+
+def _factories_run(source: str) -> dict[str, Any]:
+    """The script's sample factories, defined as Python binds them."""
+    names = pytest.importorskip("refl1d.names")
+    module = ast.parse(source)
+    factories = [
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("create_sample")
+    ]
+    namespace: dict[str, Any] = {"SLD": names.SLD}
+    exec(
+        compile(ast.Module(body=factories, type_ignores=[]), "<gen>", "exec"), namespace
+    )
+    return namespace
+
+
+def test_a_state_named_with_a_subscript_generates_python() -> None:
+    """`D₂O` is a valid name, and `create_sample_D₂O` a SyntaxError."""
+    payload = _with_state_stacks(None, CAPPED)
+    payload["states"][1]["name"] = "D₂O"
+
+    source = generate(table_from(payload, {"s0": 1, "D₂O": 1}), now=FIXED_TIME)
+
+    compile(source, "<generated>", "exec")
+    assert _factory_calls(source)["D₂O"] == "create_sample_D_O"
+
+
+def test_a_layer_named_with_a_subscript_generates_python() -> None:
+    payload = {
+        **BASE,
+        "materials": {**BASE["materials"], "D₂O": {"rho": 6.36}},
+        "stack": [{"name": "D₂O", "thickness": 0, "roughness": 5}, *BASE["stack"][1:]],
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    compile(source, "<generated>", "exec")
+    assert "    D_O = SLD('D₂O', rho=6.36)" in source
+    built = _factories_run(source)["create_sample"]()
+    assert [layer.name for layer in built] == ["D₂O", "Film", "Si"]
+
+
+def test_names_python_would_bind_as_one_build_their_own_stacks() -> None:
+    """Python binds `create_sample_xⅡ` and `create_sample_xII` as one name, so
+    the second state's stack was built for both."""
+    other = [dict(layer) for layer in CAPPED]
+    other[1] = {**other[1], "thickness": 40}
+    payload = _with_state_stacks(None, CAPPED, other)
+    payload["states"][1]["name"] = "xⅡ"
+    payload["states"][2]["name"] = "xII"
+
+    source = generate(table_from(payload, {"s0": 1, "xⅡ": 1, "xII": 1}), now=FIXED_TIME)
+
+    compile(source, "<generated>", "exec")
+    calls = _factory_calls(source)
+    factories = _factories_run(source)
+    caps = {
+        state: factories[calls[state]]()[1].thickness.value for state in ("xⅡ", "xII")
+    }
+    assert caps == {"xⅡ": 20, "xII": 40}
+
+
+def test_layer_names_python_would_bind_as_one_keep_their_own_materials() -> None:
+    """`Cu-1` and `Cu_1` are both `Cu_1`; a layer named `SLD` would replace the
+    constructor the factory calls."""
+    payload = {
+        **BASE,
+        "materials": {
+            **BASE["materials"],
+            "Cu-1": {"rho": 6.0},
+            "Cu_1": {"rho": 6.5},
+            "SLD": {"rho": 3.0},
+        },
+        "stack": [
+            {"name": "Air", "thickness": 0, "roughness": 5},
+            {"name": "Cu-1", "thickness": 10, "roughness": 3},
+            {"name": "Cu_1", "thickness": 20, "roughness": 3},
+            {"name": "SLD", "thickness": 30, "roughness": 3},
+            {"name": "Si"},
+        ],
+        "parameters": [],
+    }
+
+    source = generate(table_from(payload, {"a": 2, "b": 1}), now=FIXED_TIME)
+
+    compile(source, "<generated>", "exec")
+    built = _factories_run(source)["create_sample"]()
+    assert [(layer.name, layer.material.rho.value) for layer in built][1:4] == [
+        ("Cu-1", 6.0),
+        ("Cu_1", 6.5),
+        ("SLD", 3.0),
+    ]

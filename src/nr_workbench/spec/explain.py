@@ -167,7 +167,11 @@ def _what_is_modelled(table: ParameterTable) -> str:
 
 
 def _the_stack(table: ParameterTable) -> str:
-    """The layer structure and its starting values."""
+    """The layer structure and its starting values.
+
+    One table when every state is built from the top-level stack; otherwise
+    one per distinct stack, each saying which states and series it builds.
+    """
     from nr_workbench.spec.geometry import read_geometry
 
     spec = table.spec
@@ -185,20 +189,43 @@ def _the_stack(table: ParameterTable) -> str:
         "",
         f"{order} Thicknesses and roughnesses are starting values; whether each "
         "is fitted is in the next section.",
+    ]
+    if not any(state.stack is not None for state in spec.states):
+        return "\n".join([*lines, "", *_stack_table(spec, spec.stack)])
+
+    lines += [
         "",
+        "Some states declare a stack of their own, so the structure differs "
+        "between them. A layer in several stacks is the same layer: its "
+        "parameters are shared by name.",
+    ]
+    for index, (layers, groups) in enumerate(spec.stacks()):
+        named = ", ".join(f"`{group}`" for group in groups) or "no state or series"
+        heading = (
+            f"### The top-level stack, for {named}"
+            if index == 0
+            else f"### The stack declared by {named}"
+        )
+        lines += ["", heading, "", *_stack_table(spec, layers)]
+    return "\n".join(lines)
+
+
+def _stack_table(spec: Any, layers: list[Any]) -> list[str]:
+    """One stack as a markdown table, incident medium last."""
+    lines = [
         "| Layer | Material | SLD (10⁻⁶ Å⁻²) | Thickness (Å) | Roughness (Å) |",
         "|---|---|---|---|---|",
     ]
-    for index, layer in enumerate(spec.stack):
+    for index, layer in enumerate(layers):
         material = spec.materials.get(layer.material)
         rho = f"{material.rho:g}" if material is not None else "?"
-        last = index == len(spec.stack) - 1
+        last = index == len(layers) - 1
         thickness = "semi-infinite" if last else f"{layer.thickness:g}"
         roughness = "—" if last else f"{layer.roughness:g}"
         lines.append(
             f"| `{layer.name}` | {layer.material} | {rho} | {thickness} | {roughness} |"
         )
-    return "\n".join(lines)
+    return lines
 
 
 def _what_is_shared(table: ParameterTable) -> str:
@@ -761,7 +788,7 @@ def _fixed_layers(table: ParameterTable) -> list[str]:
         for expression in table.expressions
     }
     touched = fitted | constrained
-    return [layer.name for layer in spec.stack if layer.name not in touched]
+    return [name for name in spec.layers_in_use() if name not in touched]
 
 
 #: Real-space resolution limit for a typical REF_L Q_max of 0.2 1/A.
@@ -769,10 +796,20 @@ _RESOLUTION_LIMIT = 30.0
 
 
 def _thin_layers(spec: Any) -> list[tuple[str, float]]:
-    """Layers thinner than the resolution limit, excluding the substrate."""
-    found = []
-    for layer in spec.stack[:-1]:
-        thickness = float(layer.thickness or 0.0)
-        if 0 < thickness < _RESOLUTION_LIMIT:
-            found.append((layer.name, thickness))
+    """Layers thinner than the resolution limit, excluding the substrate.
+
+    Across every stack a state or series is built from, each layer once per
+    starting thickness.
+    """
+    found: list[tuple[str, float]] = []
+    for layers, groups in spec.stacks():
+        if not groups:
+            continue
+        for layer in layers[:-1]:
+            thickness = float(layer.thickness or 0.0)
+            if (
+                0 < thickness < _RESOLUTION_LIMIT
+                and (layer.name, thickness) not in found
+            ):
+                found.append((layer.name, thickness))
     return found

@@ -45,6 +45,12 @@ In `nrw-model/1` every parameter declares a scope, and that is the whole system:
 three Experiments sharing one set of structural parameters. You never write the
 tying, which is the part that goes wrong by hand.
 
+**Scope shares a value; a stack shares a structure.** `per:` says whether a
+layer's thickness is one number or several. Whether the layer is *there* at all
+is a different question, answered by the stack: a state whose structure differs
+declares its own complete `stack`, and parameters are shared across stacks by
+layer name.
+
 ## When to Use
 
 - Two or more steady states of one sample: before and after a treatment, two
@@ -74,6 +80,29 @@ Start from physics, not from what improves χ².
 **`per: measurement` is rare and deliberate.** It is for a genuine per-file
 nuisance, not for structure. If you find yourself wanting a per-measurement
 *thickness*, the model is wrong.
+
+**A layer present in one state and not another gets that state's own stack.**
+A native oxide reduced away under potential is the common case. Never fake it
+by keeping the layer and pinning its SLD at the copper's: write the state's
+stack without it (`nrw-model-spec` has the YAML).
+
+```yaml
+states:
+  - {name: ocv, run: 230539, segments: auto}       # the top-level stack, with CuOx
+  - name: reduced
+    run: 230546
+    segments: auto
+    stack:                                         # its own, without CuOx
+      - {name: D2O, material: D2O, thickness: 0, roughness: 5}
+      - {name: Cu,  material: Cu,  thickness: 358, roughness: 5}
+      - {name: Si,  material: Si}
+```
+
+**A layer keeps its name in every stack, because sharing is by name.** The `Cu`
+in `reduced`'s stack is the `Cu` of the top-level one, so `Cu.rho` `per: model`
+is one copper SLD for both states -- which is what makes the comparison of the
+two states a comparison of their oxides. Then `CuOx.*` with no `in:` reaches
+only `ocv`, and naming `reduced` for it is refused.
 
 ### 2. Write it down
 
@@ -169,6 +198,12 @@ is free — change `per:` and regenerate.
 thicknesses. If the segments disagree, run `nrw data overlap` — it is a
 normalisation problem.
 
+**"I'll keep the oxide in the reduced state and pin it to the copper SLD; it's
+equivalent."** Only while every pin holds, and only to a reader who has been
+told. The stack still shows an oxide, model.md tables it, and `nrw check`
+reports each pin as contradicting the stack. A state `stack` without the layer
+is the same problem with nothing to explain.
+
 ## Red Flags
 
 - A structural parameter declared `per: measurement`.
@@ -181,6 +216,10 @@ normalisation problem.
 - Angle segments tied by hand in a generated script — they alias automatically,
   so a manual tie means someone did not trust the generator and may have got it
   wrong.
+- A layer absent in one state written as a zero-thickness layer with its SLD
+  pinned at a neighbour's, instead of that state's own `stack`.
+- The same layer under two names in two states' stacks: nothing is shared
+  between them.
 
 ## Verification
 
@@ -191,10 +230,14 @@ nrw model preview <spec> --build   # builds it, reports the initial chi-squared
 nrw data overlap <sample>     # do the segments agree before you fit them
 ```
 
-Three checks:
+Four checks:
 
 1. **The free-parameter count matches what you intended.** Predict it, then look.
 2. **Every `@scope` is the one you meant.** This is the whole skill in one line.
-3. **Generated scripts assert it at runtime.** `_check_links()` compares object
+3. **Each state is built from the stack you meant.** When a state declares its
+   own, `nrw model validate` says so in one line --
+   `stacks: reduced declares its own; ocv inherits the top-level stack` -- and
+   `nrw model preview` lists every stack beside the states built from it.
+4. **Generated scripts assert it at runtime.** `_check_links()` compares object
    identity for every group that should be shared, so a broken tie fails loudly
    rather than producing a plausible wrong answer.
