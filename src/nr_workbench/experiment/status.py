@@ -1,30 +1,19 @@
-"""When is a run finished arriving?
+"""When is a run's data ready to use?
 
-*Settled* -- no file has changed for a while -- is necessary and not enough.
-The segments of one run are reduced as each angle finishes being measured: in
-the reference corpus, 218386's three segments landed 15 and then 52 minutes
-apart. A five-minute settle therefore calls the run complete twice before it
-is, and a copy made then is a third of a measurement that fits perfectly well.
+A run is reduced one angle segment at a time, as each angle finishes being
+measured: in the reference corpus, 218386's three segments landed 15 and then
+52 minutes apart. A file still being written is never used, so a run whose
+files changed recently is *arriving* or *settling*. Once its files have been
+unchanged for ``settle_seconds`` it is *complete*, and what is there is used.
 
-So *complete* needs evidence that the sequence has ended, and today there is
-one kind that proves it: **the instrument moved on** -- a *later run whose
-files have been reduced*. A later run that a feed merely *announces* does not
-count: that is when the next acquisition started, and this run's last segment
-may still be reducing.
+A segment that lands later is more data for the same run: the run is arriving
+again, settles again, and the new file is copied beside the others (see
+:mod:`~nr_workbench.experiment.apply`). A fit made before it landed is not
+flagged, so it is fitted again once the new data is there.
 
-**The header's plan can veto, but not prove.** The ``new_reduction`` header's
-per-segment arrays appear to be sized by the reduction template, so they
-would say how many segments there will be (:attr:`~nr_workbench.instrument.
-header.ReducedHeader.n_segments`). When they say three and two are present,
-the run is not complete, whatever else is true. But whether those arrays are
-already full length in the *first* segment's file has not been checked on a
-real file: if they grow as segments are reduced instead, a count read from
-segment 1 is 1, and trusting it would copy a third of a measurement five
-minutes after it landed. Until a real first-segment file settles that, a
-fulfilled plan still waits for a later run (or a person).
-
-A settled run without that evidence is *unconfirmed*. It is shown, it can be
-assigned, and a person can confirm it -- but it is never copied on its own.
+The header's plan (:attr:`~nr_workbench.instrument.header.ReducedHeader.
+n_segments`), when it has one, only shapes the reason: "2 of 3 planned
+segments so far".
 """
 
 from __future__ import annotations
@@ -39,7 +28,6 @@ STATES = (
     "awaiting",
     "arriving",
     "settling",
-    "unconfirmed",
     "complete",
     "quarantined",
     "clock-skew",
@@ -58,7 +46,8 @@ class RunStatus:
     Attributes:
         state: One of :data:`STATES`.
         reason: Why, in a sentence for the page.
-        complete: Whether it may be copied without a person confirming.
+        complete: Whether its files may be copied: settled, and nothing wrong
+            with them.
         settled: Whether its files have stopped changing.
         quiet_for: Seconds since its files last changed.
     """
@@ -86,7 +75,6 @@ def judge(
     previous_fingerprint: str | None,
     now: float,
     settle_seconds: float,
-    latest_reduced: int | None,
 ) -> RunStatus:
     """Judge one run.
 
@@ -96,8 +84,6 @@ def judge(
         previous_fingerprint: Its fingerprint on the previous poll.
         now: This machine's clock.
         settle_seconds: How long its files must be unchanged.
-        latest_reduced: The highest run number with reduced files in the
-            source, or ``None``.
 
     Returns:
         The status.
@@ -132,43 +118,14 @@ def judge(
             quiet_for=max(quiet, 0.0),
         )
 
-    segments = run.segments
     planned = run.n_segments
-    if planned is not None and segments != tuple(range(1, planned + 1)):
-        # The veto: a plan that says more is coming wins over any later run.
-        return RunStatus(
-            "unconfirmed",
-            f"{len(segments)} of {planned} planned segments are present. "
-            "The rest may still be measured or reduced; if the measurement was "
-            "stopped early, confirm it to use what is here.",
-            settled=True,
-            quiet_for=quiet,
+    if planned is not None and run.segments != tuple(range(1, planned + 1)):
+        reason = (
+            f"{len(run.segments)} of {planned} planned segments so far; the rest "
+            "are added when they arrive"
         )
-
-    if latest_reduced is not None and latest_reduced > run.last_subrun:
-        return RunStatus(
-            "complete",
-            f"settled, and a later run ({latest_reduced}) has been reduced, so "
-            "this measurement has finished",
-            complete=True,
-            settled=True,
-            quiet_for=quiet,
-        )
-    if planned is not None:
-        return RunStatus(
-            "unconfirmed",
-            f"all {planned} planned segment(s) are present and settled. It "
-            "counts as complete once a later run has been reduced: the plan is "
-            "read from the header, which is not yet known to be reliable in a "
-            "run's first file. Confirm it to use it now.",
-            settled=True,
-            quiet_for=quiet,
-        )
-    return RunStatus(
-        "unconfirmed",
-        "settled, but nothing shows the measurement has ended: its header does "
-        "not say how many segments were planned, and no later run has been "
-        "reduced yet. Confirm it to use what is here.",
-        settled=True,
-        quiet_for=quiet,
-    )
+    elif planned is not None:
+        reason = f"settled, with all {planned} planned segment(s)"
+    else:
+        reason = "settled"
+    return RunStatus("complete", reason, complete=True, settled=True, quiet_for=quiet)

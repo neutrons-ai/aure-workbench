@@ -185,8 +185,8 @@ def preview(sample_id: str) -> Any:
 
 @experiment_api.get("/apply")
 def apply_plan() -> Any:
-    """What applying would do: ``?samples=S1,S2&confirm=218386``."""
-    return jsonify(data().apply_plan(_list_arg("samples"), _list_arg("confirm")))
+    """What applying would do: ``?samples=S1,S2``."""
+    return jsonify(data().apply_plan(_list_arg("samples")))
 
 
 @experiment_api.get("/samples/<sample_id>/adopt")
@@ -220,11 +220,9 @@ def update_experiment() -> Any:
 
 @experiment_api.post("/apply")
 def apply() -> Any:
-    """Carry out a reviewed plan: ``{"plan_id", "samples", "confirmed"}``."""
+    """Carry out a reviewed plan: ``{"plan_id", "samples"}``."""
     body = _body()
-    return jsonify(
-        data().apply(body.get("plan_id"), body.get("samples"), body.get("confirmed"))
-    )
+    return jsonify(data().apply(body.get("plan_id"), body.get("samples")))
 
 
 @experiment_api.post("/samples/<sample_id>/adopt")

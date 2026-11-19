@@ -665,16 +665,19 @@ def test_a_colleagues_fresh_project_pulls_the_data_into_its_incoming_folder(
     project: Path, colleague: Path, tiled: FakeTiled, experiment: FakeNode
 ) -> None:
     """No data folder to set up first: `nrw init` made the project's own."""
+    from .experiment_fixtures import reduced_rows
+
     catalogued(project)
     pushed(project)
-    reduced = FakeNode(content=b"q r")
+    rows = reduced_rows().encode()
+    reduced = FakeNode(content=rows)
     reduced.key = SEGMENT
     experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
 
     shown = pulled(colleague, "--context", "--data", "--fits")
 
     assert shown.exit_code == 0, shown.output
-    assert (colleague / "incoming" / SEGMENT).read_bytes() == b"q r"
+    assert (colleague / "incoming" / SEGMENT).read_bytes() == rows
 
 
 def test_a_colleagues_pull_applies_the_catalog_to_samples_at_once(
@@ -690,7 +693,7 @@ def test_a_colleagues_pull_applies_the_catalog_to_samples_at_once(
     catalogued(project)
     pushed(project)
     files = {}
-    for run in (234277, 234280, 234283):  # the last shows the others ended
+    for run in (234277, 234280):
         for path in write_autoreduced(tmp_path / "reduced", run, [1, 2, 3]):
             node = FakeNode(content=path.read_bytes())
             node.key = path.name
@@ -707,7 +710,7 @@ def test_a_colleagues_pull_applies_the_catalog_to_samples_at_once(
     assert shown.exit_code == 0, shown.output
     assert (sample / "sample.md").is_file()
     copied = sorted(p.name for p in (sample / "data" / "steady").glob("REFL_*"))
-    assert copied == sorted(n for n in files if not n.startswith("REFL_234283"))
+    assert copied == sorted(files)
 
 
 def test_a_data_folder_nrw_cannot_write_stops_the_pull_before_the_catalog(

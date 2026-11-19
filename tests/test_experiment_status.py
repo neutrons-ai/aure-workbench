@@ -1,9 +1,9 @@
 """When a run counts as complete, and how the page learns that it changed.
 
-The failure these tests exist for is quiet: a run declared complete after its
-first segment, copied, and fitted -- a third of a measurement, which fits
-perfectly well. The timeline test replays the reference corpus's *real*
-reduction times, where segments landed 15.5 and 52.4 minutes apart.
+A run is complete whenever its files have settled: what has arrived is used,
+and a segment that lands later makes the run arriving again until it settles
+once more. The timeline test replays the reference corpus's *real* reduction
+times, where segments landed 15.5 and 52.4 minutes apart.
 """
 
 from __future__ import annotations
@@ -68,13 +68,12 @@ def run_with(segments, *, n=None, changed_at=T0, problems=(), subrun_base=None):
     )
 
 
-def settled(run, latest=None):
+def settled(run):
     return judge(
         run,
         previous_fingerprint="fp",
         now=T0 + SETTLE + 1,
         settle_seconds=SETTLE,
-        latest_reduced=latest,
     )
 
 
@@ -89,7 +88,6 @@ def test_judge_an_announced_run_without_files_is_awaiting_reduction() -> None:
         previous_fingerprint=None,
         now=T0,
         settle_seconds=SETTLE,
-        latest_reduced=None,
     )
     assert status.state == "awaiting" and not status.complete
 
@@ -100,54 +98,24 @@ def test_judge_a_run_with_problems_is_quarantined() -> None:
     assert status.reason == "segment 2 is here twice"
 
 
-def test_judge_a_fulfilled_plan_alone_does_not_prove_completion() -> None:
-    """The header's count is unverified in a run's first file, so it cannot prove."""
+def test_judge_a_settled_run_with_every_planned_segment_is_complete() -> None:
     status = settled(run_with([1, 2, 3], n=3))
-    assert status.state == "unconfirmed" and not status.complete
-    assert "later run" in status.reason
+    assert status.state == "complete" and status.complete and status.settled
+    assert "all 3 planned" in status.reason
 
 
-def test_judge_a_fulfilled_plan_and_a_later_run_is_complete() -> None:
-    status = settled(run_with([1, 2, 3], n=3), latest=234290)
+def test_judge_a_settled_run_short_of_its_plan_is_complete_and_says_so() -> None:
+    """A plan that says more is coming shapes the reason and blocks nothing."""
+    status = settled(run_with([1, 2], n=3))
     assert status.state == "complete" and status.complete
+    assert "2 of 3 planned segments so far" in status.reason
 
 
-def test_judge_a_first_segment_header_sized_one_is_not_complete() -> None:
-    """If the arrays grow as segments land, segment 1's file says "1 of 1".
-
-    Trusting that would copy a third of a measurement five minutes after it
-    arrived -- the failure this module exists to prevent.
-    """
-    status = settled(run_with([1], n=1))
-    assert status.state == "unconfirmed" and not status.complete
-
-
-def test_judge_a_plan_that_grows_with_each_segment_is_not_complete() -> None:
-    status = settled(run_with([1, 2], n=2))
-    assert status.state == "unconfirmed" and not status.complete
-
-
-def test_judge_a_known_plan_with_a_missing_segment_is_never_complete() -> None:
-    """Even a later run cannot override a plan that says more is coming."""
-    status = settled(run_with([1, 2], n=3), latest=234290)
-    assert status.state == "unconfirmed" and not status.complete
-    assert "2 of 3" in status.reason
-
-
-def test_judge_settled_is_not_complete_without_evidence_the_run_ended() -> None:
-    status = settled(run_with([1], n=None), latest=234277)
-    assert status.state == "unconfirmed" and not status.complete
-
-
-def test_judge_a_later_reduced_run_completes_an_unplanned_run() -> None:
-    status = settled(run_with([1, 2, 3], n=None), latest=234280)
-    assert status.state == "complete" and "234280" in status.reason
-
-
-def test_judge_a_later_subrun_of_the_same_run_is_not_a_later_run() -> None:
-    """234279 is this run's own third segment, not the next measurement."""
-    status = settled(run_with([1, 2, 3], n=None), latest=234279)
-    assert status.state == "unconfirmed"
+def test_judge_a_settled_run_whose_header_plans_nothing_is_complete() -> None:
+    """``_partial.txt`` headers carry no plan: copper-oxide's run 230588."""
+    status = settled(run_with([1, 2, 3], n=None))
+    assert status.state == "complete" and status.complete
+    assert status.reason == "settled"
 
 
 def test_judge_files_dated_in_the_future_are_clock_skew() -> None:
@@ -157,7 +125,6 @@ def test_judge_files_dated_in_the_future_are_clock_skew() -> None:
         previous_fingerprint="fp",
         now=T0,
         settle_seconds=SETTLE,
-        latest_reduced=None,
     )
     assert status.state == "clock-skew" and not status.complete
 
@@ -168,7 +135,6 @@ def test_judge_a_run_still_changing_is_not_settled() -> None:
         previous_fingerprint="fp",
         now=T0 + 20,
         settle_seconds=SETTLE,
-        latest_reduced=None,
     )
     assert status.state == "settling" and not status.settled
 
@@ -185,7 +151,7 @@ def _arrive(folder: Path, name: str) -> None:
     os.utime(target, (stamp, stamp))
 
 
-def test_the_reference_timeline_is_complete_only_once_the_next_run_arrives(
+def test_the_reference_timeline_is_complete_each_time_it_settles(
     tmp_path: Path,
 ) -> None:
     """218386's segments landed 0, 15.5 and 67.9 minutes in; 218393 at 3h40."""
@@ -206,32 +172,29 @@ def test_the_reference_timeline_is_complete_only_once_the_next_run_arrives(
 
     _arrive(tmp_path, "REFL_218386_1_218386_partial.txt")
     assert state_at(10) == "settling"
-    # Five minutes of quiet after segment 1 is where a settle-only rule would
-    # have copied a third of the measurement.
-    assert state_at(400) == "unconfirmed"
+    assert state_at(400) == "complete"
 
     _arrive(tmp_path, "REFL_218386_2_218387_partial.txt")
+    # A segment that lands later makes the run arriving again, so nothing
+    # reads it while it may still be being written.
     assert state_at(935) == "arriving"
-    assert state_at(1300) == "unconfirmed"
+    assert state_at(1300) == "complete"
 
     _arrive(tmp_path, "REFL_218386_3_218388_partial.txt")
     # A change between two polls restarts the settle clock, whatever the mtime.
     assert state_at(4080) == "arriving"
-    # All three segments, settled -- and still not complete: the old dialect
-    # does not say three was the plan, and nothing yet shows it ended.
-    assert state_at(4400) == "unconfirmed"
+    assert state_at(4400) == "complete"
 
     _arrive(tmp_path, "REFL_218393_1_218393_partial.txt")
     clock.now = T0 + 13250
     snapshot = live.scan_once()
     assert snapshot.runs[key].status.state == "complete"
-    assert "218393" in snapshot.runs[key].status.reason
     # First sight of a run has no earlier poll to compare with, so its quiet
     # time is read from the file itself: three seconds, still settling.
     assert snapshot.runs[RunKey(218393)].status.state == "settling"
 
 
-def test_a_planned_new_reduction_run_completes_once_the_next_run_is_reduced() -> None:
+def test_a_planned_run_is_complete_whenever_it_settles() -> None:
     clock = Clock()
     source = InMemorySource()
     live = LiveInventory(
@@ -246,18 +209,16 @@ def test_a_planned_new_reduction_run_completes_once_the_next_run_is_reduced() ->
 
     source.add_segments(234277, [1], planned=3, mtime=T0)
     clock.now = T0 + 400
-    assert live.scan_once().runs[key].status.state == "unconfirmed"
+    status = live.scan_once().runs[key].status
+    assert status.state == "complete"
+    assert "1 of 3 planned segments so far" in status.reason
 
     source.add_segments(234277, [2, 3], planned=3, mtime=T0 + 500)
     clock.now = T0 + 510
     assert live.scan_once().runs[key].status.state == "arriving"
     clock.now = T0 + 900
-    # Every planned segment, settled: still waiting for proof the run ended.
-    assert live.scan_once().runs[key].status.state == "unconfirmed"
-
-    source.add_segments(234290, [1], planned=3, mtime=T0 + 950)
-    clock.now = T0 + 960
-    assert live.scan_once().runs[key].status.state == "complete"
+    status = live.scan_once().runs[key].status
+    assert status.state == "complete" and "all 3 planned" in status.reason
 
 
 # --------------------------------------------------------------------------
@@ -282,28 +243,6 @@ def test_a_run_the_feed_announces_before_any_data_is_awaiting(tmp_path: Path) ->
 
     assert view.status.state == "awaiting"
     assert view.source is None and view.announcement.state == "acquiring"
-
-
-def test_an_announced_later_run_does_not_complete_an_earlier_one() -> None:
-    """Acquisition starting is not reduction finishing."""
-    clock = Clock(T0 + 400)
-    source = InMemorySource()
-    source.add_segments(234277, [1, 2, 3], planned=None, mtime=T0)
-    feed = InMemoryFeed()
-    feed.announce(234290)
-    live = LiveInventory(
-        source,
-        feed,
-        settle_seconds=SETTLE,
-        poll_seconds=30,
-        clock=clock,
-        autostart=False,
-    )
-
-    snapshot = live.scan_once()
-
-    assert snapshot.runs[RunKey(234277)].status.state == "unconfirmed"
-    assert snapshot.runs[RunKey(234290)].status.state == "awaiting"
 
 
 # --------------------------------------------------------------------------

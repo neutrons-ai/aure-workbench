@@ -10,8 +10,8 @@ would not tell a re-reduction from the same file. The folder watcher does the re
 Only names the reduction writes are copied. Each is written under a hidden
 name and renamed whole, so the watcher never reads half of one, and is dated
 :data:`PULLED_AGE` back: a file that lands whole has nothing to settle, so its
-run is judged at once, as one that has stood an hour is. Whether the run is
-complete still needs a later run, as for any run. Nothing is written on Tiled.
+run is judged at once, as one that has stood an hour is. Nothing is written
+on Tiled.
 
 Each file is fetched by the route the client's own ``raw_export`` takes, but
 not through it: in tiled 0.2.18 that logs a failed download as a line of

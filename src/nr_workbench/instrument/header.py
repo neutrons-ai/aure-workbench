@@ -152,8 +152,7 @@ class ReducedHeader:
             ``ThetaShift``) come from the reduction template, so they are
             sized to the plan rather than to what has been reduced so far.
             ``None`` when the header does not say, or when those arrays
-            disagree about the count -- a guess here would call a run
-            complete while its last segment is still being measured.
+            disagree about the count: no count is guessed.
         dq_over_q: Fractional resolution as reduced.
         dq_convention: ``"fwhm"`` or ``"sigma"`` -- what the 4th column's width
             actually is, read from the column-title line. ``None`` when the file

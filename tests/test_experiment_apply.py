@@ -81,18 +81,12 @@ def observe(source) -> tuple[dict, dict]:
     return runs, {k: v.status for k, v in snapshot.runs.items()}
 
 
-#: The run measured after RUNS. Its reduced file is the evidence that they
-#: have finished; nothing in these tests assigns it.
-NEXT_RUN = 234290
-
-
 @pytest.fixture
 def folder(tmp_path: Path) -> Path:
-    """A facility folder with two complete new_reduction runs, and the next one."""
+    """A facility folder with two settled new_reduction runs."""
     reduced = tmp_path / "facility" / "new_reduction"
     for run in RUNS:
         write_autoreduced(reduced, run, [1, 2, 3], planned=3, mtime=time.time() - 3600)
-    write_autoreduced(reduced, NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     return reduced
 
 
@@ -158,7 +152,7 @@ def test_apply_copies_complete_runs_and_renders_sample_md(
 
     plan, report = applier.apply(catalog)
 
-    names = sorted(p.name for p in folder.iterdir() if str(NEXT_RUN) not in p.name)
+    names = sorted(p.name for p in folder.iterdir())
     assert sorted(p.name for p in steady(project).glob("REFL_*")) == names
     for name in names:
         assert (steady(project) / name).read_bytes() == (folder / name).read_bytes()
@@ -220,26 +214,49 @@ def test_downstream_scan_reads_the_applied_sample(
 # --------------------------------------------------------------------------
 
 
-def test_apply_defers_an_unconfirmed_run_until_a_person_confirms_it(
+def test_apply_copies_a_settled_run_its_header_says_is_short_of_its_plan(
     applier: Applier, project: Path, folder: Path
 ) -> None:
     write_autoreduced(folder, 234290, [1], planned=3, mtime=time.time() - 3600)
-    catalog = catalog_for(234290)
 
-    plan = applier.plan(catalog)
-    assert set(actions(plan).values()) == {Action.DEFERRED}
-    assert "1 of 3" in plan.samples[0].files[0].detail
+    plan, report = applier.apply(catalog_for(234290))
 
-    _, report = applier.apply(catalog, confirmed={RunKey(234290)})
+    assert set(actions(plan).values()) == {Action.COPY}
     assert [a.name for a in report.done] == ["REFL_234290_1_234290_autoreduction.dat"]
+    assert (steady(project) / "REFL_234290_1_234290_autoreduction.dat").is_file()
 
 
-def test_confirmation_does_not_override_a_quarantine(
-    applier: Applier, folder: Path
+def test_a_segment_arriving_after_its_run_was_copied_is_copied_next_time(
+    applier: Applier, project: Path, folder: Path
 ) -> None:
+    """More data for the same run: added beside the copies, which stay as they are."""
+    write_autoreduced(folder, 234290, [1, 2], planned=3, mtime=time.time() - 3600)
+    catalog = catalog_for(234290)
+    applier.apply(catalog)
+    first = {p.name: p.stat().st_mtime_ns for p in steady(project).glob("REFL_*")}
+    assert sorted(first) == [
+        "REFL_234290_1_234290_autoreduction.dat",
+        "REFL_234290_2_234291_autoreduction.dat",
+    ]
+
+    write_autoreduced(folder, 234290, [3], planned=3, mtime=time.time() - 3600)
+    plan, report = applier.apply(catalog)
+
+    third = "REFL_234290_3_234292_autoreduction.dat"
+    assert actions(plan) == {
+        **dict.fromkeys(first, Action.UNCHANGED),
+        third: Action.COPY,
+    }
+    assert [a.name for a in report.done] == [third]
+    assert (steady(project) / third).read_bytes() == (folder / third).read_bytes()
+    assert {n: (steady(project) / n).stat().st_mtime_ns for n in first} == first
+    assert set(read_sources(project / "samples" / "Sample6")) == {*first, third}
+
+
+def test_a_quarantined_run_is_deferred(applier: Applier, folder: Path) -> None:
     write_autoreduced(folder, 234290, [1, 3], planned=3, mtime=time.time() - 3600)
 
-    plan = applier.plan(catalog_for(234290), confirmed={RunKey(234290)})
+    plan = applier.plan(catalog_for(234290))
 
     assert set(actions(plan).values()) == {Action.DEFERRED}
     assert "quarantined" in plan.samples[0].files[0].detail
@@ -372,7 +389,6 @@ def test_apply_copy_fails_midway_no_partial_run_visible(
 ) -> None:
     source = InMemorySource(fail_reads_after=1)
     source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
-    source.add_segments(NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     applier = Applier(project, context, source)
 
     _, report = applier.apply(catalog_for(234277))
@@ -388,7 +404,6 @@ def test_apply_a_source_file_that_is_not_reduced_data_is_refused(
 ) -> None:
     source = InMemorySource()
     source.add_segments(234277, [1, 2, 3], planned=3, mtime=time.time() - 3600)
-    source.add_segments(NEXT_RUN, [1], planned=3, mtime=time.time() - 3600)
     source.files[
         "REFL_234277_2_234278_autoreduction.dat"
     ].data = b"<html>not data</html>"

@@ -182,39 +182,25 @@ page keeps showing what it last saw and says so, rather than hanging.
 
 | State | Meaning | Applied? |
 |---|---|---|
-| **complete** | Its files have stopped changing, *and* there is evidence the measurement ended. | Yes |
-| **unconfirmed** | Its files have stopped changing, but nothing shows the measurement ended. | Only if you confirm it |
+| **complete** | Its files have stopped changing. | Yes |
 | **arriving** / **settling** | A file changed recently. | Not yet |
 | **awaiting** | A run feed announced it, but no reduced files exist yet. | Not yet |
 | **quarantined** | Its files do not look like one measurement. The page says why. | No |
 | **clock skew** | Its files are dated in the future by the file server's clock. | No |
 | **in sample** | The data folder does not list it, but a sample's `data/` folder holds its files. | Nothing to copy: they are in place |
 
-**Why "stopped changing" is not enough.** A run's angle segments are reduced as
-each angle finishes measuring. In the reference experiment, run 218386's three
-segments landed 15 and then 52 minutes apart. Five quiet minutes after the
-first segment, it looks finished, and a copy made then is a third of a
-measurement. It fits perfectly well, which is the problem.
+**What has arrived is used.** A run's angle segments are reduced as each angle
+finishes measuring: in the reference experiment, run 218386's three segments
+landed 15 and then 52 minutes apart. Once a run's files have been unchanged for
+the settle time (`settle_seconds`), the run is complete and apply copies what
+is there. A segment that lands later is more data for the same run: the run is
+*arriving* again until it settles, and the next apply copies the new file
+beside the others. When the header says how many segments were planned, the
+reason says how many are here so far ("2 of 3 planned segments so far"); it
+holds nothing back.
 
-So *complete* needs evidence the run ended, and one kind counts: **a later run
-has been reduced.** Once the instrument has moved on and the next run's files
-exist, this one is not getting more segments.
-
-- **The planned segment count can only say "not yet".** When the
-  `new_reduction` header says three segments were planned and two are here,
-  the run is not complete, however much later data has arrived. When all three
-  are here, that alone does not make it complete either: nobody has yet checked
-  on a real file that the *first* segment's header already carries the whole
-  plan. If it does not, a header read after segment 1 says "1 of 1" and would
-  call a third of a measurement finished.
-- **A run the feed announces does not count as the later run.** The
-  announcement means the next acquisition started. This run's last segment may
-  still be reducing.
-
-A settled run without that evidence is *unconfirmed*. The last run of a
-beamtime always is, because nothing comes after it. If the measurement is really
-over, or was stopped early, tick "use run N as it is" when you review apply
-(`--confirm N` on the command line).
+A fit made before a run's later segment arrived is not flagged by `nrw check`,
+so fit again once new data lands.
 
 ## Organizing
 
@@ -312,8 +298,8 @@ decide:
 `samples/<id>/data/sources.json` records what apply copied and from which
 version of the source file; it is how those cases are told apart.
 
-Only runs that are *complete*, or that you confirmed, are copied. A run is
-copied whole or not at all.
+Only runs that are *complete* are copied. A run's files are copied together or
+not at all.
 
 ## Models
 

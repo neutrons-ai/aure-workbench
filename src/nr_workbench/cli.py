@@ -1775,12 +1775,6 @@ def experiment_assign_command(**kwargs: object) -> None:
 @click.option(
     "--write", is_flag=True, help="Carry the plan out; without it, only show it."
 )
-@click.option(
-    "--confirm",
-    multiple=True,
-    metavar="RUN",
-    help="Copy this unconfirmed run anyway (it settled, but nothing shows it ended).",
-)
 @click.option("--root", type=click.Path(file_okay=False), help="Project root.")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def experiment_apply_command(**kwargs: object) -> None:

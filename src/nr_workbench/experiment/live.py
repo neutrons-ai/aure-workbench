@@ -335,7 +335,6 @@ class LiveInventory:
         generation = previous.generation + 1
         announced = {a.run: a for a in feed.announcements}
         keys = set(inventory.runs) | {RunKey(run) for run in announced}
-        latest = max((k.run for k in inventory.runs), default=None)
 
         views: dict[RunKey, RunView] = {}
         changed = False
@@ -346,7 +345,6 @@ class LiveInventory:
                 previous_fingerprint=self._fingerprints.get(key),
                 now=now,
                 settle_seconds=self.settle_seconds,
-                latest_reduced=latest,
             )
             if run is not None:
                 self._fingerprints[key] = run.fingerprint

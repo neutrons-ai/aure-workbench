@@ -24,7 +24,10 @@ from .experiment_fixtures import write_autoreduced
 
 @pytest.fixture
 def expt(project: Path, tmp_path: Path) -> Path:
-    """The scaffolded project, watching a folder with runs in three states."""
+    """The scaffolded project, watching a folder of three settled runs.
+
+    234283 has one of its three planned segments so far.
+    """
     folder = tmp_path / "facility" / "new_reduction"
     for run in (234277, 234280):
         write_autoreduced(folder, run, [1, 2, 3], planned=3, mtime=time.time() - 3600)
@@ -97,7 +100,7 @@ def test_overview_lists_runs_with_their_states(app) -> None:
     payload = app.test_client().get("/api/experiment").get_json()
 
     states = {row["run"]: row["state"] for row in payload["runs"]}
-    assert states == {234277: "complete", 234280: "complete", 234283: "unconfirmed"}
+    assert states == {234277: "complete", 234280: "complete", 234283: "complete"}
 
 
 def test_the_page_and_the_command_line_describe_a_run_identically(
@@ -380,6 +383,22 @@ def test_apply_through_the_api_copies_the_reviewed_plan(
     assert response.status_code == 200, response.get_json()
     steady = expt / "samples" / "Sample6" / "data" / "steady"
     assert len(list(steady.glob("REFL_234277_*"))) == 3
+
+
+def test_apply_through_the_api_copies_a_run_with_segments_still_to_come(
+    app, writer, expt: Path
+) -> None:
+    assert assign(writer, app, run=234283).status_code == 200
+    plan = writer.get("/api/experiment/apply").get_json()
+    assert [f["action"] for f in plan["samples"][0]["files"]] == ["copy"]
+
+    response = writer.post("/api/experiment/apply", json={"plan_id": plan["plan_id"]})
+
+    assert response.status_code == 200, response.get_json()
+    steady = expt / "samples" / "Sample6" / "data" / "steady"
+    assert [p.name for p in steady.glob("REFL_234283_*")] == [
+        "REFL_234283_1_234283_autoreduction.dat"
+    ]
 
 
 def test_apply_with_a_stale_plan_is_a_409(app, writer) -> None:

@@ -7,10 +7,9 @@ is acquired, before any reduction exists, and Tiled can announce runs whatever
 their data source. A run a feed announces with no files yet is *awaiting
 reduction* -- a state the folder alone can never show.
 
-**An announcement is not evidence that the run before it has finished.** It
-says the next acquisition started; the previous run's last segment may still
-be reducing. Only a later run with *reduced files* counts (see
-:mod:`nr_workbench.experiment.status`), and a new feed must not change that.
+**An announcement says nothing about any run's files.** A run is used once
+its own files have settled (see :mod:`nr_workbench.experiment.status`); a feed
+only adds the runs that have no files yet.
 
 A feed returns a snapshot of every run it currently knows, not a delta:
 :class:`~nr_workbench.experiment.live.LiveInventory` works out what changed,

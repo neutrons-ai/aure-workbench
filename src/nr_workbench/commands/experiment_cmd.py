@@ -265,7 +265,6 @@ def run_apply(
     *,
     samples: tuple[str, ...] = (),
     write: bool = False,
-    confirm: tuple[str, ...] = (),
     root: str | None = None,
     as_json: bool = False,
     fail_on_attention: bool = True,
@@ -277,14 +276,8 @@ def run_apply(
     shows it, and has done what it was asked.
     """
     from nr_workbench.experiment.apply import ApplyError, apply, plan_apply
-    from nr_workbench.experiment.model import CatalogValidationError, RunKey
     from nr_workbench.experiment.render import SampleRenderError
     from nr_workbench.project.scaffold import LockProblemError
-
-    try:
-        confirmed = {RunKey.parse(text) for text in confirm}
-    except CatalogValidationError as exc:
-        raise click.ClickException(str(exc)) from exc
 
     workspace = _workspace(root)
     catalog = _catalog(workspace)
@@ -302,7 +295,6 @@ def run_apply(
         workspace.source,
         context,
         samples=list(samples) or None,
-        confirmed=confirmed,
     )
     # Anything a person must look at makes the exit code non-zero: the command
     # succeeding would otherwise read as "in step".
@@ -329,7 +321,6 @@ def run_apply(
             context,
             expected_plan_id=plan.plan_id,
             samples=list(samples) or None,
-            confirmed=confirmed,
         )
     except (ApplyError, LockProblemError) as exc:
         raise click.ClickException(str(exc)) from exc

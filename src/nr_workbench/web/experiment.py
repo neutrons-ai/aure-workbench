@@ -528,9 +528,7 @@ class ExperimentData:
             "problems": [p.as_dict() for p in problems],
         }
 
-    def apply_plan(
-        self, samples: list[str] | None = None, confirmed: list[Any] | None = None
-    ) -> dict[str, Any]:
+    def apply_plan(self, samples: list[str] | None = None) -> dict[str, Any]:
         """What applying would do, from the latest snapshot. Writes nothing."""
         w = self._wired()
         from nr_workbench.experiment.apply import plan_apply
@@ -545,7 +543,6 @@ class ExperimentData:
             w.source,
             w.workspace.render_context(),
             samples=_sample_list(samples),
-            confirmed=_run_keys(confirmed),
         )
         return plan.as_dict()
 
@@ -714,12 +711,7 @@ class ExperimentData:
             "catalog_version": self._catalog_version(w),
         }
 
-    def apply(
-        self,
-        plan_id: Any,
-        samples: list[str] | None = None,
-        confirmed: list[Any] | None = None,
-    ) -> dict[str, Any]:
+    def apply(self, plan_id: Any, samples: list[str] | None = None) -> dict[str, Any]:
         """Carry out a reviewed plan, after a fresh look at the source.
 
         Raises:
@@ -750,7 +742,6 @@ class ExperimentData:
             w.workspace.render_context(),
             expected_plan_id=plan_id,
             samples=_sample_list(samples),
-            confirmed=_run_keys(confirmed),
         )
         return report.as_dict()
 
@@ -876,11 +867,3 @@ def _sample_list(samples: Any) -> list[str] | None:
     if not isinstance(samples, list) or not all(isinstance(s, str) for s in samples):
         raise RequestError("samples must be a list of sample ids")
     return [validate_sample_id(s) for s in samples]
-
-
-def _run_keys(runs: Any) -> set[RunKey]:
-    if runs in (None, []):
-        return set()
-    if not isinstance(runs, list):
-        raise RequestError("confirmed must be a list of run numbers")
-    return {RunKey.parse(run) for run in runs}

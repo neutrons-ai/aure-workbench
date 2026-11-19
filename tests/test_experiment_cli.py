@@ -22,7 +22,10 @@ from .experiment_fixtures import write_autoreduced
 
 @pytest.fixture
 def expt(project: Path, tmp_path: Path) -> Path:
-    """The scaffolded project, watching a folder with two complete runs."""
+    """The scaffolded project, watching a folder of three settled runs.
+
+    234283 has one of its three planned segments so far.
+    """
     folder = tmp_path / "facility" / "new_reduction"
     for run in (234277, 234280):
         write_autoreduced(folder, run, [1, 2, 3], planned=3, mtime=time.time() - 3600)
@@ -46,7 +49,7 @@ def test_status_lists_every_run_with_its_state(expt: Path) -> None:
     payload = status(expt)
 
     states = {row["run"]: row["state"] for row in payload["runs"]}
-    assert states == {234277: "complete", 234280: "complete", 234283: "unconfirmed"}
+    assert states == {234277: "complete", 234280: "complete", 234283: "complete"}
     assert payload["reachable"] is True
     assert payload["samples"] == []
 
@@ -175,17 +178,26 @@ def test_apply_write_copies_then_a_second_apply_is_in_step(expt: Path) -> None:
     assert plan["samples"][0]["sample_md"] == "unchanged"
 
 
-def test_apply_confirm_copies_an_unconfirmed_run(expt: Path) -> None:
+def test_apply_copies_a_settled_run_with_segments_still_to_come(expt: Path) -> None:
     nrw("experiment", "assign", "234283", "--sample", "Sample6", "--root", str(expt))
 
     preview = nrw("experiment", "apply", "--root", str(expt))
-    assert "deferred" in preview.output
+    assert "deferred" not in preview.output
 
-    nrw("experiment", "apply", "--write", "--confirm", "234283", "--root", str(expt))
+    result = nrw("experiment", "apply", "--write", "--root", str(expt))
+    assert result.exit_code == 0, result.output
     steady = expt / "samples" / "Sample6" / "data" / "steady"
     assert [p.name for p in steady.glob("REFL_*")] == [
         "REFL_234283_1_234283_autoreduction.dat"
     ]
+
+
+def test_apply_has_no_confirm_option(expt: Path) -> None:
+    result = CliRunner().invoke(
+        main, ["experiment", "apply", "--confirm", "234283", "--root", str(expt)]
+    )
+
+    assert result.exit_code == 2 and "No such option" in result.output
 
 
 def test_apply_exits_non_zero_when_a_person_must_look(expt: Path) -> None:

@@ -120,22 +120,11 @@ what changed, so a feed never keeps state about what it has already said. If a
 remote API only offers deltas, keep the accumulated set inside the feed.
 
 **Acquisition is not reduction.** Each angle's `.dat` file is written once
-*that angle* has been measured, so a run's segments arrive one by one, and a
-run whose files have settled may still have angles to come. A later run that a
-feed merely *announces* does not make an earlier run complete: that is when the
-next acquisition started, and the earlier run's last segment may still be
-reducing. Today only a later run with *reduced files* counts (`status.judge`,
-`latest_reduced`).
-
-**What the monitor will add.** The web monitor reports the run being measured
-*now*. "The instrument is measuring run M" proves that every segment of an
-earlier run with a subrun below M has been *acquired*. Once each of those has
-been reduced and its files have settled, that run is complete, without waiting
-for the next run's reduction. That is also what will let the last run of a
-beamtime complete without a person: the monitor then reports that nothing is
-being measured. A monitor feed should announce the current run with
-`state="acquiring"` and leave the judgement to `status.judge`, which will need
-that one rule added.
+*that angle* has been measured, so a run's segments arrive one by one. A run is
+complete whenever its files have settled, and a segment that lands later is
+more data for the same run (`status.judge`). A feed's announcements play no
+part in that: a monitor feed announces the run being measured with
+`state="acquiring"`, and the page shows it as awaiting until its files appear.
 
 ## `CatalogStore`: the organization
 
@@ -279,8 +268,7 @@ names the reduction writes are copied. It copies into the data folder
 and checks it can write there before anything is pulled. `--run` narrows it to
 some runs, and `nrw tiled status` says which files a pull would copy, before
 it is run. A pulled file lands dated an hour back: it arrives whole, so its run
-is not held for its files to settle, as a file copied in by hand is. Whether
-the run is complete still needs a later run, as for any run.
+is not held for its files to settle, as a file copied in by hand is.
 
 **Pulling the catalog.** `pull --context` writes Tiled's runs, samples and
 experiment context into this project's catalog: a record the catalog lacks is

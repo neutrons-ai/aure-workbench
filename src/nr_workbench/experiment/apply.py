@@ -8,14 +8,15 @@ because it writes into a directory people and agents are working in.
 
 The rules, each of which exists because the obvious version fails quietly:
 
-**Only complete runs are copied.** A run that has merely stopped changing may
-be a third of a measurement (see :mod:`~nr_workbench.experiment.status`). An
-*unconfirmed* run is copied only when a person confirms it; a quarantined,
-arriving or clock-skewed one never.
+**Only complete runs are copied.** A run is complete once its files have
+settled (see :mod:`~nr_workbench.experiment.status`); an arriving, quarantined
+or clock-skewed one is not copied. A segment that lands after its run was
+copied is more data for that run, and the next apply copies it beside the
+others.
 
-**A run is copied whole or not at all.** Its files are staged under names no
-reader looks for, checked, and only then renamed into ``data/steady`` in one
-burst. They get a fresh modification time, not the source's: a copy dated
+**A run's files are copied together or not at all.** They are staged under
+names no reader looks for, checked, and only then renamed into ``data/steady``
+in one burst. They get a fresh modification time, not the source's: a copy dated
 hours ago would look settled to ``nrw agent watch`` the moment it landed.
 
 **Nothing is overwritten.** ``data/sources.json`` records the digest of every
@@ -297,7 +298,6 @@ def plan_apply(
     context: RenderContext,
     *,
     samples: Collection[str] | None = None,
-    confirmed: Collection[RunKey] = (),
 ) -> ApplyPlan:
     """Work out what applying the catalog would do. Writes nothing.
 
@@ -310,7 +310,6 @@ def plan_apply(
             changed since it was copied.
         context: The project's render context.
         samples: Restrict to these samples; all the catalog manages if omitted.
-        confirmed: Unconfirmed runs a person has confirmed may be copied.
 
     Returns:
         The plan.
@@ -347,7 +346,6 @@ def plan_apply(
                     context,
                     lock,
                     existing,
-                    set(confirmed),
                 )
             )
         except ApplyRefused as exc:
@@ -386,7 +384,6 @@ def _plan_sample(
     context: RenderContext,
     lock: Mapping[str, Any],
     existing: Mapping[str, str],
-    confirmed: set[RunKey],
 ) -> SamplePlan:
     clash = existing.get(sample_id.casefold())
     if clash is not None and clash != sample_id:
@@ -418,9 +415,7 @@ def _plan_sample(
 
     for key in sorted(wanted):
         actions.extend(
-            _plan_run(
-                key, runs.get(key), statuses.get(key), steady, record, source, confirmed
-            )
+            _plan_run(key, runs.get(key), statuses.get(key), steady, record, source)
         )
 
     # nrw's own copies of runs that no longer belong here: move them aside.
@@ -503,7 +498,6 @@ def _plan_run(
     steady: Path,
     record: Mapping[str, CopyEntry],
     source: Any,
-    confirmed: set[RunKey],
 ) -> list[FileAction]:
     """What happens to one assigned, included run's files."""
     run = key.run
@@ -546,7 +540,7 @@ def _plan_run(
                 )
             )
 
-    may_copy, why_not = _may_copy(key, status, confirmed)
+    may_copy, why_not = _may_copy(status)
     # What a fit of the sample reads, and nothing else: the segments, or the
     # combined curve when there are none. A combined curve beside segments
     # stays at the source; one nrw copied before this rule is still managed.
@@ -621,17 +615,11 @@ def _held_elsewhere(run: int, steady: Path) -> list[str]:
     return found
 
 
-def _may_copy(
-    key: RunKey, status: RunStatus | None, confirmed: set[RunKey]
-) -> tuple[bool, str]:
+def _may_copy(status: RunStatus | None) -> tuple[bool, str]:
     if status is None:
         return (False, "its state is not known yet")
     if status.complete:
         return (True, "")
-    if status.state == "unconfirmed" and key in confirmed:
-        return (True, "")
-    if status.state == "unconfirmed":
-        return (False, f"{status.reason}")
     return (False, f"{status.state}: {status.reason}")
 
 
@@ -809,7 +797,6 @@ def apply(
     *,
     expected_plan_id: str,
     samples: Collection[str] | None = None,
-    confirmed: Collection[RunKey] = (),
 ) -> ApplyReport:
     """Carry out a reviewed plan.
 
@@ -837,7 +824,6 @@ def apply(
                 source,
                 context,
                 samples=samples,
-                confirmed=confirmed,
             )
             if plan.problems:
                 raise ApplyRefused("; ".join(p.message for p in plan.problems))

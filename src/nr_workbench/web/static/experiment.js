@@ -18,7 +18,6 @@
 
   const STATE_BADGE = {
     complete: "text-bg-success",
-    unconfirmed: "text-bg-warning",
     arriving: "text-bg-info",
     settling: "text-bg-info",
     awaiting: "text-bg-secondary",
@@ -57,7 +56,6 @@
     experiment: initial.experiment || {},
     contextBase: null,
     writable: Boolean(initial.writable),
-    confirmed: new Set(),
     plan: null,
   };
 
@@ -202,7 +200,7 @@
         if (state.filter === "arriving" &&
             ["arriving", "settling", "awaiting"].indexOf(row.state) === -1) return false;
         if (state.filter === "attention" &&
-            ["unconfirmed", "quarantined", "clock-skew", "not listed"].indexOf(row.state) === -1) {
+            ["quarantined", "clock-skew", "not listed"].indexOf(row.state) === -1) {
           return false;
         }
         if (!needle) return true;
@@ -799,11 +797,8 @@
   /* ---------------------------------------------------------------- */
 
   async function review() {
-    const confirm = Array.from(state.confirmed).join(",");
     try {
-      state.plan = await api(
-        "GET", "/api/experiment/apply" + (confirm ? "?confirm=" + confirm : "")
-      );
+      state.plan = await api("GET", "/api/experiment/apply");
       renderPlan();
     } catch (error) {
       await failed(error, "Reviewing");
@@ -832,15 +827,10 @@
       });
       const list = el("ul", { className: "list-unstyled mb-1 expt-plan-list" });
       let unchanged = 0;
-      const unconfirmed = new Set();
       sample.files.forEach(function (file) {
         if (file.action === "unchanged") {
           unchanged += 1;
           return;
-        }
-        const row = state.rows.get(file.run + ":steady");
-        if (file.action === "deferred" && row && row.state === "unconfirmed") {
-          unconfirmed.add(file.run);
         }
         const attention = !(file.action in SYMBOL);
         list.append(el("li", { className: attention ? "text-warning-emphasis" : "" }, [
@@ -857,25 +847,6 @@
           text: unchanged + " file(s) already copied and unchanged.",
         }));
       }
-      unconfirmed.forEach(function (run) {
-        const id = "confirm-" + run;
-        const check = el("input", {
-          type: "checkbox", className: "form-check-input", id: id,
-          checked: state.confirmed.has(run), disabled: !state.writable,
-        });
-        check.addEventListener("change", function () {
-          if (check.checked) state.confirmed.add(run);
-          else state.confirmed.delete(run);
-          review();
-        });
-        box.append(el("div", { className: "form-check" }, [
-          check,
-          el("label", {
-            className: "form-check-label", htmlFor: id,
-            text: "Use run " + run + " as it is: it settled, but nothing shows the measurement ended.",
-          }),
-        ]));
-      });
       if (sample.sample_md) {
         box.append(el("p", {
           className: ["drifted", "untracked"].indexOf(sample.sample_md) !== -1
@@ -907,9 +878,7 @@
     try {
       const report = await api("POST", "/api/experiment/apply", {
         plan_id: state.plan.plan_id,
-        confirmed: Array.from(state.confirmed),
       });
-      state.confirmed.clear();
       await reload();
       state.plan = await api("GET", "/api/experiment/apply");
       renderPlan(report);

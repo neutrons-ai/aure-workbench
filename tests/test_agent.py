@@ -81,7 +81,7 @@ from nr_workbench.agent import guard, session
         # Organizing the experiment is a person's claim about it.
         ("nrw experiment assign 218386 --sample S6", "experiment"),
         ("nrw experiment apply --write", "experiment"),
-        ("nrw experiment apply S6 --write --confirm 218390", "experiment"),
+        ("nrw experiment apply S6 --write", "experiment"),
         ("nrw experiment adopt S6 --write --rewrite", "experiment"),
         ("nrw experiment release S6", "experiment"),
         ("nrw experiment settings --location /data/x --write", "experiment"),
@@ -129,7 +129,7 @@ def test_the_refused_commands_are_refused(command: str, rule: str) -> None:
         # Looking at the experiment, and previewing what apply would do.
         "nrw experiment status --json",
         "nrw experiment apply",
-        "nrw experiment apply S6 --confirm 218390",
+        "nrw experiment apply S6",
         "nrw experiment adopt S6",
         # Looking at the settings, and previewing a change, changes nothing.
         "nrw experiment settings",
