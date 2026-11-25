@@ -10,6 +10,7 @@ them all to an agent. Every way the client fails is caught in one place,
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,12 +18,21 @@ from typing import Any
 
 import click
 
+#: What a pull started outside a project is told, after "run `nrw init`".
+OR_GIVE_IPTS = (
+    " Or give --ipts, as `nrw tiled pull --ipts IPTS-34347 --context --data "
+    "--fits` does: it makes the experiment's project in a folder of that name, "
+    "and pulls into it."
+)
+
 
 def _start(root: str | None) -> Path | None:
     return Path(root).resolve() if root else None
 
 
-def _project(root: str | None) -> Path:
+def _project(root: str | None, *, or_else: str = "") -> Path:
+    """The project: ``--root``, else the one the command runs in. *or_else*
+    is said after the error when it runs in none."""
     from nr_workbench.project.layout import ProjectLayout, ProjectNotFoundError
 
     try:
@@ -32,8 +42,78 @@ def _project(root: str | None) -> Path:
             else ProjectLayout.discover()
         )
     except ProjectNotFoundError as exc:
-        raise click.ClickException(str(exc)) from exc
+        raise click.ClickException(f"{exc}{or_else}") from exc
     return layout.root
+
+
+def _project_of(root: str | None, ipts: str, *, dry_run: bool) -> Path:
+    """The project ``pull --ipts`` writes into, made when it is not one yet.
+
+    It is ``--root``, else the project the command runs in, else a folder
+    named for the experiment, ``IPTS-34347``, in the working directory. A
+    project there already must be the experiment's own. One to make is made
+    as ``nrw init --ipts`` makes it, once the experiment is found on Tiled
+    with the person's login: a mistyped number makes no folder.
+
+    Raises:
+        click.ClickException: *ipts* is not an IPTS; the project is another
+            experiment's; the experiment is not on Tiled; or the project is
+            still to make in a dry run, which writes nothing.
+    """
+    from nr_workbench.project.config import CONFIG_FILENAME
+    from nr_workbench.project.experiment_schema import normalize_ipts
+    from nr_workbench.project.layout import ProjectNotFoundError, find_project_root
+    from nr_workbench.tiled.server import EXPERIMENT_PATH, connect, experiment_node
+
+    named = normalize_ipts(ipts)
+    if named is None:
+        raise click.ClickException(
+            f"--ipts {ipts} is not an IPTS: write it as IPTS-34347, or 34347."
+        )
+    if root:
+        project = Path(root).resolve()
+    else:
+        try:
+            project = find_project_root()
+        except ProjectNotFoundError:
+            project = (Path.cwd() / named).resolve()
+    if (project / CONFIG_FILENAME).is_file():
+        held = _ipts(project)
+        if normalize_ipts(held) != named:
+            raise click.ClickException(
+                f"{project} is the project of {held}, not of {named}: nothing was "
+                f"pulled. Outside a project, --ipts {named} makes its own."
+            )
+        return project
+    if dry_run:
+        raise click.ClickException(
+            f"{project} is not a project yet, and --dry-run writes nothing: pull "
+            "without --dry-run, which makes it."
+        )
+    # Asked as the pull will ask once the project is made: of the same server,
+    # with the same key or login.
+    with _asking(project, to_make=True) as (chosen, _):
+        if experiment_node(connect(project, to_make=True), named) is None:
+            raise click.ClickException(
+                f"{EXPERIMENT_PATH.format(ipts=named)} is not on {chosen.url}, or "
+                f"not shared with this login: {project} was not made."
+            )
+    from nr_workbench.commands.init_cmd import run_init
+
+    try:
+        run_init(path=str(project), ipts=named)
+    except OSError as exc:
+        raise click.ClickException(
+            f"{project} could not be made: {exc}. Nothing was pulled."
+        ) from exc
+    click.echo()
+    return project
+
+
+def _from_here(path: Path) -> str:
+    """*path* as it is typed from the working directory."""
+    here = Path.cwd().resolve()
+    return str(path.relative_to(here)) if path.is_relative_to(here) else str(path)
 
 
 def _ipts(project: Path) -> str:
@@ -61,13 +141,14 @@ def _catalog(project: Path) -> Any:
 
 
 @contextmanager
-def _asking(start: Path | None) -> Iterator[tuple[Any, Any]]:
+def _asking(start: Path | None, *, to_make: bool = False) -> Iterator[tuple[Any, Any]]:
     """The person's server and the client's parts, with every failure of the
-    client said as a command's error."""
+    client said as a command's error. *to_make* is
+    :func:`nr_workbench.tiled.server.server`'s."""
     from nr_workbench.tiled.server import TiledSyncError, library, server, talking
 
     try:
-        chosen = server(start)
+        chosen = server(start, to_make=to_make)
         tiled = library()
         with talking(chosen.url, tiled):
             yield chosen, tiled
@@ -567,6 +648,7 @@ def _pull_folder(project: Path, into: str | None) -> Path:
 def run_pull(
     *,
     root: str | None = None,
+    ipts: str | None = None,
     context: bool = False,
     data: bool = False,
     fits: bool = False,
@@ -584,6 +666,9 @@ def run_pull(
     (:func:`nr_workbench.tiled.pull.pull_fits`). After ``--context`` or
     ``--data``, the catalog is applied to ``samples/``, as ``nrw experiment
     apply --write`` applies it. Nothing is written on Tiled.
+
+    ``--ipts`` names the experiment, and makes its project when there is none
+    (:func:`_project_of`); without it, the experiment is the project's.
     """
     from nr_workbench.tiled.server import EXPERIMENT_PATH, connect, experiment_node
 
@@ -591,7 +676,12 @@ def run_pull(
         raise click.ClickException(
             "Say what to pull: --context, --data or --fits, or any of them."
         )
-    project = _project(root)
+    if ipts is None:
+        project = _project(root, or_else=OR_GIVE_IPTS)
+        elsewhere = False
+    else:
+        project = _project_of(root, ipts, dry_run=dry_run)
+        elsewhere = not Path.cwd().resolve().is_relative_to(project)
     ipts = _ipts(project)
     folder = _pull_folder(project, into) if data else None
     with _asking(project) as (chosen, _):
@@ -615,6 +705,11 @@ def run_pull(
 
         click.echo("\nApplying the catalog to samples/:")
         run_apply(write=True, root=str(project), fail_on_attention=False)
+    if elsewhere:
+        where = _from_here(project)
+        click.echo(
+            f"\nThe project is in {where}: `cd {shlex.quote(where)}` to work in it."
+        )
 
 
 def _pull_context(

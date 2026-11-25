@@ -59,18 +59,24 @@ class Server:
     key_source: str = ""
 
 
-def server(root: Path | None = None) -> Server:
+def server(root: Path | None = None, *, to_make: bool = False) -> Server:
     """The person's server and key.
 
     Args:
         root: The project.
+        to_make: *root* is a folder still to make a project of. Its settings
+            are read as its commands will read them once it is one: from its
+            own ``.env`` when it holds one, and from no ``.env`` above it.
 
     Raises:
         TiledSyncError: ``TILED_URL`` names no server, or has a path.
     """
     from nr_workbench.env import shown_source, where_set
 
-    settings = where_set(root)
+    # A folder with no nrw.toml does not stop the search for a `.env`, which
+    # goes on into the folders above it; a project does.
+    above = to_make and root is not None and not (Path(root) / ".env").is_file()
+    settings = where_set(root, skip_project=above)
     named = settings.get("TILED_URL")
     if named is not None and named.value.strip():
         url = named.value.strip().rstrip("/")
@@ -150,19 +156,24 @@ def talking(url: str, tiled: Library) -> Iterator[None]:
 
 
 def connect(
-    root: Path | None = None, *, login: bool = False, data_sources: bool = False
+    root: Path | None = None,
+    *,
+    login: bool = False,
+    data_sources: bool = False,
+    to_make: bool = False,
 ) -> Any:
     """A client of the person's server, at its root, acting as the person.
 
     With the key when one is set; otherwise with the login the client keeps.
     A login is started only with *login*. With *data_sources*, each node read
-    says what files back it, in the same answer.
+    says what files back it, in the same answer. *to_make* is
+    :func:`server`'s.
 
     Raises:
         TiledSyncError: Not logged in, the server refused or did not answer,
             or the client is not installed.
     """
-    chosen = server(root)
+    chosen = server(root, to_make=to_make)
     tiled = library()
     with talking(chosen.url, tiled):
         try:

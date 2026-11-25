@@ -1043,6 +1043,13 @@ def tiled_push_command(**kwargs: object) -> None:
 
 @tiled_group.command("pull")
 @click.option(
+    "--ipts",
+    help=(
+        "The experiment, as IPTS-34347 or 34347: outside a project, makes its "
+        "project in a folder of that name [default: the project's IPTS]."
+    ),
+)
+@click.option(
     "--context", is_flag=True, help="The catalog's runs, samples and context."
 )
 @click.option("--data", is_flag=True, help="The experiment's reduced files.")
@@ -1070,6 +1077,11 @@ def tiled_pull_command(**kwargs: object) -> None:
     models/; `nrw fit run --from` runs it again. After --context or --data,
     the catalog is applied to samples/, as `nrw experiment apply --write`
     applies it.
+
+    To start from Tiled, give --ipts outside a project: once the experiment
+    is found on Tiled, its project is made in ./IPTS-34347 (or --root), as
+    `nrw init --ipts` makes it, and pulled into. In a project, --ipts must
+    name its own experiment.
     """
     from nr_workbench.commands.tiled_cmd import run_pull
 

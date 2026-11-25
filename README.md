@@ -94,11 +94,12 @@ The organization is kept in `experiment/*.parquet`.
 To share it with everyone on the experiment, `nrw tiled push` writes it, and
 the starred and final fits, to the experiment's node on tiled.ornl.gov, and
 `nrw tiled status` says what is there. A colleague starting fresh runs `nrw
-tiled pull --context --data --fits` to bring back the catalog, the reduced
+tiled pull --ipts IPTS-34567 --context --data --fits`: it makes the
+experiment's project in `IPTS-34567/`, brings back the catalog, the reduced
 files (into the project's `incoming/`), and each fit as it was recorded, and
-to apply the catalog to `samples/`; `nrw fit run --from <fit_id>` runs one
-again. Each acts with your own Tiled login (`nrw tiled login`), and needs the
-installer's `NRW_EXTRAS=tiled`.
+applies the catalog to `samples/`; `nrw fit run --from <fit_id>` runs one
+again. In a project, the same pull needs no `--ipts`. Each acts with your own
+Tiled login (`nrw tiled login`), and needs the installer's `NRW_EXTRAS=tiled`.
 
 ### Choosing an assistant
 

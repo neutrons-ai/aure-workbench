@@ -195,6 +195,7 @@ own command line, to an agent.
 | `nrw tiled pull --context` | writes Tiled's runs, samples and experiment context into the catalog, then applies it to `samples/` |
 | `nrw tiled pull --data` | copies the experiment's reduced files into the data folder, then applies the catalog to `samples/` |
 | `nrw tiled pull --fits` | rebuilds each fit here as it was recorded, with the reduced files it read, and writes its spec and script into its sample's `models/` |
+| `nrw tiled pull --ipts IPTS-37740`, with any of the three | outside a project, makes the experiment's project in `IPTS-37740/` once it is found on Tiled, and pulls into it |
 
 The server is `TILED_URL` (tiled.ornl.gov by default), and `TILED_API_KEY`
 is sent instead of a login when set: both read as nrw's other settings are,
@@ -335,18 +336,33 @@ problem file, and the `nrw fit run` line of its script in `models/` for one
 without.
 
 **Starting from Tiled.** A colleague who joins an experiment starts a project
-of their own:
+of their own, from the folder that is to hold it:
 
-1. `nrw init DIR --ipts IPTS-37740`, with the IPTS written in full:
-   `nrw tiled` looks the experiment up as written. It makes the project's
-   data folder, `incoming/`.
-2. `nrw tiled login`.
-3. `nrw tiled pull --context --data --fits`, which pulls in that order, then
-   applies the catalog: it writes each sample's `sample.md` and copies its
-   data. It leaves the reduced files the fits pull wrote, and lists as a
-   conflict each one the facility's reduction holds otherwise.
-4. Each fit on the Fits page, as it was recorded. `nrw fit run --from
-   <fit_id>`, the line the pull prints for it, runs one again.
+1. `nrw tiled login`.
+2. `nrw tiled pull --ipts IPTS-37740 --context --data --fits`. Once the
+   experiment is found on Tiled, it makes the project in `IPTS-37740/`, as
+   `nrw init IPTS-37740 --ipts IPTS-37740` does, with its data folder,
+   `incoming/`. It then pulls in that order and applies the catalog: it
+   writes each sample's `sample.md` and copies its data. It leaves the
+   reduced files the fits pull wrote, and lists as a conflict each one the
+   facility's reduction holds otherwise.
+3. `cd IPTS-37740`. Each fit is on the Fits page, as it was recorded. `nrw
+   fit run --from <fit_id>`, the line the pull prints for it, runs one again.
+
+`--ipts` takes the IPTS as `IPTS-37740` or `37740`. The project is `--root`
+when given, else the project the command runs in, else `IPTS-37740/` in the
+working directory. A project there already is pulled into when it is the
+experiment's own, so the same command can be run again; one of another
+experiment is refused, and nothing is written. No folder is made when the
+login is missing or the experiment is not on Tiled, nor by `--dry-run`, which
+is refused while the project is still to make. The experiment is looked up
+with the settings the project's own commands read: a `.env` in the folder
+that becomes the project counts, and one in a folder above it does not.
+
+Without `--ipts`, `nrw tiled pull` runs in a project, and its experiment is
+`[beamtime] ipts` in `nrw.toml`. `nrw init DIR --ipts IPTS-37740` makes such a
+project, with the IPTS written in full: `nrw tiled` looks the experiment up
+as written.
 
 A push and a status run against a real Tiled 0.2.18, started with uvx apart
 from nrw's environment, in `pytest -m tiled_server`. So do a fit's record of

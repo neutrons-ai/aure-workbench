@@ -38,6 +38,7 @@ from .test_tiled_analysis import (  # noqa: F401 - fixtures
     starred,
 )
 from .test_tiled_sync import (  # noqa: F401 - fixtures
+    KEY,
     NOW,
     SEGMENT,
     FakeNode,
@@ -45,6 +46,8 @@ from .test_tiled_sync import (  # noqa: F401 - fixtures
     catalogued,
     described,
     nrw,
+    on_tiled,
+    project_env,
     tiled,
 )
 
@@ -728,6 +731,255 @@ def test_a_data_folder_nrw_cannot_write_stops_the_pull_before_the_catalog(
     assert shown.exit_code == 1
     assert "`nrw init` creates it. Nothing was pulled." in shown.output
     assert catalog_of(colleague).runs == {}
+
+
+# --------------------------------------------------------------------------
+# --ipts: the experiment's project, made when there is none
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def desk(tmp_path_factory, monkeypatch) -> Path:
+    """The working directory: a folder that is no project, and in none."""
+    here = tmp_path_factory.mktemp("desk").resolve()
+    monkeypatch.chdir(here)
+    return here
+
+
+def from_tiled(*args: str):
+    """A pull that names no project: the one it finds, or makes."""
+    return nrw("pull", "--yes", *args)
+
+
+def test_ipts_outside_a_project_makes_the_experiments_project_and_pulls_into_it(
+    project: Path, desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    """A colleague's whole start: no `nrw init` first."""
+    from nr_workbench.project.config import load_config
+
+    from .experiment_fixtures import reduced_rows
+
+    catalogued(project)
+    pushed(project)
+    rows = reduced_rows().encode()
+    reduced = FakeNode(content=rows)
+    reduced.key = SEGMENT
+    experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
+
+    shown = from_tiled("--ipts", "IPTS-00001", "--context", "--data")
+
+    made = desk / "IPTS-00001"
+    assert shown.exit_code == 0, shown.output
+    assert load_config(made).ipts == "IPTS-00001"
+    assert catalog_of(made).runs[RunKey(234277)].condition == "OCV"
+    assert (made / "incoming" / SEGMENT).read_bytes() == rows
+    assert (
+        "The project is in IPTS-00001: `cd IPTS-00001` to work in it." in shown.output
+    )
+
+
+@pytest.mark.parametrize("written", ["00001", "ipts-00001"])
+def test_an_ipts_written_as_a_number_names_the_same_experiment(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode, written: str
+) -> None:
+    from nr_workbench.project.config import load_config
+
+    shown = from_tiled("--ipts", written, "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert [made.name for made in desk.iterdir()] == ["IPTS-00001"]
+    assert load_config(desk / "IPTS-00001").ipts == "IPTS-00001"
+
+
+def test_ipts_with_root_makes_the_project_in_that_folder(
+    project: Path, desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    catalogued(project)
+    pushed(project)
+
+    shown = from_tiled("--ipts", "00001", "--root", "li-on-cu", "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert [made.name for made in desk.iterdir()] == ["li-on-cu"]
+    assert catalog_of(desk / "li-on-cu").samples["S1"].title == "Cu/Pt"
+    assert "The project is in li-on-cu: `cd li-on-cu`" in shown.output
+
+
+def test_a_second_pull_with_the_ipts_goes_into_the_project_the_first_made(
+    project: Path, desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    catalogued(project)
+    pushed(project)
+    from_tiled("--ipts", "00001", "--context")
+    made = desk / "IPTS-00001"
+    toml = (made / "nrw.toml").read_bytes()
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert "The catalog already holds what Tiled does." in shown.output
+    assert "Scaffolded" not in shown.output
+    assert (made / "nrw.toml").read_bytes() == toml
+    assert not (made / "IPTS-00001").exists()
+
+
+def test_ipts_in_the_experiments_own_project_pulls_into_it(
+    project: Path,
+    colleague: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    monkeypatch,
+) -> None:
+    catalogued(project)
+    pushed(project)
+    monkeypatch.chdir(colleague / "samples")
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert catalog_of(colleague).runs[RunKey(234277)].condition == "OCV"
+    assert not (colleague / "samples" / "IPTS-00001").exists()
+    assert "The project is in" not in shown.output
+
+
+def test_ipts_in_another_experiments_project_is_refused_and_nothing_is_written(
+    project: Path,
+    colleague: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    monkeypatch,
+) -> None:
+    """Never one experiment's records in another's catalog, nor its project
+    made inside this one."""
+    catalogued(project)
+    pushed(project)
+    tiled.root["projects/isaac"].children["IPTS-00002"] = experiment
+    monkeypatch.chdir(colleague)
+
+    shown = from_tiled("--ipts", "00002", "--context")
+
+    assert shown.exit_code == 1
+    assert "is the project of IPTS-00001, not of IPTS-00002" in shown.output
+    assert catalog_of(colleague).runs == {}
+    assert not (colleague / "IPTS-00002").exists()
+
+
+def test_ipts_for_a_project_that_names_none_is_refused(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    made = CliRunner().invoke(main, ["init", "unnamed"])
+    toml = (desk / "unnamed" / "nrw.toml").read_bytes()
+
+    shown = from_tiled("--ipts", "00001", "--root", "unnamed", "--context")
+
+    assert made.exit_code == 0, made.output
+    assert shown.exit_code == 1
+    assert "nrw.toml names no IPTS" in shown.output
+    assert (desk / "unnamed" / "nrw.toml").read_bytes() == toml
+
+
+@pytest.mark.parametrize(
+    ("args", "why"),
+    [
+        (("--ipts", "cu-on-pt", "--context"), "--ipts cu-on-pt is not an IPTS"),
+        (("--ipts", "00001"), "Say what to pull"),
+        (
+            ("--ipts", "00001", "--context", "--dry-run"),
+            "is not a project yet, and --dry-run writes nothing",
+        ),
+        (
+            ("--ipts", "00002", "--context"),
+            "projects/isaac/IPTS-00002 is not on https://tiled.ornl.gov",
+        ),
+    ],
+)
+def test_a_pull_refused_before_its_project_is_made_makes_no_folder(
+    desk: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    args: tuple[str, ...],
+    why: str,
+) -> None:
+    """A mistyped number, or a dry run, leaves no project behind."""
+    shown = from_tiled(*args)
+
+    assert shown.exit_code == 1
+    assert why in shown.output
+    assert list(desk.iterdir()) == []
+
+
+def test_a_pull_with_no_login_makes_no_folder(desk: Path, tiled: FakeTiled) -> None:
+    on_tiled(tiled)
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 1
+    assert "run `nrw tiled login`" in shown.output
+    assert list(desk.iterdir()) == []
+
+
+def test_a_pull_outside_a_project_says_that_ipts_makes_one(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    shown = from_tiled("--context")
+
+    assert shown.exit_code == 1
+    assert "No nrw.toml found" in shown.output
+    assert "Or give --ipts" in shown.output
+    assert list(desk.iterdir()) == []
+
+
+def test_the_project_to_make_is_looked_up_on_the_server_its_pull_asks(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    """A `.env` above the project is not the project's: once it is made, no
+    command in it reads that file, so the lookup before does not either."""
+    project_env(desk, f"TILED_URL=https://other.example\nTILED_API_KEY={KEY}\n")
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert set(tiled.asked) == {("https://tiled.ornl.gov", None)}
+
+
+def test_a_key_above_the_project_to_make_does_not_stand_in_for_a_login(
+    desk: Path, tiled: FakeTiled
+) -> None:
+    """Else the project is made with the key, and its pull finds no login."""
+    on_tiled(tiled)
+    project_env(desk, f"TILED_API_KEY={KEY}\n")
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 1
+    assert "run `nrw tiled login`" in shown.output
+    assert [left.name for left in desk.iterdir()] == [".env"]
+
+
+def test_the_env_of_the_folder_to_make_a_project_of_is_read_before_and_after(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    (desk / "li-on-cu").mkdir()
+    project_env(desk / "li-on-cu", "TILED_URL=https://tiled-test.ornl.gov\n")
+
+    shown = from_tiled("--ipts", "00001", "--root", "li-on-cu", "--context")
+
+    assert shown.exit_code == 0, shown.output
+    assert set(tiled.asked) == {("https://tiled-test.ornl.gov", None)}
+
+
+def test_a_folder_that_cannot_be_made_is_said_and_nothing_is_pulled(
+    desk: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    (desk / "IPTS-00001").write_text("notes", encoding="utf-8")
+
+    shown = from_tiled("--ipts", "00001", "--context")
+
+    assert shown.exit_code == 1
+    assert "IPTS-00001 could not be made" in shown.output
+    assert "Nothing was pulled." in shown.output
+    assert isinstance(shown.exception, SystemExit)
+    assert (desk / "IPTS-00001").read_text(encoding="utf-8") == "notes"
 
 
 # --------------------------------------------------------------------------
