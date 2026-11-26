@@ -4,12 +4,13 @@ The server and its key are ``TILED_URL`` and ``TILED_API_KEY``, read as every
 other setting is: the shell, the project's ``.env``, ``~/.nrw``, then
 ``~/.aure``.
 
-Only ``nrw tiled login`` starts a login: Tiled's device-code flow, which
-asks at the terminal which login when the server offers several
-(tiled.ornl.gov offers ``globus`` and ``password``), prints Globus's address
-and a code, and waits. The client keeps the login in its own token cache, and
-renews it; every other command uses what it kept, and says to log in when
-there is nothing.
+Only ``nrw tiled login`` starts a login. When the server offers several
+(tiled.ornl.gov offers ``globus`` and ``password``), nrw asks which, by name
+or number, and hands the client that one alone; the client's own question
+takes only a number and fails on a name. Tiled's device-code flow then
+prints Globus's address and a code, and waits. The client keeps the login in
+its own token cache, and renews it; every other command uses what it kept,
+and says to log in when there is nothing.
 """
 
 from __future__ import annotations
@@ -115,6 +116,7 @@ class Library(NamedTuple):
     from_context: Any
     Spec: Any
     CannotRefresh: type[Exception]
+    prompt_for_credentials: Any
 
 
 def library() -> Library:
@@ -126,13 +128,44 @@ def library() -> Library:
     try:
         from tiled.client.auth import CannotRefreshAuthentication
         from tiled.client.constructors import from_context
-        from tiled.client.context import Context
+        from tiled.client.context import Context, prompt_for_credentials
         from tiled.structures.core import Spec
     except ImportError as exc:
         raise TiledSyncError(
             f"The Tiled client is not installed here: {INSTALL}."
         ) from exc
-    return Library(Context, from_context, Spec, CannotRefreshAuthentication)
+    return Library(
+        Context, from_context, Spec, CannotRefreshAuthentication, prompt_for_credentials
+    )
+
+
+def choose_login(url: str, providers: list[Any]) -> Any:
+    """The login the person chooses of *providers*, which *url* offers: asked
+    at the terminal, by name or by number, until the answer is one of them.
+
+    Raises:
+        TiledSyncError: The person chose none, with Enter alone.
+    """
+    import click
+
+    names = [str(provider.provider) for provider in providers]
+    click.echo(f"{url} offers these logins:")
+    for number, name in enumerate(names, start=1):
+        click.echo(f"  {number}  {name}")
+    while True:
+        answer = click.prompt(
+            "Log in with (a name or a number; Enter to cancel)",
+            default="",
+            show_default=False,
+        ).strip()
+        if not answer:
+            raise TiledSyncError("No login chosen: nothing was done.")
+        if answer.isdigit() and 1 <= int(answer) <= len(names):
+            return providers[int(answer) - 1]
+        for provider, name in zip(providers, names, strict=True):
+            if answer.lower() == name.lower():
+                return provider
+        click.echo(f"Answer {' or '.join(names)}, or 1 to {len(names)}.")
 
 
 def http_errors() -> tuple[type[Exception], ...]:
@@ -184,9 +217,10 @@ def connect(
     """A client of the person's server, at its root, acting as the person.
 
     With the key when one is set; otherwise with the login the client keeps.
-    A login is started only with *login*. With *data_sources*, each node read
-    says what files back it, in the same answer. *to_make* is
-    :func:`server`'s.
+    A login is started only with *login*, with the one of the server's logins
+    the person chooses (:func:`choose_login`) when it offers several. With
+    *data_sources*, each node read says what files back it, in the same
+    answer. *to_make* is :func:`server`'s.
 
     Raises:
         TiledSyncError: Not logged in, the server refused or did not answer,
@@ -203,7 +237,15 @@ def connect(
                     raise TiledSyncError(
                         f"Not logged in to {chosen.url}: run `nrw tiled login`."
                     )
-                context.authenticate(remember_me=True)
+                # What the client's own `authenticate` does, given the one
+                # login chosen, so that its question is never asked.
+                one = (
+                    providers[0]
+                    if len(providers) == 1
+                    else choose_login(chosen.url, providers)
+                )
+                tokens = tiled.prompt_for_credentials(context.http_client, [one])
+                context.configure_auth(tokens, remember_me=True)
             return tiled.from_context(
                 context, node_path_parts=path, include_data_sources=data_sources
             )

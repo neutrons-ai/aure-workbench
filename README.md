@@ -30,12 +30,14 @@ runs, its samples and its fits.
    not found afterwards. [docs/install.md](docs/install.md) explains what the
    script does, and its options.
 
-2. **Log in to Tiled.** It prints an address and a code to enter in your
-   browser:
+2. **Log in to Tiled:**
 
    ```bash
    nrw tiled login
    ```
+
+   It asks which login: answer `globus`. It then prints an address and a code
+   to enter in your browser.
 
 3. **Pull the experiment**, by its IPTS number:
 
@@ -63,6 +65,13 @@ runs, its samples and its fits.
    ```bash
    code .
    ```
+
+   For Claude, install the
+   [Claude Code extension for VS Code](https://code.claude.com/docs/en/vs-code);
+   it needs a Claude account. To use Claude for **Quick fit with AuRE** and for
+   the unattended agent, also install the
+   [Claude Code command line](https://code.claude.com/docs/en/setup), `claude`:
+   nrw cannot run the copy inside the extension. Fitting itself needs neither.
 
 To get what others have pushed since, run `nrw tiled pull` again inside the
 project; it needs no `--ipts` there.

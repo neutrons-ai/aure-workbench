@@ -171,14 +171,18 @@ class FakeContext:
     def __init__(self, *, providers: tuple[str, ...] = ("globus",), kept=False):
         self.server_info = SimpleNamespace(
             authentication=SimpleNamespace(
-                providers=list(providers),
+                providers=[SimpleNamespace(provider=name) for name in providers],
                 # A server with logins names its routes; one with keys alone,
                 # none.
                 links={"whoami": "/api/v1/auth/whoami"} if providers else None,
             )
         )
+        self.http_client = object()
         self.kept = kept
-        self.logins: list[bool] = []
+        # Each login: the providers the client was given, and whether it was
+        # kept.
+        self.logins: list[tuple[list[str], bool]] = []
+        self.offered: list[str] = []
         self.logged_out = False
         self.principal: dict[str, Any] = {
             "type": "user",
@@ -188,8 +192,14 @@ class FakeContext:
     def use_cached_tokens(self) -> bool:
         return self.kept
 
-    def authenticate(self, *, remember_me: bool = True) -> None:
-        self.logins.append(remember_me)
+    def prompt_for_credentials(self, http_client: Any, providers: list[Any]) -> dict:
+        """The client's: asks its own question only when given several."""
+        assert http_client is self.http_client
+        self.offered = [provider.provider for provider in providers]
+        return {"access_token": "a", "refresh_token": "r"}
+
+    def configure_auth(self, tokens: dict, remember_me: bool = True) -> None:
+        self.logins.append((self.offered, remember_me))
         self.kept = True
 
     def logout(self) -> None:
@@ -226,7 +236,13 @@ class FakeTiled:
             fake.root.context = context
             return fake.root
 
-        return server_module.Library(Context, from_context, FakeSpec, CannotRefresh)
+        return server_module.Library(
+            Context,
+            from_context,
+            FakeSpec,
+            CannotRefresh,
+            fake.context.prompt_for_credentials,
+        )
 
 
 @pytest.fixture
@@ -333,7 +349,7 @@ def test_a_login_is_started_when_asked_and_kept_by_the_client(
 ) -> None:
     client = connect(project, login=True)
 
-    assert tiled.context.logins == [True]
+    assert tiled.context.logins == [(["globus"], True)]
     assert client is tiled.root
 
 
@@ -368,7 +384,7 @@ def test_the_clients_failures_on_connecting_are_said_as_nrws(
     monkeypatch.setattr(
         server_module,
         "library",
-        lambda: server_module.Library(Context, None, None, CannotRefresh),
+        lambda: server_module.Library(Context, None, None, CannotRefresh, None),
     )
 
     with pytest.raises(TiledSyncError) as raised:
@@ -473,6 +489,75 @@ def test_login_logs_in_and_says_as_whom(project: Path, tiled: FakeTiled) -> None
 
     assert shown.exit_code == 0, shown.output
     assert "as someone@ornl.gov (globus)" in shown.output
+
+
+@pytest.fixture
+def two_logins(tiled: FakeTiled) -> FakeTiled:
+    """A server that offers two logins, as tiled.ornl.gov does."""
+    tiled.context.server_info.authentication.providers = [
+        SimpleNamespace(provider="globus"),
+        SimpleNamespace(provider="password"),
+    ]
+    return tiled
+
+
+def logging_in(project: Path, answers: str):
+    """`nrw tiled login`, with *answers* typed at its question."""
+    return CliRunner().invoke(
+        main, ["tiled", "login", "--root", str(project)], input=answers
+    )
+
+
+@pytest.mark.parametrize(
+    ("answers", "chosen"),
+    [
+        ("globus\n", "globus"),
+        ("1\n", "globus"),
+        ("2\n", "password"),
+        ("  Globus \n", "globus"),
+        ("orcid\n3\nglobus\n", "globus"),
+    ],
+    ids=["by-name", "by-number", "the-other", "as-typed", "asked-again"],
+)
+def test_login_asks_which_login_by_name_or_number_and_gives_the_client_that_one(
+    project: Path, two_logins: FakeTiled, answers: str, chosen: str
+) -> None:
+    """The client's own question takes a number alone, and fails on a name."""
+    shown = logging_in(project, answers)
+
+    assert shown.exit_code == 0, shown.output
+    assert "  1  globus\n  2  password\n" in shown.output
+    assert two_logins.context.logins == [([chosen], True)]
+
+
+def test_a_login_answered_with_neither_is_asked_again(
+    project: Path, two_logins: FakeTiled
+) -> None:
+    shown = logging_in(project, "orcid\nglobus\n")
+
+    assert shown.exit_code == 0, shown.output
+    assert "Answer globus or password, or 1 to 2." in shown.output
+
+
+def test_a_login_cancelled_with_enter_logs_nothing_in(
+    project: Path, two_logins: FakeTiled
+) -> None:
+    shown = logging_in(project, "\n")
+
+    assert shown.exit_code == 1
+    assert "No login chosen: nothing was done." in shown.output
+    assert "Traceback" not in shown.output
+    assert two_logins.context.logins == []
+
+
+def test_a_server_with_one_login_is_not_asked_which(
+    project: Path, tiled: FakeTiled
+) -> None:
+    shown = logging_in(project, "")
+
+    assert shown.exit_code == 0, shown.output
+    assert "offers these logins" not in shown.output
+    assert tiled.context.logins == [(["globus"], True)]
 
 
 # --------------------------------------------------------------------------
