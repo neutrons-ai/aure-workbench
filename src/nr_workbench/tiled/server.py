@@ -306,9 +306,19 @@ def experiment_node(client: Any, ipts: str) -> Any | None:
 
 
 def tags_of(node: Any) -> list[str]:
-    """The access tags *node* has: what everything nrw makes in it is given."""
+    """The access tags *node* has: what everything nrw makes in it is given.
+
+    Read from the node's attributes as the server sent them: a tiled 0.2.23
+    server sends ``access_tags``, a 0.2.18 server ``access_blob: {"tags":
+    ...}``. The client's own ``metadata_copy`` reads one of the two alone, and
+    fails on the other server's node.
+    """
     try:
-        tags = node.access_blob.get("tags")
-    except AttributeError:
+        attributes = node.item["attributes"]
+    except (AttributeError, KeyError, TypeError):
         return []
+    tags = attributes.get("access_tags")
+    if tags is None:
+        blob = attributes.get("access_blob")
+        tags = blob.get("tags") if isinstance(blob, dict) else None
     return [tag for tag in tags or () if isinstance(tag, str)]

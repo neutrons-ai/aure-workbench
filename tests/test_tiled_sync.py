@@ -80,8 +80,12 @@ class FakeNode:
 
     @property
     def item(self) -> dict[str, Any]:
-        """What the client keeps of the node: its own address."""
-        return {"links": {"self": f"https://tiled.ornl.gov/api/v1/metadata/{self.key}"}}
+        """What the client keeps of the node: its own address, and its tags as
+        a tiled 0.2.23 server sends them."""
+        return {
+            "attributes": {"access_tags": list(self.tags)},
+            "links": {"self": f"https://tiled.ornl.gov/api/v1/metadata/{self.key}"},
+        }
 
     def data_sources(self) -> list[Any]:
         """What backs the node: one file, when it holds one."""
@@ -113,10 +117,6 @@ class FakeNode:
         if specs is not None:
             self.specs = list(specs)
         self.log.append(("replace", self.key))
-
-    @property
-    def access_blob(self) -> dict[str, Any]:
-        return {"tags": list(self.tags)}
 
     def __getitem__(self, key: str) -> FakeNode:
         node = self
@@ -927,6 +927,43 @@ def test_nothing_is_made_where_there_are_no_tags_to_give(
     assert shown.exit_code == 1
     assert "has no access tags" in shown.output
     assert tiled.root.log == []
+
+
+@pytest.mark.parametrize(
+    ("access", "tags"),
+    [
+        ({"access_tags": ["isaac", "ipts-1"]}, ["isaac", "ipts-1"]),
+        ({"access_blob": {"tags": ["isaac", "ipts-1"]}}, ["isaac", "ipts-1"]),
+        ({"access_blob": {"user": "someone"}}, []),
+        ({"access_blob": {}}, []),
+    ],
+    ids=["a-0.2.23-server", "a-0.2.18-server", "a-persons-own", "untagged"],
+)
+def test_the_tags_are_read_from_the_clients_node_as_each_server_sends_them(
+    access: dict[str, Any], tags: list[str]
+) -> None:
+    """The client keeps them in what the server sent, and has no attribute
+    for them. Each node is the client's own, made from the attributes a local
+    server of that version sends."""
+    pytest.importorskip("tiled.client")
+    from tiled.client.container import Container
+
+    from nr_workbench.tiled.server import tags_of
+
+    attributes = {
+        "ancestors": ["projects", "isaac"],
+        "structure_family": "container",
+        "specs": [],
+        "metadata": {},
+        "structure": None,
+        "sorting": None,
+        "data_sources": None,
+        **access,
+    }
+    item = {"id": "IPTS-00001", "links": {}, "attributes": attributes}
+    node = Container(None, item=item, structure_clients=None)
+
+    assert tags_of(node) == tags
 
 
 def test_a_dry_run_says_what_would_be_written_and_writes_nothing(
