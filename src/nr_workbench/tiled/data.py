@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from nr_workbench.project.experiment_schema import SETTLE_RANGE
-from nr_workbench.tiled.server import TiledSyncError
+from nr_workbench.tiled.server import TiledSyncError, http_errors
 
 #: Where the reduced files are, in the experiment's own node.
 AUTOREDUCTION = "autoreduction"
@@ -110,7 +110,8 @@ def content_of(node: Any) -> bytes | None:
     one file.
 
     Raises:
-        httpx.HTTPError: The download failed, or the server refused it.
+        Exception: One of :func:`~nr_workbench.tiled.server.http_errors`: the
+            download failed, or the server refused it.
     """
     assets = [asset for source in node.data_sources() or () for asset in source.assets]
     if len(assets) != 1 or assets[0].is_directory:
@@ -139,8 +140,6 @@ def pull(missing: Iterable[Missing], folder: Path) -> list[Path]:
             could not be downloaded. The message names what was copied
             before it: a pull run again copies only what is still missing.
     """
-    import httpx
-
     if not writable(folder):
         raise TiledSyncError(
             f"{folder} is not a folder nrw can write: create it, or point "
@@ -163,7 +162,7 @@ def pull(missing: Iterable[Missing], folder: Path) -> list[Path]:
             if target.exists():
                 continue  # written meanwhile, by the reduction or a person
             os.replace(partial, target)
-        except httpx.HTTPError as exc:
+        except http_errors() as exc:
             raise TiledSyncError(
                 f"{item.name} could not be downloaded: {exc}. {_before(written)}"
             ) from None

@@ -199,6 +199,25 @@ def test_wheel_requires_pyarrow_unconditionally(
     assert any("extra ==" not in line for line in pyarrow), pyarrow
 
 
+def test_wheel_requires_the_tiled_client_unconditionally(
+    wheel_path: Path, wheel_namelist: list[str]
+) -> None:
+    """The README's quick start runs `nrw tiled login` straight after the
+    plain install, so the client comes with every install, behind no extra."""
+    metadata_name = next(n for n in wheel_namelist if n.endswith(".dist-info/METADATA"))
+    with zipfile.ZipFile(wheel_path) as archive:
+        metadata = archive.read(metadata_name).decode("utf-8")
+
+    tiled = [
+        line
+        for line in metadata.splitlines()
+        if line.startswith("Requires-Dist: tiled")
+    ]
+    assert tiled, "the Tiled client is not a declared dependency"
+    assert all("extra ==" not in line for line in tiled), tiled
+    assert "Provides-Extra: tiled" not in metadata
+
+
 def test_wheel_declares_only_the_expected_direct_references(
     wheel_path: Path, wheel_namelist: list[str]
 ) -> None:

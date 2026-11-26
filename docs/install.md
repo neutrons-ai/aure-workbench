@@ -31,8 +31,8 @@ is also what stops a truncated download from running half an installation.
 3. **Installs [uv](https://github.com/astral-sh/uv)** if you do not have it, into
    `~/.local/bin`. uv is a single binary with no dependencies of its own.
 4. **Runs `uv tool install`**, which creates an isolated environment holding
-   nr-workbench and everything it needs — refl1d, bumps, scipy, matplotlib, AuRE —
-   and puts `nrw` and `nr-workbench` on your PATH.
+   nr-workbench and everything it needs — refl1d, bumps, scipy, matplotlib, AuRE,
+   the Tiled client — and puts `nrw` and `nr-workbench` on your PATH.
 5. **Verifies** by running `nrw --version`, and tells you if the `nrw` your shell
    resolves is a *different* one (an old checkout's virtualenv still ahead on PATH,
    which otherwise fails in a confusing way much later).
@@ -58,7 +58,7 @@ has no way to receive any — so everything is an environment variable.
 | `NRW_VERSION` | `main` | Git ref (branch, tag or commit) to install |
 | `NRW_REPO` | this repository | Git URL to install from |
 | `NRW_PYTHON` | `3.13` | Python version for the tool environment |
-| `NRW_EXTRAS` | *(none)* | Extras to include, comma-separated: `nexus` for HDF5/NeXus reading, `isaac` for publishing fits to the ISAAC Portal, `tiled` for `nrw tiled` |
+| `NRW_EXTRAS` | *(none)* | Extras to include, comma-separated: `nexus` for HDF5/NeXus reading, `isaac` for publishing fits to the ISAAC Portal |
 | `NRW_UV_VERSION` | *(latest)* | Pin uv to a version, e.g. `0.12.17` |
 | `NRW_SYSTEM_CERTS` | `0` | `1` to use the system trust store from the start |
 | `NRW_INSTALL_DRY_RUN` | `0` | `1` prints what would run and exits, changing nothing |

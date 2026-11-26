@@ -534,8 +534,7 @@ constraints:
 ```
 
 The spec says nothing about how it is fitted: that is `nrw fit run`'s
-options, or the project's `nrw.toml` [fit] (see the README, "Fitting
-options").
+options, or the project's `nrw.toml` [fit] (see [fitting.md](fitting.md)).
 
 Four things in there are doing most of the work.
 

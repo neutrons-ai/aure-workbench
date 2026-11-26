@@ -182,8 +182,8 @@ read partially.
 ## Tiled: pushed and pulled, by a person
 
 Tiled is reached only by `nrw tiled` commands a person runs, through the
-official client: the installer's `NRW_EXTRAS=tiled` adds it
-([install.md](install.md)). Nothing `nrw serve`, the poller or an agent runs
+official client, which is installed with nrw. Nothing `nrw serve`, the poller
+or an agent runs
 talks to Tiled, and the guard refuses every `nrw tiled` command, and Tiled's
 own command line, to an agent.
 
@@ -192,10 +192,17 @@ own command line, to an agent.
 | `nrw tiled login`, `logout` | Tiled's device-code login through Globus (tiled.ornl.gov first asks which login: choose `globus`); the client keeps the login, and renews it, in its own token cache |
 | `nrw tiled status` | whose the login is, whether the experiment is on Tiled, each record there, the experiment's context and each fit, against this project's, whether each fit there is here, and which reduced files there the data folder lacks |
 | `nrw tiled push` | writes the project's catalog to the experiment's `context/`, and its starred and final fits to `analysis/`; `--only context` or `--only fits` writes one |
+| `nrw tiled pull` | all three of `--context`, `--data` and `--fits`, in that order |
 | `nrw tiled pull --context` | writes Tiled's runs, samples and experiment context into the catalog, then applies it to `samples/` |
 | `nrw tiled pull --data` | copies the experiment's reduced files into the data folder, then applies the catalog to `samples/` |
 | `nrw tiled pull --fits` | rebuilds each fit here as it was recorded, with the reduced files it read, and writes its spec and script into its sample's `models/` |
-| `nrw tiled pull --ipts IPTS-37740`, with any of the three | outside a project, makes the experiment's project in `IPTS-37740/` once it is found on Tiled, and pulls into it |
+| `nrw tiled pull --ipts IPTS-37740` | outside a project, makes the experiment's project in `IPTS-37740/` once it is found on Tiled, and pulls into it |
+
+`nrw tiled pull` with none of `--context`, `--data` and `--fits` pulls all
+three. Reduced files that cannot be copied, because Tiled has no
+`autoreduction/` for the experiment yet or the data folder is not one nrw
+can write (the facility's mount, for one), are then said, and the catalog and
+the fits are still pulled. With `--data`, either stops the pull.
 
 The server is `TILED_URL` (tiled.ornl.gov by default), and `TILED_API_KEY`
 is sent instead of a login when set: both read as nrw's other settings are,
@@ -339,10 +346,11 @@ without.
 of their own, from the folder that is to hold it:
 
 1. `nrw tiled login`.
-2. `nrw tiled pull --ipts IPTS-37740 --context --data --fits`. Once the
+2. `nrw tiled pull --ipts IPTS-37740`. Once the
    experiment is found on Tiled, it makes the project in `IPTS-37740/`, as
    `nrw init IPTS-37740 --ipts IPTS-37740` does, with its data folder,
-   `incoming/`. It then pulls in that order and applies the catalog: it
+   `incoming/`. It then pulls the catalog, the reduced files and the fits,
+   in that order, and applies the catalog: it
    writes each sample's `sample.md` and copies its data. It leaves the
    reduced files the fits pull wrote, and lists as a conflict each one the
    facility's reduction holds otherwise.

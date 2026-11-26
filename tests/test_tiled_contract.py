@@ -4,7 +4,7 @@ The server runs apart from nrw's environment, through `uvx --from
 "tiled[server]==0.2.18"`, on this machine's loopback, with its key in
 `TILED_SINGLE_USER_API_KEY` (never on its command line, and never
 `--public`). The first run downloads it. Skipped without uv, or without the
-client (the `tiled` extra).
+client.
 
 What this tests is a push and a status as the official client and the
 server answer them: connecting with a key, reading the experiment's node,

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -28,6 +29,7 @@ from .test_tiled_sync import (  # noqa: F401 - fixtures
     FakeSpec,
     FakeTiled,
     catalogued,
+    http,
     nrw,
     on_tiled,
     tiled,
@@ -466,10 +468,8 @@ def test_nothing_is_made_where_there_are_no_tags_to_give(
 
 
 def test_a_push_stopped_partway_says_how_many_fits_it_wrote(
-    project: Path, tiled: FakeTiled, experiment: FakeNode, monkeypatch
+    project: Path, tiled: FakeTiled, experiment: FakeNode, monkeypatch, http: Any
 ) -> None:
-    import httpx
-
     fitted(project)
     fitted(project, B)
     starred(project)
@@ -478,7 +478,7 @@ def test_a_push_stopped_partway_says_how_many_fits_it_wrote(
 
     def server_goes_away(self, name, **kwargs):
         if name == B:
-            raise httpx.ConnectError("the server went away")
+            raise http.ConnectError("the server went away")
         return made(self, name, **kwargs)
 
     monkeypatch.setattr(FakeNode, "create_container", server_goes_away)

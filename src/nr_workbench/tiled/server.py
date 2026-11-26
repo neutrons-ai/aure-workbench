@@ -28,11 +28,13 @@ DEFAULT_URL = "https://tiled.ornl.gov"
 #: process makes the node, and its ``autoreduction/``.
 EXPERIMENT_PATH = "projects/isaac/{ipts}"
 
-#: How the client is installed. Not ``pip install 'nr-workbench[tiled]'``:
-#: nr-workbench is not on PyPI, so that installs nothing, or someone else's.
+#: How an environment that lacks the client gets it: nr-workbench requires it,
+#: so installing nr-workbench again brings it. Not ``pip install
+#: nr-workbench``: nr-workbench is not on PyPI, so that installs nothing, or
+#: someone else's.
 INSTALL = (
-    "re-run the nr-workbench installer with NRW_EXTRAS=tiled (docs/install.md), "
-    "or `pip install -e '.[tiled]'` in a clone"
+    "re-run the nr-workbench installer (docs/install.md), "
+    "or `pip install -e .` in a clone"
 )
 
 
@@ -133,6 +135,25 @@ def library() -> Library:
     return Library(Context, from_context, Spec, CannotRefreshAuthentication)
 
 
+def http_errors() -> tuple[type[Exception], ...]:
+    """The errors the client raises when a request fails: the ``HTTPError``
+    of each HTTP library installed.
+
+    Clients in nrw's range use one or the other: tiled 0.2.23 makes its
+    requests with ``httpx2``, tiled 0.2.18 with ``httpx``. Neither's error is
+    a subclass of the other's.
+    """
+    import importlib
+
+    errors: list[type[Exception]] = []
+    for name in ("httpx2", "httpx"):
+        try:
+            errors.append(importlib.import_module(name).HTTPError)
+        except ImportError:
+            continue
+    return tuple(errors)
+
+
 @contextmanager
 def talking(url: str, tiled: Library) -> Iterator[None]:
     """Every way the client, *tiled*, fails while it talks to *url*, said as
@@ -141,13 +162,11 @@ def talking(url: str, tiled: Library) -> Iterator[None]:
     Raises:
         TiledSyncError: Instead of the client's own error.
     """
-    import httpx
-
     try:
         yield
     except TiledSyncError:
         raise
-    except httpx.HTTPError as exc:
+    except http_errors() as exc:
         raise TiledSyncError(f"{url} did not answer as asked: {exc}") from None
     except tiled.CannotRefresh:
         raise TiledSyncError(

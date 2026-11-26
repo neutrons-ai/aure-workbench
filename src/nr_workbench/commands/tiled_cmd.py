@@ -20,9 +20,8 @@ import click
 
 #: What a pull started outside a project is told, after "run `nrw init`".
 OR_GIVE_IPTS = (
-    " Or give --ipts, as `nrw tiled pull --ipts IPTS-34347 --context --data "
-    "--fits` does: it makes the experiment's project in a folder of that name, "
-    "and pulls into it."
+    " Or give --ipts, as `nrw tiled pull --ipts IPTS-34347` does: it makes the "
+    "experiment's project in a folder of that name, and pulls into it."
 )
 
 
@@ -613,9 +612,14 @@ def _folder_of(project: Path) -> Path | None:
     return experiment_config_for(project).source.path
 
 
-def _pull_folder(project: Path, into: str | None) -> Path:
+def _pull_folder(project: Path, into: str | None) -> tuple[Path | None, str]:
     """The folder ``pull --data`` copies into, checked before anything is
-    pulled: a pull of the catalog and the fits with it must not stop halfway."""
+    pulled: a pull of the catalog and the fits with it must not stop halfway.
+
+    Returns:
+        The folder and ``""``; or ``None`` and why there is none to copy
+        into, with what to do about it.
+    """
     from nr_workbench.experiment.config import experiment_config_for
     from nr_workbench.project.config import DEFAULT_EXPERIMENT_LOCATION
     from nr_workbench.tiled.data import writable
@@ -626,7 +630,7 @@ def _pull_folder(project: Path, into: str | None) -> Path:
     else:
         source = experiment_config_for(project).source
         if source.path is None:
-            raise click.ClickException(
+            return None, (
                 "The data folder cannot be worked out from nrw.toml: give --into "
                 "DIR, or set [experiment.source] location."
             )
@@ -639,10 +643,8 @@ def _pull_folder(project: Path, into: str | None) -> Path:
                 "settings --location DIR --write`, or pull into one with --into DIR"
             )
     if not writable(folder):
-        raise click.ClickException(
-            f"{folder} is not a folder nrw can write: {fix}. Nothing was pulled."
-        )
-    return folder
+        return None, f"{folder} is not a folder nrw can write: {fix}."
+    return folder, ""
 
 
 def run_pull(
@@ -663,19 +665,23 @@ def run_pull(
     ``--context`` writes Tiled's records into the catalog, Tiled's copy
     winning, after one confirmation. ``--data`` copies each reduced file the
     data folder lacks. ``--fits`` rebuilds each fit as it was recorded
-    (:func:`nr_workbench.tiled.pull.pull_fits`). After ``--context`` or
-    ``--data``, the catalog is applied to ``samples/``, as ``nrw experiment
-    apply --write`` applies it. Nothing is written on Tiled.
+    (:func:`nr_workbench.tiled.pull.pull_fits`). With none of the three, all
+    three. After ``--context`` or ``--data``, the catalog is applied to
+    ``samples/``, as ``nrw experiment apply --write`` applies it. Nothing is
+    written on Tiled.
+
+    Reduced files that cannot be copied, because Tiled has none or the data
+    folder is not one nrw can write, stop a pull that names ``--data``; one
+    that does not name it says so, and pulls the rest.
 
     ``--ipts`` names the experiment, and makes its project when there is none
     (:func:`_project_of`); without it, the experiment is the project's.
     """
     from nr_workbench.tiled.server import EXPERIMENT_PATH, connect, experiment_node
 
+    asked_for_data = data
     if not (context or data or fits):
-        raise click.ClickException(
-            "Say what to pull: --context, --data or --fits, or any of them."
-        )
+        context = data = fits = True
     if ipts is None:
         project = _project(root, or_else=OR_GIVE_IPTS)
         elsewhere = False
@@ -683,7 +689,9 @@ def run_pull(
         project = _project_of(root, ipts, dry_run=dry_run)
         elsewhere = not Path.cwd().resolve().is_relative_to(project)
     ipts = _ipts(project)
-    folder = _pull_folder(project, into) if data else None
+    folder, no_folder = _pull_folder(project, into) if data else (None, "")
+    if no_folder and asked_for_data:
+        raise click.ClickException(f"{no_folder} Nothing was pulled.")
     with _asking(project) as (chosen, _):
         experiment = experiment_node(connect(project, data_sources=data), ipts)
         place = f"{chosen.url}/{EXPERIMENT_PATH.format(ipts=ipts)}"
@@ -694,8 +702,17 @@ def run_pull(
             )
         if context:
             _pull_context(project, experiment, place, dry_run=dry_run, yes=yes)
-        if data:
-            _pull_data(experiment, folder, ipts, runs=runs, dry_run=dry_run)
+        if no_folder:
+            click.echo(f"No reduced file is copied. {no_folder}")
+        elif data:
+            _pull_data(
+                experiment,
+                folder,
+                ipts,
+                runs=runs,
+                dry_run=dry_run,
+                required=asked_for_data,
+            )
         if fits:
             _pull_fits(
                 project, experiment, place, dry_run=dry_run, applying=context or data
@@ -777,8 +794,11 @@ def _pull_data(
     *,
     runs: tuple[int, ...],
     dry_run: bool,
+    required: bool,
 ) -> None:
-    """Each reduced file on Tiled the data folder lacks, copied in."""
+    """Each reduced file on Tiled the data folder lacks, copied in. Tiled
+    holding none stops the pull when the reduced files are *required*, and is
+    said when they are not."""
     from nr_workbench.tiled.data import AUTOREDUCTION, autoreduction_of, plan_pull, pull
     from nr_workbench.tiled.server import EXPERIMENT_PATH, TiledSyncError
 
@@ -786,10 +806,11 @@ def _pull_data(
     where = f"{EXPERIMENT_PATH.format(ipts=ipts)}/{AUTOREDUCTION}"
     autoreduction = autoreduction_of(experiment) if experiment is not None else None
     if autoreduction is None:
-        raise TiledSyncError(
-            f"{where} is not on Tiled, or not shared with this login: "
-            "nothing was copied."
-        )
+        absent = f"{where} is not on Tiled, or not shared with this login"
+        if required:
+            raise TiledSyncError(f"{absent}: nothing was copied.")
+        click.echo(f"{absent}: no reduced file to copy.")
+        return
     missing, held = plan_pull(autoreduction, folder, runs=runs)
     click.echo(
         f"{where} -> {folder}: {len(missing)} file(s) to copy, {held} held "

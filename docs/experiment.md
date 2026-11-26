@@ -410,8 +410,8 @@ Each box starts at the value the fit would use: the project's, from
 `nrw.toml`, else bumps' default. A line under the boxes says which is which.
 DREAM's steps follow from its samples, so that box says "from samples". Only
 what you change is sent: the rest `nrw fit run` takes from the same place, so a
-fit started here is recorded just as one typed in a terminal. The README's
-"Fitting options" section has the `[fit]` tables. The note, if you give one, heads
+fit started here is recorded just as one typed in a terminal.
+[fitting.md](fitting.md) has the `[fit]` tables. The note, if you give one, heads
 the fit's `NOTES.md` as why it was run, so it is one line, and does not start
 with `#`. The page runs the same two commands you would, one after the other:
 
@@ -602,7 +602,7 @@ its `analysis/`, where everyone on the experiment, and other programs, can
 read them; `nrw tiled status` says what is there. Each fit goes as analysed
 data: its model with its parameters and the data it was fitted to, in the
 file refl1d loads, with its curves and its provenance. A colleague starting
-fresh runs `nrw tiled pull --ipts IPTS-34347 --context --data --fits`, which
+fresh runs `nrw tiled pull --ipts IPTS-34347`, which
 makes the experiment's project in `IPTS-34347/` and pulls into it: the
 catalog, the reduced files, and each fit as it was recorded, on the Fits
 page, with the catalog applied to `samples/`.

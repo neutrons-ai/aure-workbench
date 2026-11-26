@@ -377,8 +377,6 @@ def push(
             write failed. The message names what was written before it: a
             push run again writes only what is still different.
     """
-    import httpx
-
     Spec = server_module.library().Spec  # noqa: N806 - the client's class
     written: list[Planned] = []
     where = f"{tree.name}/"
@@ -456,7 +454,7 @@ def push(
                     specs=[Spec(*record.spec), *others],
                 )
             written.append(item)
-    except httpx.HTTPError as exc:
+    except server_module.http_errors() as exc:
         raise TiledSyncError(
             f"{where} could not be written: {exc}. {len(written)} record(s) "
             "were written before it; push again to write the rest."

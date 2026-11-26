@@ -984,9 +984,9 @@ def isaac_push_command(fit_id: str, validate_only: bool, yes: bool) -> None:
 def tiled_group() -> None:
     """Tiled: push the catalog and the fits, say what is there, pull them back.
 
-    Needs the installer's NRW_EXTRAS=tiled. The server is TILED_URL
-    (tiled.ornl.gov by default), read as nrw's other settings are. Each
-    command acts with your login, so an agent is refused them all.
+    The server is TILED_URL (tiled.ornl.gov by default), read as nrw's other
+    settings are. Each command acts with your login, so an agent is refused
+    them all.
     """
 
 
@@ -1077,6 +1077,11 @@ def tiled_pull_command(**kwargs: object) -> None:
     models/; `nrw fit run --from` runs it again. After --context or --data,
     the catalog is applied to samples/, as `nrw experiment apply --write`
     applies it.
+
+    With none of the three, all three are pulled. Reduced files that cannot
+    be copied, because Tiled has none yet or the data folder is not one nrw
+    can write, are then said, and the rest is pulled; with --data, they stop
+    the pull.
 
     To start from Tiled, give --ipts outside a project: once the experiment
     is found on Tiled, its project is made in ./IPTS-34347 (or --root), as

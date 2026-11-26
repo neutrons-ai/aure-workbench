@@ -594,6 +594,29 @@ the harness's output.
 mechanism, so a different harness must provide its own equivalent; without
 one, nothing refuses these commands to it.
 
+### Choosing an assistant
+
+A scaffolded project carries the instructions, subagent stubs and limits for
+each assistant it is set up for. Claude Code and GitHub Copilot are the default;
+`--harness` names the set explicitly and it is remembered in `nrw.toml`:
+
+```bash
+nrw init --harness claude --harness opencode   # both
+nrw init --harness opencode                    # OpenCode alone
+```
+
+Sites that cannot install Claude Code, or that need to point an assistant at a
+locally hosted model, want OpenCode: it takes a provider and model in its own
+`opencode.json` rather than being tied to one vendor.
+
+Two things to know. **`nrw agent run` drives Claude Code or OpenCode**
+(`--harness opencode`), each limited by its own guard: Claude Code's
+`PreToolUse` hook, or OpenCode's guard plugin and deny rules.
+OpenCode has no turn cap, so a session there needs `--timeout`, and refuses to
+start without one rather than run unbounded. And **narrowing the set never
+deletes anything**: files for an assistant you drop stay on disk, and nrw stops
+updating them, because a scientist may have edited them.
+
 ### OpenCode
 
 `nrw init --harness opencode` scaffolds a project OpenCode can work in: an

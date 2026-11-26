@@ -1,6 +1,5 @@
-"""`nrw tiled pull --context --data --fits`: a colleague who starts fresh brings
-back the catalog, the reduced files and the fits' models, and runs each fit
-again here.
+"""`nrw tiled pull`: a colleague who starts fresh brings back the catalog, the
+reduced files and the fits' models, and runs each fit again here.
 
 One project pushes, and a colleague's, made fresh, pulls; both on the fake
 client of `tests/test_tiled_sync.py`.
@@ -733,6 +732,112 @@ def test_a_data_folder_nrw_cannot_write_stops_the_pull_before_the_catalog(
     assert catalog_of(colleague).runs == {}
 
 
+def test_a_pull_naming_none_of_the_three_pulls_all_three_in_order(
+    project: Path,
+    colleague: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    tmp_path_factory,
+) -> None:
+    catalogued(project)
+    fitted(project)
+    starred(project)
+    pushed(project)
+    reduced = FakeNode(content=b"q r")
+    reduced.key = SEGMENT
+    experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
+    folder = tmp_path_factory.mktemp("data")
+
+    shown = pulled(colleague, "--into", str(folder))
+
+    assert shown.exit_code == 0, shown.output
+    said = shown.output
+    assert said.index("/context, into") < said.index("autoreduction ->")
+    assert said.index("autoreduction ->") < said.index("/analysis: 1 fit(s)")
+    assert catalog_of(colleague).runs[RunKey(234277)].condition == "OCV"
+    assert (folder / SEGMENT).read_bytes() == b"q r"
+    assert index_of(colleague).find(A)["chisq"] == 1.2
+
+
+def test_a_pull_naming_one_of_the_three_pulls_that_one_alone(
+    project: Path, colleague: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    catalogued(project)
+    fitted(project)
+    starred(project)
+    pushed(project)
+    reduced = FakeNode(content=b"q r")
+    reduced.key = SEGMENT
+    experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
+
+    shown = pulled(colleague, "--fits")
+
+    assert shown.exit_code == 0, shown.output
+    assert "/context" not in shown.output
+    assert "autoreduction ->" not in shown.output
+    assert catalog_of(colleague).runs == {}
+    assert not (colleague / "incoming" / SEGMENT).exists()
+    assert index_of(colleague).find(A)["chisq"] == 1.2
+
+
+def test_no_reduced_data_on_tiled_is_said_and_the_rest_is_pulled(
+    project: Path, colleague: Path, tiled: FakeTiled, experiment: FakeNode
+) -> None:
+    """An experiment pushed before its reduction is on Tiled: what there is,
+    is pulled."""
+    catalogued(project)
+    fitted(project)
+    starred(project)
+    pushed(project)
+
+    shown = pulled(colleague)
+
+    assert shown.exit_code == 0, shown.output
+    assert (
+        "projects/isaac/IPTS-00001/autoreduction is not on Tiled, or not shared "
+        "with this login: no reduced file to copy."
+    ) in shown.output
+    assert catalog_of(colleague).runs[RunKey(234277)].condition == "OCV"
+    assert index_of(colleague).find(A)["chisq"] == 1.2
+
+
+def test_a_data_folder_nrw_cannot_write_is_said_and_the_rest_is_pulled(
+    project: Path,
+    colleague: Path,
+    tiled: FakeTiled,
+    experiment: FakeNode,
+    tmp_path: Path,
+) -> None:
+    """The facility's mount, read-only, as the data folder: its reduced files
+    are there already."""
+    from nr_workbench.project.settings import save
+
+    catalogued(project)
+    fitted(project)
+    starred(project)
+    pushed(project)
+    reduced = FakeNode(content=b"q r")
+    reduced.key = SEGMENT
+    experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
+    mount = tmp_path / "SNS" / "IPTS-00001"
+    mount.mkdir(parents=True)
+    mount.chmod(0o555)
+    save(colleague, {"source.location": str(mount)})
+
+    try:
+        shown = pulled(colleague)
+    finally:
+        mount.chmod(0o755)
+
+    assert shown.exit_code == 0, shown.output
+    assert (
+        f"No reduced file is copied. {mount} is not a folder nrw can write"
+    ) in shown.output
+    assert list(mount.iterdir()) == []
+    assert catalog_of(colleague).runs[RunKey(234277)].condition == "OCV"
+    assert index_of(colleague).find(A)["chisq"] == 1.2
+
+
 # --------------------------------------------------------------------------
 # --ipts: the experiment's project, made when there is none
 # --------------------------------------------------------------------------
@@ -760,19 +865,22 @@ def test_ipts_outside_a_project_makes_the_experiments_project_and_pulls_into_it(
     from .experiment_fixtures import reduced_rows
 
     catalogued(project)
+    fitted(project)
+    starred(project)
     pushed(project)
     rows = reduced_rows().encode()
     reduced = FakeNode(content=rows)
     reduced.key = SEGMENT
     experiment.children["autoreduction"] = FakeNode({SEGMENT: reduced})
 
-    shown = from_tiled("--ipts", "IPTS-00001", "--context", "--data")
+    shown = from_tiled("--ipts", "IPTS-00001")
 
     made = desk / "IPTS-00001"
     assert shown.exit_code == 0, shown.output
     assert load_config(made).ipts == "IPTS-00001"
     assert catalog_of(made).runs[RunKey(234277)].condition == "OCV"
     assert (made / "incoming" / SEGMENT).read_bytes() == rows
+    assert index_of(made).find(A)["chisq"] == 1.2
     assert (
         "The project is in IPTS-00001: `cd IPTS-00001` to work in it." in shown.output
     )
@@ -882,7 +990,6 @@ def test_ipts_for_a_project_that_names_none_is_refused(
     ("args", "why"),
     [
         (("--ipts", "cu-on-pt", "--context"), "--ipts cu-on-pt is not an IPTS"),
-        (("--ipts", "00001"), "Say what to pull"),
         (
             ("--ipts", "00001", "--context", "--dry-run"),
             "is not a project yet, and --dry-run writes nothing",

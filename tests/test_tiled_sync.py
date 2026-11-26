@@ -239,6 +239,13 @@ def tiled(monkeypatch, tmp_path: Path) -> FakeTiled:
     return fake
 
 
+@pytest.fixture(params=["httpx2", "httpx"])
+def http(request) -> Any:
+    """The HTTP library a request fails in: each one a client in nrw's range
+    uses, when it is installed."""
+    return pytest.importorskip(request.param)
+
+
 def on_tiled(fake: FakeTiled, ipts: str = "IPTS-00001", **node: Any) -> FakeNode:
     experiment = FakeNode(**node)
     experiment.share(fake.root.log)
@@ -286,8 +293,31 @@ def test_a_client_not_installed_says_how_to_install_it(project: Path, monkeypatc
 
     monkeypatch.setitem(sys.modules, "tiled.client.constructors", None)
 
-    with pytest.raises(TiledSyncError, match="NRW_EXTRAS=tiled"):
+    with pytest.raises(TiledSyncError, match="re-run the nr-workbench installer"):
         connect(project)
+
+
+def test_a_server_that_does_not_answer_the_real_client_is_said_as_nrws(
+    project: Path, monkeypatch, tmp_path: Path
+) -> None:
+    """The installed client's own request, failing in its own HTTP library:
+    the failure the fakes stand in for."""
+    import socket
+
+    pytest.importorskip("tiled.client")
+    import stamina
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed = probe.getsockname()[1]
+    own_settings(f"TILED_URL=http://127.0.0.1:{closed}\n")
+    monkeypatch.setenv("TILED_CACHE_DIR", str(tmp_path / "tiled-cache"))
+
+    # One attempt, not the client's retries and their waits.
+    with stamina.set_testing(True), pytest.raises(TiledSyncError) as raised:
+        connect(project)
+
+    assert f"http://127.0.0.1:{closed} did not answer as asked" in str(raised.value)
 
 
 def test_a_command_never_starts_a_login(project: Path, tiled: FakeTiled) -> None:
@@ -326,15 +356,13 @@ def test_with_the_persons_key_no_login_is_looked_for(
     ],
 )
 def test_the_clients_failures_on_connecting_are_said_as_nrws(
-    project: Path, monkeypatch, failure: str, said: str
+    project: Path, monkeypatch, http: Any, failure: str, said: str
 ) -> None:
-    import httpx
-
     class Context:
         @staticmethod
         def from_any_uri(url: str, *, api_key=None):
             if failure == "no-answer":
-                raise httpx.ConnectError("refused")
+                raise http.ConnectError("refused")
             raise RuntimeError("a key and a login both")
 
     monkeypatch.setattr(
@@ -842,17 +870,15 @@ def test_a_push_not_confirmed_writes_nothing(
 
 
 def test_a_push_stopped_partway_says_what_it_wrote_and_the_next_finishes(
-    project: Path, tiled: FakeTiled, ready: FakeNode, monkeypatch
+    project: Path, tiled: FakeTiled, ready: FakeNode, monkeypatch, http: Any
 ) -> None:
     """Each record is written whole, or not at all: a push run again writes
     only what is still different."""
-    import httpx
-
     made = FakeNode.create_container
 
     def server_goes_away(self, name, **kwargs):
         if name.startswith("234280"):
-            raise httpx.ConnectError("the server went away")
+            raise http.ConnectError("the server went away")
         return made(self, name, **kwargs)
 
     monkeypatch.setattr(FakeNode, "create_container", server_goes_away)
@@ -1127,16 +1153,14 @@ def test_a_configured_folder_nrw_cannot_write_says_how_to_choose_another(
 
 
 def test_a_download_that_fails_names_what_was_copied_before_it(
-    project: Path, tiled: FakeTiled, away: Path, monkeypatch
+    project: Path, tiled: FakeTiled, away: Path, monkeypatch, http: Any
 ) -> None:
-    import httpx
-
     reduced(tiled, {COMBINED: b"c", SEGMENT: b"q"})
     served = FakeHttp.get
 
     def goes_away(self, url, **kwargs):
         if self.node.key == COMBINED:
-            raise httpx.ReadTimeout("no answer")
+            raise http.ReadTimeout("no answer")
         return served(self, url, **kwargs)
 
     monkeypatch.setattr(FakeHttp, "get", goes_away)
@@ -1355,12 +1379,6 @@ def test_many_runs_are_said_by_their_first_and_last(runs: list[int], said: str) 
     from nr_workbench.commands.tiled_cmd import _runs
 
     assert _runs(runs) == said
-
-
-def test_a_pull_says_what_to_pull(project: Path, tiled: FakeTiled) -> None:
-    shown = nrw("pull", "--root", str(project))
-
-    assert shown.exit_code == 1 and "--data" in shown.output
 
 
 def test_a_pull_copies_into_the_configured_data_folder(

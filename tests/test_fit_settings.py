@@ -2,8 +2,8 @@
 
 The resolution rules first, then what `nrw fit run` does with them -- a dry
 run shows the settings without fitting, and one real amoeba fit shows they
-reach the record. The examples in the README and in the scaffolded nrw.toml
-are parsed here too: a documented table that does not parse is a trap.
+reach the record. The examples in docs/fitting.md and in the scaffolded
+nrw.toml are parsed here too: a documented table that does not parse is a trap.
 """
 
 # The fixture is imported and requested by name, which ruff reads as a
@@ -123,10 +123,9 @@ def test_a_setting_the_fitter_does_not_take_is_refused_on_the_command_line() -> 
 # --------------------------------------------------------------------------
 
 
-def test_the_readme_example_is_what_it_says() -> None:
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    section = readme.split("## Fitting options", 1)[1].split("\n## ", 1)[0]
-    (example,) = re.findall(r"```toml\n(.*?)```", section, re.DOTALL)
+def test_the_documented_example_is_what_it_says() -> None:
+    guide = (ROOT / "docs" / "fitting.md").read_text(encoding="utf-8")
+    (example,) = re.findall(r"```toml\n(.*?)```", guide, re.DOTALL)
 
     toml = defaults(example)
 
