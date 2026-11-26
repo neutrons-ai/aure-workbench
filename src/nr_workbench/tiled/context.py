@@ -373,13 +373,24 @@ def push(
         What was written, in order.
 
     Raises:
-        TiledSyncError: A node to make something in has no access tags, or a
+        TiledSyncError: A node to make something in has no access tags, the
+            first node made was read back without the tags it was given, or a
             write failed. The message names what was written before it: a
             push run again writes only what is still different.
     """
     Spec = server_module.library().Spec  # noqa: N806 - the client's class
     written: list[Planned] = []
     where = f"{tree.name}/"
+    unchecked = True
+
+    def check(parent: Any, key: str, tags: list[str]) -> None:
+        # The first node made is read back: which tags a server keeps depends
+        # on its version and the client's alone, so it answers for the rest.
+        nonlocal unchecked
+        if unchecked:
+            unchecked = False
+            _kept(parent[key], tags, where)
+
     try:
         writes = context_plan is not None and context_plan.writes
         own = dict(context_plan.fields) if writes else None
@@ -392,6 +403,7 @@ def push(
                 specs=[Spec(*tree.spec)],
                 access_tags=node_tags,
             )
+            check(experiment, tree.name, node_tags)
         else:
             metadata = dict(node.metadata)
             wanted = {**metadata, **header(ipts, url)}
@@ -420,6 +432,7 @@ def push(
                     specs=[Spec(*tree.part_spec)] if part and tree.part_spec else None,
                     access_tags=tags,
                 )
+                check(node, name, tags)
                 containers[name] = (made, tags)
             return containers[name]
 
@@ -432,12 +445,14 @@ def push(
             parent, tags = container(record.container)
             where = record.path
             if item.action == "create":
+                given = tags or _given(parent, f"{record.container}/")
                 parent.create_container(
                     record.key,
                     metadata=dict(record.fields),
                     specs=[Spec(*record.spec)],
-                    access_tags=tags or _given(parent, f"{record.container}/"),
+                    access_tags=given,
                 )
+                check(parent, record.key, given)
             else:
                 there = parent[record.key]
                 # Fields another program keeps on it stay; nrw's are written
@@ -460,6 +475,25 @@ def push(
             "were written before it; push again to write the rest."
         ) from None
     return written
+
+
+def _kept(node: Any, given: list[str], where: str) -> None:
+    """Whether *node*, as the server read back holds it, has each tag it was
+    *given*.
+
+    Raises:
+        TiledSyncError: It lacks one: the server dropped what it was sent.
+    """
+    held = tags_of(node)
+    if set(given) <= set(held):
+        return
+    raise TiledSyncError(
+        f"{where} was made on Tiled without the tags it was given "
+        f"({', '.join(given)}): it has {', '.join(held) or 'none'}, so it is its "
+        "maker's alone, unseen by everyone else on the experiment. Nothing more "
+        "was made. A server keeps only tags sent as its own version of Tiled "
+        "sends them: the Tiled client here and the server differ in version."
+    )
 
 
 def _says(node: Any, spec: tuple[str, str]) -> bool:

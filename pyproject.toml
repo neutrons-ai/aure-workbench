@@ -116,7 +116,12 @@ dependencies = [
   # `nrw tiled`: the official client, without the array and table stacks. It
   # pins pydantic-settings below 2.12, which nothing else here needs. Imported
   # inside the `nrw tiled` commands only.
-  "tiled[minimal-client]>=0.2.18,<0.3",
+  #
+  # Exactly the version tiled.ornl.gov runs. A client must send a new node's
+  # access tags as its server reads them: 0.2.18 sends `access_blob`, 0.2.19
+  # and later send `access_tags`, which a 0.2.18 server ignores, making each
+  # node its maker's alone. Move this with the server.
+  "tiled[minimal-client]==0.2.18",
   "aure @ git+https://github.com/neutrons-ai/aure.git@94710c8e6667c53febc582e5fc87a895c7338c54",
 ]
 

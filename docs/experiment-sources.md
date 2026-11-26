@@ -264,7 +264,11 @@ written, and Tiled keeps each version a write replaced.
 **Nothing untagged.** Whatever a push makes takes its parent's access tags,
 and a parent with none is refused: under Tiled's tag policy, a node made
 without them is its maker's alone, invisible to everyone else on the
-experiment.
+experiment. A server keeps only tags sent as its own version of Tiled sends
+them, so nrw requires the client of tiled.ornl.gov's version, 0.2.18: a
+0.2.19 or later client sends them as `access_tags`, which a 0.2.18 server
+ignores. A push reads back the first node it makes, and stops when the server
+did not keep its tags.
 
 **Pulling data.** `pull --data` copies each reduced file the data folder
 lacks, and leaves alone every one it holds, or that appears while it runs:
@@ -373,15 +377,16 @@ project, with the IPTS written in full: `nrw tiled` looks the experiment up
 as written.
 
 A push and a status run against a real Tiled 0.2.18, started with uvx apart
-from nrw's environment, in `pytest -m tiled_server`. So do a fit's record of
-a three-segment fit's size, read back as it was written, and a colleague's
-pull of the catalog and the fit, whose problem file bumps loads at the
-chi-squared recorded. A Globus login and `pull --data` are tested against a
-fake of the client alone, and were each checked once against tiled.ornl.gov
-(2026-10-27). A node's tags are read from the client's own node, as a Tiled
-0.2.18 server sends them (`access_blob`) and as a 0.2.23 server does
-(`access_tags`); a server that gives tags by policy, as tiled.ornl.gov does,
-is not among the tests.
+from nrw's environment, in `pytest -m tiled_server`, whose policy keeps each
+node's tags as it is sent them: what a push makes is read back there with the
+experiment's tags. So do a fit's record of a three-segment fit's size, read
+back as it was written, and a colleague's pull of the catalog and the fit,
+whose problem file bumps loads at the chi-squared recorded. A Globus login
+and `pull --data` are tested against a fake of the client alone, and were
+each checked once against tiled.ornl.gov (2026-10-27). A node's tags are read
+as a 0.2.18 server sends them (`access_blob`) and as a 0.2.23 server does
+(`access_tags`). Which tags tiled.ornl.gov's policy allows is not among the
+tests.
 
 ## tNR, later
 

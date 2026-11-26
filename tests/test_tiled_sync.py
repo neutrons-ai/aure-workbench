@@ -55,10 +55,14 @@ class FakeNode:
         specs: tuple[Any, ...] = (),
         log: list[tuple[str, ...]] | None = None,
         content: bytes | None = None,
+        keeps_tags: bool = True,
     ) -> None:
         self.content = content
         self.children = dict(children or {})
         self.tags = list(tags)
+        # Whether what is made in it keeps the tags it is given: a server
+        # drops those a client of another version sends.
+        self.keeps_tags = keeps_tags
         self.metadata = dict(metadata or {})
         self.specs = list(specs)
         self.log = log if log is not None else []
@@ -101,10 +105,11 @@ class FakeNode:
     ) -> FakeNode:
         assert key not in self.children, f"{key} made twice"
         made = FakeNode(
-            tags=tuple(access_tags or ()),
+            tags=tuple(access_tags or ()) if self.keeps_tags else (),
             metadata=metadata,
             specs=tuple(specs or ()),
             log=self.log,
+            keeps_tags=self.keeps_tags,
         )
         made.key = key
         self.children[key] = made
@@ -929,22 +934,72 @@ def test_nothing_is_made_where_there_are_no_tags_to_give(
     assert tiled.root.log == []
 
 
+def test_a_server_that_drops_the_tags_stops_the_push_at_the_first_node(
+    project: Path, tiled: FakeTiled
+) -> None:
+    """A client of another version than the server's sends tags the server
+    does not read: what is made is its maker's alone, and the push says so
+    rather than make the rest the same way."""
+    tiled.context.kept = True
+    catalogued(project)
+    on_tiled(tiled, tags=("isaac", "ipts-1"), keeps_tags=False)
+
+    shown = pushed(project)
+
+    assert shown.exit_code == 1
+    assert (
+        "context/ was made on Tiled without the tags it was given (isaac, ipts-1): "
+        "it has none"
+    ) in shown.output
+    assert "Nothing more was made." in shown.output
+    assert tiled.root.log == [("create", "context", "ipts-1", "isaac")]
+
+
+def test_a_server_that_keeps_the_tags_is_read_back_once_per_push(
+    project: Path, tiled: FakeTiled, monkeypatch
+) -> None:
+    from nr_workbench.tiled import context as context_module
+
+    tiled.context.kept = True
+    catalogued(project)
+    on_tiled(tiled, tags=("isaac",))
+    read: list[str] = []
+    real = context_module._kept
+    monkeypatch.setattr(
+        context_module,
+        "_kept",
+        lambda node, given, where: (read.append(where), real(node, given, where)),
+    )
+
+    shown = pushed(project)
+
+    assert shown.exit_code == 0, shown.output
+    assert read == ["context/"]
+
+
 @pytest.mark.parametrize(
     ("access", "tags"),
     [
         ({"access_tags": ["isaac", "ipts-1"]}, ["isaac", "ipts-1"]),
         ({"access_blob": {"tags": ["isaac", "ipts-1"]}}, ["isaac", "ipts-1"]),
         ({"access_blob": {"user": "someone"}}, []),
+        ({"access_tags": ["user:someone"]}, []),
         ({"access_blob": {}}, []),
     ],
-    ids=["a-0.2.23-server", "a-0.2.18-server", "a-persons-own", "untagged"],
+    ids=[
+        "a-0.2.23-server",
+        "a-0.2.18-server",
+        "a-persons-own-0.2.18",
+        "a-persons-own-0.2.23",
+        "untagged",
+    ],
 )
 def test_the_tags_are_read_from_the_clients_node_as_each_server_sends_them(
     access: dict[str, Any], tags: list[str]
 ) -> None:
-    """The client keeps them in what the server sent, and has no attribute
-    for them. Each node is the client's own, made from the attributes a local
-    server of that version sends."""
+    """Read from what the server sent, they are read alike from a 0.2.18
+    server's node and a 0.2.23 server's. Each node is the client's own, made
+    from the attributes a local server of that version sends."""
     pytest.importorskip("tiled.client")
     from tiled.client.container import Container
 

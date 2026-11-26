@@ -8,12 +8,13 @@ client.
 
 What this tests is a push and a status as the official client and the
 server answer them: connecting with a key, reading the experiment's node,
-making containers with specs, replacing metadata, reading it back. Not
-tested here: a Globus login (no test server has one), the tags (a
-single-user server has no access policy, so it keeps none: the test stands in
-for the policy's where nrw reads them), and `pull --data` (whose `bytes`
-nodes another process registers). Those are the fakes' to test, in
-tests/test_tiled_sync.py.
+making containers with specs and tags, replacing metadata, reading it back.
+The server keeps each node's tags as it was sent them, under Tiled's
+`DummyAccessPolicy`: a client that sends them as the server does not read
+them leaves nodes without them, and the push stops. Not tested here: a
+Globus login (no test server has one), which tags a policy allows, and `pull
+--data` (whose `bytes` nodes another process registers). Those are the
+fakes' to test, in tests/test_tiled_sync.py.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ import pytest
 from click.testing import CliRunner
 
 from nr_workbench.cli import main
-from nr_workbench.tiled import context as context_module
+from nr_workbench.tiled.server import tags_of
 
 from .test_tiled_sync import catalogued, own_settings
 
@@ -59,7 +60,36 @@ def local_tiled(tmp_path_factory) -> Iterator[tuple[str, str]]:
 
     key = secrets.token_hex(16)  # the server takes only letters and digits
     port = _free_port()
-    log = tmp_path_factory.mktemp("tiled") / "server.log"
+    folder = tmp_path_factory.mktemp("tiled")
+    log = folder / "server.log"
+    # A catalog in the test's folder, with a policy that keeps each node's
+    # tags as it is sent them and refuses no one: a policy's tags without its
+    # rules.
+    config = folder / "config.yml"
+    config.write_text(
+        json.dumps(
+            {
+                "access_control": {
+                    "access_policy": (
+                        "tiled.access_control.access_policies:DummyAccessPolicy"
+                    ),
+                    "args": {},
+                },
+                "trees": [
+                    {
+                        "path": "/",
+                        "tree": "catalog",
+                        "args": {
+                            "uri": f"sqlite:///{folder / 'catalog.db'}",
+                            "writable_storage": str(folder / "data"),
+                            "init_if_not_exists": True,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     with log.open("w") as out:
         server = subprocess.Popen(
             [
@@ -68,8 +98,8 @@ def local_tiled(tmp_path_factory) -> Iterator[tuple[str, str]]:
                 "tiled[server]==0.2.18",
                 "tiled",
                 "serve",
-                "catalog",
-                "--temp",
+                "config",
+                str(config),
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -109,13 +139,15 @@ def on_local_tiled(local_tiled, project: Path, monkeypatch, tmp_path: Path):
     url, key = local_tiled
     own_settings(f"TILED_URL={url}\nTILED_API_KEY={key}\n")
     monkeypatch.setenv("TILED_CACHE_DIR", str(tmp_path / "tiled-cache"))
-    # No access policy, so no tags: what the policy would have given.
-    monkeypatch.setattr(context_module, "tags_of", lambda node: ["isaac"])
     root = from_uri(url, api_key=key)
     ipts = f"IPTS-{secrets.randbelow(10**8):08d}"
     for part in ("projects", "isaac"):
-        root = root[part] if part in root else root.create_container(part)
-    root.create_container(ipts)
+        root = (
+            root[part]
+            if part in root
+            else root.create_container(part, access_tags=["isaac"])
+        )
+    root.create_container(ipts, access_tags=["isaac", ipts.lower()])
     toml = project / "nrw.toml"
     toml.write_text(
         toml.read_text(encoding="utf-8").replace("IPTS-00001", ipts), encoding="utf-8"
@@ -196,6 +228,32 @@ def test_a_push_writes_the_records_and_reads_them_back(
     assert [(s.name, s.version) for s in run.specs] == [("context-run", "2")]
     assert context["samples/S1"].metadata["title"] == "Cu/Pt"
     assert len(status["records"]["same"]) == 3 and status["only_on_tiled"] == []
+
+
+def test_what_a_push_makes_is_given_the_experiments_tags_and_keeps_them(
+    project: Path, on_local_tiled
+) -> None:
+    """Read back from the server: what the client sends is what it keeps."""
+    from .test_tiled_analysis import A
+
+    catalogued(project)
+    real_fit(project)
+
+    shown = nrw(project, "push", "--yes")
+
+    assert shown.exit_code == 0, shown.output
+    tags = sorted(tags_of(on_local_tiled))
+    assert len(tags) == 2
+    for path in (
+        "context",
+        "context/runs",
+        "context/runs/234277-steady",
+        "context/samples/S1",
+        "analysis",
+        "analysis/S1",
+        f"analysis/S1/{A}",
+    ):
+        assert sorted(tags_of(on_local_tiled[path])) == tags, path
 
 
 def test_the_experiments_context_is_written_into_contexts_own_metadata(

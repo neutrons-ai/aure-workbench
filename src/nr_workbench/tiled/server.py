@@ -172,9 +172,9 @@ def http_errors() -> tuple[type[Exception], ...]:
     """The errors the client raises when a request fails: the ``HTTPError``
     of each HTTP library installed.
 
-    Clients in nrw's range use one or the other: tiled 0.2.23 makes its
-    requests with ``httpx2``, tiled 0.2.18 with ``httpx``. Neither's error is
-    a subclass of the other's.
+    tiled 0.2.18, the client nrw requires, makes its requests with ``httpx``;
+    0.2.23 with ``httpx2``, whose error is not a subclass of ``httpx``'s. Both
+    are caught, so that a client of either version is said as nrw's.
     """
     import importlib
 
@@ -312,6 +312,10 @@ def tags_of(node: Any) -> list[str]:
     server sends ``access_tags``, a 0.2.18 server ``access_blob: {"tags":
     ...}``. The client's own ``metadata_copy`` reads one of the two alone, and
     fails on the other server's node.
+
+    A node someone made for themselves alone carries, from a 0.2.23 server,
+    ``user:<id>`` or ``service:<id>``: the maker's, never a tag to give
+    anything else, and not counted.
     """
     try:
         attributes = node.item["attributes"]
@@ -321,4 +325,8 @@ def tags_of(node: Any) -> list[str]:
     if tags is None:
         blob = attributes.get("access_blob")
         tags = blob.get("tags") if isinstance(blob, dict) else None
-    return [tag for tag in tags or () if isinstance(tag, str)]
+    return [
+        tag
+        for tag in tags or ()
+        if isinstance(tag, str) and not tag.startswith(("user:", "service:"))
+    ]
